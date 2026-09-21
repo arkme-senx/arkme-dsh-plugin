@@ -1,4 +1,4 @@
-import { HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
+import { HARNESS_LOCAL_SESSION_OPEN, HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
 import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_SURFACE, CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
@@ -453,6 +453,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     if (open && !external) { close(); return }
     close()
     show()
+    doc.dispatchEvent(new win.Event(HARNESS_MENU_OPEN))
   })
   function externalOpen(event: Event) {
     const request = (event as CustomEvent<HarnessSessionMenuRequest>).detail
@@ -484,6 +485,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const row = target.closest('[role="treeitem"][aria-selected]')
     const buttonLabel = target.closest('button')?.getAttribute('aria-label') ?? ''
     const workspaceCreate = /^在“.+”中新建会话$/.test(buttonLabel) || /^New session in /.test(buttonLabel)
+    if (current.create.contains(target)) doc.dispatchEvent(new doc.defaultView!.Event(HARNESS_LOCAL_SESSION_OPEN))
     if ((row && !target.closest('button, input, [role="menu"]')) || current.create.contains(target) || workspaceCreate
       || target.closest('nav button')) {
       const request = external

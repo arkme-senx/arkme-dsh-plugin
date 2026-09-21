@@ -81,7 +81,7 @@ describe('login-only DSH remote Host API and SDK', () => {
       accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01',
     } }) })
     expect(accepted.status).toBe(200)
-    expect(host.reportCurrentSession).toHaveBeenCalledWith({ accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01' })
+    expect(host.reportCurrentSession).toHaveBeenCalledWith({ accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01', focused: false })
   })
 
   it('Browser, SDK and Tool reads share the same current-session owner', async () => {

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -15,6 +16,7 @@ const click = async (element: Element) => { await act(async () => { element.disp
 const bubble = (text: string) => [...host.querySelectorAll('p')].find(p => p.textContent === text)!.parentElement!
 const detail = () => host.querySelector('[role="dialog"][aria-label="消息详情"]')
 beforeEach(async () => {
+  arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', () => 0)
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -284,13 +286,13 @@ it('keeps model switching isolated from the open detail and preserves the draft'
     if (method === 'arko.model.activate') return new Promise(resolve => { finish = resolve }) as never
     return original(method, input, signal)
   })
-  await act(async () => { root.render(<ArkmeArkoSurface key="models" />) })
+  await act(async () => { arkoModelCache.clear(); root.render(<ArkmeArkoSurface key="models" />) })
   const key = arkmeArkoComposerDraftKey(10001)
   await act(async () => { arkmeComposerDraftStore.setText(key, '已有草稿') })
   await click(bubble('完整回答'))
   const originalPanel = detail()
-  await click(host.querySelector('[title="选择模型"]')!)
-  const modal = host.querySelector('[aria-modal="true"]')!
+  await click(host.querySelector('footer [aria-label="选择模型"]')!)
+  const modal = document.querySelector('[role="menu"]')!
   await click([...modal.querySelectorAll('button')].find(b => b.textContent?.includes('模型B'))!)
   expect((host.querySelector('[title="发送"]') as HTMLButtonElement).disabled).toBe(true)
   await act(async () => { finish({ ...models, effectiveRouteKey: 'b' }) })

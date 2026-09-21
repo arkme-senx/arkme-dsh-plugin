@@ -11,7 +11,7 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
   const release = () => { stopWatching?.(); stopWatching = undefined; native = undefined; frameElement = undefined }
   return watchConversationMenuHover(anchor, {
     open: hover => {
-      const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"][data-arkme-account-id]')
+      const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"]:not([data-arkme-active="false"])[data-arkme-account-id]')
       if (surface?.getAttribute('data-arkme-account-scope') !== scope) return false
       const frame = surface.querySelector('iframe')
       let next: Document | null | undefined

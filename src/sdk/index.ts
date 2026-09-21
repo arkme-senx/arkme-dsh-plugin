@@ -1,3 +1,6 @@
+import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
+import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
@@ -2154,6 +2157,30 @@ export class ArkmeSdk {
       stopped = true
       if (timeout !== undefined) clearTimeout(timeout)
     }
+  }
+
+  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
+    const result = await this.call<DshAccountSessionPage>('remote.sessions.list', options, signal)
+    if (result.contractVersion !== 1) throw new Error('账号会话协议版本不受支持')
+    return result
+  }
+
+  async readDshAccountSession(options: { runtimeRef: string; sessionRef: string; cursor?: DshSessionHistoryCursor; source?: 'host' | 'cloud' }, signal?: AbortSignal): Promise<DshAccountSessionHistory> {
+    return await this.call('remote.session.read', options, signal)
+  }
+
+  async commandDshAccountSession(options: DshAccountSessionCommandOptions, signal?: AbortSignal): Promise<unknown> {
+    return await this.call('remote.session.command', options, signal)
+  }
+
+  /** Event-driven invalidation only. Abort or dispose closes the Host subscription. */
+  observeDshAccountSession(target: { runtimeRef: string; sessionRef: string }, changed: () => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    return observeDshAccountSession(this.route, this.fetchImpl, target, changed, options)
+  }
+
+  /** Account-authorized native DSH carrier. Callers retain native RPC result semantics. */
+  async nativeDshRequest(options: { runtimeRef: string; requestRef: string; body: { mode: 'call' | 'pull' | 'close'; endpoint?: string; payload?: { args: Record<string, unknown> }; streamRef?: string } }, signal?: AbortSignal): Promise<unknown> {
+    return await this.call('remote.session.native', options, signal)
   }
 
   async currentDesktopSession(signal?: AbortSignal): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running?: boolean; projectionAsOfSeq?: number } | null }> {

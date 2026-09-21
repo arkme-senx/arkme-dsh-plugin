@@ -1,3 +1,4 @@
+import type { DshNativeTransport } from './native-transport.js'
 import { DshLiveEventBatcher, LIVE_BATCH_ITEMS, type LiveEventBatch } from './live-event-batcher.js'
 import { DesktopSessionPresence } from './desktop-session-presence.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -41,6 +42,9 @@ const HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS = 5_000
 const HISTORY_OBJECT_BACKFILL_NEXT_DELAY_MILLIS = 250
 const HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS = 30_000
 const HISTORY_OBJECT_KNOWN_BATCH_ITEMS = 500
+const HISTORY_RAW_BATCH_ITEMS = 100
+const HISTORY_RAW_ENTRY_BYTES = 512 * 1024
+const HISTORY_RAW_BATCH_BYTES = 4 * 1024 * 1024
 const RECONNECT_BASE_DELAY_MILLIS = 1_000
 const RECONNECT_MAX_DELAY_MILLIS = 30_000
 const RECONNECT_STABLE_MILLIS = 60_000
@@ -102,6 +106,7 @@ type DshRemoteHostControlPlane = Pick<DshRemoteControlPlane,
   | 'completeProjectionSnapshot'
   | 'turnObjectUploadCapabilities'
   | 'knownHistorySessions'
+  | 'appendSessionEvents'
 >
 
 function liveRunState(entries: DshRemoteHistoryEntry[]): 'running' | 'completed' | 'failed' | undefined {
@@ -133,6 +138,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
   sessionOwnership: DshRemoteSessionOwnership
   controlPlane: DshRemoteHostControlPlane
   realtime: DshRemoteRealtimeTransport
+  nativeTransport?: DshNativeTransport
   apiProxy: DshApiProxyAdapter
   ledgerForAccount: (accountId: string, key: Buffer) => Promise<DshRemoteCommandLedger> | DshRemoteCommandLedger
   turnUploadForAccount?: (
@@ -169,6 +175,7 @@ function validHistorySessionRef(value: string): boolean {
 
 function requiredCapabilities(operation: DshRemoteOperation): DshRemoteCapability[] {
   switch (operation) {
+    case 'session.native': return ['session.native']
     case 'capabilities.get': return []
     case 'snapshot.get': return ['workspace.list', 'session.list']
     case 'workspace.list': return ['workspace.list']
@@ -181,6 +188,8 @@ function requiredCapabilities(operation: DshRemoteOperation): DshRemoteCapabilit
     case 'session.history': return ['session.history']
     case 'session.prompt': return ['session.prompt']
     case 'session.cancel': return ['session.cancel']
+    case 'session.rename': return ['session.rename']
+    case 'session.archive': return ['session.archive']
     case 'interaction.question.respond': return ['interaction.question.respond']
     case 'interaction.approval.respond': return ['interaction.approval.respond']
   }
@@ -302,6 +311,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (flushPending) await this.flushPendingSessionEventBatches()
     else this.clearPendingSessionEventBatches()
     this.started = false
+    this.options.nativeTransport?.close()
     this.connectionController?.abort()
     this.connectionController = undefined
     this.stopTransportDisconnect?.()
@@ -354,7 +364,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           protocol: DSH_REMOTE_PROTOCOL, protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
           kind: 'event', request_ref: requestRef, host_generation: runtime.hostGeneration,
           issued_at: this.now(), operation: 'session.current',
-          body: { ...value, selectionRevision: selection.revision },
+          body: { ...value, selectionRevision: selection.revision, selectedAt: selection.selectedAt ?? null },
         }, requestRef)
         if (generation !== this.accountGeneration || manager !== this.channelManager) return
         // A just-created session may not be owned until its canonical baseline arrives.
@@ -371,9 +381,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.desktopSelectionFlight = flight
   }
 
-  reportCurrentSession(input: { accountId: string; windowRef: string; revision: number; sessionRef: string | null }): void {
+  reportCurrentSession(input: { accountId: string; windowRef: string; revision: number; sessionRef: string | null; focused?: boolean }): void {
     this.requireActiveAccount(input.accountId)
-    this.desktopSessions.report(input, performance.now())
+    this.desktopSessions.report(input, performance.now(), this.now())
     this.scheduleDesktopSelection()
   }
 
@@ -384,7 +394,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (accountId === undefined || sessionRef === undefined) return { session: null }
     const owned = await this.options.sessionOwnership.listOwned(accountId, [sessionRef])
     if (generation !== this.accountGeneration || !owned.has(sessionRef)) return { session: null }
-    const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1 })
+    const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1, includeUngrouped: true })
     this.requireActiveAccount(accountId)
     // A slow lookup may outlive a tab switch or the Browser lease.
     if (generation !== this.accountGeneration || this.desktopSessions.current(performance.now()) !== sessionRef) return { session: null }
@@ -393,7 +403,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   }
 
   private capabilities(): DshRemoteCapability[] {
-    const values = this.options.apiProxy.capabilities()
+    const values = [...this.options.apiProxy.capabilities(), ...(this.options.nativeTransport ? ['session.native' as const, 'session.native.history' as const] : [])]
     return values.includes('session.list') && values.includes('workspace.list')
       ? [...values, 'session.current'] : values
   }
@@ -471,7 +481,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         expectedHostGeneration: this.runtime!.hostGeneration,
         nowMillis: this.now(),
       })
-      const capabilities = new Set(this.options.apiProxy.capabilities())
+      const capabilities = new Set(this.capabilities())
       if (requiredCapabilities(request.operation).some(capability => !capabilities.has(capability))) {
         throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '当前 DSH Runtime 不支持该操作')
       }
@@ -727,16 +737,42 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private async readHistorySource(
     persistence: DshRemoteSessionPersistenceLike,
     sessionRef: string,
+    fromSeq: number,
     signal: AbortSignal,
   ): Promise<{ meta: DshRemotePersistenceHeader; events: DshRemoteHistoryEntry['event'][] }> {
     try {
-      return await persistence.readFrom(sessionRef, 0, signal)
+      return await persistence.readFrom(sessionRef, fromSeq, signal)
     } catch (error) {
       if (!isLegacyMessageShapeError(error) || persistence.loadStored === undefined) throw error
       const stored = await persistence.loadStored(sessionRef, signal)
       if (stored === undefined) throw error
-      return stored
+      return { ...stored, events: stored.events.filter(event => event.seq >= fromSeq) }
     }
+  }
+
+  private async syncJournalGaps(
+    runtime: DshRemoteRuntimeProjection, sessionRef: string,
+    events: DshRemoteHistoryEntry['event'][], ranges: Array<[number, number]>, signal: AbortSignal,
+  ): Promise<void> {
+    let entries: DshRemoteHistoryEntry[] = [], bytes = 0
+    const flush = async (): Promise<void> => {
+      if (!entries.length) return
+      signal.throwIfAborted()
+      this.requireActiveAccount(runtime.accountId, runtime.runtimeRef)
+      await this.options.controlPlane.appendSessionEvents({
+        runtime_ref: runtime.runtimeRef, host_generation: runtime.hostGeneration, session_ref: sessionRef, entries,
+      }, signal)
+      entries = []; bytes = 0
+      await this.yieldHistoryReconciliation()
+    }
+    for (const [from, through] of ranges) for (let index = from; index < through; index++) {
+      const entry = { event: events[index]! }
+      const size = Buffer.byteLength(JSON.stringify(entry))
+      if (size > HISTORY_RAW_ENTRY_BYTES) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '原始日志超过服务端单条大小上限')
+      if (entries.length >= HISTORY_RAW_BATCH_ITEMS || bytes + size > HISTORY_RAW_BATCH_BYTES) await flush()
+      entries.push(entry); bytes += size
+    }
+    await flush()
   }
 
   private async backfillOneHistorySession(
@@ -789,27 +825,42 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       const failure = this.historyObjectBackfillFailures.get(sessionRef)
       if (failure?.revision === revision && failure.nextAttemptAt > now) continue
       try {
-        const source = await this.readHistorySource(persistence, sessionRef, signal)
+        const fromSeq = outbox.historyResumeSeq(sessionRef)
+        if (fromSeq === 0) await outbox.restoreHistoryReceipts(sessionRef, signal)
+        const source = await this.readHistorySource(persistence, sessionRef, fromSeq, signal)
         signal.throwIfAborted()
         this.requireActiveAccount(accountId, runtime.runtimeRef)
         if (source.meta.id !== sessionRef) {
           throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '历史 Session 读取结果无效', true)
         }
 
-        let turnStart = -1
+        let turnStart = -1, outsideStart = 0
+        const outsideRanges: Array<[number, number]> = []
         for (let index = 0; index < source.events.length; index += 1) {
           const event = source.events[index]!
           if (event.type === 'turn/start') turnStart = index
           if (event.type !== 'turn/end' || turnStart < 0) continue
+          outsideRanges.push([outsideStart, turnStart])
+          const startSeq = source.events[turnStart]!.seq
           for (let offset = turnStart; offset <= index; offset += LIVE_EVENT_BATCH_MAX_ITEMS) {
             signal.throwIfAborted()
             const batch = source.events.slice(offset, Math.min(index + 1, offset + LIVE_EVENT_BATCH_MAX_ITEMS))
-              .map(item => ({ event: item }))
-            await outbox.capture(sessionRef, batch)
+              .map(event => ({ event }))
+            await outbox.capture(sessionRef, batch, startSeq)
             await this.yieldHistoryReconciliation()
           }
+          const uncoveredFrom = outbox.historyUncoveredFrom(sessionRef, startSeq, event.seq)
+          let tail = index + 1
+          while (tail > turnStart && source.events[tail - 1]!.seq >= uncoveredFrom) tail--
+          if (tail <= index) outsideRanges.push([tail, index + 1])
           turnStart = -1
+          outsideStart = index + 1
         }
+        outsideRanges.push([outsideStart, turnStart < 0 ? source.events.length : turnStart])
+        await this.syncJournalGaps(runtime, sessionRef, source.events, outsideRanges, signal)
+        // The source journal is the durable retry source. An unfinished Turn
+        // cannot prove a completed scan; its terminal event schedules the retry.
+        if (turnStart >= 0) continue
 
         const current = (await persistence.listSnapshots(signal))
           .find(snapshot => snapshot.header.id === sessionRef)
@@ -818,7 +869,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         this.historyObjectBackfillFailures.delete(sessionRef)
         if (current === undefined || current.revision !== revision) return true
         const throughSeq = source.events.reduce(
-          (latest, event) => Math.max(latest, event.seq), -1,
+          (latest, event) => Math.max(latest, event.seq), fromSeq - 1,
         )
         outbox.queueHistoryFinalization(sessionRef, revision, throughSeq)
         return true
@@ -898,6 +949,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.projectionSnapshotPending = false
     this.projectionSyncTail = Promise.resolve()
     this.stopApiProxyEvents()
+    this.options.nativeTransport?.close()
     this.connectionController?.abort()
     this.connectionController = undefined
     this.connectionFlight = undefined
@@ -985,6 +1037,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       const page = await this.options.apiProxy.sessions({
         limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         workspaceInventory,
+        includeUngrouped: true,
         ...(cursor === undefined ? {} : { cursor }),
       })
       await this.options.sessionOwnership.claimUnownedAndListOwned({
@@ -1064,6 +1117,17 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           : HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS,
       )
       this.enqueueSessionEventBatch(accountId, runtime, event.sessionId, event.entry, issuedAt)
+      return
+    }
+    if (event.kind === 'session-metadata') {
+      const owned = await this.options.sessionOwnership.claimUnownedAndListOwned({
+        accountId, sessionRefs: [event.sessionId], origin: 'observed-while-active', nowMillis: issuedAt,
+        canClaim: () => this.historyOwnerMatches(accountId, runtime),
+      })
+      if (!owned.has(event.sessionId) || !this.historyOwnerMatches(accountId, runtime)) return
+      this.scheduleProjectionSnapshot(true)
+      await this.publishSessionMetadata(event.sessionId)
+      this.scheduleDesktopSelection()
       return
     }
     if (event.kind === 'session-projection') {
@@ -1178,6 +1242,27 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.liveEventBatcher.value.enqueue(sessionRef, entry, issuedAt)
   }
 
+  private async publishSessionMetadata(sessionRef: string): Promise<void> {
+    const manager = this.channelManager
+    const runtime = this.runtime
+    const generation = this.accountGeneration
+    if (!this.connected || manager === undefined || runtime === undefined) return
+    try {
+      const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1, includeUngrouped: true })
+      if (generation !== this.accountGeneration || manager !== this.channelManager || page.items.length === 0) return
+      const requestRef = `metadata_${randomUUID()}`
+      await manager.publishProjectionEvent({
+        protocol: DSH_REMOTE_PROTOCOL, protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
+        kind: 'event', request_ref: requestRef, host_generation: runtime.hostGeneration,
+        issued_at: this.now(), operation: 'snapshot.get', body: { session_ref: sessionRef, sessions: page.items },
+      }, requestRef)
+    } catch (error) {
+      if (generation !== this.accountGeneration) return
+      this.projectionError = asDshRemoteError(error)
+      this.bump()
+    }
+  }
+
   private async publishSessionEventBatch(batch: ScopedLiveEventBatch): Promise<void> {
     const { accountId, runtime, sessionRef } = batch
     if (this.liveEventBatcher?.key !== batch.scopeKey || !this.historyOwnerMatches(accountId, runtime) || batch.entries.length === 0) return
@@ -1230,22 +1315,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     // Use the existing bounded live batch owner. Metadata must reach mobile
     // independently of Backend latency, before history for a newly seen session.
     if (metadataChanged) {
-      try {
-        const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1 })
-        if (batch.generation !== this.accountGeneration || this.channelManager !== manager) return
-        if (page.items.length > 0) {
-          const metadataRef = `metadata_${requestRef}`
-          await manager.publishProjectionEvent({
-            protocol: DSH_REMOTE_PROTOCOL, protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
-            kind: 'event', request_ref: metadataRef, host_generation: runtime.hostGeneration,
-            issued_at: this.now(), operation: 'snapshot.get', body: { session_ref: sessionRef, sessions: page.items },
-          }, metadataRef)
-        }
-      } catch (error) {
-        if (batch.generation !== this.accountGeneration) return
-        this.projectionError = asDshRemoteError(error)
-        this.bump()
-      }
+      await this.publishSessionMetadata(sessionRef)
     }
     if (batch.generation !== this.accountGeneration || this.channelManager !== manager) return
     const runState = liveRunState(entries)
@@ -1381,11 +1451,26 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private async connectHost(signal: AbortSignal): Promise<void> {
     const localRuntime = this.runtime!
     const accountId = this.accountId!
+    const clientId = this.clientId
+    const registration = async <T>(stage: string, action: () => Promise<T>): Promise<T> => {
+      const startedAt = performance.now()
+      const fields = { user_id: accountId, client_id: clientId, runtime_ref: localRuntime.runtimeRef, attempt_id: this.attemptId, stage }
+      this.diagnostic('registration_started', fields)
+      try {
+        const result = await action()
+        this.diagnostic('registration_response_received', { ...fields, duration_ms: Math.round(performance.now() - startedAt) })
+        return result
+      } catch (error) {
+        const remote = asDshRemoteError(error)
+        this.diagnostic('registration_failed', { ...fields, error_code: remote.code, retryable: remote.retryable, duration_ms: Math.round(performance.now() - startedAt) })
+        throw error
+      }
+    }
     const platform = this.options.platform ?? process.platform
     const displayName = (await this.options.runtimeStore.account(accountId)).displayName
       ?? this.options.displayName ?? hostname()
     signal.throwIfAborted()
-    const desktop = await this.options.controlPlane.registerDesktop({ display_name: displayName, platform }, AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
+    const desktop = await registration('desktop', () => this.options.controlPlane.registerDesktop({ display_name: displayName, platform }, AbortSignal.any([signal, AbortSignal.timeout(10_000)])))
     signal.throwIfAborted()
     const desktopRef = typeof desktop.desktop_ref === 'string' ? desktop.desktop_ref
       : typeof desktop.desktopRef === 'string' ? desktop.desktopRef : ''
@@ -1393,7 +1478,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     await this.options.runtimeStore.bindDesktop(accountId, { desktopRef })
     signal.throwIfAborted()
     this.runtime = { ...localRuntime, desktopRef }
-    const registeredRuntime = await this.options.controlPlane.registerRuntime(desktopRef, {
+    const registeredRuntime = await registration('runtime', () => this.options.controlPlane.registerRuntime(desktopRef, {
       profile_ref: this.options.profileRef,
       host_client_ref: this.options.hostClientRef,
       service_namespace: 'dsh_remote',
@@ -1402,7 +1487,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
       host_generation: localRuntime.hostGeneration,
       capabilities: localRuntime.capabilities,
-    }, AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
+    }, AbortSignal.any([signal, AbortSignal.timeout(10_000)])))
     signal.throwIfAborted()
     const backendRuntimeRef = typeof registeredRuntime.runtime_ref === 'string' ? registeredRuntime.runtime_ref : ''
     const backendHostGeneration = typeof registeredRuntime.host_generation === 'number'
@@ -1432,6 +1517,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       realtime: this.options.realtime,
       secretBroker: this.options.secretBroker,
       dispatch: async (request, context) => await this.dispatchAuthorizedRequest(request, context),
+      onDiagnostic: (event, fields) => this.diagnostic(event, { client_id: clientId, desktop_ref: desktopRef, ...fields }),
       onProjectionError: error => {
         this.projectionError = asDshRemoteError(error)
         this.bump()
@@ -1537,144 +1623,196 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     const capabilities = new Set(this.options.apiProxy.capabilities())
     const projectionAt = this.nextProjectionVersion()
     const snapshotRef = `snap_${runtime.hostGeneration}_${projectionAt}`
-    const previous = await this.options.runtimeStore.projectionInventory(
-      accountId,
-      this.options.profileRef,
-    )
-    const workspaceInventory = capabilities.has('workspace.list')
-      ? await this.options.apiProxy.workspaceInventory()
-      : { items: [], archivedSessionIds: [] }
-    check()
-    const workspaces = workspaceInventory.items
-    const currentWorkspaceRefs = new Set(workspaces.map(item => item.workspaceId))
-    const workspaceItems = [
-      ...workspaces.map((item, orderIndex) => ({
-        workspace_ref: item.workspaceId,
-        title: item.title,
-        path: item.path,
-        available: item.available,
-        projection_at: projectionAt,
-        order_index: orderIndex,
-        deleted: false,
-      })),
-      ...previous.workspaceRefs
-        .filter(workspaceRef => !currentWorkspaceRefs.has(workspaceRef))
-        .map(workspaceRef => ({
-          workspace_ref: workspaceRef,
-          title: '',
-          path: '',
-          available: false,
-          projection_at: projectionAt,
-          order_index: 0,
-          deleted: true,
-        })),
-    ]
-    for (let offset = 0; offset < workspaceItems.length || offset === 0; offset += 100) {
-      check()
-      await this.options.controlPlane.syncWorkspaces({
-        runtime_ref: runtime.runtimeRef,
-        host_generation: runtime.hostGeneration,
-        snapshot_ref: snapshotRef,
-        items: workspaceItems.slice(offset, offset + 100),
-      }, signal)
-      if (workspaceItems.length === 0) break
+    const startedAt = performance.now()
+    const diagnostic = {
+      user_id: accountId, client_id: this.clientId, desktop_ref: runtime.desktopRef,
+      runtime_ref: runtime.runtimeRef, host_generation: runtime.hostGeneration,
+      snapshot_ref: snapshotRef, projection_at: projectionAt,
+      workspace_list_supported: capabilities.has('workspace.list'), session_list_supported: capabilities.has('session.list'),
+      stage: 'read_inventory', workspace_count: 0, session_count: 0,
+      workspace_items_acked: 0, session_items_acked: 0, page_index: 0, item_count: 0,
+      server_completed: false,
     }
-
-    const sessions = [] as Awaited<ReturnType<DshApiProxyAdapter['sessions']>>['items']
-    if (capabilities.has('session.list')) {
-      let cursor: string | undefined
-      const seenCursors = new Set<string>()
-      for (let pageCount = 0; pageCount < 200; pageCount += 1) {
-        const page = await this.accountSessionPage(accountId, {
-          limit: 50,
-          workspaceInventory,
-          ...(cursor === undefined ? {} : { cursor }),
-        })
-        sessions.push(...page.items)
-        if (page.nextCursor === undefined) break
-        if (seenCursors.has(page.nextCursor)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话游标发生循环')
-        seenCursors.add(page.nextCursor)
-        cursor = page.nextCursor
-        if (pageCount === 199) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话分页超过安全上限')
+    const progress = (stage: string) => {
+      diagnostic.stage = stage
+      this.diagnostic('projection_sync_progress', { ...diagnostic, duration_ms: Math.round(performance.now() - startedAt) })
+    }
+    this.diagnostic('projection_sync_started', { ...diagnostic })
+    try {
+      const previous = await this.options.runtimeStore.projectionInventory(
+        accountId,
+        this.options.profileRef,
+      )
+      progress('read_workspaces')
+      const workspaceInventory = capabilities.has('workspace.list')
+        ? await this.options.apiProxy.workspaceInventory()
+        : { items: [], archivedSessionIds: [] }
+      check()
+      const workspaces = workspaceInventory.items
+      diagnostic.workspace_count = workspaces.length
+      const currentWorkspaceRefs = new Set(workspaces.map(item => item.workspaceId))
+      const workspaceItems = [
+        ...workspaces.map((item, orderIndex) => ({
+          workspace_ref: item.workspaceId,
+          title: item.title,
+          path: item.path,
+          available: item.available,
+          projection_at: projectionAt,
+          order_index: orderIndex,
+          deleted: false,
+        })),
+        ...previous.workspaceRefs
+          .filter(workspaceRef => !currentWorkspaceRefs.has(workspaceRef))
+          .map(workspaceRef => ({
+            workspace_ref: workspaceRef,
+            title: '',
+            path: '',
+            available: false,
+            projection_at: projectionAt,
+            order_index: 0,
+            deleted: true,
+          })),
+      ]
+      for (let offset = 0; offset < workspaceItems.length || offset === 0; offset += 100) {
+        check()
+        diagnostic.page_index = offset / 100
+        diagnostic.item_count = Math.min(100, workspaceItems.length - offset)
+        progress('upload_workspaces')
+        await this.options.controlPlane.syncWorkspaces({
+          runtime_ref: runtime.runtimeRef,
+          host_generation: runtime.hostGeneration,
+          snapshot_ref: snapshotRef,
+          items: workspaceItems.slice(offset, offset + 100),
+        }, signal)
+        diagnostic.workspace_items_acked += diagnostic.item_count
+        if (workspaceItems.length === 0) break
       }
-    }
-    const currentSessionRefs = new Set(sessions.map(item => item.sessionId))
-    const sessionOrder = new Map<string, number>()
-    for (const workspace of workspaces) {
-      workspace.sessionIds.forEach((sessionRef, orderIndex) => {
-        if (!sessionOrder.has(sessionRef)) sessionOrder.set(sessionRef, orderIndex)
-      })
-    }
-    const sessionItems = [
-      ...sessions.map(item => ({
-        workspace_ref: item.workspaceId,
-        session_ref: item.sessionId,
-        title: item.title ?? '',
-        source_updated_at: Math.max(1, Math.trunc(item.updatedAt)),
-        projection_at: projectionAt,
-        order_index: sessionOrder.get(item.sessionId) ?? sessions.length,
-        running: item.running,
-        blank: item.blank,
-        archived: item.archived === true,
-        ...(item.origin === undefined ? {} : { origin: item.origin }),
-        ...(item.parentSessionId === undefined ? {} : { parent_session_ref: item.parentSessionId }),
-        ...(item.projectionAsOfSeq === undefined ? {} : { projection_as_of_seq: item.projectionAsOfSeq }),
-        ...(Object.hasOwn(item, 'goal') ? { goal: item.goal } : {}),
-        deleted: false,
-      })),
-      ...previous.sessions
-        .filter(item => !currentSessionRefs.has(item.sessionRef))
-        .map(item => ({
-          workspace_ref: item.workspaceRef,
-          session_ref: item.sessionRef,
-          title: '',
-          source_updated_at: item.sourceUpdatedAt,
+
+      progress('read_sessions')
+      const sessions = [] as Awaited<ReturnType<DshApiProxyAdapter['sessions']>>['items']
+      if (capabilities.has('session.list')) {
+        let cursor: string | undefined
+        const seenCursors = new Set<string>()
+        for (let pageCount = 0; pageCount < 200; pageCount += 1) {
+          diagnostic.page_index = pageCount
+          diagnostic.item_count = 0
+          progress('read_sessions')
+          const page = await this.accountSessionPage(accountId, {
+            limit: 50,
+            workspaceInventory,
+            includeUngrouped: true,
+            ...(cursor === undefined ? {} : { cursor }),
+          })
+          sessions.push(...page.items)
+          diagnostic.session_count = sessions.length
+          if (page.nextCursor === undefined) break
+          if (seenCursors.has(page.nextCursor)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话游标发生循环')
+          seenCursors.add(page.nextCursor)
+          cursor = page.nextCursor
+          if (pageCount === 199) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话分页超过安全上限')
+        }
+      }
+      const currentSessionRefs = new Set(sessions.map(item => item.sessionId))
+      const sessionOrder = new Map<string, number>()
+      for (const workspace of workspaces) {
+        workspace.sessionIds.forEach((sessionRef, orderIndex) => {
+          if (!sessionOrder.has(sessionRef)) sessionOrder.set(sessionRef, orderIndex)
+        })
+      }
+      const sessionItems = [
+        ...sessions.map(item => ({
+          workspace_ref: item.workspaceId,
+          session_ref: item.sessionId,
+          title: item.title ?? '',
+          source_updated_at: Math.max(1, Math.trunc(item.updatedAt)),
           projection_at: projectionAt,
-          order_index: 0,
-          running: false,
-          blank: false,
-          archived: false,
-          deleted: true,
+          order_index: sessionOrder.get(item.sessionId) ?? sessions.length,
+          running: item.running,
+          blank: item.blank,
+          archived: item.archived === true,
+          ...(item.origin === undefined ? {} : { origin: item.origin }),
+          ...(item.parentSessionId === undefined ? {} : { parent_session_ref: item.parentSessionId }),
+          ...(item.projectionAsOfSeq === undefined ? {} : { projection_as_of_seq: item.projectionAsOfSeq }),
+          ...(Object.hasOwn(item, 'goal') ? { goal: item.goal } : {}),
+          deleted: false,
         })),
-    ]
-    for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
+        ...previous.sessions
+          .filter(item => !currentSessionRefs.has(item.sessionRef))
+          .map(item => ({
+            workspace_ref: item.workspaceRef,
+            session_ref: item.sessionRef,
+            title: '',
+            source_updated_at: item.sourceUpdatedAt,
+            projection_at: projectionAt,
+            order_index: 0,
+            running: false,
+            blank: false,
+            archived: false,
+            deleted: true,
+          })),
+      ]
+      for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
+        check()
+        diagnostic.page_index = offset / 100
+        diagnostic.item_count = Math.min(100, sessionItems.length - offset)
+        progress('upload_sessions')
+        await this.options.controlPlane.syncSessions({
+          runtime_ref: runtime.runtimeRef,
+          host_generation: runtime.hostGeneration,
+          snapshot_ref: snapshotRef,
+          items: sessionItems.slice(offset, offset + 100),
+        }, signal)
+        diagnostic.session_items_acked += diagnostic.item_count
+        if (sessionItems.length === 0) break
+      }
       check()
-      await this.options.controlPlane.syncSessions({
+      progress('complete_snapshot')
+      await this.options.controlPlane.completeProjectionSnapshot({
         runtime_ref: runtime.runtimeRef,
         host_generation: runtime.hostGeneration,
         snapshot_ref: snapshotRef,
-        items: sessionItems.slice(offset, offset + 100),
+        workspace_count: workspaces.length,
+        session_count: sessions.length,
       }, signal)
-      if (sessionItems.length === 0) break
+      diagnostic.server_completed = true
+      check()
+      progress('save_inventory')
+      await this.options.runtimeStore.saveProjectionInventory(
+        accountId,
+        this.options.profileRef,
+        {
+          workspaceRefs: workspaces.map(item => item.workspaceId),
+          sessions: sessions.map(item => ({
+            sessionRef: item.sessionId,
+            workspaceRef: item.workspaceId,
+            sourceUpdatedAt: Math.max(1, Math.trunc(item.updatedAt)),
+          })),
+        },
+      )
+      this.diagnostic('projection_sync_completed', { ...diagnostic, duration_ms: Math.round(performance.now() - startedAt) })
+    } catch (error) {
+      const remote = asDshRemoteError(error)
+      // Account/lifecycle cancellation is not an upload failure for the next account.
+      const cancelled = generation !== this.accountGeneration || this.projectionController.signal.aborted
+      this.diagnostic(cancelled ? 'projection_sync_cancelled' : 'projection_sync_failed', {
+        ...diagnostic, duration_ms: Math.round(performance.now() - startedAt),
+        error_code: remote.code, retryable: remote.retryable,
+        reason: cancelled ? 'scope_changed' : signal.aborted ? 'timeout' : 'operation_failed',
+      })
+      throw error
     }
-    check()
-    await this.options.controlPlane.completeProjectionSnapshot({
-      runtime_ref: runtime.runtimeRef,
-      host_generation: runtime.hostGeneration,
-      snapshot_ref: snapshotRef,
-      workspace_count: workspaces.length,
-      session_count: sessions.length,
-    }, signal)
-    check()
-    await this.options.runtimeStore.saveProjectionInventory(
-      accountId,
-      this.options.profileRef,
-      {
-        workspaceRefs: workspaces.map(item => item.workspaceId),
-        sessions: sessions.map(item => ({
-          sessionRef: item.sessionId,
-          workspaceRef: item.workspaceId,
-          sourceUpdatedAt: Math.max(1, Math.trunc(item.updatedAt)),
-        })),
-      },
-    )
   }
 
   private async dispatch(request: DshRemoteRequest): Promise<{ duplicate: boolean; value: unknown }> {
     switch (request.operation) {
+      case 'session.native': {
+        const endpoint = String(request.body.endpoint)
+        const read = request.body.mode !== 'call' || /^(session\/(list|modelCatalog|canOpenWorkspacePath|attachment|page)|messageFeedback\/list|commands\/list|goals\/get|permissionPresets\/list|fileReferences\/list|subagents\/list|agentPresets\/list|settings\/describe)$/.test(endpoint)
+        return read ? { duplicate: false, value: await this.dispatchNative(request) } : await this.dispatchWrite(request)
+      }
       case 'session.current': {
         const selection = this.desktopSessions.snapshot(performance.now())
-        return { duplicate: false, value: { ...await this.currentSession(), selectionRevision: selection.revision } }
+        return { duplicate: false, value: { ...await this.currentSession(), selectionRevision: selection.revision, selectedAt: selection.selectedAt ?? null } }
       }
       case 'capabilities.get': return { duplicate: false, value: { capabilities: this.capabilities() } }
       case 'snapshot.get': {
@@ -1742,12 +1880,34 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     }
   }
 
+  private async dispatchNative(request: DshRemoteRequest): Promise<unknown> {
+    if (!this.options.nativeTransport) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '当前实例不支持原生传输')
+    const accountId = this.accountId!, runtimeRef = this.runtime!.runtimeRef
+    const signal = this.projectionController.signal
+    const value = await this.options.nativeTransport.request(request.body, {
+      accountId, signal, createSessionId: stableDshRemoteSessionId(request.request_ref),
+      claim: async sessionId => {
+        const owned = await this.options.sessionOwnership.claimUnownedAndListOwned({ accountId, sessionRefs: [sessionId], origin: 'remote-create', nowMillis: this.now(), canClaim: () => this.started && this.accountId === accountId && this.runtime?.runtimeRef === runtimeRef })
+        this.requireActiveAccount(accountId, runtimeRef)
+        if (!owned.has(sessionId)) throw new DshRemoteError('SESSION_STATE_CHANGED', 'DSH 会话归属已经变化')
+      },
+      owned: async ids => {
+        this.requireActiveAccount(accountId, runtimeRef)
+        const owned = await this.options.sessionOwnership.listOwned(accountId, ids)
+        this.requireActiveAccount(accountId, runtimeRef)
+        return owned
+      },
+    })
+    this.requireActiveAccount(accountId, runtimeRef)
+    return value
+  }
+
   private async dispatchWrite(request: DshRemoteRequest): Promise<{ duplicate: boolean; value: unknown }> {
     const ledger = this.ledger
     if (ledger === undefined) throw new DshRemoteError('REMOTE_STORAGE_FAILED', '远控命令账本尚未就绪')
     const accountId = this.accountId!
     const runtimeRef = this.runtime!.runtimeRef
-    if (request.operation !== 'session.create') {
+    if (request.operation !== 'session.create' && request.operation !== 'session.native') {
       await this.requireSessionOwnership(accountId, stringBody(request.body, 'session_ref'))
     }
     this.requireActiveAccount(accountId, runtimeRef)
@@ -1759,6 +1919,10 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       arguments: request.body,
       executeBeforeMillis: request.execute_before,
     })
+    if (request.operation !== 'session.native') this.diagnostic('host_request_ledger', {
+      user_id: accountId, runtime_ref: runtimeRef, request_ref: request.request_ref,
+      operation: request.operation, duplicate: begun.duplicate, status: begun.entry.state,
+    })
     if (begun.duplicate) {
       if (begun.entry.state === 'completed') return { duplicate: true, value: resultFromLedger(begun.entry) }
       throw new DshRemoteError('COMMAND_OUTCOME_UNKNOWN', '同一命令的结果尚未完成对账')
@@ -1767,6 +1931,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     let value: unknown
     try {
       switch (request.operation) {
+        case 'session.native': value = await this.dispatchNative(request); break
         case 'session.create':
           if ((request.body.model_provider !== undefined || request.body.model_id !== undefined)
             && !this.runtime!.capabilities.includes('session.create.model')) {
@@ -1823,6 +1988,16 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
             }),
             dsh_rpc_id: begun.entry.dshRpcId,
           }
+          break
+        case 'session.rename':
+        case 'session.archive':
+          value = await this.options.apiProxy.editCatalog({
+            operation: request.operation,
+            sessionId: stringBody(request.body, 'session_ref'),
+            ...(request.operation === 'session.rename' ? { title: stringBody(request.body, 'title') } : {}),
+            dshRpcId: begun.entry.dshRpcId,
+          })
+          this.scheduleProjectionSnapshot(true)
           break
         case 'session.cancel':
           value = await this.options.apiProxy.cancel({

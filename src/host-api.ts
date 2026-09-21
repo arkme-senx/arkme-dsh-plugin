@@ -1,3 +1,4 @@
+import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -49,7 +50,8 @@ const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
 const MAX_MESSAGE_WITHDRAWAL_REF_CHARS = 4_096
 const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
-const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+const MAX_NATIVE_REQUEST_BYTES = 64 * 1024 * 1024
+const MAX_REQUEST_BYTES = MAX_NATIVE_REQUEST_BYTES
 
 function searchScopeParam(params: Record<string, unknown> | undefined): { searchScope?: 'global' | 'topic' | 'chat_session' } {
   if (params?.searchScope === undefined) return {}
@@ -61,6 +63,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'remote.session.native') return MAX_NATIVE_REQUEST_BYTES
   if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
   if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward' || operation === 'native-chat.forward' || operation === 'native-chat.copy-link') {
     return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -871,6 +874,7 @@ export interface ArkmeHostApiOptions {
   extensionManager?: () => ArkmeExtensionManager | undefined
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
+  accountSessions?: () => DshAccountSessions | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
   remoteUnavailableReason?: () => string
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
@@ -927,12 +931,26 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
       if (request.operation === 'calendar.day-recap' && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
+      }
+      if (request.operation === 'remote.session.observe') {
+        const directory = options.accountSessions?.()
+        if (!directory) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)
+        try {
+          await directory.observe(params, controller.signal, () => {
+            if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
+            if (!res.write('{"changed":true}\n') && res.writableLength > 4096) { controller.abort(); res.destroy() }
+          })
+        } catch (error) {
+          if (!res.headersSent) throw error
+          if (!res.destroyed) res.write('{"error":"远程连接已断开，请重试"}\n')
+        } finally { if (res.headersSent) res.end() }
+        return
       }
       const value = await dispatchArkmeHostOperation(
         service,
@@ -948,6 +966,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.openApiMcpController,
         options.teamService,
         options.remoteUnavailableReason,
+        options.accountSessions?.(),
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -994,10 +1013,12 @@ export async function dispatchArkmeHostOperation(
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
   teamService?: TeamServicePort,
   remoteUnavailableReason?: () => string,
+  accountSessions?: DshAccountSessions,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
+      if (accountSessions) capabilities.features = { ...capabilities.features, dshAccountSessions: true }
       return teamService === undefined ? capabilities : {
         ...capabilities,
         features: {
@@ -1113,6 +1134,16 @@ export async function dispatchArkmeHostOperation(
       })),
       requestSignal,
     )
+    case 'remote.session.native':
+    case 'remote.sessions.list':
+    case 'remote.session.read':
+    case 'remote.session.command': {
+      if (!accountSessions) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)
+      if (operation === 'remote.session.native') return await accountSessions.native(params, requestSignal)
+      if (operation === 'remote.sessions.list') return await accountSessions.list(params, requestSignal)
+      if (operation === 'remote.session.read') return await accountSessions.read(params, requestSignal)
+      return await accountSessions.command(params, requestSignal)
+    }
     case 'remote.currentSession': return await requireRemoteHost(remoteHost, remoteUnavailableReason).currentSession()
     case 'remote.reportCurrentSession': {
       const host = requireRemoteHost(remoteHost, remoteUnavailableReason)
@@ -1120,6 +1151,7 @@ export async function dispatchArkmeHostOperation(
         accountId: stringParam(params, 'accountId'),
         windowRef: stringParam(params, 'windowRef'),
         revision: numberParam(params, 'revision', Number.NaN),
+        focused: params.focused === true,
         sessionRef: params.sessionRef === null ? null : stringParam(params, 'sessionRef'),
       })
       return { accepted: true }

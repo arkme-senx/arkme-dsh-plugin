@@ -59,4 +59,14 @@ describe('published package contents', () => {
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
   }, 30_000)
+
+  it('loads cloud history validators from the consuming Harness instead of bundling the development DSH', () => {
+    runPnpm(['run', 'bundle'])
+
+    const javascript = readFileSync(join(projectRoot, 'lib/index.js'), 'utf8')
+    expect(javascript).toMatch(/from\s+["']@deepseek-ai\/dsh-session\/surface["']/)
+    expect(javascript).not.toContain('node_modules/@deepseek-ai/dsh-session/')
+    const manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'))
+    expect(manifest.peerDependencies).toHaveProperty('@deepseek-ai/dsh-session')
+  }, 30_000)
 })

@@ -10,15 +10,19 @@ export class DesktopSessionPresence {
 
   private selected: string | undefined
   private revision = 0
+  private selectedAt: number | undefined
 
-  clear(): void { this.windows.clear(); this.selected = undefined; this.revision = 0 }
+  clear(): void { this.windows.clear(); this.selected = undefined; this.revision = 0; this.selectedAt = undefined }
 
-  snapshot(now: number): { sessionRef: string | undefined; revision: number } {
+  snapshot(now: number): { sessionRef: string | undefined; revision: number; selectedAt: number | undefined } {
     this.prune(now)
-    const sessionRef = [...this.windows.values()].filter(value => value.sessionRef !== null)
-      .sort((a, b) => b.selectedAt - a.selectedAt)[0]?.sessionRef ?? undefined
-    if (sessionRef !== this.selected) { this.selected = sessionRef; this.revision++ }
-    return { sessionRef, revision: this.revision }
+    const selected = [...this.windows.values()].filter(value => value.sessionRef !== null)
+      .sort((a, b) => b.selectedAt - a.selectedAt)[0]
+    const sessionRef = selected?.sessionRef ?? undefined
+    if (sessionRef !== this.selected || selected?.selectedAt !== this.selectedAt) {
+      this.selected = sessionRef; this.selectedAt = selected?.selectedAt; this.revision++
+    }
+    return { sessionRef, revision: this.revision, selectedAt: this.selectedAt }
   }
 
   expiryDelay(now: number): number | undefined {
@@ -27,7 +31,7 @@ export class DesktopSessionPresence {
     return Math.max(1, Math.min(...[...this.windows.values()].map(value => value.seenAt + DESKTOP_SESSION_LEASE_MS - now)))
   }
 
-  report(input: { windowRef: string; revision: number; sessionRef: string | null }, now: number): void {
+  report(input: { windowRef: string; revision: number; sessionRef: string | null; focused?: boolean }, now: number, wallTime = now): void {
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(input.windowRef)
       || !Number.isSafeInteger(input.revision) || input.revision < 1
       || (input.sessionRef !== null && !/^[^\s\x00-\x1f\x7f]{1,128}$/.test(input.sessionRef))) {
@@ -41,7 +45,7 @@ export class DesktopSessionPresence {
     }
     this.windows.set(input.windowRef, {
       revision: input.revision, sessionRef: input.sessionRef, seenAt: now,
-      selectedAt: previous?.sessionRef === input.sessionRef ? previous.selectedAt : now,
+      selectedAt: previous?.sessionRef === input.sessionRef && !input.focused ? previous.selectedAt : wallTime,
     })
   }
 
