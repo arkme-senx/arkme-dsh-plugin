@@ -77,13 +77,14 @@ export function createDshGatewayApi(
     } finally { controller.abort(); await iterator.return?.() }
   }
   const api: DshPublicApiProxyLike = {
-    workspace: { list: wrap(async () => {
+    workspace: { archiveSession: wrap(async payload => record(await gateway.invoke({ namespace: 'workspace', method: 'archiveSession', args: { request: payload }, signal: lifetime })) as { archivedSessionIds: string[] }), list: wrap(async () => {
       const frame = await opening('workspace', 'follow', {})
       if (frame.type !== 'baseline') throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH Workspace 缺少 baseline')
       const value = record(frame.value)
       return { items: array(value.items) as WorkspaceValue['items'], archivedSessionIds: array(value.archivedSessionIds) as string[] }
     }) },
     sessions: {
+      rename: wrap(async payload => record(await invoke('rename', payload)) as unknown as SessionValue<'rename'>),
       list: wrap(async payload => record(await invoke('list', payload)) as unknown as SessionValue<'list'>),
       create: wrap(async payload => record(await invoke('create', payload)) as unknown as SessionValue<'create'>),
       modelCatalog: wrap(async () => record(await invoke('modelCatalog', undefined)) as unknown as SessionValue<'modelCatalog'>),
@@ -168,6 +169,11 @@ export function createDshGatewayApi(
     const tasks = [
       consume(gateway.wireStream.open('$events', { args: {} }, signal), async frame => {
         if (frame.type === 'ready') { clientId = text(frame.clientId); return }
+        if (frame.type === 'emit' && ['api-session/added', 'api-session/activity', 'api-session/status'].includes(String(frame.event))) {
+          const first = array(frame.args)[0]
+          push({ type: 'session/metadata', sessionId: frame.event === 'api-session/added' ? text(record(first).sessionId) : text(first) })
+          return
+        }
         if (frame.type === 'cancel') {
           const item = pending.get(text(frame.eventId))
           pending.delete(text(frame.eventId))
@@ -189,6 +195,7 @@ export function createDshGatewayApi(
           : { type: 'approval/requested', sessionId: frame.agentId, approvalId: frame.eventId, toolName: request.toolName, reason: request.reason }, text(frame.eventId))
       }),
       consume(gateway.stream({ namespace: 'session', method: 'control', args: {}, signal }), frame => {
+        if (frame.type === 'projection' && frame.key === 'title') push({ type: 'session/metadata', sessionId: text(frame.sessionId) })
         if (frame.type === 'projection' && frame.key === 'goal') push({ ...frame, type: 'session/projection' })
         if (frame.type === 'baseline') {
           for (const [sessionId, value] of Object.entries(record(record(frame.value).projections))) {

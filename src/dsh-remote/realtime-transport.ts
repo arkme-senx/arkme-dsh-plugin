@@ -173,6 +173,9 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
   private stopHeartbeat: (() => void) | undefined
   private livenessTimer: ReturnType<typeof setTimeout> | undefined
   private lastReceivedAt = 0
+  private lastChannelEventAt: number | undefined
+  private lastChannelSequence = 0
+  private lastHeartbeatDiagnosticAt = 0
   private lifecycleGeneration = 0
 
   constructor(
@@ -246,7 +249,18 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       this.send({ type: 'connection.open', profile_ref: input.profileRef, client_ref: input.clientRef })
       this.connectionGeneration = positive(await ready, 'connection_generation')
       if (this.socket !== socket) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '连接已被替换', true)
-      this.stopHeartbeat = socket.subscribeHeartbeat(() => { if (this.socket === socket) this.touchLiveness() })
+      this.stopHeartbeat = socket.subscribeHeartbeat(() => {
+        if (this.socket !== socket) return
+        this.touchLiveness()
+        const now = (this.options.now ?? (() => performance.now()))()
+        if (now - this.lastHeartbeatDiagnosticAt < 30_000) return
+        this.lastHeartbeatDiagnosticAt = now
+        this.diagnostic('wire_heartbeat', {
+          connection_generation: this.connectionGeneration, lease_generation: this.serviceLeaseGeneration,
+          channel_count: this.channelListeners.size, last_transport_seq: this.lastChannelSequence,
+          ...(this.lastChannelEventAt === undefined ? {} : { last_channel_event_age_ms: Math.round(now - this.lastChannelEventAt) }),
+        })
+      })
       this.touchLiveness()
       this.diagnostic('transport_ready', { connection_generation: this.connectionGeneration, request_id: socket.diagnosticRequestId })
     } catch (error) {
@@ -318,23 +332,33 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'Realtime after_seq 无效')
     }
     const generation = this.lifecycleGeneration
-    await this.request({
+    this.diagnostic('wire_subscribe_started', { runtime_ref: input.target.runtimeRef, after_seq: input.afterSequence })
+    const subscribed = await this.request({
       type: 'channel.subscribe', namespace: 'dsh_remote', channel_ref: input.target.runtimeRef,
       ...wireTarget(input.target),
       ...(input.afterSequence === undefined ? {} : { after_seq: input.afterSequence }),
     }, 'channel.subscribed', input.signal)
+    this.diagnostic('wire_subscribe_finished', {
+      runtime_ref: input.target.runtimeRef, after_seq: input.afterSequence,
+      server_seq: subscribed.seq, duplicate: subscribed.duplicate === true,
+      connection_generation: this.connectionGeneration,
+    })
     input.signal.throwIfAborted()
     if (generation !== this.lifecycleGeneration) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '订阅所属连接已失效', true)
     this.channelListeners.set(input.target.runtimeRef, frame => {
       const event = frame.event
       if (event === null || typeof event !== 'object' || Array.isArray(event)) return
       const source = event as Record<string, unknown>
-      if (source.payload === null || typeof source.payload !== 'object' || Array.isArray(source.payload)) return
-      if (source.sender_role !== 'host' && source.sender_role !== 'controller') return
+      const reject = (reason: string) => this.diagnostic('wire_event_rejected', {
+        runtime_ref: input.target.runtimeRef, transport_seq: frame.seq, reason,
+        sender_role: source.sender_role, target_lease_generation: source.target_host_lease_generation,
+      })
+      if (source.payload === null || typeof source.payload !== 'object' || Array.isArray(source.payload)) { reject('invalid_payload'); return }
+      if (source.sender_role !== 'host' && source.sender_role !== 'controller') { reject('invalid_sender'); return }
       if (source.runtime_ref !== input.target.runtimeRef
         || !positiveInteger(source.accepted_at)
         || !Number.isSafeInteger(source.target_host_lease_generation)
-        || (source.target_host_lease_generation as number) < 0) return
+        || (source.target_host_lease_generation as number) < 0) { reject('invalid_target_metadata'); return }
       input.onEvent(source.payload as Record<string, unknown>, {
         senderRole: source.sender_role,
         runtimeRef: source.runtime_ref,
@@ -354,10 +378,14 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       input.signal.removeEventListener('abort', unsubscribe)
       if (generation !== this.lifecycleGeneration) return
       this.channelListeners.delete(input.target.runtimeRef)
-      if (this.socket !== undefined) this.send({
-        type: 'channel.unsubscribe', request_id: randomUUID(), namespace: 'dsh_remote',
-        channel_ref: input.target.runtimeRef,
-      })
+      // Disposal also runs from AbortSignal listeners. A closing socket or a
+      // send race must not turn local cleanup into an uncaught process error.
+      try {
+        if (this.socket?.readyState === 1) this.send({
+          type: 'channel.unsubscribe', request_id: randomUUID(), namespace: 'dsh_remote',
+          channel_ref: input.target.runtimeRef,
+        })
+      } catch { /* The disconnected channel is released with its socket. */ }
     }
     input.signal.addEventListener('abort', unsubscribe, { once: true })
     return unsubscribe
@@ -382,6 +410,13 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       ...wireTarget(input.target), direction: input.direction,
       command_id: input.commandId, payload: input.payload,
     }, 'channel.published', input.signal)
+    const payload = input.payload
+    if (payload.operation !== 'session.native' && payload.kind !== 'event' && payload.kind !== 'fragment') this.diagnostic('wire_publish_ack', {
+      runtime_ref: input.target.runtimeRef, command_id: input.commandId,
+      request_ref: payload.request_ref, operation: payload.operation,
+      server_seq: frame.seq, duplicate: frame.duplicate === true,
+      lease_generation: input.target.hostLeaseGeneration, connection_generation: this.connectionGeneration,
+    })
     return { sequence: positive(frame, 'seq') }
   }
 
@@ -403,7 +438,15 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
         waiter.reject(error instanceof Error ? error : new Error(String(error)))
       }
     }
-    return await response
+    try {
+      return await response
+    } catch (error) {
+      this.diagnostic('wire_request_failed', {
+        frame_type: frame.type, request_id: requestId, runtime_ref: frame.channel_ref,
+        error_code: error instanceof DshRemoteError ? error.code : 'REMOTE_TRANSPORT_FAILED',
+      })
+      throw error
+    }
   }
 
   private waitForRequest(requestId: string, expectedType: string, signal: AbortSignal): Promise<ServerFrame> {
@@ -453,6 +496,7 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       })
     }
     if (!validServerFrame(frame)) {
+      this.diagnostic('wire_frame_rejected', { frame_type: frame.type, request_id: frame.request_id, reason: 'invalid_server_frame' })
       if (remoteDiagnosticsEnabled) {
         console.warn('dsh-arkme: remote_wire_frame_rejected', {
           type: frame.type,
@@ -476,10 +520,24 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       return
     }
     if (frame.type === 'error') {
+      this.diagnostic('wire_server_error', { request_id: requestId, runtime_ref: frame.channel_ref, error_code: frame.code })
       this.failConnection(remoteError(frame), false)
       return
     }
-    if (frame.type === 'channel.event' && typeof frame.channel_ref === 'string') this.channelListeners.get(frame.channel_ref)?.(frame)
+    if (frame.type === 'channel.event' && typeof frame.channel_ref === 'string') {
+      this.lastChannelEventAt = (this.options.now ?? (() => performance.now()))()
+      this.lastChannelSequence = frame.seq as number
+      const listener = this.channelListeners.get(frame.channel_ref)
+      const event = frame.event as Record<string, unknown>
+      const payload = event.payload as Record<string, unknown> | undefined
+      if ((event.sender_role !== 'host' && payload?.operation !== 'session.native') || listener === undefined) this.diagnostic('wire_event_received', {
+        runtime_ref: frame.channel_ref, transport_seq: frame.seq,
+        request_ref: payload?.request_ref, operation: payload?.operation,
+        sender_role: event.sender_role, listener_ready: listener !== undefined,
+        target_lease_generation: event.target_host_lease_generation, lease_generation: this.serviceLeaseGeneration,
+      })
+      listener?.(frame)
+    }
   }
 
   private failConnection(error: DshRemoteError, expected: boolean): void {
@@ -508,6 +566,9 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
     for (const waiter of this.waiters.values()) waiter.reject(error)
     this.waiters.clear()
     this.channelListeners.clear()
+    this.lastChannelEventAt = undefined
+    this.lastChannelSequence = 0
+    this.lastHeartbeatDiagnosticAt = 0
     if (!expected) for (const listener of this.disconnectListeners) listener(error)
   }
 

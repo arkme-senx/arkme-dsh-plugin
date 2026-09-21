@@ -199,3 +199,16 @@ it('bounds native fullscreen sidebars below the task header without moving the i
   expect(native.querySelector('style')).toBeNull()
   expect(native.querySelector('textarea')).toBe(draft)
 })
+
+it('keeps native boot and error content visible before the session layout exists', async () => {
+  const { native, surface } = fixture()
+  native.body.innerHTML = '<main>Native loading or connection error</main>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+  native.body.innerHTML = '<main><div data-rightbar-col></div></main>'
+  await flush()
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+  expect(native.querySelector('main')?.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+})

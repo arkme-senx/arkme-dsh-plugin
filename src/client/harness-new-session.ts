@@ -2,7 +2,7 @@ import { HARNESS_ACTIVITY_ATTRIBUTE, parseHarnessActivity } from './harness-acti
 
 /** Use the mounted native action, so workspace inheritance and blank-session reuse stay host-owned. */
 export function startEmbeddedHarnessSession(activate: () => void, doc: Document = document): void {
-  const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"][data-arkme-account-id]')
+  const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"]:not([data-arkme-active="false"])[data-arkme-account-id]')
   const frame = surface?.querySelector('iframe')
   const native = frame?.contentDocument
   const sidebar = native?.querySelector('[data-slot="sidebar"]')

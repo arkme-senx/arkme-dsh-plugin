@@ -25,13 +25,23 @@ describe('desktop session selection lease', () => {
 
   it('selection versions advance on changes and lease expiry but not heartbeat renewal', () => {
     const state = new DesktopSessionPresence()
-    expect(state.snapshot(0)).toEqual({ sessionRef: undefined, revision: 0 })
+    expect(state.snapshot(0)).toEqual({ sessionRef: undefined, revision: 0, selectedAt: undefined })
     state.report({ windowRef: 'one', revision: 1, sessionRef: 'A' }, 1)
-    expect(state.snapshot(1)).toEqual({ sessionRef: 'A', revision: 1 })
+    expect(state.snapshot(1)).toEqual({ sessionRef: 'A', revision: 1, selectedAt: 1 })
     state.report({ windowRef: 'one', revision: 2, sessionRef: 'A' }, 10)
     expect(state.snapshot(10).revision).toBe(1)
     expect(state.expiryDelay(10)).toBe(DESKTOP_SESSION_LEASE_MS)
-    expect(state.snapshot(10 + DESKTOP_SESSION_LEASE_MS)).toEqual({ sessionRef: undefined, revision: 2 })
+    expect(state.snapshot(10 + DESKTOP_SESSION_LEASE_MS)).toEqual({ sessionRef: undefined, revision: 2, selectedAt: undefined })
+  })
+
+  it('preserves wall-clock focus time on heartbeat and advances on explicit refocus', () => {
+    const state = new DesktopSessionPresence()
+    state.report({ windowRef: 'one', revision: 1, sessionRef: 'A' }, 1, 1000)
+    state.snapshot(1)
+    state.report({ windowRef: 'one', revision: 2, sessionRef: 'A' }, 2, 2000)
+    expect(state.snapshot(2).selectedAt).toBe(1000)
+    state.report({ windowRef: 'one', revision: 3, sessionRef: 'A', focused: true }, 3, 3000)
+    expect(state.snapshot(3)).toMatchObject({ sessionRef: 'A', selectedAt: 3000, revision: 2 })
   })
 
   it('bounds windows and validates opaque refs and sequence numbers', () => {

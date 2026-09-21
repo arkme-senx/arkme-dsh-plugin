@@ -75,6 +75,7 @@ export class DshRemoteRuntimeSecretBroker {
     runtimeRef: string
     channelRef: string
     lastTransportSequence: number
+    reset?: boolean
   }): Promise<void> {
     if (!Number.isSafeInteger(input.lastTransportSequence) || input.lastTransportSequence < 0) {
       throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控 transport sequence 无效')
@@ -83,7 +84,7 @@ export class DshRemoteRuntimeSecretBroker {
     const previous = this.cursorWrites.get(key) ?? Promise.resolve()
     const writing = previous.catch(() => undefined).then(async () => {
       const raw = await this.store.read(key)
-      if (raw !== undefined && this.parseCursor(raw, input).lastTransportSequence >= input.lastTransportSequence) return
+      if (input.reset !== true && raw !== undefined && this.parseCursor(raw, input).lastTransportSequence >= input.lastTransportSequence) return
       const value: PersistedRuntimeCursor = {
         schemaVersion: 2,
         accountId: input.accountId,

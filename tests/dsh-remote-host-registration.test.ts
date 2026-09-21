@@ -1,3 +1,4 @@
+import type { DshNativeTransport } from '../src/dsh-remote/native-transport.js'
 import { adaptSessionPersistence } from '../src/dsh-remote/session-persistence.js'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,6 +21,7 @@ import type {
   DshRemoteControlPlane,
   DshRemoteRealtimePayload,
   DshRemoteRealtimeTransport,
+  DshRemoteRuntimeProjection,
   DshRemoteTrustedEventMetadata,
 } from '../src/dsh-remote/types.js'
 
@@ -69,6 +71,7 @@ function apiProxy(): DshApiProxyAdapter {
 }
 
 async function fixture(input: {
+  nativeTransport?: DshNativeTransport
   featureEnabled?: boolean
   session?: () => { userId: number; clientId: number } | undefined
   now?: () => number
@@ -110,6 +113,7 @@ async function fixture(input: {
     ...(input.knownHistorySessions === undefined ? {} : { knownHistorySessions: input.knownHistorySessions }),
   }
   const adapter = apiProxy()
+  const diagnostics = vi.fn()
   const sessionOwnership = new DshRemoteSessionOwnershipStore(directory, 'web')
   const host = new ArkmeRemoteRealtimeHost({
     featureEnabled: input.featureEnabled ?? true,
@@ -118,14 +122,15 @@ async function fixture(input: {
     secretBroker: new DshRemoteRuntimeSecretBroker(new MemorySecrets()),
     runtimeStore: new DshRemoteRuntimeStore(directory),
     sessionOwnership,
-    controlPlane, realtime, apiProxy: adapter,
+    onDiagnostic: diagnostics,
+    controlPlane, realtime, apiProxy: adapter, ...(input.nativeTransport ? { nativeTransport: input.nativeTransport } : {}),
     ledgerForAccount: (_accountId, key) => new DshRemoteCommandLedger(join(directory, 'ledger'), key),
     ...(input.turnUploadForAccount === undefined ? {} : { turnUploadForAccount: input.turnUploadForAccount }),
     ...(input.sessionPersistence === undefined ? {} : { sessionPersistence: input.sessionPersistence }),
     ...(input.yieldToEventLoop === undefined ? {} : { yieldToEventLoop: input.yieldToEventLoop }),
     now: input.now ?? (() => 2_000),
   })
-  return { host, realtime, controlCalls, controlPlane, adapter, sessionOwnership }
+  return { host, realtime, controlCalls, controlPlane, adapter, sessionOwnership, diagnostics }
 }
 
 function historyEvent(type: string, seq: number): DshRemoteHistoryEntry['event'] {
@@ -138,14 +143,186 @@ function historyOutbox() {
     activate: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     capture: vi.fn(async () => undefined),
+    historyResumeSeq: vi.fn((_sessionRef: string) => 0),
+    restoreHistoryReceipts: vi.fn(async () => undefined),
+    historyUncoveredFrom: vi.fn((_sessionRef: string, _startSeq: number, endSeq: number) => endSeq + 1),
     needsHistoryRevision: vi.fn((sessionRef: string, revision: string) => revisions.get(sessionRef) !== revision),
     queueHistoryFinalization: vi.fn((sessionRef: string, revision: string) => { revisions.set(sessionRef, revision) }),
   }
 }
 
+async function journalBackfillFixture(events: DshRemoteHistoryEntry['event'][], now?: () => number) {
+  const outbox = historyOutbox()
+  const readFrom = vi.fn(async (id: string, from: number) => ({ meta: { id }, events: events.filter(event => event.seq >= from) }))
+  const value = await fixture({
+    now,
+    turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
+    turnObjectCapabilities: async () => ({
+      available: true, storage_version: 'oss_turn_v1', coverage: 'live_completed_turns',
+      backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024,
+    }),
+    knownHistorySessions: async () => ({ session_refs: ['session-01'] }),
+    sessionPersistence: {
+      listSnapshots: async () => [{ header: { id: 'session-01' }, revision: 'revision-1' }], readFrom,
+    },
+    yieldToEventLoop: async () => undefined,
+  })
+  await value.host.start()
+  await vi.waitFor(() => { expect(outbox.activate).toHaveBeenCalledOnce() })
+  const internal = value.host as unknown as {
+    runtime: DshRemoteRuntimeProjection
+    backfillOneHistorySession(accountId: string, runtime: unknown, signal: AbortSignal): Promise<boolean>
+  }
+  return { ...value, outbox, readFrom, backfill: (signal = new AbortController().signal) => internal.backfillOneHistorySession('42', internal.runtime, signal) }
+}
+
 afterEach(() => { vi.useRealTimers() })
 
 describe('Host login-only registration lifecycle', () => {
+  it('backfills a previously sealed short Turn tail before recording a full-journal checkpoint', async () => {
+    const events = ['session/start', 'turn/start', 'assistant/message', 'assistant/message', 'turn/end', 'session/title'].map(historyEvent)
+    const f = await journalBackfillFixture(events)
+    f.outbox.historyUncoveredFrom.mockReturnValue(3)
+    try {
+      expect(await f.backfill()).toBe(true)
+      expect(f.controlCalls.filter(call => call.name === 'events').map(call => call.value.entries)).toEqual([
+        [0, 3, 4, 5].map(seq => ({ event: events[seq] })),
+      ])
+      expect(f.outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-1', 5)
+    } finally { await f.host.stop() }
+  })
+
+  it('uploads the native journal prefix, between-turn records and suffix without duplicating Turn bodies', async () => {
+    const events = ['session/start', 'turn/start', 'assistant/message', 'turn/end', 'user/message',
+      'turn/start', 'assistant/message', 'turn/end', 'session/title', 'session/config'].map(historyEvent)
+    const f = await journalBackfillFixture(events)
+    try {
+      expect(await f.backfill()).toBe(true)
+      const uploaded = f.controlCalls.filter(call => call.name === 'events')
+      expect(uploaded).toHaveLength(1)
+      expect(uploaded[0]!.value).toMatchObject({ runtime_ref: 'runtime-01', host_generation: 1, session_ref: 'session-01' })
+      expect(uploaded[0]!.value.entries).toEqual([0, 4, 8, 9].map(seq => ({ event: events[seq] })))
+      const turns = f.outbox.capture.mock.calls.flatMap(call => call[1])
+      expect(turns.map(entry => entry.event.seq)).toEqual([1, 2, 3, 5, 6, 7])
+      const combined = [...turns, ...uploaded[0]!.value.entries as DshRemoteHistoryEntry[]].sort((a, b) => a.event.seq - b.event.seq)
+      expect(combined).toEqual(events.map(event => ({ event })))
+      expect(f.outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-1', 9)
+    } finally { await f.host.stop() }
+  })
+
+  it('retries a failed gap upload from the source journal and never checkpoints the failed attempt', async () => {
+    let now = 1_000
+    const f = await journalBackfillFixture(['session/start', 'turn/start', 'turn/end', 'session/title'].map(historyEvent), () => now)
+    const append = vi.spyOn(f.controlPlane, 'appendSessionEvents').mockRejectedValueOnce(new Error('offline'))
+    try {
+      expect(await f.backfill()).toBe(false)
+      expect(f.outbox.queueHistoryFinalization).not.toHaveBeenCalled()
+      expect(await f.backfill()).toBe(false)
+      expect(append).toHaveBeenCalledOnce()
+      now += 30_001
+      expect(await f.backfill()).toBe(true)
+      expect(append).toHaveBeenCalledTimes(2)
+      expect(append.mock.calls[0]![0]).toEqual(append.mock.calls[1]![0])
+      expect(f.outbox.queueHistoryFinalization).toHaveBeenCalledOnce()
+    } finally { await f.host.stop() }
+  })
+
+  it('reads only the immutable suffix after a full-journal checkpoint', async () => {
+    const events = ['session/start', 'turn/start', 'turn/end', 'session/title', 'user/message', 'turn/start', 'turn/end'].map(historyEvent)
+    const f = await journalBackfillFixture(events)
+    f.outbox.historyResumeSeq.mockReturnValue(4)
+    try {
+      expect(await f.backfill()).toBe(true)
+      expect(f.readFrom).toHaveBeenCalledWith('session-01', 4, expect.any(AbortSignal))
+      expect(f.controlCalls.filter(call => call.name === 'events').map(call => call.value.entries)).toEqual([[{ event: events[4] }]])
+      expect(f.outbox.capture.mock.calls.flatMap(call => call[1].map(entry => entry.event.seq))).toEqual([5, 6])
+      expect(f.outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-1', 6)
+    } finally { await f.host.stop() }
+  })
+
+  it('retains unfinished Turns on the source and does not checkpoint them as uploaded history', async () => {
+    const f = await journalBackfillFixture(['session/start', 'turn/start', 'turn/end', 'user/message', 'turn/start', 'assistant/chunk'].map(historyEvent))
+    try {
+      expect(await f.backfill()).toBe(false)
+      expect(f.outbox.queueHistoryFinalization).not.toHaveBeenCalled()
+      expect(f.outbox.capture.mock.calls.flatMap(call => call[1].map(entry => entry.event.seq))).toEqual([1, 2])
+      expect(f.controlCalls.filter(call => call.name === 'events').map(call => call.value.entries)).toEqual([[
+        { event: historyEvent('session/start', 0) }, { event: historyEvent('user/message', 3) },
+      ]])
+    } finally { await f.host.stop() }
+  })
+
+  it.each([['count', 101, 0], ['bytes', 9, 500 * 1024]] as const)('bounds raw journal batches by %s', async (_kind, count, size) => {
+    const events = Array.from({ length: count }, (_, seq) => ({ ...historyEvent('session/config', seq), data: { text: 'x'.repeat(size) } }))
+    const f = await journalBackfillFixture(events)
+    try {
+      expect(await f.backfill()).toBe(true)
+      const batches = f.controlCalls.filter(call => call.name === 'events').map(call => call.value.entries as DshRemoteHistoryEntry[])
+      expect(batches).toHaveLength(2)
+      expect(batches.flat()).toEqual(events.map(event => ({ event })))
+      expect(batches.every(batch => batch.length <= 100 && Buffer.byteLength(JSON.stringify(batch)) < 4 * 1024 * 1024)).toBe(true)
+    } finally { await f.host.stop() }
+  })
+
+  it('keeps oversized raw records pending instead of dropping or declaring them complete', async () => {
+    const f = await journalBackfillFixture([{ ...historyEvent('session/config', 0), data: { text: 'x'.repeat(512 * 1024) } }])
+    try {
+      expect(await f.backfill()).toBe(false)
+      expect(f.controlCalls.filter(call => call.name === 'events')).toEqual([])
+      expect(f.outbox.queueHistoryFinalization).not.toHaveBeenCalled()
+      expect(f.host.getStatus().historySyncWarning).toContain('单条大小上限')
+    } finally { await f.host.stop() }
+  })
+
+  it('does not checkpoint an upload that completes after cancellation', async () => {
+    const f = await journalBackfillFixture([historyEvent('session/start', 0)])
+    const controller = new AbortController()
+    vi.spyOn(f.controlPlane, 'appendSessionEvents').mockImplementationOnce(async () => { controller.abort(); return {} })
+    try {
+      await expect(f.backfill(controller.signal)).rejects.toBeDefined()
+      expect(f.outbox.queueHistoryFinalization).not.toHaveBeenCalled()
+    } finally { await f.host.stop() }
+  })
+
+  it('correlates registration, failed projection stage and confirmed recovery without session content', async () => {
+    const { host, controlPlane, diagnostics } = await fixture()
+    const failure = new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'private server content', true)
+    vi.spyOn(controlPlane, 'syncSessions').mockRejectedValueOnce(failure)
+    const internal = host as unknown as { backgroundProjectionFlight?: Promise<void>; syncProjectionSnapshotSafely(force?: boolean): Promise<void> }
+    try {
+      await host.start()
+      await internal.backgroundProjectionFlight
+      expect(diagnostics).toHaveBeenCalledWith('registration_response_received', expect.objectContaining({ user_id: '42', stage: 'runtime' }))
+      expect(diagnostics).toHaveBeenCalledWith('projection_sync_failed', expect.objectContaining({
+        user_id: '42', runtime_ref: 'runtime-01', snapshot_ref: 'snap_1_2000', stage: 'upload_sessions',
+        workspace_count: 1, session_count: 1, workspace_items_acked: 1, session_items_acked: 0,
+        server_completed: false, error_code: failure.code, retryable: true,
+      }))
+      expect(diagnostics.mock.calls.some(([phase]) => phase === 'projection_sync_completed')).toBe(false)
+      await internal.syncProjectionSnapshotSafely(true)
+      expect(diagnostics).toHaveBeenCalledWith('projection_sync_completed', expect.objectContaining({
+        snapshot_ref: 'snap_1_2001', stage: 'save_inventory', session_items_acked: 1, server_completed: true,
+      }))
+      expect(JSON.stringify(diagnostics.mock.calls)).not.toMatch(/private server content|\/repo|My Mac/)
+      diagnostics.mockImplementation(() => { throw new Error('logger unavailable') })
+      await expect(internal.syncProjectionSnapshotSafely(true)).resolves.toBeUndefined()
+      expect(host.getStatus().projectionWarning).toBeUndefined()
+    } finally { await host.stop() }
+  })
+
+  it('does not call an uploaded page a completed snapshot when completion is rejected', async () => {
+    const { host, controlPlane, diagnostics } = await fixture()
+    vi.spyOn(controlPlane, 'completeProjectionSnapshot').mockRejectedValueOnce(new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'count mismatch'))
+    try {
+      await host.start()
+      await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+      expect(diagnostics).toHaveBeenCalledWith('projection_sync_failed', expect.objectContaining({
+        stage: 'complete_snapshot', session_items_acked: 1, server_completed: false, error_code: 'REMOTE_PROJECTION_CONFLICT',
+      }))
+      expect(diagnostics.mock.calls.some(([phase]) => phase === 'projection_sync_completed')).toBe(false)
+    } finally { await host.stop() }
+  })
+
   it('pushes selection changes once, clears on leaving Harness and exposes the latest version for reconnect', async () => {
     const { host, realtime } = await fixture()
     await host.start()
@@ -163,7 +340,7 @@ describe('Host login-only registration lifecycle', () => {
     expect(selections()).toHaveLength(count)
     host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 3, sessionRef: null })
     await flush()
-    expect(selections().at(-1)?.body).toEqual({ session: null, selectionRevision: 2 })
+    expect(selections().at(-1)?.body).toEqual({ session: null, selectionRevision: 2, selectedAt: null })
     await host.stop()
     expect((host as unknown as { desktopSelectionTimer?: unknown }).desktopSelectionTimer).toBeUndefined()
   })
@@ -498,7 +675,7 @@ describe('Host login-only registration lifecycle', () => {
       await vi.waitFor(() => { expect(sync).toHaveBeenCalledOnce() })
       expect(controlCalls.some(call => call.name === 'complete')).toBe(false)
       title = 'Final title'
-      await emit('session/title')
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
       expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ title: 'Final title' }] })
       for (let i = 0; i < 20; i++) await emit('assistant/chunk')
       expect(metadata()).toHaveLength(2)
@@ -686,7 +863,7 @@ describe('Host login-only registration lifecycle', () => {
       }),
     }
     const knownHistorySessions = vi.fn(async () => ({ session_refs: ['session-01'] }))
-    const { host } = await fixture({
+    const { host, controlCalls } = await fixture({
       turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
       turnObjectCapabilities: async () => ({
         available: true, storage_version: 'oss_turn_v1', coverage: 'live_completed_turns',
@@ -712,6 +889,9 @@ describe('Host login-only registration lifecycle', () => {
     expect(readFrom).toHaveBeenCalledWith('session-01', 0, expect.any(AbortSignal))
     expect(outbox.capture.mock.calls.map(call => call[1].map(entry => entry.event.seq))).toEqual([
       [1, 2, 3], [4, 5],
+    ])
+    expect(controlCalls.filter(call => call.name === 'events').map(call => call.value.entries)).toEqual([
+      [{ event: historyEvent('session/start', 0) }],
     ])
     expect(outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-1', 5)
 
@@ -766,14 +946,17 @@ describe('Host login-only registration lifecycle', () => {
       .resolves.toBe(true)
     expect(readFrom).toHaveBeenCalledOnce()
     expect(loadStored).toHaveBeenCalledOnce()
-    expect(outbox.capture).toHaveBeenCalledWith('session-01', legacyEvents.map(event => ({ event })))
+    expect(outbox.capture).toHaveBeenCalledWith('session-01', legacyEvents.map(event => ({ event })), 1)
     await host.stop()
   })
 
-  it('backs off one corrupt session and continues with the next session', async () => {
+  it.each(['corrupt', 'unfinished'])('continues past one %s session to the next session', async kind => {
     const outbox = historyOutbox()
     const readFrom = vi.fn(async (sessionRef: string) => {
-      if (sessionRef === 'session-bad') throw new Error('corrupt session log')
+      if (sessionRef === 'session-bad') {
+        if (kind === 'corrupt') throw new Error('corrupt session log')
+        return { meta: { id: sessionRef }, events: [historyEvent('turn/start', 0)] }
+      }
       return {
         meta: { id: sessionRef },
         events: [historyEvent('turn/start', 1), historyEvent('turn/end', 2)],
@@ -807,12 +990,13 @@ describe('Host login-only registration lifecycle', () => {
     await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
       .resolves.toBe(true)
     expect(readFrom.mock.calls.map(call => call[0])).toEqual(['session-bad', 'session-good'])
-    expect(outbox.capture).toHaveBeenCalledWith('session-good', expect.any(Array))
-    expect(host.getStatus().historySyncWarning).toBe('corrupt session log')
+    expect(outbox.capture).toHaveBeenCalledWith('session-good', expect.any(Array), 1)
+    expect(host.getStatus().historySyncWarning).toBe(kind === 'corrupt' ? 'corrupt session log' : undefined)
 
     await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
       .resolves.toBe(false)
-    expect(readFrom.mock.calls.map(call => call[0])).toEqual(['session-bad', 'session-good'])
+    expect(readFrom.mock.calls.map(call => call[0])).toEqual(kind === 'corrupt'
+      ? ['session-bad', 'session-good'] : ['session-bad', 'session-good', 'session-bad'])
     await host.stop()
   })
 
@@ -886,7 +1070,7 @@ describe('Host login-only registration lifecycle', () => {
       { event: historyEvent('turn/start', 1) },
       { event: historyEvent('assistant/message', 2) },
       { event: historyEvent('turn/end', 3) },
-    ])
+    ], 1)
     expect(outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-1', 3)
     await host.stop()
   })
@@ -1061,4 +1245,22 @@ it('a logged-in Host with zero conversations registers without opening a desktop
   expect(host.getStatus().connected).toBe(true)
   expect(realtime.calls).toContain('register')
   await host.suspend()
+})
+
+it('keeps the native carrier usable after the connection attempt completes, deduplicates writes and closes on stop', async () => {
+  let signal: AbortSignal | undefined
+  const request = vi.fn(async (_body, scope) => { signal = scope.signal; expect(await scope.owned(['session-01', 'foreign'])).toEqual(new Set(['session-01'])); return { ok: true, value: { accepted: true } } })
+  const close = vi.fn()
+  const { host } = await fixture({ nativeTransport: { request, close } as unknown as DshNativeTransport })
+  await host.start()
+  expect(host.getStatus().capabilities).toContain('session.native')
+  const envelope = { protocol: 'dsh.remote', protocol_major: 1, kind: 'request', request_ref: 'native-request-01', host_generation: 1, issued_at: 2000, execute_before: 5000, operation: 'session.native', body: { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'session-01' } } } } }
+  const context = { serviceLeaseGeneration: 9, metadata: { senderRole: 'controller' as const, runtimeRef: 'runtime-01', acceptedAtMillis: 2000, targetHostLeaseGeneration: 9 } }
+  expect(await host.dispatchAuthorizedRequest(envelope, context)).toMatchObject({ status: 'completed', result: { ok: true } })
+  expect(await host.dispatchAuthorizedRequest(envelope, context)).toMatchObject({ status: 'duplicate' })
+  expect(request).toHaveBeenCalledOnce()
+  expect(signal?.aborted).toBe(false)
+  await host.stop()
+  expect(signal?.aborted).toBe(true)
+  expect(close).toHaveBeenCalled()
 })

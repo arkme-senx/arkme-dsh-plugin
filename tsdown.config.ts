@@ -139,7 +139,8 @@ export default defineConfig([
     entry: { 'harness-sidebar-client': 'src/client/harness-sidebar-client.ts' },
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
     fixedExtension: false, dts: false, clean: false,
-    external: ['react'],
+    external: CLIENT_EXTERNALS,
+    noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     outputOptions: {
       entryFileNames: 'harness-sidebar-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-sidebar", factory: (require) => {',
