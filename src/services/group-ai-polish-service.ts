@@ -166,7 +166,7 @@ export class GroupAiPolishService {
       options: { signal?: AbortSignal } = {},
     ): Promise<ArkmeGroupAiPolishSnapshot> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       if (source.kind !== 'group_chat') {
         throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
       }
@@ -187,7 +187,7 @@ export class GroupAiPolishService {
       options: { signal?: AbortSignal } = {},
     ): Promise<ArkmeGroupAiPolishNotice[]> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       if (source.kind !== 'group_chat') {
         throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色通知仅支持群聊', false)
       }
@@ -200,7 +200,7 @@ export class GroupAiPolishService {
       options: { signal?: AbortSignal; threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string } = {},
     ): Promise<ArkmeGroupAiPolishRuleCandidate> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const instruction = requirement.trim()
       if (source.kind !== 'group_chat') {
         throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
@@ -365,7 +365,7 @@ export class GroupAiPolishService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupAiPolishRuleCandidate> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
     const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal, true)
     if (!config.canManage) throw this.permissionDenied()
@@ -392,7 +392,7 @@ export class GroupAiPolishService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupAiPolishRuleCandidate> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
     const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal, true)
     if (!config.canManage) throw this.permissionDenied()
@@ -425,7 +425,7 @@ export class GroupAiPolishService {
       options: { signal?: AbortSignal } = {},
     ): Promise<ArkmeGroupAiPolishRuleCandidate> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
       const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
       if (!config.canManage) throw this.permissionDenied()

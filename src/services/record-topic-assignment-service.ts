@@ -11,7 +11,7 @@ export class RecordTopicAssignmentService {
     const invalid = () => new ArkmePluginError('record-topic-selection-invalid', '请选择 1 至 100 条当前页面内的本人快记', false, 409)
     if (!Array.isArray(input.assignmentRefs) || input.assignmentRefs.length < 1 || input.assignmentRefs.length > 100) throw invalid()
     const session = await this.runtime.requireSession()
-    const source = await this.sources.openSourceRef(input.sourceRef, session.userId)
+    const source = await this.sources.openAccessibleSourceRef(input.sourceRef, session.userId)
     if (!['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw invalid()
     const signingKey = await this.runtime.stateStore.uniqueCode()
     const refs = input.assignmentRefs.map(value => openRecordTopicAssignmentRef(value, signingKey))
@@ -23,7 +23,7 @@ export class RecordTopicAssignmentService {
     }
     let targetTopicUid = ''
     if (input.targetSourceRef !== undefined) {
-      const target = await this.sources.openSourceRef(input.targetSourceRef, session.userId)
+      const target = await this.sources.openAccessibleSourceRef(input.targetSourceRef, session.userId)
       if (target.kind !== 'topic') throw new ArkmePluginError('record-topic-target-invalid', '只能指定个人主题', false, 409)
       targetTopicUid = target.ownerRef
     } else if (source.kind !== 'topic') {

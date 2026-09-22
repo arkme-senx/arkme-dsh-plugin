@@ -132,3 +132,9 @@ it('closes on outside pointer and Escape, returning keyboard focus to the add ic
   expect(document.querySelector('[role="menu"]')).toBeNull()
   expect(document.activeElement).toBe(trigger)
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

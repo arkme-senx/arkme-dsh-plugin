@@ -24,6 +24,8 @@ function fixture(options: FixtureOptions = {}) {
     invalidateScope: vi.fn(),
     invalidateKey: vi.fn(),
     stateStore: { async uniqueCode() { return 'directory-test-secret' } },
+    socialAccess: { require: vi.fn(async () => {}), status: vi.fn(async () => ({ userId: currentSession.userId, allowed: true })) },
+    requireSocialSession: vi.fn(async () => currentSession),
     requireSession: vi.fn(async () => currentSession),
     authenticatedChatPost: vi.fn(async (path: string) => {
       if (path === '/api/v1/chats/list') return options.groups ?? { items: [], has_more: false }

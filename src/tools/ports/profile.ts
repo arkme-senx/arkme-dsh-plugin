@@ -4,6 +4,7 @@ import type { ArkmeBackgroundSoundPreference, ArkmeIdMutationResult, ArkmeProvid
 export interface ArkmeProfileToolPort {
   aiPointsAccount(expectedScope?: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount>
   aiPointsConsumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal): Promise<ArkmeAiPointsPage>
+  socialAccessStatus(): Promise<import('../../types.js').ArkmeSocialAccessSnapshot>
   providerCapabilities(): ArkmeProviderCapabilities
   cachedProfile(): Promise<ArkmeUserProfileSnapshot>
   refreshProfile(): Promise<ArkmeUserProfileSnapshot>

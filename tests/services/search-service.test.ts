@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { dshAgentInputRecordUid } from '../../src/dsh-agent-input-sync.js'
 import { stringifyOwnerJson } from '../../src/record-owner-id.js'
 import { describe, expect, it, vi } from 'vitest'
@@ -27,7 +29,7 @@ describe('SearchService', () => {
     const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
       items: [{ record_uid: 'hit', source_kind: 3, source_uid: 'chat-1', chat_core: { title: '狗才' }, record_core: { text_content: '搜索内容' } }],
       source_aggregates: [...chats].map(([uid, source]) => ({ source_kind: 3, source_uid: uid, chat_core: { title: source.privateNickname }, matched_record_count: 2, matched_record_count_exact: true })),
-    }) } as unknown as ServiceRuntime
+    }) , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as unknown as ServiceRuntime
     const service = new SearchService(runtime, {} as never, {} as never, { chatSourcesBySessionUids } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
     const result = await service.searchRemote({ query: '搜索', limit: 50 })
     expect(result.items[0]).toMatchObject({ sourceTitle: '周鹏', targetSource: chats.get('chat-1') })
@@ -135,7 +137,7 @@ describe('SearchService', () => {
     }, { recordUid() { return '' } })
     const record = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+     get openAccessibleSourceRef() { return this.openSourceRef }})
     const service = new SearchService(runtime, record, media)
 
     await expect(service.searchRemote({ query: ' ', limit: 20 })).rejects.toMatchObject({
@@ -171,7 +173,7 @@ describe('SearchService', () => {
     }, { recordUid() { return '' } })
     const record = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+     get openAccessibleSourceRef() { return this.openSourceRef }})
     const service = new SearchService(runtime, record, media)
 
     await expect(service.searchTagRecords({ normalizedTag: '＃项目', limit: 50 })).resolves.toMatchObject({
@@ -235,7 +237,7 @@ describe('SearchService', () => {
     }, { recordUid() { return '' } })
     const record = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+     get openAccessibleSourceRef() { return this.openSourceRef }})
     const service = new SearchService(runtime, record, media)
 
     await expect(service.searchRemote({ query: '测试搜索', limit: 20 })).resolves.toMatchObject({
@@ -289,7 +291,7 @@ describe('SearchService', () => {
     }, { recordUid() { return '' } })
     const record = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+     get openAccessibleSourceRef() { return this.openSourceRef }})
     const service = new SearchService(runtime, record, media)
 
     const result = await service.searchScene({ scene: 'audio', limit: 20 })

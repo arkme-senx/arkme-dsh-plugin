@@ -392,7 +392,7 @@ export class WorldService {
   async listWorldFeed(
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldFeedPage> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
     const offset = Math.max(0, Math.trunc(options.offset ?? 0))
     const data = await this.runtime.post<Record<string, unknown>>(
@@ -412,7 +412,7 @@ export class WorldService {
   async listMyWorldFeed(
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldFeedPage> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
     let offset = Math.max(0, Math.trunc(options.offset ?? 0))
     let total = 0
@@ -445,7 +445,7 @@ export class WorldService {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new ArkmePluginError('world-user-id-invalid', '世界用户 ID 无效，请刷新后重试', false, 400)
     }
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
     let offset = Math.max(0, Math.trunc(options.offset ?? 0))
     let total = 0
@@ -476,7 +476,7 @@ export class WorldService {
     recordRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ArkmeWorldVoiceprintAvailability> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const normalizedRefs = [...new Set(recordRefs.map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
     if (normalizedRefs.length === 0) return { items: [] }
     const entries = normalizedRefs.map(recordRef => ({
@@ -516,7 +516,7 @@ export class WorldService {
     chunkIndex?: number
     signal?: AbortSignal
   }): Promise<ArkmeWorldVoiceprintPlaybackChunk> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const entry = this.openWorldRecordRef(input.recordRef, session.userId)
     const chunkIndex = Math.trunc(input.chunkIndex ?? 0)
     if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= 334) {
@@ -562,7 +562,7 @@ export class WorldService {
     recordRef: string,
     options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldVoiceprintSocialContext> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const authorUserId = entry.ownerUserId ?? 0
     if (!Number.isSafeInteger(authorUserId) || authorUserId <= 0 || authorUserId === session.userId) {
@@ -596,7 +596,7 @@ export class WorldService {
     recordRef: string,
     signal?: AbortSignal,
   ): Promise<ArkmeWorldVoiceprintInviteIntent> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const peerUserId = entry.ownerUserId ?? 0
     if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
@@ -663,7 +663,7 @@ export class WorldService {
     recordUid: string
     signal?: AbortSignal
   }): Promise<ArkmeWorldVoiceprintSocialLoadResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const directChat = this.loadWorldVoiceprintDirectChat(input.authorUserId, session, input.signal)
     const results = await Promise.all([
       this.guardWorldVoiceprintSocialSource(
@@ -865,7 +865,7 @@ export class WorldService {
     recordRef: string,
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldInteractionPage> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const root = this.openWorldRecordRef(recordRef, session.userId)
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 50)))
     const offset = Math.max(0, Math.trunc(options.offset ?? 0))
@@ -918,7 +918,7 @@ export class WorldService {
     clientMutationId: string
     signal?: AbortSignal
   }): Promise<ArkmeWorldInteractionCreateResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const target = this.openWorldRecordRef(input.targetRef, session.userId)
     const textContent = input.textContent.trim()
     const clientMutationId = input.clientMutationId.trim()
@@ -932,9 +932,6 @@ export class WorldService {
     const snapshot = await this.profile.refreshProfile()
     if (snapshot.profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
     const profile = snapshot.profile
-    if (profile.contact.phoneMasked === undefined) {
-      throw new ArkmePluginError('world-phone-binding-required', '请先在 Arkme 客户端绑定手机号，再参与互动', false)
-    }
     const recordUid = stableWorldInteractionRecordUid(session.userId, target.recordUid, clientMutationId)
     const recordResult = await this.record.createTextForConversation(recordUid, textContent)
     if (recordResult.localState !== 'synced') {
@@ -998,7 +995,7 @@ export class WorldService {
     imageRef: string,
     options: { maxBytes?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeImageBytes> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const entry = await this.openWorldImageRef(imageRef, session.userId)
     const byteLimit = Math.min(
       ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,
@@ -1016,6 +1013,7 @@ export class WorldService {
     textContent: string,
     signal?: AbortSignal,
   ): Promise<ArkmeWorldPublishResult> {
+    await this.runtime.requireSocialSession()
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
@@ -1031,13 +1029,6 @@ export class WorldService {
       if (snapshot.profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       profile = snapshot.profile
     } catch (error) { return this.worldPublishFailure(false, error) }
-    if (profile.contact.phoneMasked === undefined) {
-      return {
-        recordSaved: false, recordState: 'not_saved', worldPublished: false,
-        visibility: 'not_published', checkStatus: 0, retryable: false,
-        error: '请先在 Arkme 客户端绑定手机号，再发到世界',
-      }
-    }
     try {
       if (await this.worldRecordIsPublic(normalizedUid, signal)) {
         return { recordSaved: true, recordState: 'synced', worldPublished: true, visibility: 'unknown', checkStatus: 0, retryable: false }
@@ -1076,7 +1067,7 @@ export class WorldService {
   }
 
   async publishWorldText(input: ArkmeWorldPublishTextInput): Promise<ArkmeWorldPublishResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const clientMutationId = input.clientMutationId.trim()
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(clientMutationId)) {
       throw new ArkmePluginError('world-publish-mutation-invalid', '发布请求标识无效，请重试', false)
@@ -1088,7 +1079,7 @@ export class WorldService {
   }
 
   async publishWorldFileAssets(input: ArkmeWorldPublishFileAssetsInput): Promise<ArkmeWorldPublishResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const clientMutationId = input.clientMutationId.trim()
     const textContent = input.textContent.trim()
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(clientMutationId)) {
@@ -1109,13 +1100,6 @@ export class WorldService {
       if (snapshot.profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       profile = snapshot.profile
     } catch (error) { return this.worldPublishFailure(false, error) }
-    if (profile.contact.phoneMasked === undefined) {
-      return {
-        recordSaved: false, recordState: 'not_saved', worldPublished: false,
-        visibility: 'not_published', checkStatus: 0, retryable: false,
-        error: '请先在 Arkme 客户端绑定手机号，再发到世界',
-      }
-    }
     const recordUid = stableWorldPublishRecordUid(session.userId, clientMutationId)
     try {
       if (await this.worldRecordIsPublic(recordUid)) {
@@ -1496,7 +1480,7 @@ export class WorldService {
 
   /** Resolve an opaque World author reference only inside the trusted Provider. */
   async worldAuthorFromRef(recordRef: string): Promise<{ userId: number; displayName: string }> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const userId = entry.ownerUserId ?? 0
     if (!Number.isSafeInteger(userId) || userId <= 0 || userId === session.userId) {
@@ -1510,7 +1494,7 @@ export class WorldService {
 
   /** Resolve viewer-local labels after World content has already been rendered. */
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const refs = [...new Set(recordRefs.map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
     const entries = refs.map(authorRef => ({ authorRef, entry: this.openWorldRecordRef(authorRef, session.userId) }))
       .filter(({ entry }) => entry.ownerUserId !== undefined && entry.ownerUserId > 0 && entry.ownerUserId !== session.userId)
