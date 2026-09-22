@@ -1,3 +1,4 @@
+import type { TeamAppOperation } from './team-app-contract.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
@@ -998,7 +999,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
 
 export async function dispatchArkmeHostOperation(
   service: ArkmeService,
-  operation: ArkmePluginRequest['operation'],
+  operation: ArkmePluginRequest['operation'] | TeamAppOperation,
   params: Record<string, unknown>,
   updateManager?: Pick<
     ArkmePluginUpdateManager,
@@ -1015,6 +1016,7 @@ export async function dispatchArkmeHostOperation(
   remoteUnavailableReason?: () => string,
   accountSessions?: DshAccountSessions,
 ): Promise<unknown> {
+  if (operation.startsWith('team.app.')) return await service.executeTeamApp(operation as TeamAppOperation, params, requestSignal)
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()

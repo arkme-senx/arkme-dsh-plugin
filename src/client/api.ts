@@ -1,3 +1,4 @@
+import type { TeamAppOperation } from '../team-app-contract.js'
 import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
@@ -88,7 +89,7 @@ export async function uploadArkmeRecording(
   })
 }
 
-type ArkmeUiOperation = ArkmePluginOperation
+type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation
   | 'emoji.recent.list'
   | 'emoji.recent.record'
   | 'topic.candidates'

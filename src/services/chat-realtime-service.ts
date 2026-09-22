@@ -264,6 +264,14 @@ export class ChatRealtimeService {
   }
 
   handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
+    if (notice.cause === 'team-invalidation') {
+      void this.runtime.accountScopedSession().then(session => {
+        if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) {
+          this.emitChatClientEvent({ type: 'team-invalidated', revision: this.nextChatClientRevision() })
+        }
+      }).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'chat-policy-invalidation' && notice.policyUpdated !== undefined) {
       void this.invalidateChatPolicyForCurrentSession(notice)
       return

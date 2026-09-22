@@ -13,7 +13,7 @@ export function recordOwnerId(value: unknown): RecordOwnerId {
 export function parseOwnerJson(text: string): unknown {
   const parse = JSON.parse as (text: string, reviver: (key: string, value: unknown, context: { source?: string }) => unknown) => unknown
   return parse(text, (key, value, context) => {
-    if (/(?:^|_)(?:owner|user)_id$/.test(key) && typeof value === 'number' && !Number.isSafeInteger(value)
+    if (/(?:^|_)(?:owner|user|team)_id$/.test(key) && typeof value === 'number' && !Number.isSafeInteger(value)
       && context.source !== undefined && /^[1-9]\d*$/.test(context.source)) return context.source
     return value
   })
@@ -23,7 +23,7 @@ export function parseOwnerJson(text: string): unknown {
 export function stringifyOwnerJson(value: unknown): string {
   const json = JSON as typeof JSON & { rawJSON(text: string): unknown }
   return JSON.stringify(value, (key, item: unknown) => {
-    if (/(?:^|_)(?:owner|user)_id$/.test(key) && typeof item === 'string'
+    if (/(?:^|_)(?:owner|user|team)_id$/.test(key) && typeof item === 'string'
       && typeof recordOwnerId(item) === 'string') return json.rawJSON(item)
     return item
   })

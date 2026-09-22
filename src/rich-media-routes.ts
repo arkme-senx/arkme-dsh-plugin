@@ -197,3 +197,31 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
     }
   }
 }
+
+/** Team bytes use live Team authority and are never cached as personal or Chat media. */
+export function createArkmeTeamMediaHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => { controller.abort() }, 120_000)
+    const disconnect = () => { controller.abort() }
+    res.once('close', disconnect)
+    try {
+      assertLocalRequest(req, options)
+      if (req.method !== 'GET' && req.method !== 'HEAD') throw new ArkmePluginError('method-not-allowed', '只允许 GET 或 HEAD 请求', false, 405)
+      const ref = new URL(req.url ?? '/', `http://127.0.0.1:${options.expectedPort}`).searchParams.get('ref') || ''
+      const { response, fileName, mimeType } = await service.fetchTeamMedia(ref, headerText(req, 'range') || undefined, controller.signal)
+      const inline = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime)|audio\/(mpeg|mp4|ogg|wav|x-wav|flac))$/.test(mimeType)
+      res.writeHead(response.status, { 'Content-Type': inline ? mimeType : 'application/octet-stream', 'Cache-Control': 'private, no-store',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(fileName)}`, 'X-Content-Type-Options': 'nosniff',
+        ...(response.headers.get('content-range') ? { 'Content-Range': response.headers.get('content-range')! } : {}) })
+      if (req.method === 'HEAD') { await response.body?.cancel(); res.end(); return }
+      if (response.body) await pipeline(Readable.fromWeb(response.body as never), res)
+      else res.end()
+    } catch (error) {
+      const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('team-media-unavailable', '团队附件读取失败', true, 502)
+      if (!res.headersSent) writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
+      else res.destroy(error instanceof Error ? error : undefined)
+    } finally { clearTimeout(timeout); res.off('close', disconnect) }
+  }
+}

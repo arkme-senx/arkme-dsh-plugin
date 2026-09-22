@@ -110,6 +110,7 @@ export interface ArkmeServiceConfig {
   subjectBaseUrl: string
   recordBaseUrl: string
   dataBaseUrl?: string
+  teamBaseUrl?: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -515,6 +516,7 @@ export class ServiceRuntime {
         ? []
         : [[this.config.dataBaseUrl, 'data'] as [string, ArkmeRequestService]]),
       [this.config.chatBaseUrl, 'chat'],
+      ...(this.config.teamBaseUrl ? [[this.config.teamBaseUrl, 'team'] as [string, ArkmeRequestService]] : []),
       [this.config.recordBaseUrl, 'record'],
       [this.config.audioBaseUrl, 'audio'],
       [this.config.worldBaseUrl, 'world'],
@@ -538,6 +540,10 @@ export class ServiceRuntime {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
       '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
+    ]).has(path)) return true
+    if (baseUrl === this.config.teamBaseUrl && new Set([
+      '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
+      '/api/v1/team/conversations/list', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
@@ -1003,6 +1009,20 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.subjectBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false): Promise<T> {
+    const origin = this.config.teamBaseUrl
+    if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', { bypassCache: true, cacheMs: 0 })
+    try {
+      return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
     }
   }
 

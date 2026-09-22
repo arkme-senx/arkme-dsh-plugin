@@ -3500,6 +3500,9 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'team-invalidated'
+  revision: number
+} | {
   type: 'directory-update'
   revision: number
   page: ArkmeSourceList

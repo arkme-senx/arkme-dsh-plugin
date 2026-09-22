@@ -1,3 +1,4 @@
+import { TeamMessagingMount } from './TeamMessagingPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -151,6 +152,7 @@ export function ArkmePersistentClientRuntime() {
 
   return <>
     <ArkmeOutgoingCallHost />
+    {avatarScopeKey && <TeamMessagingMount key={avatarScopeKey} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
     <ArkmeHomeTour auth={auth}
       blocked={ui.mode === 'login' || ui.webLoginDialogOpen === true}
       routeActive={homeTourRouteActive}

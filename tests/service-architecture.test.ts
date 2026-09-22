@@ -10,6 +10,7 @@ const expectedPublicMethods = [
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
   'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
+  'executeTeamApp', 'fetchTeamMedia', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',
@@ -115,7 +116,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
-  'team-service.ts',
+  'team-service.ts', 'team-app-service.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
@@ -266,7 +267,8 @@ describe('Arkme service architecture', () => {
     expect(service).not.toMatch(/from ['"]node:crypto['"]/)
     expect(service).not.toMatch(/\/api\/v1\//)
     expect(service).not.toMatch(/\bServiceRuntime\b|\bSourceService\b|\bBotService\b/)
-    expect(infrastructure).toMatch(/createCipheriv|createDecipheriv/)
+    expect(infrastructure).toContain('EncryptedReferenceCodec')
+    expect(readFileSync(join(root, 'src/encrypted-reference.ts'), 'utf8')).toMatch(/createCipheriv|createDecipheriv/)
     expect(infrastructure).toContain('/api/v1/chats/messages/copy-link/get-or-create')
     expect(infrastructure).toContain('/api/v1/chats/records/forward')
   })
