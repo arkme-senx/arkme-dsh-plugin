@@ -115,7 +115,24 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await panel.getByText(marker, { exact: true }).waitFor()
       const reply = `插件真实回复 ${randomUUID()}`
       await panel.getByRole('textbox', { name: '团队消息内容' }).fill(reply)
+      // Another member replies after this screen loaded. The accepted draft
+      // must have a stable operation, display the fresh reply, and require consent.
+      const concurrentReply = `并发回复 ${randomUUID()}`
+      const head = await teamCall(users.owner, 'conversations/timeline/page', { conversation_uid: uid, side: 'team' })
+      const otherReply = await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: head.conversation.latest_team_reply_seq, content: { text_content: concurrentReply, template_kind: 1 } })
       await panel.getByRole('button', { name: '发送', exact: true }).click()
+      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).waitFor()
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe(reply)
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).isDisabled()).toBe(true)
+      await panel.locator('article').getByText(concurrentReply, { exact: true }).waitFor()
+      // A second race during explicit confirmation must refresh again, never loop
+      // forever on the stale expected sequence or silently publish.
+      const newerReply = `确认前的新回复 ${randomUUID()}`
+      await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: otherReply.seq, content: { text_content: newerReply, template_kind: 1 } })
+      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
+      await panel.locator('article').getByText(newerReply, { exact: true }).waitFor()
+      expect(await panel.locator('article').getByText(reply, { exact: true }).count()).toBe(0)
+      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
       await panel.locator('article').getByText(reply, { exact: true }).waitFor()
       const published = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.record?.text_content === reply)
       expect(published.sender.nickname).toBe('验收-member')
@@ -128,7 +145,13 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const article = panel.locator('article').filter({ hasText: reply })
       await article.getByRole('button', { name: '编辑', exact: true }).click()
       await panel.getByRole('textbox', { name: '修改消息内容' }).fill(`${reply} 已修改`)
+      await teamCall(users.member, 'conversations/messages/update', { message_uid: published.message_uid, side: 'team', expected_record_version: published.record.version, content: { text_content: `${reply} 另一设备修改`, template_kind: 1 } })
       await panel.getByRole('button', { name: '确认修改', exact: true }).click()
+      await panel.getByRole('button', { name: '读取最新版本', exact: true }).waitFor()
+      expect(await panel.getByRole('textbox', { name: '修改消息内容' }).inputValue()).toBe(`${reply} 已修改`)
+      await panel.getByRole('button', { name: '读取最新版本', exact: true }).click()
+      await panel.getByText(/最新内容：.*另一设备修改/).waitFor()
+      await panel.getByRole('button', { name: '确认覆盖最新版本', exact: true }).click()
       await panel.locator('article').getByText(`${reply} 已修改`, { exact: true }).waitFor()
       expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === published.message_uid).record.text_content).toBe(`${reply} 已修改`)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
