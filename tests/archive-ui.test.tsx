@@ -80,13 +80,64 @@ it('shows inherited state without a misleading restore, masks private topics and
 
 it('shows the archive source inline and removes only that explicit marker on click', async () => {
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
+  const row = host.querySelector('li')!
   mock.call.mockResolvedValueOnce({items: [{...inherited, selfArchived: true, sourceRef: 'parent', revision: 7, source: {...inherited.source, displayName: '父主题', topicHierarchyKey: 'parent-key'}}], hasMore: false})
   await click('查看来源')
   expect(host.querySelector('[role=dialog]')).toBeNull()
   expect(host.querySelector('[aria-label=归档来源]')?.textContent).toContain('父主题')
+  expect(host.querySelector('[aria-label=归档来源]')?.closest('li')).toBe(row)
+  const toggle = row.querySelector<HTMLButtonElement>('[aria-expanded=true]')!
+  expect(toggle.getAttribute('aria-controls')).toBe(host.querySelector('[aria-label=归档来源]')!.id)
   expect(mock.call.mock.calls.filter(call => call[0] === 'archives.set')).toHaveLength(0)
-  await click('取消该主题归档')
+  await click('取消来源归档')
   expect(mock.call).toHaveBeenCalledWith('archives.set', { sourceRef: 'parent', selfArchived: false, expectedRevision: 7 }, expect.any(AbortSignal))
+})
+
+it('reuses a listed source, moves the expansion to the clicked row and supports collapse without writes', async () => {
+  const parent = {...inherited, selfArchived: true, inheritedFrom: undefined, sourceRef: 'parent', revision: 7,
+    source: {...inherited.source, sourceRef: 'parent', displayName: '父主题', topicHierarchyKey: 'parent-key'}}
+  mock.call.mockResolvedValue({items: [...page.items, parent], hasMore: false})
+  await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
+  const rows = host.querySelectorAll('li')
+  await click('查看来源')
+  expect(mock.call).toHaveBeenCalledTimes(1)
+  expect(rows[0]!.querySelector('[aria-label=归档来源]')?.textContent).toContain('父主题')
+  const secondToggle = [...rows[1]!.querySelectorAll('button')].find(button => button.textContent === '查看来源')!
+  await act(async () => { secondToggle.click() })
+  expect(rows[0]!.querySelector('[aria-label=归档来源]')).toBeNull()
+  expect(rows[1]!.querySelector('[aria-label=归档来源]')).not.toBeNull()
+  await click('收起来源')
+  expect(host.querySelector('[aria-label=归档来源]')).toBeNull()
+  expect(mock.call).toHaveBeenCalledTimes(1)
+})
+
+it('keeps source loading local and cancels a collapsed lookup without accepting its late result', async () => {
+  await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
+  let reply: (value: unknown) => void = () => {}
+  mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
+  await click('查看来源')
+  const signal = mock.call.mock.calls.at(-1)![2] as AbortSignal
+  expect(host.querySelector('[role=status]')?.closest('li')).toBe(host.querySelector('li'))
+  await click('收起来源')
+  expect(signal.aborted).toBe(true)
+  await act(async () => { reply({items: [{...inherited, source: {...inherited.source, displayName: '迟到来源', topicHierarchyKey: 'parent-key'}}], hasMore: false}) })
+  expect(host.querySelector('[aria-label=归档来源]')).toBeNull()
+  expect(host.textContent).not.toContain('迟到来源')
+})
+
+it('retries a source lookup inside its row and never exposes a private source title', async () => {
+  await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
+  mock.call.mockRejectedValueOnce(new Error('private backend details'))
+  await click('查看来源')
+  expect(host.querySelector('[role=alert]')?.closest('li')).toBe(host.querySelector('li'))
+  expect(host.textContent).not.toContain('private backend details')
+  mock.call.mockResolvedValueOnce({items: [{...inherited, privacyLocked: true, selfArchived: true, sourceRef: 'parent',
+    source: {...inherited.source, displayName: '不得泄露的父主题名', topicHierarchyKey: 'parent-key'}}], hasMore: false})
+  await click('重试')
+  const region = host.querySelector('[aria-label=归档来源]')!
+  expect(region.textContent).toContain('隐私主题')
+  expect(region.textContent).not.toContain('不得泄露')
+  expect(region.querySelector<HTMLButtonElement>('.arkme-archive-source-name')!.disabled).toBe(true)
 })
 
 it('discards a delayed response after account change and refreshes on foreground recovery', async () => {
@@ -138,22 +189,28 @@ it('deduplicates paginated entries by stable topic identity when a title changes
   expect(host.textContent).toContain('重命名后')
 })
 
-it('serializes paginated loading and ancestor lookup without leaving a stuck loading state', async () => {
+it('keeps pagination and source lookup independent and reuses an ancestor arriving in the next page', async () => {
   mock.call.mockResolvedValueOnce({items: [inherited], hasMore: true, nextCursor: 'next'})
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  let reply: (value: unknown) => void = () => {}
-  mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
+  let pageReply: (value: unknown) => void = () => {}
+  let sourceReply: (value: unknown) => void = () => {}
+  mock.call.mockImplementationOnce(() => new Promise(resolve => { pageReply = resolve }))
   await click('加载更多')
+  const pageSignal = mock.call.mock.calls.at(-1)![2] as AbortSignal
   const origin = [...document.body.querySelectorAll('button')].find(node => node.textContent === '查看来源')!
-  expect(origin.disabled).toBe(true)
-  await act(async () => { reply({items: [], hasMore: false}) })
   expect(origin.disabled).toBe(false)
-  mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
+  mock.call.mockImplementationOnce(() => new Promise(resolve => { sourceReply = resolve }))
   await click('查看来源')
-  expect(origin.disabled).toBe(true)
-  expect(host.querySelector('[role=status]')?.getAttribute('aria-label')).toBe('加载中')
-  await act(async () => { reply({items: [{...inherited, selfArchived: true, source: {...inherited.source, topicHierarchyKey: 'parent-key'}}], hasMore: false}) })
+  const sourceSignal = mock.call.mock.calls.at(-1)![2] as AbortSignal
+  expect(pageSignal.aborted).toBe(false)
+  expect(origin.disabled).toBe(false)
+  expect(host.querySelectorAll('[role=status]')).toHaveLength(2)
+  await act(async () => { pageReply({items: [{...inherited, selfArchived: true, sourceRef: 'parent', inheritedFrom: undefined,
+    source: {...inherited.source, displayName: '分页中的父主题', topicHierarchyKey: 'parent-key'}}], hasMore: false}) })
+  expect(sourceSignal.aborted).toBe(true)
+  await act(async () => { sourceReply({items: [], hasMore: false}) })
   expect(host.querySelector('[role=status]')).toBeNull()
+  expect(host.querySelector('[aria-label=归档来源]')?.textContent).toContain('分页中的父主题')
   expect(host.querySelector('[role=dialog]')).toBeNull()
 })
 

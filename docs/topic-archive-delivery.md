@@ -144,3 +144,23 @@ review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4
 - Flutter 通知/主题绑定/归档 32 项通过，改动文件 analyze 无问题。Record 通知/MQ 测试及 race 通过。没有修改集合、索引、依赖、插件版本、DSH 源码或用户常驻 3081 实例；Windows/Linux 本轮未实机验收。
 
 上线需同步采用 Record 和客户端分支的新通知合同，不能只替换插件包却仍期待旧服务端的通用 record 通知具备目录专用语义。此次是一次性完整收口，没有双发通知或过渡配置。
+
+## 2026-09-22 归档来源就地展开
+
+原来源区域渲染在整个列表之后，长列表中与点击条目脱离。本轮将来源详情放回对应条目下方，支持展开/收起，并明确标注“取消来源归档”。已在列表中的来源直接复用当前 owner 返回的条目；未加载的来源仍通过原分页接口定位，加载、重试及请求取消由当前展开区域负责，不改变归档事实或恢复语义。
+
+| 能力面 | 本轮范围 |
+| --- | --- |
+| UI | 条目内展示、折叠、局部加载/失败恢复、键盘可访问性和实际页面验收 |
+| Host owner | 沿用 ArchiveService 的列表、权限与 CAS；不新增路由、命令、查询协议或持久化 |
+| Tools | N/A：现有能力和语义不变，本轮只调整内置 UI 的展示位置与读取生命周期 |
+| SDK | N/A：公开接口不变，无新增外部插件能力；既有跨仓合同继续验证 |
+
+验证结果：
+
+- 新增断言在旧实现中先出现 4 项失败，确认来源与条目脱离、重复读取、局部错误恢复和分页生命周期问题；修复后聚焦 4 文件 64 项通过。覆盖就地展开/切换/收起、已加载来源零新增请求、未加载来源分页定位、取消后丢弃迟到响应、局部重试、隐私标题遮蔽，以及按来源 revision 取消独立归档。
+- 全量 734 文件、8,708 项通过，原有 9 文件/13 项条件跳过；typecheck、build、pack 通过。日志为 `archive-source-style-before.log`、`archive-source-style-focused-final.log`、`archive-source-style-full-tests.log`、`archive-source-style-typecheck.log`、`archive-source-style-build.log`。
+- 不可变包 `senguoyun-dsh-arkme-0.1.76.tgz`，SHA-256 `5516150d829194f80ec2602d1906ca7af66d97fd4c9432406b592e6fc33610d4`。已检查打包清单和运行产物，无本机用户路径耦合。通过官方 CLI 安装到全新、路径含空格的临时 Profile；CLI 自建 workspace 的安装按公开参数添加 `--workspace-root`，未修改全局包管理配置。
+- 官方 DSH `dsh-v0.1.5-rc.2`（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）中，正式包 Chrome → Host → 隔离 Record/Mongo 链路通过。实际检查展开区域位于当前行内、无横向溢出、按钮可操作、键盘收起，以及取消来源后父/子有效归档状态正确恢复。此前连续归档、DOM 保留、独立父子归档和 SDK/会话 Tool 断言继续通过。最终日志 `archive-source-style-e2e-final.log`，已核验截图 `archive-source-style-verified.png`；首次窗口缩放的过渡帧截图未用作验收证据。
+
+继续原任务分支 `codex/c20260917-topic-archive-plan`，dev 基线仍为 `a5b2c5b075d0686f817ae8e21eb8a1fec9edae72`；本轮已核对最新 master `140d5ec27627de1b96229c8917b209f8fc7bc9c4`。未改插件版本、根 README、锁文件、DSH tracked 源码或用户常驻 3081/Profile。运行态验收为 macOS Chrome，本轮没有新增 Windows/Linux 实机结论。
