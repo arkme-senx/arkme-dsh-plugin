@@ -13,6 +13,27 @@ function fixture(allowed: unknown = false) {
   return { service: new SocialAccessService(runtime as unknown as ServiceRuntime), runtime, post, change: () => listener() }
 }
 describe('account-owned social access', () => {
+ it.each([true, false])('presentation retains confirmed %s on failed refresh without publishing a change', async allowed => {
+  const load = vi.fn(async () => ({ userId: 7, allowed: allowed as boolean | null }))
+  const store = new SocialAccessStore(load)
+  store.activate('test:7'); await store.refresh()
+  const snapshot = store.getSnapshot()
+  const listener = vi.fn(); store.subscribe(listener)
+  load.mockRejectedValueOnce(new Error('offline'))
+  await store.refresh()
+  expect(store.getSnapshot()).toBe(snapshot)
+  load.mockResolvedValueOnce({ userId: 7, allowed: null })
+  await store.refresh()
+  expect(store.getSnapshot()).toBe(snapshot)
+  await store.refresh()
+  expect(listener).not.toHaveBeenCalled()
+  load.mockResolvedValueOnce({ userId: 7, allowed: !allowed })
+  await store.refresh()
+  expect(store.getSnapshot().allowed).toBe(!allowed)
+  expect(listener).toHaveBeenCalledTimes(1)
+  store.activate('test:8')
+  expect(store.getSnapshot().allowed).toBeNull()
+ })
  it('deduplicates only in-flight reads and rechecks the next action', async () => {
   const { service, post } = fixture(true)
   await Promise.all([service.status(), service.status()])

@@ -25,9 +25,12 @@ export class SocialAccessStore {
     const generation = this.generation
     const accountKey = this.state.accountKey
     const pending = this.load().then(result => {
-      if (generation === this.generation) this.publish({ accountKey, allowed: result.allowed })
+      if (generation === this.generation && typeof result.allowed === 'boolean' && result.allowed !== this.state.allowed) {
+        this.publish({ accountKey, allowed: result.allowed })
+      }
     }).catch(() => {
-      if (generation === this.generation) this.publish({ accountKey, allowed: null })
+      // Transport failure does not revoke this account's confirmed presentation.
+      // Host and service owners still authorize operations; activation clears it.
     }).finally(() => { if (this.flight === pending) this.flight = undefined })
     this.flight = pending
     return pending
