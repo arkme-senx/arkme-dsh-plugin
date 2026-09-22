@@ -13,7 +13,7 @@ const page = (start = 1, n = 20): ArkmeCommonGroupPage => ({
   items: Array.from({ length: n }, (_, i) => ({ source: { kind: 'group_chat', sourceRef: `group-${i+start}`, displayName: `群${i+start}` } as ArkmeSourceItem, memberCount: 2 })),
   totalCached: 21, hasMore: start === 1, ...(start === 1 ? { nextCursor: 'group-20' } : {}), syncedAtMillis: 1, revision: 1, syncHasMore: false,
 })
-const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean }> = []
+const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; options?: IntersectionObserverInit; disconnected: boolean }> = []
 async function scrollBottom() {
   await act(async () => {
     for (const observer of [...observers]) if (!observer.disconnected && observer.target?.hasAttribute('data-arkme-common-groups-more')) {
@@ -26,7 +26,7 @@ beforeEach(() => {
   observers.length = 0
   vi.stubGlobal('IntersectionObserver', class {
     entry: typeof observers[number]
-    constructor(callback: IntersectionObserverCallback) { this.entry = { callback, disconnected: false }; observers.push(this.entry) }
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) { this.entry = { callback, options, disconnected: false }; observers.push(this.entry) }
     observe(target: Element) { this.entry.target = target }
     disconnect() { this.entry.disconnected = true }
   })
@@ -53,6 +53,9 @@ it('renders local data before sync, reuses the overlay, and cancels on Escape wi
   expect(host.textContent).not.toContain('2 人')
   expect(host.querySelector('[aria-selected]')).toBeNull()
   expect(host.querySelector('footer')).toBeNull()
+  const chunk = observers.find(observer => observer.target?.hasAttribute('data-arkme-directory-chunk'))!
+  expect(chunk.options?.root).toBe(chunk.target!.parentElement)
+  expect(chunk.options?.rootMargin).toBe('600px')
   expect(host.querySelectorAll('button').length).toBeLessThan(27)
   expect(host.querySelector<HTMLElement>('[data-arkme-note-detail]')?.style.position).toBe('absolute')
   expect(host.querySelector('[aria-label="调整共同群聊宽度"]')).not.toBeNull()
@@ -153,6 +156,9 @@ it('refreshes the loaded prefix after sync removes a group', async () => {
   expect([...host.querySelectorAll('button')].some(b => b.textContent === '群1›')).toBe(false)
   expect(host.textContent).toContain('群2')
   expect(host.querySelector('footer')).toBeNull()
+  const chunk = observers.find(observer => observer.target?.hasAttribute('data-arkme-directory-chunk'))!
+  expect(chunk.options?.root).toBe(chunk.target!.parentElement)
+  expect(chunk.options?.rootMargin).toBe('600px')
 })
 
 it('retries a failed page without clearing rows or duplicating them', async () => {

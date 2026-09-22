@@ -122,7 +122,7 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
     </p>}
     {page !== undefined && <>
       {page.items.length === 0 && !syncing && !error && <p>{tr('暂无共同群聊')}</p>}
-      <ArkmeDirectoryWindow>
+      <ArkmeDirectoryWindow scrollRootRef={body}>
       {page.items.map(item => <button key={item.source.sourceKey ?? item.source.sourceRef} type="button" data-arkme-feedback="neutral" disabled={opening}
         onClick={() => { void open(item.source) }} style={{ width: '100%', display: 'flex', gap: 12, alignItems: 'center', padding: '14px 0', border: 0,
           borderBottom: `1px solid ${arkmeTheme.borderSoft}`, background: 'transparent', color: arkmeTheme.text, textAlign: 'left', font: 'inherit' }}>
