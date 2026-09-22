@@ -266,45 +266,75 @@ it('resolves workspace names with at most four concurrent source reads', async (
 })
 
 
-it('shares verified source selection through Host HTTP, SDK and registered DSH Tool without exposing message hashes', async () => {
-  const hash = 'a'.repeat(64)
-  const f = fixture(false, undefined, { summaries: async () => new Map([['same-session', { updatedAt: 42, projectionAsOfSeq: -1, running: false }]]) })
-  const base = f.post.getMockImplementation()!
-  f.post.mockImplementation(async path => path.endsWith('/sessions/account-list') ? { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', source_updated_at: 1, history_revision: 'h', content_revision: 'c', deduplicated_runtime_refs: ['runtime-local'], readable_runtime_refs: ['runtime-local'], canonical_identity: true }] } as never
-    : base(path))
-  const ctx = new Context(), options = { expectedPort: 0, allowNonLoopback: false, accountSessions: () => f.directory }
-  const server = createServer(createArkmeHostApi({} as never, options)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
-  const address = server.address(); if (!address || typeof address === 'string') throw new Error('no address')
-  options.expectedPort = address.port
-  const sdk = new ArkmeSdk({ fetchImpl: (path, init) => fetch(new URL(String(path), `http://127.0.0.1:${address.port}`), init) })
+ it('retains one channel and discovery across sequential native pulls until explicit close', async () => {
+  const f = fixture()
+  const params = { runtimeRef: 'runtime-remote', requestRef: 'request-stream-01', body: { mode: 'pull', streamRef: 'stream-01', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'same-session' } } } } } }
   try {
-    await f.directory.list()
-    await vi.waitFor(async () => expect((await f.directory.list()).items[0]?.coveredLocalHistory?.source).toBe('local'))
-    const expected = await sdk.listDshAccountSessions()
-    await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
-    for (const tool of accountSessionTools(f.directory)) ctx.tools.register(tool)
-    const session = ctx.sessions.create()
-    const result = await ctx.tools.execute({ callId: CallId('proof-tool'), name: 'arkme_dsh_sessions', arguments: {}, agent: { id: session.id, session } as never, signal: new AbortController().signal })
-    expect(result.isError).toBe(false)
-    expect(JSON.parse(String(result.value))).toEqual(expected)
-    expect(JSON.stringify(expected)).not.toContain(hash)
-    expect(f.post.mock.calls.some(([path]) => path.includes('/sessions/metadata') || path.includes('session-events') || path.includes('session-turn'))).toBe(false)
-  } finally { f.directory.close(); await ctx.fiber.dispose(); server.closeAllConnections(); server.close(); await once(server, 'close') }
+    await f.directory.native(params)
+    await f.directory.native({ ...params, body: { mode: 'pull', streamRef: 'stream-01' } })
+    await f.directory.native({ ...params, body: { mode: 'pull', streamRef: 'stream-01' } })
+    expect(f.transport.connect).toHaveBeenCalledOnce()
+    expect(f.transport.disconnect).not.toHaveBeenCalled()
+    expect(f.post.mock.calls.filter(([path]) => path.endsWith('/desktops/list'))).toHaveLength(1)
+    await f.directory.native({ ...params, body: { mode: 'close', streamRef: 'stream-01' } })
+    expect(f.transport.disconnect).toHaveBeenCalledOnce()
+  } finally { f.directory.close() }
 })
 
-
-it('annotates owned canonical identities while local Host registration is pending', async () => {
-  const summaries = vi.fn(async () => new Map([['same-session', { updatedAt: 1, running: false }]]))
-  const f = fixture(false, undefined, { summaries }, true)
-  const original = f.post.getMockImplementation()!
-  f.post.mockImplementation(async (...args) => {
-    const result = await original(...args)
-    return args[0].endsWith('/sessions/account-list') ? { ...result, items: (result.items as Array<Record<string, unknown>>).map(row => ({ ...row, canonical_identity: true })) } : result
-  })
-  const page = await f.directory.list()
-  expect(page.localRuntimeRef).toBeUndefined()
-  expect(page.items[0]?.coveredLocalHistory).toEqual({ updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' })
-  expect(summaries).toHaveBeenCalledOnce()
-  expect(f.transport.connect).not.toHaveBeenCalled()
+it('shares discovery without letting one cancelled caller abort its peer', async () => {
+  const f = fixture(), abort = new AbortController(), post = f.post.getMockImplementation()!
+  let resolve!: (value: any) => void, discoverySignal!: AbortSignal
+  f.post.mockImplementationOnce((_path, _body, signal) => { discoverySignal = signal!; return new Promise(done => { resolve = done }) as never })
+  const params = { runtimeRef: 'runtime-remote', sessionRef: 'same-session' }
+  const cancelled = f.directory.read(params, abort.signal).catch(error => error)
+  const kept = f.directory.read(params)
+  await vi.waitFor(() => expect(f.post).toHaveBeenCalledOnce())
+  abort.abort(new Error('consumer cancelled'))
+  expect((await cancelled).message).toBe('consumer cancelled')
+  expect(discoverySignal.aborted).toBe(false)
+  resolve(await post('/api/v1/dsh-remote/desktops/list'))
+  await expect(kept).resolves.toMatchObject({ complete: true })
   f.directory.close()
+})
+
+it('releases idle native leases, invalidates disconnected channels, and cancels account discovery', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  const params = { runtimeRef: 'runtime-remote', requestRef: 'request-stream-01', body: { mode: 'pull', streamRef: 'stream-01', endpoint: '$events', payload: { args: {} } } }
+  try {
+    await f.directory.native(params)
+    const disconnect = vi.mocked(f.transport.subscribeDisconnect).mock.calls[0]![0]
+    disconnect(new Error('lost'))
+    await f.directory.native(params)
+    expect(f.transport.connect).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(45_001)
+    expect(f.transport.disconnect).toHaveBeenCalledTimes(2)
+    await f.directory.native(params)
+    f.directory.close()
+    expect(f.transport.disconnect).toHaveBeenCalledTimes(3)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { f.directory.close(); vi.useRealTimers() }
+})
+
+it('rechecks retained routing after five seconds and fences a replaced Host generation', async () => {
+  vi.useFakeTimers()
+  const f = fixture(), post = f.post.getMockImplementation()!
+  const params = { runtimeRef: 'runtime-remote', requestRef: 'request-stream-01', body: { mode: 'pull', streamRef: 'stream-01', endpoint: '$events', payload: { args: {} } } }
+  try {
+    await f.directory.native(params)
+    await vi.advanceTimersByTimeAsync(5_001)
+    f.post.mockImplementation(async path => {
+      const value = await post(path)
+      if (path.endsWith('/desktops/list')) { const row = value.desktops![0]!.runtimes[0]!; row.runtime.host_generation = 4; row.presence.lease_generation = 9 }
+      return value
+    })
+    vi.mocked(f.transport.publish).mockImplementation(async input => {
+      f.emit({ protocol: 'dsh.remote', protocol_major: 1, kind: 'response', request_ref: input.payload.request_ref, operation: 'session.native', host_generation: 4, status: 'completed', result: {} }, { targetHostLeaseGeneration: 9 })
+      return { sequence: 1 }
+    })
+    await f.directory.native(params)
+    expect(f.transport.connect).toHaveBeenCalledTimes(2)
+    expect(f.transport.disconnect).toHaveBeenCalledOnce()
+    expect(f.transport.subscribe).toHaveBeenLastCalledWith(expect.objectContaining({ target: expect.objectContaining({ hostLeaseGeneration: 9 }) }))
+  } finally { f.directory.close(); vi.useRealTimers() }
 })

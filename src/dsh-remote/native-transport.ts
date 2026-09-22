@@ -174,7 +174,7 @@ export class DshNativeTransport {
     }
     let lease = this.streams.get(id)
     if (!lease) {
-      if (body.endpoint === undefined) throw new DshRemoteError('REMOTE_NOT_FOUND', '原生订阅已断开')
+      if (body.endpoint === undefined) throw new DshRemoteError('REMOTE_NOT_FOUND', '原生订阅已断开', true)
       if (this.opening.has(id)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生订阅正在建立')
       if (this.streams.size + this.opening.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '原生订阅数量超限')
       this.opening.add(id)

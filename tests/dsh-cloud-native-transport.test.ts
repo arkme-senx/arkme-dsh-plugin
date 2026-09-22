@@ -51,6 +51,7 @@ it('bounds cloud subscriptions, prevents a polling loop, and cancels pending rea
   await vi.advanceTimersByTimeAsync(46_000)
   await f.call(opening, 'new')
   expect(f.cloud.has('0')).toBe(false)
+  await expect(f.call({ mode: 'pull' } as never, '0')).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND', retryable: true })
   f.cloud.close()
 })
 it('rejects execution and arbitrary APIs in cloud mode', async () => {

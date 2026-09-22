@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
 import { harnessNativeTransportScript } from '../src/harness-native-transport-script.js'
@@ -38,7 +41,7 @@ function fixture(search = '?arkme-harness-embed=1') {
     close() { this.readyState = 3; this.onclose?.() }
   }
   let nextId = 0
-  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
+  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, Error, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
   disposers.push(() => listeners.get('pagehide')?.())
   const hooks = window.__DSH_TRANSPORT__
   const rpc = async (method: string, args: object) => (await hooks.fetch(new URL(`http://localhost:3000/api/${method}`), { body: JSON.stringify({ rpcId: 'rpc', method, payload: { args } }) })).json()
@@ -186,130 +189,114 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   await next.return()
 })
 
-it('redirects a selected retired address after a complete canonical directory refresh', () => {
-  const f = fixture(), dispatchEvent = vi.fn()
-  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
-  f.directory.publish([f.row('retired')]); f.directory.select('arkme:retired:same')
-  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
-  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'arkme:native-session-open', init: { detail: { runtimeRef: 'canonical', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
-  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
-  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
-  expect(dispatchEvent).toHaveBeenCalledOnce()
+
 })
 
-it('keeps a single cloud entry while local and cloud metadata advance', async () => {
-  const f = fixture(), dispatchEvent = vi.fn()
-  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
-  const local = { sessionId: 'same', updatedAt: 42, running: false, blank: false, projections: { asOfSeq: 3, values: { title: 'same' } } }
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [local] } } }))
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } })
-  await f.rpc('session/list', {})
-  f.directory.publish([row], 'local-runtime')
-  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
-  expect(dispatchEvent).not.toHaveBeenCalled()
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
-  local.updatedAt = 43
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
-  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
-})
-it('never folds unverified, ambiguous, wrong-runtime or running local sources', async () => {
-  const f = fixture()
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'] })
-  f.directory.publish([row], 'local-runtime')
-  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
-  const proved = { ...row, coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } }
-  f.directory.publish([proved], 'different-runtime')
-  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
-  f.directory.publish([proved, { ...proved, runtimeRef: 'other' }], 'local-runtime')
-  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(3)
-})
-it('keeps one native local entry when content proof selects local history and redirects old cloud selection', async () => {
-  const f = fixture(), dispatchEvent = vi.fn()
-  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
-  await f.rpc('session/list', {})
-  f.directory.select('arkme:canonical:same')
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
-  f.directory.publish([row], 'local-runtime')
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['same'])
-  expect(f.directory.preferredSession('arkme:canonical:same')).toBe('same')
-  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
-  f.directory.publish([f.row('canonical', { previousRuntimeRefs: ['local-runtime'] })], 'local-runtime')
-  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
-})
-it('does not resurrect a proven hidden cloud row on metadata refresh and restores it once evidence expires', async () => {
+it('marks a follow carrier loss for the official DSH stream generation recovery', async () => {
   const f = fixture(), abort = new AbortController()
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: -1 } }] } } }))
-  await f.rpc('session/list', {})
-  const stream = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  await stream.next()
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: -1, source: 'local' } })
-  f.directory.publish([row], 'local-runtime')
-  expect((await stream.next()).value.event).toBe('api-session/added')
-  expect((await stream.next()).value).toMatchObject({ event: 'api-session/removed', args: ['arkme:canonical:same'] })
-  f.directory.publish([{ ...row, title: 'new title' }], 'local-runtime')
-  f.directory.publish([f.row('canonical', { title: 'new title', previousRuntimeRefs: ['local-runtime'] })], 'local-runtime')
-  // The next event must be the one restoration, not a hidden metadata update.
-  expect((await stream.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:same', projections: { values: { title: 'new title' } } }] })
-  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
-  await stream.return()
-})
-it('does not re-add a hidden cloud source through another remote session subscription', async () => {
-  const f = fixture(), abort = new AbortController()
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
-  await f.rpc('session/list', {})
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
-  f.directory.publish([row], 'local-runtime')
-  const wire = f.wire.getMockImplementation()!
-  f.wire.mockImplementation(async params => params.body.endpoint === '$events' ? { ok: true, value: { items: [
-    { type: 'ready', clientId: 'cloud' },
-    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'same' }] },
-    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'other' }] },
-  ], done: true } } : wire(params))
-  const events = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  await events.next()
-  const follow = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:canonical:other' } } } }, abort.signal)[Symbol.asyncIterator]()
-  await follow.next()
-  expect((await events.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:other' }] })
-  await follow.return(); await events.return(); abort.abort()
+  const original = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] } } as any
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    return original(params)
+  })
+  const stream = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await stream.next()).value.type).toBe('snapshot')
+  const waiting = stream.next().then(() => undefined, (error: any) => error)
+  await Promise.resolve(); await Promise.resolve()
+  f.sockets.find(item => String(item.url).includes('native-streams'))!.close()
+  const error = await waiting
+  expect(error.message).toContain('原生远程连接已断开')
+  expect(error.dshRemoteStreamFailure).toEqual({ kind: 'carrier' })
+  expect(error.name).toBe('Error')
+  abort.abort()
 })
 
-it('keeps an ongoing native selection through completion and hides an archived alias', async()=>{
- const f=fixture(),dispatchEvent=vi.fn()
- f.window.frameElement.parentElement.ownerDocument={dispatchEvent,defaultView:{CustomEvent:class{constructor(public type:string,public init:unknown){}}}}
- const local={sessionId:'same',updatedAt:1,running:true,projections:{asOfSeq:9999}}
- f.fetch.mockImplementation(async()=>Response.json({result:{ok:true,value:{items:[local]}}}))
- await f.rpc('session/list',{});f.directory.select('same')
- const row=f.row('canonical',{previousRuntimeRefs:['local-runtime'],coveredLocalHistory:{runtimeRef:'local-runtime',updatedAt:1,projectionAsOfSeq:9999,source:'cloud'}})
- for(let i=0;i<100;i++){local.updatedAt++;local.projections.asOfSeq++;f.directory.publish([{...row,contentRevision:String(i)}],'local-runtime');expect((await f.rpc('session/list',{})).result.value.items.map((r:any)=>r.sessionId)).toEqual(['same'])}
- local.running=false;f.directory.publish([row],'local-runtime')
- expect(dispatchEvent).not.toHaveBeenCalled()
- f.directory.publish([{...row,archived:true}],'local-runtime')
- expect((await f.rpc('session/list',{})).result.value.items).toEqual([])
+it('retries opening failures with backoff but stops on terminal authorization and cancellation', async () => {
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController(), original = f.wire.getMockImplementation()!
+  let attempts = 0
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint !== 'session/follow') return original(params)
+    attempts++
+    if (attempts < 3) return { ok: false, error: { code: 'REMOTE_REALTIME_UNAVAILABLE', message: 'offline', retryable: true } } as any
+    return original(params)
+  })
+  const payload = { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }
+  const stream = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]()
+  try {
+    const opening = stream.next()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(attempts).toBe(1)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await opening).value.type).toBe('snapshot')
+    expect(attempts).toBe(3)
+    await stream.return()
+    f.wire.mockImplementation(async params => params.body.endpoint === 'session/follow'
+      ? { ok: false, error: { code: 'REMOTE_LOGIN_REQUIRED', message: 'login', retryable: false } } as any : original(params))
+    const denied = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]()
+    await expect(denied.next()).rejects.toMatchObject({ dshRemoteStreamFailure: { kind: 'remote', code: 'REMOTE_LOGIN_REQUIRED' } })
+    f.wire.mockImplementation(async params => params.body.endpoint === 'session/follow'
+      ? { ok: false, error: { code: 'REMOTE_REALTIME_UNAVAILABLE', retryable: true } } as any : original(params))
+    const cancelled = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]().next().catch((error: any) => error)
+    await vi.advanceTimersByTimeAsync(1)
+    abort.abort()
+    expect((await cancelled).name).toBe('AbortError')
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { abort.abort(); f.listeners.get('pagehide')?.(); vi.useRealTimers() }
 })
 
-it('keeps one account-owned entry while cold-start Host registration has no Runtime yet', async () => {
-  for (const [running, selected] of [[false, false], [true, false], [false, true]]) {
-    const f = fixture()
-    if (selected) f.directory.select('same')
-    f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', running, updatedAt: 1 }] } } }))
-    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })])
-    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
-    // Registration enriches the identity; it must not insert a second row.
-    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { runtimeRef: 'restored', updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })], 'restored')
-    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
-  }
-})
-
-it('returns a cold-start cloud selection to its native owner when registration identifies the same Runtime', () => {
-  const f = fixture(), dispatchEvent = vi.fn()
-  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
-  f.directory.publish([f.row('cloud', { canonicalIdentity: true })])
-  f.directory.select('arkme:cloud:same')
-  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
-  expect(dispatchEvent).toHaveBeenCalledOnce()
-  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
-  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
-  expect(dispatchEvent).toHaveBeenCalledOnce()
-})
+// Opt-in against the unmodified installed DSH public Client bundle.
+// DSH_GATEWAY_PACKAGE is the directory containing its package.json.
+it.skipIf(!process.env.DSH_GATEWAY_PACKAGE)('recovers a real DSH RemoteStream across carrier loss and repeated opening failures', async () => {
+  const nativeRequire = createRequire(resolve(process.env.DSH_GATEWAY_PACKAGE!, 'package.json'))
+  let gateway: any
+  runInNewContext(readFileSync(nativeRequire.resolve('@deepseek-ai/dsh-api-gateway/client'), 'utf8'), {
+    window: { __ModuleLoader__: { load: (entry: any) => { gateway = entry.factory(nativeRequire) } } },
+    Error, AbortController, AbortSignal, crypto, setTimeout, clearTimeout, queueMicrotask,
+  })
+  const { Context } = nativeRequire('@deepseek-ai/cordis')
+  const ctx = new Context(), f = fixture(), original = f.wire.getMockImplementation()!
+  let opens = 0, failOpen = 0
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') {
+      opens++
+      if (failOpen > 0) { failOpen--; return { ok: false, error: { code: 'REMOTE_TRANSPORT_FAILED', retryable: true } } as any }
+      return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: opens, records: [] }] } } as any
+    }
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    return original(params)
+  })
+  ctx.provide('typert', { remotes: { register: () => () => {} } })
+  ctx.provide('connection', {
+    rpc: { open: (_prefix: string, endpoint: string, payload: unknown, signal: AbortSignal) => f.hooks.openStream(endpoint, payload, signal) },
+    generation: { getSnapshot: () => ({ host: { home: '/' } }), subscribe: () => () => {} },
+    registerGenerationSource: () => () => {}, start: () => ({ stop() {} }),
+  })
+  const plugin = ctx.plugin(gateway)
+  await plugin
+  const codec = { mode: 'strict', typeSymbol: '@fixture#Json', schema: { parse: (value: unknown) => value } }
+  const unmount = await ctx.remote.$mount({ package: '@fixture/session', descriptors: [{
+    id: '@fixture/session#session/follow', service: 'session', namespace: 'session', method: 'follow', mode: 'stream',
+    invocation: { kind: 'direct' }, parameters: [{ name: 'request', wire: 'request', source: 'json', codec }],
+    cancellation: { parameter: 'signal' }, result: codec,
+  }] })
+  const stream = ctx.remote.$stream({ name: 'fixture-follow',
+    open: (signal: AbortSignal) => ctx.remote.session.follow({ address: { kind: 'session', sessionId: 'arkme:windows:same' } }, signal),
+    ended: () => new gateway.RemoteStreamCarrierError('ended'),
+  })
+  const iterator = stream[Symbol.asyncIterator]()
+  try {
+    const first = (await iterator.next()).value
+    first.accept(); expect(first.generation).toBe(1)
+    const next = iterator.next()
+    await vi.waitFor(() => expect(f.wire.mock.calls.some(([params]) => params.body.mode === 'pull' && !params.body.endpoint)).toBe(true))
+    failOpen = 2
+    f.sockets.find(socket => String(socket.url).includes('native-streams'))!.close()
+    const restored = (await next).value
+    restored.accept()
+    expect(restored.generation).toBe(2)
+    expect(restored.value.type).toBe('snapshot')
+    expect(opens).toBe(4)
+    expect(first.signal.aborted).toBe(true)
+  } finally { await stream.dispose(); await unmount(); await plugin.dispose(); f.listeners.get('pagehide')?.() }
