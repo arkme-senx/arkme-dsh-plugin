@@ -16,6 +16,7 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
   const [error, setError] = useState('')
   const [syncing, setSyncing] = useState(true)
   const [paging, setPaging] = useState(false)
+  const [showLoading, setShowLoading] = useState(false)
   const [pagingFailed, setPagingFailed] = useState(false)
   const pendingRead = useRef<Promise<void>>()
   const currentPage = useRef<ArkmeCommonGroupPage>()
@@ -28,7 +29,7 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
     if (pendingRead.current) return pendingRead.current
     const previous = currentPage.current
     const work = (async () => {
-      setPaging(true)
+      setPaging(append)
       const items = append ? [...previous?.items ?? []] : []
       let cursor = append ? previous?.nextCursor : undefined
       const targetCount = append ? items.length + 20 : Math.max(20, previous?.items.length ?? 0)
@@ -103,6 +104,13 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
     observer.observe(sentinel.current)
     return () => observer.disconnect()
   }, [paging, pagingFailed, page, loadMore])
+  const waitingForFirstResult = syncing && (page === undefined || (page.items.length === 0 && page.syncedAtMillis === 0))
+  const loading = !error && (paging || waitingForFirstResult)
+  useEffect(() => {
+    if (!loading) { setShowLoading(false); return }
+    const timer = setTimeout(() => setShowLoading(true), 200)
+    return () => clearTimeout(timer)
+  }, [loading])
   const open = async (item: ArkmeSourceItem) => {
     const signal = lifetime.current?.signal
     if (!signal || signal.aborted || opening) return
@@ -121,7 +129,7 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
       <button type="button" data-arkme-feedback="neutral" disabled={syncing || paging} onClick={() => setRefresh(n => n + 1)}>{tr('重试')}</button>
     </p>}
     {page !== undefined && <>
-      {page.items.length === 0 && !syncing && !error && <p>{tr('暂无共同群聊')}</p>}
+      {page.items.length === 0 && !waitingForFirstResult && !error && <p>{tr('暂无共同群聊')}</p>}
       <ArkmeDirectoryWindow scrollRootRef={body}>
       {page.items.map(item => <button key={item.source.sourceKey ?? item.source.sourceRef} type="button" data-arkme-feedback="neutral" disabled={opening}
         onClick={() => { void open(item.source) }} style={{ width: '100%', display: 'flex', gap: 12, alignItems: 'center', padding: '14px 0', border: 0,
@@ -133,7 +141,7 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
       </ArkmeDirectoryWindow>
     </>}
     <div ref={sentinel} data-arkme-common-groups-more style={{ minHeight: 1 }}>
-      {(paging || (syncing && !page?.items.length)) && !error && <p role="status" style={{ color: arkmeTheme.tertiary }}>{tr('正在获取共同群聊…')}</p>}
+      {loading && showLoading && <p role="status" style={{ color: arkmeTheme.tertiary }}>{tr('正在获取共同群聊…')}</p>}
     </div>
   </ArkmeDetailShell>
 }

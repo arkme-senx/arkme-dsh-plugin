@@ -192,3 +192,70 @@ it('exposes committed cache pages when a later server batch fails', async () => 
   await scrollBottom()
   expect(api.mock.calls.some(c => c[0] === 'group.common.list' && c[1].cursor === 'group-20')).toBe(true)
 })
+
+it('does not flash loading for a fast local read before a slow sync', async () => {
+  vi.useFakeTimers()
+  try {
+    let resolve!: (value: ArkmeCommonGroupPage) => void
+    api.mockImplementation((operation: string) => operation.endsWith('.list')
+      ? new Promise<ArkmeCommonGroupPage>(r => { resolve = r }) : new Promise(() => {}))
+    await mount()
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); resolve(page()) })
+    expect(host.textContent).toContain('群1')
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(host.querySelector('[role="status"]')).toBeNull()
+  } finally { vi.useRealTimers() }
+})
+
+it('shows a previously synced empty cache without waiting for the server', async () => {
+  api.mockImplementation(async (operation: string) => operation.endsWith('.list')
+    ? { ...page(1, 0), totalCached: 0, hasMore: false } : new Promise(() => {}))
+  await mount()
+  expect(host.textContent).toContain('暂无共同群聊')
+  expect(host.querySelector('[role="status"]')).toBeNull()
+})
+
+it('keeps cached rows without a loading label during a slow background reread', async () => {
+  vi.useFakeTimers()
+  try {
+    let reads = 0
+    api.mockImplementation(async (operation: string) => {
+      if (operation.endsWith('.sync')) return page()
+      if (++reads === 1) return page()
+      return new Promise(() => {})
+    })
+    await mount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(reads).toBe(2)
+    expect(host.textContent).toContain('群1')
+    expect(host.querySelector('[role="status"]')).toBeNull()
+  } finally { vi.useRealTimers() }
+})
+
+it('still indicates a slow cold-cache sync and a slow next page, and clears its timer on close', async () => {
+  vi.useFakeTimers()
+  try {
+    let sync!: (value: ArkmeCommonGroupPage) => void
+    let populated = false
+    api.mockImplementation(async (operation: string, params: { cursor?: string }) => {
+      if (operation.endsWith('.sync')) return new Promise<ArkmeCommonGroupPage>(r => { sync = r })
+      if (params.cursor) return new Promise(() => {})
+      return populated ? page() : { ...page(1, 0), totalCached: 0, hasMore: false, syncedAtMillis: 0 }
+    })
+    await mount()
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    expect(host.querySelector('[role="status"]')).not.toBeNull()
+    populated = true
+    await act(async () => sync(page()))
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    await scrollBottom()
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    expect(host.querySelector('[role="status"]')).not.toBeNull()
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { vi.useRealTimers() }
+})
