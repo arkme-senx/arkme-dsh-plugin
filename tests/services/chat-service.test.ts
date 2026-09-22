@@ -3616,7 +3616,7 @@ it('returns the hydrated original attachment snapshot only when requested for As
     hydrateRecordSnapshotMediaPage: async () => [[{ file_asset_uid: 'file-1' }]],
     richContentBlocks: () => [block], recordMediaUnavailable: () => false,
   }
-  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
+  const chat = new ChatService(runtime as never, { openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
     { publicProfileSummariesByUserIds: async () => new Map([[42, { displayName: '本人昵称' }]]) } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
   const result = await chat.messageSnapshotDetail('source', snapshotActionRef(), { includeAttachments: true })
   expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
@@ -3637,7 +3637,7 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
   const media = { hydrateRecordSnapshotMediaPage: vi.fn(async () => [[]]), richContentBlocks: () => [], recordMediaUnavailable: () => false }
   const remarks = vi.fn(async () => { throw new Error('must reuse local names') })
   const profiles = vi.fn(async () => { throw new Error('must reuse local names') })
-  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
+  const chat = new ChatService(runtime as never, { openAccessibleSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
     { publicProfileSummariesByUserIds: profiles } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
   const ref = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99 })
   await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).resolves.toMatchObject({
