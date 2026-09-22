@@ -27,6 +27,56 @@ function fixture(seed?: Partial<ArkmeNavigationCache>, initialTime = 100_000) {
 }
 afterEach(() => vi.useRealTimers())
 describe('shared topic directory cache', () => {
+  it('hides overlapping subtrees immediately and rolls back only the failed intent', async () => {
+    const tree = [...base, { ...source('child', 'topic'), parentTopicHierarchyKey: 'a' },
+      { ...source('grandchild', 'topic'), parentTopicHierarchyKey: 'child' }]
+    const f = fixture({ sources: { send_to_self: tree } }), cache = f.make()
+    const child = cache.beginArchive(tree[4]!)!
+    const parent = cache.beginArchive(base[2]!)!
+    expect(cache.getSnapshot().sources.map(identity => identity.sourceRef)).toEqual(['self', 'default', 'b'])
+    expect(cache.getConfirmedSnapshot().sources).toEqual(tree)
+    expect(f.write).not.toHaveBeenCalled()
+    child(true)
+    parent(false)
+    expect(cache.getSnapshot().sources.map(identity => identity.sourceRef)).toEqual(['self', 'default', 'a', 'b'])
+    expect(f.getSaved()?.sources.send_to_self?.map(identity => identity.sourceRef)).toEqual(['self', 'default', 'a', 'b'])
+  })
+  it('keeps pending removals across older reads, does not persist them, and uses latest data on failure', async () => {
+    const f = fixture({}), cache = f.make(), old = deferred<ArkmeSourceList>()
+    f.load.mockReturnValueOnce(old.promise)
+    const read = cache.ensure(true)
+    const settle = cache.beginArchive(base[2]!)!
+    const renamed = {...base[2]!, sourceRef: 'a-new-ref', displayName: '新名称'}
+    old.resolve(page([...base.slice(0, 2), renamed, base[3]!])); await read
+    expect(cache.getSnapshot().sources).not.toContainEqual(renamed)
+    expect(f.getSaved()?.sources.send_to_self).toContainEqual(renamed)
+    settle(false)
+    expect(cache.getSnapshot().sources).toContainEqual(renamed)
+  })
+  it('retains successful removals against pre-commit reads and retires them after a fresh owner read', async () => {
+    const f = fixture({}), cache = f.make(), old = deferred<ArkmeSourceList>()
+    f.load.mockReturnValueOnce(old.promise)
+    const read = cache.ensure(true)
+    const settle = cache.beginArchive(base[2]!)!
+    settle(true)
+    old.resolve(page()); await read
+    expect(cache.getSnapshot().sources).not.toContainEqual(base[2])
+    expect(f.getSaved()?.sources.send_to_self).not.toContainEqual(base[2])
+    // Another device can legitimately restore it before our next authoritative read.
+    await cache.ensure(true)
+    expect(cache.getSnapshot().sources).toContainEqual(base[2])
+  })
+  it('hides newly loaded descendants while a parent is pending and never restores rows cleared by privacy', async () => {
+    const f = fixture({}), cache = f.make()
+    const settle = cache.beginArchive(base[2]!)!
+    f.load.mockResolvedValue(page([...base, {...source('child', 'topic'), parentTopicHierarchyKey: 'a'}]))
+    await cache.ensure(true)
+    expect(cache.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['self', 'default', 'b'])
+    cache.invalidate(true)
+    settle(false)
+    expect(cache.getSnapshot().sources).toEqual([])
+    cache.dispose()
+  })
   it('deduplicates initial reads and keeps the flight across menu unmounts', async () => {
     const f = fixture(), cache = f.make(), pending = deferred<ArkmeSourceList>()
     f.load.mockReturnValue(pending.promise)

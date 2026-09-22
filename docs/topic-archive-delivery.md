@@ -121,3 +121,26 @@ review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4
 - 使用未修改的官方 DSH 0.1.5-rc.2（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）。空 Profile 自动解析预发布 peer 时因上游稳定版本范围而失败；正式安装时按目标 DSH 的包清单，通过官方 CLI 显式安装同版本运行时依赖及 tgz，未改宿主源码或插件依赖声明。
 - 真实 Chrome 中文界面 → 正式安装包 UI / SDK / 会话 Tool → 隔离 Record/Mongo 链路 32 秒通过。验证冷刷新后打开菜单零前置状态请求、正常悬停和键盘访问、一次点击一次归档、菜单及消息 DOM 保留且不出现加载行、不重读内容、独立父子归档恢复、数据管理入口及空态。测试改用官方中文工作区 helper 和新基线设置按钮；没有放宽业务断言。
 - 日志：`rebase-20260922-plugin-full-tests-final.log`、`rebase-20260922-plugin-typecheck.log`、`rebase-20260922-plugin-build-final.log`、`rebase-20260922-plugin-install-final.log`、`rebase-20260922-plugin-consumer.log`、`rebase-20260922-plugin-verified.log`。已查看 `rebase-20260922-plugin-verified.png` 的实际页面。验证范围仍为 macOS/Chrome；未替换用户常驻实例。
+
+
+## 2026-09-22 连续归档与即时隐藏
+
+用户明确要求：普通目录中的归档按钮始终可用，点击即隐藏当前主题树，下一主题不等待前一请求。此前的请求锁属于整个 breadcrumb，导致其他行同步禁用；Record 的归档完成还发布通用 `record` 通知，经 IM 到插件后走隐私/内容硬失效，清空目录。旧浏览器回归只在前一笔完成后操作下一笔，并且未接通上游 SSE 通知，遗漏了这两条链路。
+
+本轮改变：
+- `useArchiveMutation` 按主题去重与限时，打开/hover 仍不查询；点击后在后台读取 CAS 并固定提交归档意图，不因其他主题的请求禁用按钮。
+- 现有账号目录缓存统一管理临时隐藏。立即隐藏当前已知子树、覆盖回读中新出现的后代；未确认意图不持久化。重叠操作失败只撤销自身隐藏，使用最新快照，不把陈旧标题、已删除或隐私隐藏条目回填。已确认隐藏抵挡提交前的旧读取，只由提交后发起的完整读取收敛。
+- 导航持久化/选中主题校对读取已确认视图，待提交隐藏不能被当成删除；请求由稳定栏持有，行消失不取消命令。30 秒超时释放当前操作；未知写结果重新读事实、不自动重放。
+- Record 的成功归档/恢复改为通过既有 `projection.invalidated.v1` 发布 `entity_archive`，未改变 owner 时不通知。IM 的现有通用投影协议可透传。插件将它映射为已有 `topic-directory` 软更新，同时淘汰归档旧读取；真正 `record` 通知保留原内容/隐私处理。Flutter 接收新名称后沿已有同步链处理，不新增 PC 归档能力。
+
+能力覆盖：本轮无新 HTTP、Tool 或 SDK 命令。UI 的立即隐藏、连续操作、失败恢复及 Host 实时适配为改动面；正式包 E2E 同时保持 SDK 读写/CAS、真实 Session 中三个归档 Tool 的可见性和状态 Tool 调用。独立仓外 SDK Consumer 编译通过。
+
+验证：
+- 旧不可变包在真实 Chrome 中复现了点击后行仍存在（`archive-interaction-before-e2e.log`）；组件回归同样先失败。
+- 聚焦 5 文件 98 项通过；Node 24.19.0 全量 734 文件、8,705 项通过，9 文件/13 项按原条件跳过。首次全量的既有 400 条消息用例出现一次目录读取次数偏差，原样单独复跑以及后续完整重跑均通过，未放宽断言。日志：`archive-interaction-focused-final.log`、`archive-interaction-content-rerun.log`、`archive-interaction-full-tests-final.log`。
+- typecheck、build、不可变包、官方 CLI 全新临时 Profile 安装、仓外 Consumer 通过。DSH 使用未修改 `dsh-v0.1.5-rc.2`（`fb2c4b9`）。包 `senguoyun-dsh-arkme-optimistic-20260922-0.1.76.tgz`，SHA-256 `eb552cb874265a1340650619ba46f777bd4a5c4e9cd108588bff155493d97fc4`。
+- 正式包 Chrome → Host → 隔离 Record/Mongo 的最终 E2E 29 秒通过，覆盖一笔失败恢复而另一笔仍 pending、两个成功操作的前置读取同时 pending、第二个 hover 仍正确、行立即隐藏、通知先于回执、列表与消息 DOM 不卸载、不新增内容读取、独立父子归档恢复。记录 `archive-interaction-final-e2e.log`，截图 `archive-interaction-final.png.hover.png` 已核验。
+- SSE 在测试中使用协议传输 fixture，将真实 Record 提交结果转成同名元数据提示；MQ producer 的真实名称、账号、取消隔离、不阻塞完成、无变化/冲突不通知由 Go 单测和 race 验证。没有声称测试已部署生产 RabbitMQ/IM。
+- Flutter 通知/主题绑定/归档 32 项通过，改动文件 analyze 无问题。Record 通知/MQ 测试及 race 通过。没有修改集合、索引、依赖、插件版本、DSH 源码或用户常驻 3081 实例；Windows/Linux 本轮未实机验收。
+
+上线需同步采用 Record 和客户端分支的新通知合同，不能只替换插件包却仍期待旧服务端的通用 record 通知具备目录专用语义。此次是一次性完整收口，没有双发通知或过渡配置。

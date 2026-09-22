@@ -42,11 +42,20 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
     let page
     const archived = []
     const failures = []
+    const realtimeClients = new Set()
+    const archiveHints = []
     const proxy = createServer(tls, async (req, res) => {
       try {
         const buffers = []
         for await (const chunk of req) buffers.push(chunk)
         const body = Buffer.concat(buffers)
+        if (req.url === '/api/v1/sse/chat/noty') {
+          res.writeHead(200, {'content-type': 'text/event-stream', 'cache-control': 'no-cache'})
+          res.write(': connected\n\n')
+          realtimeClients.add(res)
+          res.on('close', () => realtimeClients.delete(res))
+          return
+        }
         let response
         if (req.url === '/api/public/v1/auth/the-best-api-for-testing') {
           response = { code: 200, data: { access_token: token, refresh_token: 'isolated-fixture-refresh' } }
@@ -58,6 +67,13 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           })
           response = await upstream.json()
           if (req.url === '/api/v1/records/dsh-agent-input/create') archived.push({ request: JSON.parse(body), response })
+          if (req.url === '/api/v1/archives/set' && response.code === 0 && response.data.state_changed) {
+            // The transport fixture forwards the producer's metadata-only contract.
+            // The Go notification test checks the actual publisher; writes/reads here use real Mongo owners.
+            const hint = {t: 25, event_uid: randomUUID(), projection: 'entity_archive', event_at: Date.now()}
+            archiveHints.push(hint)
+            for (const client of realtimeClients) client.write(`data: ${JSON.stringify(hint)}\n\n`)
+          }
         } else {
           response = { code: 200, data: { items: [], users: [], has_more: false } }
         }
@@ -135,6 +151,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const B = (await service.createTopic('单独归档子主题', A.sourceRef)).source
       const C = (await service.createTopic('随父级恢复的子主题', A.sourceRef)).source
       const D = (await service.createTopic('随子级归档的孙主题', B.sourceRef)).source
+      const failedSource = (await service.createTopic('归档失败后应恢复的主题')).source
       const existingRecord = await service.sendSourceText(B.sourceRef, '归档前已有内容', {recordUid: randomUUID()})
       expect(existingRecord.localState).toBe('synced')
       const set = async (source, archived) => {
@@ -145,8 +162,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.reload({waitUntil: 'load'})
       await page.getByRole('button', {name: '对话', exact: true}).click()
       await page.getByRole('treeitem', {name: /发给自己/}).click()
+      await expect.poll(() => realtimeClients.size).toBeGreaterThan(0)
       let selectedTitleBeforeArchive
-      const archiveFromMenu = async source => {
+      const archiveFromMenu = async (source, failRead = false) => {
         const selector = page.getByRole('button', {name: '选择主题', exact: true})
         // The initial cached self-source is reconciled to its owner identity;
         // wait for the current header and its directory to be ready to operate.
@@ -190,7 +208,8 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           if (archiveStateReads > 1) return route.fallback()
           const response = await route.fetch()
           await archiveStateGate
-          await route.fulfill({response})
+          if (failRead) await route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'offline', message: '读取失败', retryable: true}})})
+          else await route.fulfill({response})
         }
         await page.route('**/arkme-self/api', holdArchiveState)
         await row.hover()
@@ -205,7 +224,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         expect(archiveStateReads).toBe(0)
         expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
         if (source === B && process.env.ARKME_E2E_SCREENSHOT) {
-          await page.locator('[data-arkme-self-topic-menu]').screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.hover.png`})
+          await page.screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.hover.png`})
         }
         for (const action of await page.getByRole('menuitem').filter({hasText: /^(新建子主题|重命名|归档)$/}).all()) {
           await action.hover()
@@ -218,7 +237,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         expect(await archiveAction.evaluate(node => node.matches(':focus-visible'))).toBe(true)
         expect(await archiveAction.evaluate(node => node === document.activeElement)).toBe(true)
         await expect.poll(() => page.locator('[data-arkme-self-topic-loading]').count()).toBe(0)
-        await page.locator('[data-arkme-self-topic-menu]').evaluate(menu => {
+        if (source === B) await page.locator('[data-arkme-self-topic-menu]').evaluate(menu => {
           const retained = [...menu.querySelectorAll('[data-arkme-self-topic-tree-row]')].find(node => node.textContent.includes('未分类'))
           if (!retained) throw new Error('The complete menu must contain the uncategorized row')
           const loading = '[data-arkme-self-topic-loading], [data-arkme-self-topic-children-loading]'
@@ -236,26 +255,47 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await archiveAction.click()
         await expect.poll(() => archiveStateReads).toBe(1)
         expect(archiveCommands).toBe(0)
-        releaseArchiveState()
+        // The UI has already removed this whole subtree while the owner read is held.
+        await expect.poll(() => row.count(), {timeout: 1000}).toBe(0)
+        expect(await selector.getAttribute('aria-expanded')).toBe('true')
         expect(await page.getByRole('dialog', {name: '归档主题', exact: true}).count()).toBe(0)
-        await expect.poll(async () => (await sdk.getArchiveStates([source.sourceRef]))[0].selfArchived).toBe(true)
-        expect(archiveCommands).toBe(1)
-        await page.unroute('**/arkme-self/api', holdArchiveState)
-        await expect.poll(async () => {
-          if (await selector.getAttribute('aria-expanded') !== 'true') await selector.click()
-          await page.locator('[data-arkme-self-topic-menu]').waitFor()
-          return row.count()
-        }).toBe(0)
-        expect(await page.evaluate(() => {
-          const scene = globalThis.__archiveMenuScene
-          scene.observer.disconnect()
-          return {detached: scene.detached || !scene.menu.isConnected || !scene.retained.isConnected, loadingSeen: scene.loadingSeen}
-        })).toEqual({detached: false, loadingSeen: false})
+        return {
+          release: releaseArchiveState,
+          finish: async () => {
+            if (failRead) {
+              await expect.poll(() => row.count()).toBe(1)
+              expect(archiveCommands).toBe(0)
+              expect(await page.getByRole('alert').filter({hasText: '归档未完成'}).count()).toBe(1)
+              await page.unroute('**/arkme-self/api', holdArchiveState)
+              return
+            }
+            await expect.poll(async () => (await sdk.getArchiveStates([source.sourceRef]))[0].selfArchived).toBe(true)
+            await expect.poll(() => archiveCommands).toBe(1)
+            await page.unroute('**/arkme-self/api', holdArchiveState)
+            expect(await row.count()).toBe(0)
+            expect(await selector.getAttribute('aria-expanded')).toBe('true')
+          },
+        }
       }
-      await archiveFromMenu(B)
+      const failedArchive = await archiveFromMenu(failedSource, true)
+      const firstArchive = await archiveFromMenu(B)
+      failedArchive.release()
+      await failedArchive.finish()
       expect(postArchiveContentReads).toEqual([])
       expect(await page.getByRole('button', {name: '选择主题', exact: true}).getAttribute('title')).toBe(selectedTitleBeforeArchive)
-      await archiveFromMenu(A)
+      const secondArchive = await archiveFromMenu(A)
+      // Both menus worked before either command could reach the Record owner.
+      expect((await sdk.getArchiveStates([A.sourceRef, B.sourceRef])).map(state => state.selfArchived)).toEqual([false, false])
+      firstArchive.release()
+      await firstArchive.finish()
+      secondArchive.release()
+      await secondArchive.finish()
+      expect(archiveHints).toHaveLength(2)
+      expect(await page.evaluate(() => {
+        const scene = globalThis.__archiveMenuScene
+        scene.observer.disconnect()
+        return {detached: scene.detached || !scene.menu.isConnected || !scene.retained.isConnected, loadingSeen: scene.loadingSeen}
+      })).toEqual({detached: false, loadingSeen: false})
       expect(postArchiveContentReads).toEqual([])
       // Hidden ancestors no longer contribute directory breadcrumb segments;
       // the selected topic itself and its mounted content must remain.

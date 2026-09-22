@@ -1028,7 +1028,7 @@ export function ArkmeSourceBreadcrumb({
             items={[
               ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutline16 /> }] : []),
               ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutline16 /> }] : []),
-              { id: 'archive', label: tr('归档'), icon: <Archive size={16} />, disabled: archiveMutation.busy },
+              { id: 'archive', label: tr('归档'), icon: <Archive size={16} />, disabled: archiveMutation.isBusy(row.source.sourceRef) },
               ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutline16 />, danger: true }] : []),
             ]}
             onToggle={() => { setSortMenuOpen(false); setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : row.source) }}
@@ -1036,7 +1036,7 @@ export function ArkmeSourceBreadcrumb({
             onSelect={action => {
               if (action === 'archive') {
                 setTopicMenuSource(undefined)
-                void archiveMutation.archive(row.source.sourceRef)
+                void archiveMutation.archive(row.source)
                 return
               }
               closeMenu()

@@ -8,6 +8,7 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { selfTopicDirectory } from './self-topic-directory-cache.js'
 
 function useArchiveRefresh(): { userId: number | undefined; scope: string; revision: string; refresh(): void } {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -57,57 +58,73 @@ export function useArchiveMutation() {
   const scope = `${auth.auth?.status}:${auth.auth?.environment}:${auth.auth?.userId}:${ui.authRevision}`
   const currentScope = useRef(scope)
   currentScope.current = scope
-  const request = useRef<AbortController>()
-  const [busy, setBusy] = useState(false)
+  const requests = useRef(new Map<string, AbortController>())
+  const [busyRefs, setBusyRefs] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState('')
   useEffect(() => {
-    request.current?.abort()
-    request.current = undefined
-    setBusy(false)
+    const pending = requests.current
+    const cancel = () => { for (const controller of pending.values()) controller.abort(); pending.clear() }
+    cancel()
+    setBusyRefs(new Set())
     setError('')
-    return () => { request.current?.abort() }
+    return cancel
   }, [scope])
-  const submit = async (input: { sourceRef: string; selfArchived: boolean; expectedRevision?: number }): Promise<boolean> => {
-    if (request.current !== undefined || auth.auth?.status !== 'authenticated') return false
+  const submit = async (input: { sourceRef: string; selfArchived: boolean; expectedRevision?: number; source?: ArkmeSourceItem }): Promise<boolean> => {
+    if (requests.current.has(input.sourceRef) || auth.auth?.status !== 'authenticated' || auth.auth.userId === undefined) return false
+    const directory = selfTopicDirectory(auth.auth.userId, auth.auth.environment)
+    const settleRemoval = input.source === undefined ? undefined : directory.beginArchive(input.source)
+    if (input.source !== undefined && settleRemoval === undefined) return false
     const controller = new AbortController()
-    request.current = controller
-    setBusy(true)
+    requests.current.set(input.sourceRef, controller)
+    setBusyRefs(new Set(requests.current.keys()))
     setError('')
+    const current = () => currentScope.current === scope && requests.current.get(input.sourceRef) === controller
+    let writeAttempted = false
+    let accepted = false
+    // Bound the entire interaction, including browser connection-queue time.
+    // An uncertain write is reconciled from the owner, never replayed here.
+    const cancelled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => { reject(controller.signal.reason) }, { once: true })
+    })
+    const timer = setTimeout(() => { controller.abort(new Error('归档请求超时')) }, 30_000)
     try {
-      // The normal directory already defines the action as Archive. Only an
-      // actual click needs the write precondition; opening a menu never does.
-      let expectedRevision = input.expectedRevision
-      if (expectedRevision === undefined) {
-        const states = await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [input.sourceRef] }, controller.signal)
-        if (controller.signal.aborted || currentScope.current !== scope) return false
-        const state = states[0]
-        if (states.length !== 1 || state?.sourceRef !== input.sourceRef || !state.ownerAvailable) {
-          throw new Error('Archive target unavailable')
+      accepted = await Promise.race([cancelled, (async () => {
+        let expectedRevision = input.expectedRevision
+        if (expectedRevision === undefined) {
+          const states = await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [input.sourceRef] }, controller.signal)
+          if (controller.signal.aborted || !current()) return false
+          const state = states[0]
+          if (states.length !== 1 || state?.sourceRef !== input.sourceRef || !state.ownerAvailable) throw new Error('Archive target unavailable')
+          expectedRevision = state.revision
         }
-        expectedRevision = state.revision
-      }
-      await callArkme<ArkmeArchiveSetResult>('archives.set', {
-        sourceRef: input.sourceRef, selfArchived: input.selfArchived, expectedRevision,
-      }, controller.signal)
-      return !controller.signal.aborted && currentScope.current === scope
+        writeAttempted = true
+        await callArkme<ArkmeArchiveSetResult>('archives.set', {
+          sourceRef: input.sourceRef, selfArchived: input.selfArchived, expectedRevision,
+        }, controller.signal)
+        return !controller.signal.aborted && current()
+      })()])
+      return accepted
     } catch {
-      if (!controller.signal.aborted && currentScope.current === scope) {
-        setError(input.selfArchived ? '归档未完成，请稍后重试' : '取消归档未完成，请稍后重试')
-      }
+      if (current()) setError(input.selfArchived ? '归档未完成，请稍后重试' : '取消归档未完成，请稍后重试')
       return false
     } finally {
-      if (request.current === controller) request.current = undefined
-      if (!controller.signal.aborted && currentScope.current === scope) {
-        setBusy(false)
-        // An uncertain reply must be re-read, never silently replayed with a new revision.
-        arkmeUi.topicDirectoryChanged()
+      clearTimeout(timer)
+      settleRemoval?.(accepted)
+      if (current()) {
+        requests.current.delete(input.sourceRef)
+        setBusyRefs(new Set(requests.current.keys()))
+        // Reads that fail before submission cannot change directory membership.
+        if (writeAttempted) {
+          directory.invalidate()
+          arkmeUi.topicDirectoryChanged()
+        }
       }
     }
   }
   return {
     set: (state: ArkmeArchiveState) => submit({ sourceRef: state.sourceRef, selfArchived: !state.selfArchived, expectedRevision: state.revision }),
-    archive: (sourceRef: string) => submit({ sourceRef, selfArchived: true }),
-    busy, error,
+    archive: (source: ArkmeSourceItem) => submit({ sourceRef: source.sourceRef, selfArchived: true, source }),
+    isBusy: (sourceRef: string) => busyRefs.has(sourceRef), error,
   }
 }
 
@@ -184,14 +201,14 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
               {item.inheritedFrom !== undefined && <span className="arkme-archive-inherited">随父主题归档</span>}
               <div className="arkme-archive-actions">
                 {item.inheritedFrom !== undefined && <button type="button" className="arkme-archive-action" disabled={busy} onClick={() => { void showSource(item.inheritedFrom!) }}>查看来源</button>}
-                <button type="button" className="arkme-archive-action" disabled={mutation.busy} onClick={() => { void mutation.set(item) }}>{item.selfArchived ? '取消归档' : '单独归档'}</button>
+                <button type="button" className="arkme-archive-action" disabled={mutation.isBusy(item.sourceRef)} onClick={() => { void mutation.set(item) }}>{item.selfArchived ? '取消归档' : '单独归档'}</button>
               </div>
             </li>)}
           </ul>
           {sourceEntry !== undefined && <div className="arkme-archive-source" role="region" aria-label="归档来源">
             <span>归档来源</span>
             <button type="button" className="arkme-archive-source-name" disabled={sourceEntry.privacyLocked} onClick={() => { open(sourceEntry) }}>{sourceEntry.privacyLocked ? '隐私主题' : sourceEntry.source.displayName}</button>
-            {sourceEntry.selfArchived && <button type="button" className="arkme-archive-action" disabled={mutation.busy} onClick={() => { void mutation.set(sourceEntry) }}>取消该主题归档</button>}
+            {sourceEntry.selfArchived && <button type="button" className="arkme-archive-action" disabled={mutation.isBusy(sourceEntry.sourceRef)} onClick={() => { void mutation.set(sourceEntry) }}>取消该主题归档</button>}
           </div>}
           {busy && <div className="arkme-archive-loading" role="status" aria-label="加载中"><CircleNotch size={18} aria-hidden /></div>}
           {cursor !== undefined && <button type="button" className="arkme-archive-action arkme-archive-more" disabled={busy} onClick={() => { void load(cursor) }}>加载更多</button>}

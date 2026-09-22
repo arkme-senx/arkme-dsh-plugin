@@ -8,6 +8,8 @@ import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { selfTopicDirectory, resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
+import { useSyncExternalStore } from 'react'
 
 const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
@@ -28,7 +30,39 @@ beforeEach(() => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
+afterEach(async () => { await act(async () => { root.unmount() }); host.remove(); resetSelfTopicDirectories(); vi.useRealTimers() })
+
+it('immediately removes each clicked subtree and accepts the next archive while both reads are pending', async () => {
+  const directory = selfTopicDirectory(42, 'test')
+  const a = {sourceRef: 'a', topicHierarchyKey: 'a', kind: 'topic' as const, displayName: '甲', activeAtMillis: 1, unreadCount: 0}
+  const b = {...a, sourceRef: 'b', topicHierarchyKey: 'b', displayName: '乙'}
+  const child = {...a, sourceRef: 'child', topicHierarchyKey: 'child', parentTopicHierarchyKey: 'a', displayName: '甲的子主题'}
+  directory.upsert(a); directory.upsert(b); directory.upsert(child)
+  mock.call.mockImplementation(() => new Promise(() => {}))
+  function Directory() {
+    const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot)
+    return <ArkmeSourceBreadcrumb userId={42} selectedSource={undefined} sources={snapshot.sources}
+      onSelect={vi.fn()} onSelectAggregate={vi.fn()} onRenameTopic={vi.fn()} />
+  }
+  await act(async () => { root.render(<Directory />) })
+  await click('选择主题')
+  const menu = host.querySelector('[data-arkme-self-topic-menu]')!
+  for (const source of [a, b]) {
+    const row = host.querySelector(`[data-arkme-self-topic-tree-row-ref="${source.sourceRef}"]`)!
+    await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
+    await click(`${source.displayName}主题操作`)
+    const action = [...document.body.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find(button => button.textContent === '归档')!
+    expect(action.textContent).toBe('归档')
+    expect(action.disabled).toBe(false)
+    await click('归档')
+    expect(row.isConnected).toBe(false)
+    expect(menu.isConnected).toBe(true)
+  }
+  expect(directory.getSnapshot().sources).toEqual([])
+  expect(mock.call.mock.calls.map(call => [call[0], call[1]])).toEqual([
+    ['archives.state', {sourceRefs: ['a']}], ['archives.state', {sourceRefs: ['b']}],
+  ])
+})
 
 it('shows inherited state without a misleading restore, masks private topics and opens by UID reference', async () => {
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
@@ -212,6 +246,23 @@ it.each(['read-failure', 'unavailable', 'missing', 'wrong-source'])('does not wr
   await act(async () => { action.click() })
   expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state'])
   expect(host.textContent).toContain('归档未完成，请稍后重试')
+})
+
+it.each(['archives.state', 'archives.set'])('restores the optimistic row after a bounded %s failure without replaying', async stalled => {
+  vi.useFakeTimers()
+  const directory = selfTopicDirectory(42, 'test')
+  directory.upsert(directorySource)
+  mock.call.mockImplementation((operation: string) => operation === stalled ? new Promise(() => {})
+    : Promise.resolve([{...inherited, sourceRef: directorySource.sourceRef, revision: 7}]))
+  const action = await openDirectoryArchive()
+  await act(async () => { action.click() })
+  expect(directory.getSnapshot().sources).toEqual([])
+  const before = mock.call.mock.calls.length
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+  expect(directory.getSnapshot().sources).toEqual([directorySource])
+  expect(host.textContent).toContain('归档未完成，请稍后重试')
+  expect(mock.call).toHaveBeenCalledTimes(before)
+  expect((mock.call.mock.calls[0]![2] as AbortSignal).aborted).toBe(true)
 })
 
 it('reports a conflict without re-reading and replaying the Archive command', async () => {

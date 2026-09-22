@@ -34,10 +34,15 @@ describe('ChatRealtimeService', () => {
     const service = new ChatRealtimeService(runtime, source, {chatTimelineItems: vi.fn(async () => [])})
     const events: unknown[] = []
     service.subscribeChatRealtime(event => { events.push(event) })
-    await service.invalidateTopicDirectoryProjection()
+    service.handleChatRealtimeNotice({
+      cause: 'projection-invalidation', state: {revision: 1, connected: true, connectionGeneration: 1},
+      projectionInvalidation: {eventUid: 'archive-event', projection: 'entity_archive', eventAtMillis: 1},
+    })
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
     expect(directory).toHaveBeenCalledWith(42, 'send_to_self')
     expect(events).toEqual([expect.objectContaining({type: 'projection-invalidated', projection: 'topic-directory'})])
     expect(cacheInvalidation.mock.calls.some(([, key]) => key === 'calendar:')).toBe(false)
+    expect(cacheInvalidation).toHaveBeenCalledWith(runtime.requestScope(42), 'owner-read:archives:')
     service.dispose()
     runtime.dispose()
   })

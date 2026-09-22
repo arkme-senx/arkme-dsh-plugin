@@ -205,7 +205,7 @@ export function ArkmeTopicDirectoryPopover({
     firstLoad.current = false
     void directory.ensure(force).then(async () => {
       if (disposed) return
-      const result = directory.getSnapshot()
+      const result = directory.getConfirmedSnapshot()
       if (!result.complete || result.error) return
       const loaded = result.sources
       const currentSelected = selectedSourceRef.current
