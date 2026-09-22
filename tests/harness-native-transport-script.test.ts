@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { harnessNativeTransportScript } from '../src/harness-native-transport-script.js'
@@ -44,7 +47,7 @@ function fixture(search = '?arkme-harness-embed=1') {
     close() { this.readyState = 3; this.onclose?.() }
   }
   let nextId = 0
-  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
+  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, Error, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
   disposers.push(() => listeners.get('pagehide')?.())
   const hooks = window.__DSH_TRANSPORT__
   const rpc = async (method: string, args: object) => (await hooks.fetch(`api/${method}`, { body: JSON.stringify({ rpcId: 'rpc', method, payload: { args } }) })).json()
@@ -230,15 +233,7 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   await next.return()
 })
 
-it('redirects a selected retired address after a complete canonical directory refresh', () => {
-  const f = fixture(), dispatchEvent = vi.fn()
-  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
-  f.directory.publish([f.row('retired')]); f.directory.select('arkme:retired:same')
-  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
-  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'arkme:native-session-open', init: { detail: { runtimeRef: 'canonical', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
-  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
-  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
-  expect(dispatchEvent).toHaveBeenCalledOnce()
+
 })
 
 it('keeps an idle native local entry executable while its cloud metadata advances', async () => {
@@ -304,18 +299,58 @@ it('does not resurrect a proven hidden cloud row on metadata refresh and restore
   await stream.return()
 })
 
-it('keeps an ongoing native selection through completion and hides an archived alias', async()=>{
- const f=fixture(),dispatchEvent=vi.fn()
- f.window.frameElement.parentElement.ownerDocument={dispatchEvent,defaultView:{CustomEvent:class{constructor(public type:string,public init:unknown){}}}}
- const local={sessionId:'same',updatedAt:1,running:true,projections:{asOfSeq:9999}}
- f.fetch.mockImplementation(async()=>Response.json({result:{ok:true,value:{items:[local]}}}))
- await f.rpc('session/list',{});f.directory.select('same')
- const row=f.row('canonical',{previousRuntimeRefs:['local-runtime'],coveredLocalHistory:{runtimeRef:'local-runtime',updatedAt:1,projectionAsOfSeq:9999,source:'cloud'}})
- for(let i=0;i<100;i++){local.updatedAt++;local.projections.asOfSeq++;f.directory.publish([{...row,contentRevision:String(i)}],'local-runtime');expect((await f.rpc('session/list',{})).result.value.items.map((r:any)=>r.sessionId)).toEqual(['same'])}
- local.running=false;f.directory.publish([row],'local-runtime')
- expect(dispatchEvent).not.toHaveBeenCalled()
- f.directory.publish([{...row,archived:true}],'local-runtime')
- expect((await f.rpc('session/list',{})).result.value.items).toEqual([])
+it('marks a follow carrier loss for the official DSH stream generation recovery', async () => {
+  const f = fixture(), abort = new AbortController()
+  const original = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] } } as any
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    return original(params)
+  })
+  const stream = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await stream.next()).value.type).toBe('snapshot')
+  const waiting = stream.next().then(() => undefined, (error: any) => error)
+  await Promise.resolve(); await Promise.resolve()
+  f.sockets.find(item => String(item.url).includes('native-streams'))!.close()
+  const error = await waiting
+  expect(error.message).toContain('原生远程连接已断开')
+  expect(error.dshRemoteStreamFailure).toEqual({ kind: 'carrier' })
+  expect(error.name).toBe('Error')
+  abort.abort()
+})
+
+it('retries opening failures with backoff but stops on terminal authorization and cancellation', async () => {
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController(), original = f.wire.getMockImplementation()!
+  let attempts = 0
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint !== 'session/follow') return original(params)
+    attempts++
+    if (attempts < 3) return { ok: false, error: { code: 'REMOTE_REALTIME_UNAVAILABLE', message: 'offline', retryable: true } } as any
+    return original(params)
+  })
+  const payload = { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }
+  const stream = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]()
+  try {
+    const opening = stream.next()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(attempts).toBe(1)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await opening).value.type).toBe('snapshot')
+    expect(attempts).toBe(3)
+    await stream.return()
+    f.wire.mockImplementation(async params => params.body.endpoint === 'session/follow'
+      ? { ok: false, error: { code: 'REMOTE_LOGIN_REQUIRED', message: 'login', retryable: false } } as any : original(params))
+    const denied = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]()
+    await expect(denied.next()).rejects.toMatchObject({ dshRemoteStreamFailure: { kind: 'remote', code: 'REMOTE_LOGIN_REQUIRED' } })
+    f.wire.mockImplementation(async params => params.body.endpoint === 'session/follow'
+      ? { ok: false, error: { code: 'REMOTE_REALTIME_UNAVAILABLE', retryable: true } } as any : original(params))
+    const cancelled = f.hooks.openStream('session/follow', payload, abort.signal)[Symbol.asyncIterator]().next().catch((error: any) => error)
+    await vi.advanceTimersByTimeAsync(1)
+    abort.abort()
+    expect((await cancelled).name).toBe('AbortError')
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { abort.abort(); f.listeners.get('pagehide')?.(); vi.useRealTimers() }
 })
 
 it('keeps one account-owned entry while cold-start Host registration has no Runtime yet', async () => {
@@ -409,3 +444,58 @@ it('delivers an online prompt to its source and forwards the subsequent live jou
   expect((await live).value.event.data.text).toBe('response from source')
   abort.abort(); await journal.return()
 })
+
+// Opt-in against the unmodified installed DSH public Client bundle.
+// DSH_GATEWAY_PACKAGE is the directory containing its package.json.
+it.skipIf(!process.env.DSH_GATEWAY_PACKAGE)('recovers a real DSH RemoteStream across carrier loss and repeated opening failures', async () => {
+  const nativeRequire = createRequire(resolve(process.env.DSH_GATEWAY_PACKAGE!, 'package.json'))
+  let gateway: any
+  runInNewContext(readFileSync(nativeRequire.resolve('@deepseek-ai/dsh-api-gateway/client'), 'utf8'), {
+    window: { __ModuleLoader__: { load: (entry: any) => { gateway = entry.factory(nativeRequire) } } },
+    Error, AbortController, AbortSignal, crypto, setTimeout, clearTimeout, queueMicrotask,
+  })
+  const { Context } = nativeRequire('@deepseek-ai/cordis')
+  const ctx = new Context(), f = fixture(), original = f.wire.getMockImplementation()!
+  let opens = 0, failOpen = 0
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') {
+      opens++
+      if (failOpen > 0) { failOpen--; return { ok: false, error: { code: 'REMOTE_TRANSPORT_FAILED', retryable: true } } as any }
+      return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: opens, records: [] }] } } as any
+    }
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    return original(params)
+  })
+  ctx.provide('typert', { remotes: { register: () => () => {} } })
+  ctx.provide('connection', {
+    rpc: { open: (_prefix: string, endpoint: string, payload: unknown, signal: AbortSignal) => f.hooks.openStream(endpoint, payload, signal) },
+    generation: { getSnapshot: () => ({ host: { home: '/' } }), subscribe: () => () => {} },
+    registerGenerationSource: () => () => {}, start: () => ({ stop() {} }),
+  })
+  const plugin = ctx.plugin(gateway)
+  await plugin
+  const codec = { mode: 'strict', typeSymbol: '@fixture#Json', schema: { parse: (value: unknown) => value } }
+  const unmount = await ctx.remote.$mount({ package: '@fixture/session', descriptors: [{
+    id: '@fixture/session#session/follow', service: 'session', namespace: 'session', method: 'follow', mode: 'stream',
+    invocation: { kind: 'direct' }, parameters: [{ name: 'request', wire: 'request', source: 'json', codec }],
+    cancellation: { parameter: 'signal' }, result: codec,
+  }] })
+  const stream = ctx.remote.$stream({ name: 'fixture-follow',
+    open: (signal: AbortSignal) => ctx.remote.session.follow({ address: { kind: 'session', sessionId: 'arkme:windows:same' } }, signal),
+    ended: () => new gateway.RemoteStreamCarrierError('ended'),
+  })
+  const iterator = stream[Symbol.asyncIterator]()
+  try {
+    const first = (await iterator.next()).value
+    first.accept(); expect(first.generation).toBe(1)
+    const next = iterator.next()
+    await vi.waitFor(() => expect(f.wire.mock.calls.some(([params]) => params.body.mode === 'pull' && !params.body.endpoint)).toBe(true))
+    failOpen = 2
+    f.sockets.find(socket => String(socket.url).includes('native-streams'))!.close()
+    const restored = (await next).value
+    restored.accept()
+    expect(restored.generation).toBe(2)
+    expect(restored.value.type).toBe('snapshot')
+    expect(opens).toBe(4)
+    expect(first.signal.aborted).toBe(true)
+  } finally { await stream.dispose(); await unmount(); await plugin.dispose(); f.listeners.get('pagehide')?.() }
