@@ -1,3 +1,4 @@
+import { SocialAccessPresentationBoundary } from './SocialAccessPresentationBoundary.js'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
@@ -42,7 +43,7 @@ export function ArkmeConversationWindow() {
    if (ui.mode !== 'source' || !ui.selectedSource || arkmeSourceIdentityKey(ui.selectedSource) !== target.sourceKey) arkmeUi.selectSource(target.source)
   })
  },[target])
- return <section data-arkme-owned="conversation-window" style={{position:'fixed',inset:0,display:'flex',flexDirection:'column',background:arkmeTheme.base,color:arkmeTheme.text}}>
+ return <SocialAccessPresentationBoundary><section data-arkme-owned="conversation-window" style={{position:'fixed',inset:0,display:'flex',flexDirection:'column',background:arkmeTheme.base,color:arkmeTheme.text}}>
   <div style={{position:'relative',flex:1,minHeight:0}}>{target ? <ConversationContent target={target}/> : <div role={error ? 'alert' : 'status'} style={{padding:24}}>{error || tr('正在加载会话…')}</div>}</div>
- </section>
+ </section></SocialAccessPresentationBoundary>
 }

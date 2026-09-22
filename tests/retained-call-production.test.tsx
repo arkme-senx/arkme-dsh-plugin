@@ -45,4 +45,5 @@ it('retains calls through both utility-mode switches and full workspace suspensi
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
   useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))

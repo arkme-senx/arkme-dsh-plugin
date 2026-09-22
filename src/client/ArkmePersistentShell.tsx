@@ -1,3 +1,4 @@
+import { SocialAccessPresentationBoundary } from './SocialAccessPresentationBoundary.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -408,7 +409,7 @@ export function ArkmePersistentSidebar({
     aria-hidden
   />
 
-  return <aside
+  return <SocialAccessPresentationBoundary><aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
@@ -498,7 +499,7 @@ export function ArkmePersistentSidebar({
     {directoryVisible && (contactsMode
       ? <div aria-hidden style={{ flex: '0 0 3px', width: 3 }} />
       : sidebarResizeHandle)}
-  </aside>
+  </aside></SocialAccessPresentationBoundary>
 }
 
 export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'>
@@ -528,7 +529,7 @@ export function ArkmePersistentWorkspace({
   useLayoutEffect(() => {
     arkmeContactsTab.activateAccount(contactsAccountKey)
   }, [contactsAccountKey])
-  return <main
+  return <SocialAccessPresentationBoundary><main
     data-arkme-owned="persistent-workspace"
     data-arkme-workspace
     data-arkme-notification-activation-revision={ui.notificationActivationRevision ?? 0}
@@ -599,7 +600,7 @@ export function ArkmePersistentWorkspace({
         />}
       />
     </div>}
-  </main>
+  </main></SocialAccessPresentationBoundary>
 }
 
 export type ArkmePersistentDetailsProps = PropsRuntime<'details'> & { closeDetails(): void }

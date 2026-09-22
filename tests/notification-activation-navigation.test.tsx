@@ -9,6 +9,7 @@ const testState = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
   useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))
 
 vi.mock('../src/client/api.js', () => ({

@@ -239,4 +239,5 @@ it('shows single-note preparation feedback outside selection mode and disables d
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
   useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))
