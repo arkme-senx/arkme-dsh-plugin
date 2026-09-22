@@ -172,6 +172,50 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await page.getByText(`${reply} 已修改`, { exact: true }).waitFor()
       expect(await page.getByRole('heading', { name: '团队成员', exact: true }).count()).toBe(0)
       expect(upstreamRequests.some(path => path.endsWith('/messages/send'))).toBe(true)
+
+      // A second visitor has their own empty conversation, never this history.
+      const otherConversation = (await teamCall(users.stranger, 'conversations/open', { public_ref: channel.public_ref })).conversation
+      expect(otherConversation.conversation_uid).not.toBe(uid)
+      expect((await teamCall(users.stranger, 'conversations/timeline/page', { conversation_uid: otherConversation.conversation_uid, side: 'external' })).messages).toEqual([])
+      expect((await teamCall(users.stranger, 'conversations/list', { side: 'external' })).items).toEqual([])
+
+      // Rotation revokes entry by old link, not an existing conversation.
+      const oldRef = channel.public_ref
+      channel = await teamCall(users.owner, 'message-channel/configure', { team_id: team.team_id, expected_revision: channel.revision, enabled: true, rotate_link: true })
+      expect((await teamCall(users.stranger, 'conversations/open', { public_ref: oldRef }, true)).data.reason).toBe('not_accessible')
+      const beforePause = await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })
+      channel = await teamCall(users.owner, 'message-channel/configure', { team_id: team.team_id, expected_revision: channel.revision, enabled: false })
+      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
+      await panel.getByText('当前通道暂停接收新消息', { exact: true }).waitFor()
+      const rejected = { ...command, client_message_uid: randomUUID(), content: { text_content: 'must not publish', template_kind: 1 } }
+      expect((await teamCall(users.visitor, 'conversations/messages/send', rejected, true)).data.reason).toBe('channel_paused')
+      expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).conversation.last_seq).toBe(beforePause.conversation.last_seq)
+      channel = await teamCall(users.owner, 'message-channel/configure', { team_id: team.team_id, expected_revision: channel.revision, enabled: true })
+
+      expect((await teamCall(users.otherMember, 'conversations/block', { conversation_uid: uid, blocked: true }, true)).data.reason).toBe('not_accessible')
+      await teamCall(users.owner, 'conversations/block', { conversation_uid: uid, blocked: true })
+      expect((await teamCall(users.visitor, 'conversations/messages/send', { ...rejected, client_message_uid: randomUUID() }, true)).data.reason).toBe('channel_paused')
+      expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).conversation.last_seq).toBe(beforePause.conversation.last_seq)
+      await teamCall(users.owner, 'conversations/block', { conversation_uid: uid, blocked: false })
+
+      // A former visitor may become a member; retain separate composers even
+      // though both views point to the same underlying conversation.
+      await panel.getByRole('textbox', { name: '团队消息内容' }).fill('咨询侧未发送草稿')
+      const application = await teamCall(users.visitor, 'join-requests/create', { team_id: team.team_id, request_uid: randomUUID() })
+      await teamCall(users.owner, 'join-requests/decide', { team_id: team.team_id, user_id: users.visitor, revision: application.revision, approve: true })
+      expect((await teamCall(users.visitor, 'conversations/open', { public_ref: channel.public_ref })).open_inbox).toBe(true)
+      await panel.getByRole('button', { name: '团队收件箱', exact: true }).click()
+      await panel.getByRole('navigation', { name: '团队会话' }).getByRole('button', { name: /验收-visitor/ }).click()
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe('')
+      await panel.getByRole('textbox', { name: '团队消息内容' }).fill('团队侧未发送草稿')
+      await panel.getByRole('button', { name: '我的咨询', exact: true }).click()
+      await panel.getByRole('navigation', { name: '团队会话' }).getByRole('button', { name: /即我团队验收/ }).click()
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe('咨询侧未发送草稿')
+      await teamCall(users.visitor, 'conversations/messages/withdraw', { message_uid: message.message_uid, side: 'external' })
+      const withdrawn = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === message.message_uid)
+      expect(withdrawn.state).toBe('withdrawn'); expect(withdrawn.record).toBeUndefined()
+      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
+      await panel.getByText('这条消息已撤回', { exact: true }).waitFor()
     } catch (error) {
       failures.push(error)
       if (page && process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png` }).catch(() => {})

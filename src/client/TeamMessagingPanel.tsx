@@ -68,6 +68,12 @@ function TeamMessagingPanel({ accountKey, intent, onClose }: { accountKey: strin
   const joinUid = useRef(crypto.randomUUID()), createUid = useRef(crypto.randomUUID())
   const controller = useRef(new AbortController()), listGeneration = useRef(0), dialog = useRef<HTMLDivElement>(null)
   const listSide = useRef(side); listSide.current = side
+  const selectSide = useCallback((next: 'team' | 'external') => {
+    if (listSide.current === next) return
+    listSide.current = next
+    ++listGeneration.current
+    setSide(next); setPage({ items: [], hasMore: false }); setSelected(undefined); setSettings(undefined)
+  }, [])
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; dialog.current?.focus(); return () => { controller.current.abort(); previous?.focus() } }, [])
   const refreshTeams = useCallback(async () => {
     const result = await callArkme<ArkmeTeam[]>('team.app.teams', {}, controller.current.signal)
@@ -87,9 +93,9 @@ function TeamMessagingPanel({ accountKey, intent, onClose }: { accountKey: strin
   const open = useCallback(async (ref: string) => {
     const data = await callArkme<TeamOpen>('team.app.open', { publicRef: ref }, controller.current.signal)
     if (controller.current.signal.aborted) return
-    if (data.openInbox) { setSide('team'); setSettings(data.channel.teamRef); setSelected(undefined) }
-    else if (data.conversation) { setSide('external'); setSelected(data.conversation); setSettings(undefined) }
-  }, [])
+    if (data.openInbox) { selectSide('team'); setSettings(data.channel.teamRef); setSelected(undefined) }
+    else if (data.conversation) { selectSide('external'); setSelected(data.conversation); setSettings(undefined) }
+  }, [selectSide])
   useEffect(() => { void refresh(); void refreshTeams().catch(e => { if (!controller.current.signal.aborted) setError(errorText(e)) }) }, [side, refresh, refreshTeams])
   useEffect(() => {
     const run = async () => {
@@ -124,7 +130,7 @@ function TeamMessagingPanel({ accountKey, intent, onClose }: { accountKey: strin
       <header className="team-panel-header"><strong>团队消息</strong><span>团队共同接待，每位用户独立会话</span><button onClick={onClose} aria-label="关闭团队消息">关闭</button></header>
       <div className="team-panel-layout">
         <aside className="team-inbox">
-          <div className="team-tabs"><button aria-pressed={side === 'team'} onClick={() => { setSide('team') }}>团队收件箱</button><button aria-pressed={side === 'external'} onClick={() => { setSide('external') }}>我的咨询</button></div>
+          <div className="team-tabs"><button aria-pressed={side === 'team'} onClick={() => { selectSide('team') }}>团队收件箱</button><button aria-pressed={side === 'external'} onClick={() => { selectSide('external') }}>我的咨询</button></div>
           <div className="team-list-actions"><button disabled={loading} onClick={() => { void refresh() }}>刷新</button><select aria-label="团队通道与成员管理" value="" onChange={e => { if (e.target.value) { setSettings(e.target.value); setSelected(undefined) } }}><option value="">管理我的团队…</option>{teams.map(t => <option key={t.jotmoId} value={t.teamRef}>{t.name}</option>)}</select></div>
           <nav aria-label="团队会话">{page.items.map(c => <button key={c.key} className="team-conversation-row" aria-current={selected?.key === c.key} onClick={() => { setSelected(c); setSettings(undefined) }}>
             <TeamAvatar identity={c.side === 'team' && c.visitor ? c.visitor : { nickname: c.channel.name, ...(c.channel.imageRef ? { imageRef: c.channel.imageRef } : {}) }} />

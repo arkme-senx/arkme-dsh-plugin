@@ -60,7 +60,9 @@ export class TeamAppService {
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
     const v = obj(raw), uid = str(v.conversation_uid), side: TeamSide = v.side === 'team' ? 'team' : 'external'
     if (!uid) throw invalid()
-    return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(uid, actor),
+    // A former visitor can also be a current member. Each side owns a different
+    // composer and accepted send identity, even when the conversation is shared.
+    return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at) }
