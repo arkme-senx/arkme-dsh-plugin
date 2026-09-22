@@ -6,15 +6,16 @@ import {
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
-  ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
+  ArkmeEnvironment, ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeUi } from './ui-controller.js'
+import { createSelfTopic } from './create-self-topic.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,
   canCreateChildTopicAtParentLevel,
-  expandAncestorsForReveal, expandTopicFromRowClick, mergeCreatedTopicSource,
+  expandAncestorsForReveal, expandTopicFromRowClick,
   toggleTopicCollapsedState,
 } from './ArkmeVirtualWorkspace.js'
 import {
@@ -22,7 +23,7 @@ import {
   type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import {
-  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -305,7 +306,7 @@ export function ArkmeTopicDirectoryPopover({
     [cardMode, directorySources, sourceSort],
   )
   const rows = useMemo(
-    () => flattenVisibleArkmeSourceTree(buildArkmeSourceTree(filteredSources), collapsedSourceRefs),
+    () => flattenVisibleArkmeSourceTree(sortArkmeSourceTree(buildArkmeSourceTree(filteredSources), 'custom'), collapsedSourceRefs),
     [collapsedSourceRefs, filteredSources],
   )
 
@@ -354,18 +355,14 @@ export function ArkmeTopicDirectoryPopover({
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
-      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+      const result = await createSelfTopic({
         title,
         contextSourceRef: contextSource.sourceRef,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
-      })
+      }, directory)
       if (createRequestRef.current !== request) return
-      const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
+      const nextSources = directory.getConfirmedSnapshot().sources
       sourcesRef.current = nextSources
-      directory.upsert(result.source)
-      // A successful creation does not prove normal-directory membership: an
-      // ancestor may have been archived before this reply arrived.
-      directory.invalidate()
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)

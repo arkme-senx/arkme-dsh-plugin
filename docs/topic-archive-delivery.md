@@ -9,7 +9,7 @@
 | Tools | 列表、状态读取；独立标记写入使用 explicit-user-write | archive-runtime.test.ts 使用官方 Session / Inbox / ToolRuntime 验证发现、授权后写入及生命周期；打包端到端测试同时验证真实会话可见和读取 |
 | SDK | listArchives/getArchiveStates/setArchiveState，能力发现、AbortSignal | 公开 SDK 单测通过；仓外 Consumer 只导入打包后的公开入口，严格类型编译及 Node 执行通过，包含不支持能力和 AbortSignal |
 
-恢复父主题仅撤销该主题自身标记，子主题独立标记保留。仅继承的条目可单独归档或查看来源，不自动恢复祖先。隐私标题不从 sourceRef 的历史名称补齐；内容按原权限读取。复用 settings.section、Tools 正式注册与既有 Host API；不增加 DSH 私有扩展点。
+恢复父主题仅撤销该主题自身标记，子主题独立标记保留。已归档列表直接显示“随「具体主题名」一起归档”；仅继承的条目没有单独归档或查看来源入口，也不自动恢复祖先。隐私标题不从 sourceRef 的历史名称补齐；内容按原权限读取。复用 settings.section、Tools 正式注册与既有 Host API；不增加 DSH 私有扩展点。以下各轮记录保留历史验收过程，最终行为和证据以末尾记录为准。
 
 ## 可复现验证
 
@@ -181,3 +181,13 @@ review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4
 验证：聚焦 47 项、全量 8,712 项通过（13 项原条件跳过），typecheck/build 通过。不可变包 SHA-256 `c8ec7b13ba91b24d8c6ff08e612f8a96dbd0764f6ceb3b718ce7507b6dde2f14`；打包清单及 lib 产物检查无临时凭据或本机路径。官方 CLI 安装到全新含空格路径 Profile 后，官方 DSH `dsh-v0.1.5-rc.2` / `fb2c4b9` 中 Chrome → 打包插件 → Record/Mongo 场景通过。除本次来源展示，还保留了连续归档、hover、目录/内容 DOM 不卸载、消息内容不重刷、失败恢复、独立父子归档、SDK/真实会话 Tool 验收。已核验 `archive-simple-plugin.png`。
 
 日志：`archive-simple-plugin-full-results.json`、`archive-simple-plugin-typecheck.log`、`archive-simple-plugin-build.log`、`archive-simple-plugin-install.log`、`archive-simple-plugin-consumer.log`、`archive-simple-plugin-e2e.log`。本轮仍使用上述任务分支/基线，没有更新用户常驻服务、真实 Profile、DSH 源码、根 README、版本或锁文件。macOS Chrome 运行通过，不据此推断其他操作系统完成实机验收。
+
+## 2026-09-22 PR 前整合 dev
+
+合入用户指定的最新 dev `114ad18a0852e77b0ff69b1b08ae6169e8e56c4a`，保留其新主题置顶、统一创建 owner 和目录软更新。归档继续由账号目录 owner 投影隐藏，创建回执不能在展示或持久化层重新拼回已归档条目。部分创建成功也后台核对目录归属，不重复创建；已有独立子主题归档、连续归档和失败回滚语义不变。
+
+冲突文件为主题目录组件和共享缓存测试，双方测试均保留。新增创建与父主题归档并发的成功/部分成功场景；创建回执早于或晚于目录读取、后台读取后警告仍可见且不影响继续发送均通过。聚焦 101 项、会话目录 335 项、最终全量 8,730 项通过，13 项沿用原条件跳过；typecheck/build 通过。最终测试日志为 `archive-pr-integration-full-final-results.json`、`archive-pr-integration-typecheck.log`、`archive-pr-integration-build-final.log`。
+
+联调和部署需配套 Record 分支 `codex/c20260917-topic-archive-plan` 的 `ad6025c`（含归档来源摘要及前序归档专用通知）。旧后端无法提供新客户端所需的来源摘要，不能仅升级客户端后据此判断列表异常。此处不引入兼容过渡查询或新配置。
+
+最终运行产物 SHA-256 `c6a3326e7fa129754fa7948b0c2cd40df4675c3e4e177d1801074fe9adca131a`，打包清单无额外临时文件，运行代码无本机绝对路径。官方 CLI 安装到全新临时 Profile 后，仓外 SDK Consumer 通过；未修改的官方 DSH `dsh-v0.1.5-rc.2` 中真实 Chrome → Host → Record/Mongo 链路 47 秒通过，包含实际 Session Tool。已检查来源直接展示的最终截图。日志为 `archive-pr-integration-install.log`、`archive-pr-integration-consumer.log`、`archive-pr-integration-e2e.log`，截图为 `archive-pr-integration.png`。用户常驻实例、DSH tracked 源码、根 README、版本和锁文件保持不变。

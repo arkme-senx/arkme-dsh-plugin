@@ -77,6 +77,35 @@ describe('shared topic directory cache', () => {
     expect(cache.getSnapshot().sources).toEqual([])
     cache.dispose()
   })
+  it('coalesces background mutation refreshes after an older read, even without a mounted menu', async () => {
+    const f = fixture({}), cache = f.make(), old = deferred<ArkmeSourceList>()
+    f.load.mockReturnValueOnce(old.promise)
+    const first = cache.ensure(true)
+    const refresh1 = cache.refreshAfterMutation(), refresh2 = cache.refreshAfterMutation()
+    cache.upsert(source('new', 'topic'))
+    old.resolve(page())
+    await Promise.all([first, refresh1, refresh2])
+    expect(f.load).toHaveBeenCalledTimes(2)
+    expect(cache.getSnapshot().sources).toEqual(base)
+    cache.dispose()
+  })
+  it('clears cached rows on an explicit privacy error during background revalidation', async () => {
+    const f = fixture({}), cache = f.make()
+    f.load.mockRejectedValue(Object.assign(Error('locked'), { body: { code: 'topic-privacy-locked' } }))
+    await cache.refreshAfterMutation()
+    expect(cache.getSnapshot()).toMatchObject({ sources: [], complete: false, error: 'locked' })
+  })
+  it('keeps all confirmed sibling ranks against a directory read started before creation', async () => {
+    const f = fixture({}), cache = f.make(), pending = deferred<ArkmeSourceList>()
+    f.load.mockReturnValue(pending.promise)
+    const read = cache.ensure(true)
+    const created = { ...source('new-topic', 'topic', 0), siblingOrder: 1024 }
+    const reordered = base.map((item, index) => ({ ...item, siblingOrder: (index + 2) * 1024 }))
+    cache.upsert(created, reordered)
+    pending.resolve(page()); await read
+    expect(cache.getSnapshot().sources).toEqual([...reordered, created])
+    expect(f.getSaved()?.sources.send_to_self).toEqual([...reordered, created])
+  })
   it('deduplicates initial reads and keeps the flight across menu unmounts', async () => {
     const f = fixture(), cache = f.make(), pending = deferred<ArkmeSourceList>()
     f.load.mockReturnValue(pending.promise)
