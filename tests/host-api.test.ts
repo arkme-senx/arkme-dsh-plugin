@@ -897,7 +897,7 @@ describe('conversation member Host API dispatch', () => {
 })
 
 describe('message snapshot Host API dispatch', () => {
-  it('forwards only the opaque source/action identity and request lifecycle signal', async () => {
+  it('forwards only the opaque source/action identity, request lifecycle signal and default attachment option', async () => {
     const service = fakeService()
     const signal = new AbortController().signal
     await dispatchArkmeHostOperation(service as never, 'source.message-snapshot.detail', {
@@ -910,7 +910,29 @@ describe('message snapshot Host API dispatch', () => {
     expect(service.messageSnapshotDetail).toHaveBeenCalledWith(
       'source-ref',
       'arkme-message-action-v1.payload.signature',
-      { signal },
+      { signal, includeAttachments: false },
+    )
+  })
+
+  it.each([
+    { input: true, expected: true },
+    { input: false, expected: false },
+    { input: 'true', expected: false },
+    { input: 1, expected: false },
+  ])('enables attachments only for explicit boolean true (input: $input)', async ({ input, expected }) => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.message-snapshot.detail', {
+      sourceRef: 'source-ref',
+      actionRef: 'arkme-message-action-v1.payload.signature',
+      includeAttachments: input,
+      recordUid: 'must-not-forward',
+      userId: 999,
+    })
+
+    expect(service.messageSnapshotDetail).toHaveBeenCalledWith(
+      'source-ref',
+      'arkme-message-action-v1.payload.signature',
+      { includeAttachments: expected },
     )
   })
 })
