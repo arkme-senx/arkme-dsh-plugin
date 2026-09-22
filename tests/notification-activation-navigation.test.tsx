@@ -132,53 +132,21 @@ describe('system notification navigation activation', () => {
     expect(onActivateSurface).toHaveBeenCalledTimes(2)
   })
 
-  it('waits for an in-flight author navigation and reasserts the notification target before commit', async () => {
-    const authorSource: ArkmeSourceItem = {
-      sourceRef: 'author-source-ref', sourceKey: 'author-source-key', kind: 'private_chat',
-      displayName: '作者', activeAtMillis: 101, unreadCount: 0, peerUserId: 11,
-    }
-    let resolveAuthor: ((value: { source: ArkmeSourceItem }) => void) | undefined
-    const authorOpening = new Promise<{ source: ArkmeSourceItem }>(resolve => { resolveAuthor = resolve })
-    testState.callArkme.mockImplementation(async (operation: string) => {
-    if (operation === 'provider.instance') return { instanceId: 'notification-navigation-instance' }
-      if (operation === 'sources.list') return { directory: 'root', items: [targetSource], hasMore: false }
-      if (operation === 'bots.private-chat.directory') return { items: [] }
-      if (operation === 'chat.official-author.private.open') return await authorOpening
-      if (operation === 'chat.official-author.profile' || operation === 'arko.profile') {
-        throw new Error('not needed by this navigation test')
-      }
-      return {}
-    })
-
-    await act(async () => {
-      renderer = create(<ArkmeNavigation />)
-      await Promise.resolve()
-    })
+  it('keeps ordinary notification navigation independent of the official Team entry', async () => {
+    const opened: unknown[] = []
+    const { subscribeTeamMessageOpen } = await import('../src/client/team-messaging-events.js')
+    const unsubscribe = subscribeTeamMessageOpen(intent => opened.push(intent))
+    await act(async () => { renderer = create(<ArkmeNavigation />); await Promise.resolve() })
     await flushEffects()
-    const authorButton = renderer.root.findAllByType('button')
-      .find(button => button.props['aria-label'] === '联系作者')
-    expect(authorButton).toBeDefined()
-
-    act(() => { authorButton?.props.onClick() })
+    const teamButton = renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '联系团队')
+    expect(teamButton).toBeDefined()
+    act(() => { teamButton?.props.onClick() })
+    expect(opened).toEqual([{ kind: 'official' }])
+    expect(testState.callArkme).not.toHaveBeenCalledWith('chat.official-author.private.open')
+    act(() => { arkmeNotificationActivation.publish('activation-team-independent', targetSource) })
     await flushEffects()
-    expect(testState.callArkme).toHaveBeenCalledWith('chat.official-author.private.open')
-
-    act(() => { arkmeNotificationActivation.publish('activation-author-race', targetSource) })
-    await flushEffects()
-    expect(arkmeNotificationActivation.getSnapshot()).toMatchObject({
-      activationId: 'activation-author-race', navigationApplied: false,
-    })
-
-    await act(async () => {
-      resolveAuthor?.({ source: authorSource })
-      await authorOpening
-      await Promise.resolve()
-    })
-    await flushEffects()
-
     expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: targetSource })
-    expect(arkmeNotificationActivation.getSnapshot()).toMatchObject({
-      activationId: 'activation-author-race', navigationApplied: true, surfaceCommitted: false,
-    })
+    expect(arkmeNotificationActivation.getSnapshot()).toMatchObject({ activationId: 'activation-team-independent', navigationApplied: true })
+    unsubscribe()
   })
 })

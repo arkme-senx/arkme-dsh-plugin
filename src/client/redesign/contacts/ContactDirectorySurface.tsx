@@ -149,7 +149,7 @@ export function ContactDirectoryContent({
 }
 
 const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, signal) => await callArkme<ArkmeDirectoryPage>(
-  'directory.list',
+  section === 'teams' ? 'team.app.directory' : 'directory.list',
   {
     section,
     limit: options.limit,

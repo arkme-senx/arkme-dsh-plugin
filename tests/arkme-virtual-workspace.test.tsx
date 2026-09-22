@@ -114,13 +114,14 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('authenticated && <ArkmeNotificationPermissionBanner />')
   })
 
-  it('hides the contact-author guide when the ordinary directory already contains the author chat', () => {
+  it('retains historical author chats while always offering the independent official Team channel', () => {
     const author = { sourceRef: 'author-chat', kind: 'private_chat' as const, peerUserId: 11, displayName: '作者', activeAtMillis: 1, unreadCount: 0 }
     const peer = { sourceRef: 'peer-chat', kind: 'private_chat' as const, peerUserId: 12, displayName: '朋友', activeAtMillis: 2, unreadCount: 0 }
     expect(arkmeOfficialAuthorSource([peer, author], 11)).toBe(author)
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
-    expect(workspaceSource).toContain("officialAuthorSource === undefined && <ArkmeOfficialAuthorRow")
-    expect(workspaceSource).toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
+    expect(workspaceSource).toContain("authenticated && <ArkmeOfficialAuthorRow")
+    expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
+    expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
   })
 

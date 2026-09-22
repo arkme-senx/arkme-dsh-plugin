@@ -1,6 +1,8 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
 import { isSocialSource, useSocialAccess } from './social-access-store.js'
+import { TeamMessagingEntry } from './TeamMessagingPanel.js'
+import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -676,12 +678,12 @@ export function ArkmeOfficialAuthorRow({
           label={tr("{v0}的头像", { v0: profile.displayName })}
           {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
         />}
-    title={tr("联系作者")}
+    title={tr("联系团队")}
     titleBadge={<ArkmeTopicTagBadge label={tr("官方")} />}
-    preview={busy ? '正在打开私聊…' : OFFICIAL_AUTHOR_PREVIEW}
+    preview={busy ? '正在打开团队通道…' : '向即我团队反馈问题'}
     selected={false}
     disabled={busy}
-    ariaLabel={tr("联系作者")}
+    ariaLabel={tr("联系团队")}
     homeTourTarget="official-author"
     onClick={onClick}
   />
@@ -1042,8 +1044,6 @@ export function ArkmeNavigation({
     action: 'pin' | 'dismiss'
   }>()
   const [directoryActionFeedback, setDirectoryActionFeedback] = useState<string>()
-  const [officialAuthorOpening, setOfficialAuthorOpening] = useState(false)
-  const [officialAuthorProfile, setOfficialAuthorProfile] = useState<ArkmeOfficialAuthorProfile>()
   const [conversationVisibility, setConversationVisibility] = useState<ConversationVisibilityOverlay>(
     emptyConversationVisibilityOverlay,
   )
@@ -1156,10 +1156,7 @@ export function ArkmeNavigation({
   ]), [botChatDirectory])
   const conversationVisibilityActivityRef = useRef(conversationVisibilityActivity)
   conversationVisibilityActivityRef.current = conversationVisibilityActivity
-  const officialAuthorSource = useMemo(
-    () => arkmeOfficialAuthorSource(rootSources, officialAuthorProfile?.userId ?? OFFICIAL_AUTHOR_USER_ID),
-    [officialAuthorProfile?.userId, rootSources],
-  )
+
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     if (userId === undefined || chatDirectory.projection === undefined) return
@@ -1484,17 +1481,6 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.environment, auth?.userId, bots, chatRevision, directory, rootSources, chatDirectory.projection])
   useEffect(() => {
-    if (!authenticated || !socialAllowed) {
-      setOfficialAuthorProfile(undefined)
-      return
-    }
-    const controller = new AbortController()
-    void callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile', undefined, controller.signal)
-      .then(profile => { if (!controller.signal.aborted) setOfficialAuthorProfile(profile) })
-      .catch(() => { if (!controller.signal.aborted) setOfficialAuthorProfile(undefined) })
-    return () => { controller.abort() }
-  }, [authenticated, auth?.userId, socialAllowed])
-  useEffect(() => {
     if (!active) return
     if (ui.searchTarget === undefined) return
     setGlobalSearchOpen(true)
@@ -1605,7 +1591,6 @@ export function ArkmeNavigation({
       && !globalSearchOpen
       && topicCreateParent === undefined
       && !quickAddBlockingOpen
-      && !officialAuthorOpening
       && directoryContextMenu === undefined
     if (!blockersCleared) return
     if (selected === undefined || arkmeSourceIdentityKey(selected) !== targetIdentity) {
@@ -1624,7 +1609,7 @@ export function ArkmeNavigation({
   }, [
     activeDirectoryEntryId, authenticated, directory, directoryContextMenu, globalSearchOpen,
     notificationActivation.navigationApplied, notificationActivation.revision, notificationActivation.source,
-    officialAuthorOpening, onActivateSurface, persistCache, quickAddBlockingOpen, sources, topicCreateParent, ui.mode, ui.selectedSource,
+    onActivateSurface, persistCache, quickAddBlockingOpen, sources, topicCreateParent, ui.mode, ui.selectedSource,
   ])
   useEffect(() => {
     if (!active || !authenticated || directory !== 'send_to_self' || ui.mode !== 'source') return
@@ -1969,43 +1954,8 @@ export function ArkmeNavigation({
   }
 
   const openOfficialAuthor = async (): Promise<void> => {
-    if (!authenticated) {
-      showLogin()
-      return
-    }
-    if (officialAuthorOpening) return
-    setOfficialAuthorOpening(true)
-    setError('')
-    try {
-      const sharedSources = arkmeChatDirectory.getSnapshot().sources
-      const currentSources = sharedSources.length > 0 ? sharedSources : sources
-      const existing = arkmeOfficialAuthorSource(
-        currentSources,
-        officialAuthorProfile?.userId ?? OFFICIAL_AUTHOR_USER_ID,
-      )
-      if (existing !== undefined) {
-        activateNativeEntry()
-        setDirectory('root')
-        arkmeUi.selectSource(existing)
-        persistCache({ directory: 'root', sources: { root: currentSources }, selectedSourceRef: existing.sourceRef })
-        onActivateSurface?.()
-        return
-      }
-      const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.official-author.private.open')
-      const source = result.source
-      activateNativeEntry()
-      const nextSources = arkmePrependSourceByIdentity(source, currentSources)
-      setDirectory('root')
-      setSources(nextSources)
-      arkmeChatDirectory.publish(nextSources)
-      arkmeUi.selectSource(source)
-      persistCache({ directory: 'root', sources: { root: nextSources }, selectedSourceRef: source.sourceRef })
-      onActivateSurface?.()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '暂时无法联系作者，请稍后重试')
-    } finally {
-      setOfficialAuthorOpening(false)
-    }
+    if (!authenticated) { showLogin(); return }
+    openTeamMessages({ kind: 'official' })
   }
 
   const createdQuickAddSource = async (source: ArkmeSourceItem): Promise<void> => {
@@ -2214,11 +2164,10 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
           </span>
         </button>}
-        {authenticated && socialAllowed && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
-          {...(officialAuthorProfile === undefined ? {} : { profile: officialAuthorProfile })}
-          busy={officialAuthorOpening}
+        {authenticated && socialAllowed && <ArkmeOfficialAuthorRow
           onClick={() => { void openOfficialAuthor() }}
         />}
+        {authenticated && currentAccountKey && <TeamMessagingEntry accountKey={currentAccountKey} />}
         {showArkoInSearch && <ArkmeArkoRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
