@@ -265,7 +265,7 @@ export class SearchService {
   }, userId: number): Promise<{ search_scope: string; source_kinds: number[]; source_uid?: string }> {
     if (options.sourceRef !== undefined) {
       if (this.source === undefined) throw new ArkmePluginError('search-source-unavailable', '会话搜索暂不可用', true)
-      const source = await this.source.openSourceRef(options.sourceRef, userId)
+      const source = await this.source.openAccessibleSourceRef(options.sourceRef, userId)
       if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
         throw new ArkmePluginError('search-source-invalid', '请选择私聊或群聊搜索', false)
       }
@@ -287,7 +287,7 @@ export class SearchService {
     if (this.source === undefined || (result.items.length === 0 && result.sourceAggregates.length === 0)) return result
     if (sourceRef !== undefined) {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const targetSource = await this.source.sourceItem(source)
       return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
         ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }

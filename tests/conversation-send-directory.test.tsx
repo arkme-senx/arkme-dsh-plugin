@@ -8436,3 +8436,9 @@ describe('conversation send directory projection', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('相关快记引用已过期，请刷新后重试')
   })
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

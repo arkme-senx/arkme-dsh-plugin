@@ -9,10 +9,10 @@ function fixture() {
   const post = vi.fn(async (_path, body) => ({ moved_count: body.items.length, projection_refresh_pending: true,
     items: body.items.map(item => ({ record_uid: item.record_uid, target_status: body.target_topic_uid ? 1 : undefined,
       target_is_primary: Boolean(body.target_topic_uid), source_status: item.source_topic_uid ? 2 : undefined, idempotent_replay: false })) }))
-  const runtime = { requireSession: vi.fn(async () => session), stateStore: { uniqueCode: async () => key }, authenticatedPost: post }
+  const runtime = { requireSession: vi.fn(async () => session), stateStore: { uniqueCode: async () => key }, authenticatedPost: post , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
   const source = { openSourceRef: vi.fn(async (ref: string) => ref === 'target'
     ? { userId: 42, kind: 'topic', ownerRef: 'target-topic' }
-    : { userId: 42, kind: 'send_to_self', ownerRef: 'self' }), invalidateSourceListCache: vi.fn() }
+    : { userId: 42, kind: 'send_to_self', ownerRef: 'self' }), invalidateSourceListCache: vi.fn() , get openAccessibleSourceRef() { return this.openSourceRef }}
   const service = new RecordTopicAssignmentService(runtime as never, source as never)
   return { service, post, runtime, source, session }
 }

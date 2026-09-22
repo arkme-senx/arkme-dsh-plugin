@@ -1,6 +1,7 @@
 import type { ArkmeBackgroundSoundPreference, ArkmeIdMutationResult, ArkmeProviderCapabilities, ArkmeUserProfileSnapshot } from '../../types.js'
 
 export interface ArkmeProfileToolPort {
+  socialAccessStatus(): Promise<import('../../types.js').ArkmeSocialAccessSnapshot>
   providerCapabilities(): ArkmeProviderCapabilities
   cachedProfile(): Promise<ArkmeUserProfileSnapshot>
   refreshProfile(): Promise<ArkmeUserProfileSnapshot>

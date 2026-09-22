@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -195,3 +197,9 @@ it('does not switch the operator after peer resolution crosses an account transi
   await expect(transport.sdk!.banPrivateChatUser(source.sourceRef)).rejects.toMatchObject({ body: { code: 'login-context-changed' } })
   expect(requests.some(item => item.path.includes('/user-ban/'))).toBe(false)
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

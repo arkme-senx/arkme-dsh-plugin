@@ -133,7 +133,7 @@ export class InterwovenService {
       || (options.expectedVersion !== undefined && !/^[a-f0-9]{64}$/.test(options.expectedVersion))) {
       throw new ArkmePluginError('interaction-input-invalid', '互动查询参数无效', false, 400)
     }
-    const source = options.sourceRef === undefined ? undefined : await this.source.openSourceRef(options.sourceRef, session.userId)
+    const source = options.sourceRef === undefined ? undefined : await this.source.openAccessibleSourceRef(options.sourceRef, session.userId)
     if (source !== undefined && source.kind !== 'private_chat') throw new ArkmePluginError('interaction-source-invalid', '群互动摘要需要普通私聊联系人', false, 400)
     let data: Record<string, unknown>
     try {
@@ -204,7 +204,7 @@ export class InterwovenService {
     signal?: AbortSignal,
   ): Promise<ArkmeInterwovenBootstrap> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
     }
@@ -381,7 +381,7 @@ export class InterwovenService {
     signal?: AbortSignal,
   ): Promise<ArkmeInterwovenDetail> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
     }
@@ -451,7 +451,7 @@ export class InterwovenService {
   ): Promise<ArkmeRelatedQuickNoteSourceLocator> {
     const session = await this.runtime.requireSession()
     const normalizedSourceRef = sourceRef.trim()
-    const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(normalizedSourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
     }

@@ -1,3 +1,4 @@
+import { useSocialAccess } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
@@ -90,6 +91,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   /** Hover entry point: the trigger and the menu stay one hover target. */
   hoverAnchor?: HTMLElement | undefined
 }) {
+  const socialAllowed = useSocialAccess()
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
@@ -98,10 +100,10 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
         onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
-        { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
-        { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
+        socialAllowed && { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
+        socialAllowed && { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
-        onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
+        socialAllowed && onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
         error ? { id: 'error', label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} } : false,
       ]}
     />
@@ -124,12 +126,16 @@ export function ArkmeQuickAddButton({
   onBlockingOverlayChange?(open: boolean): void
 }) {
   useArkmeLocale()
+  const socialAllowed = useSocialAccess()
   const [menuMode, setMenuMode] = useState<'hover' | 'pinned'>()
   const menuOpen = menuMode !== undefined
   const closeMenu = () => setMenuMode(undefined)
   const [menuError, setMenuError] = useState('')
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
+  useEffect(() => {
+    if (!socialAllowed && (dialogKind === 'call' || dialogKind === 'group')) { setDialogKind(undefined); setDialogBusy(false) }
+  }, [socialAllowed, dialogKind])
   const anchorRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const restoreCallFocus = useRef(false)
@@ -178,7 +184,9 @@ export function ArkmeQuickAddButton({
       open={menuOpen} onClose={closeMenu}
       hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
       anchor={<button data-arkme-feedback="neutral"
-        ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'} title={tr("添加")}
+        ref={triggerRef} type="button" aria-label={socialAllowed
+          ? onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'
+          : onNewDshSession ? '新建 DSH 会话或添加 Bot' : '添加 Bot'} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
         // A click pins an already-hovered menu as well as opening a closed one.
         // Removing hoverAnchor also cancels any pending hover-close timer.
@@ -201,12 +209,12 @@ export function ArkmeQuickAddButton({
     />
   return <div ref={anchorRef} style={style.anchor}>
     {menu}
-    {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
+    {socialAllowed && dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
       pendingNotificationDismissRef.current = false
       restoreCallFocus.current = true
       setDialogKind(undefined)
     }} />}
-    {dialogKind === 'group' && <ArkmeGroupCreateDialog
+    {socialAllowed && dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
         pendingNotificationDismissRef.current = false
         setDialogBusy(false)

@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { createHmac } from 'node:crypto'
 import { once } from 'node:events'
 import { createServer } from 'node:http'

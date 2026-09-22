@@ -1269,6 +1269,9 @@ export class SourceService {
       this.selfDirectoryContexts.delete(session.userId)
       this.selfDirectoryContextReads.invalidate(key => key === String(session.userId))
     }
+    if (directory !== 'send_to_self' && (await this.runtime.socialAccess.status()).allowed !== true) {
+      return { directory, items: [], total: 0, hasMore: false }
+    }
     const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}:${options.firstPaint === true ? "first" : "full"}`
     this.pruneSourceListCache()
     const cached = this.sourceListCache.get(cacheKey)
@@ -1430,14 +1433,14 @@ export class SourceService {
   async listGroupSources(
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
     const page = await this.listSourcesUncached(session, 'root', options, limit, 2)
     return { ...page, items: page.items.filter(item => item.kind === 'group_chat') }
   }
 
   async countGroupSources(signal?: AbortSignal): Promise<number> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     let total = 0
     let cursor: Record<string, unknown> | undefined
     const seen = new Set<string>()
@@ -2095,6 +2098,23 @@ export class SourceService {
     } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-source-v1.${payload}.${signature}`
+  }
+
+  /** Resolve a user read/action boundary before using cached chat material. */
+  async openAccessibleSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload> {
+    const source = await this.openSourceRef(sourceRef, expectedUserId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return source
+    const access = await this.runtime.socialAccess.status()
+    if (access.allowed === true) return source
+    // Personal Bot direct sessions use the same Chat transport. The source owner,
+    // not a display label or caller-supplied Bot flag, confirms this exemption.
+    if (source.kind === 'private_chat') {
+      const session = await this.runtime.requireSession()
+      if (session.userId !== expectedUserId) throw new ArkmePluginError('account-scope-changed', '账号已切换，请重试', false, 409)
+      const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/detail', { chat_session_uid: source.ownerRef }, session)
+      if (objectValue(detail.session).is_personal_bot === true) return source
+    }
+    throw new ArkmePluginError(access.allowed === false ? 'PHONE_BINDING_REQUIRED' : 'SOCIAL_ACCESS_UNAVAILABLE', access.allowed === false ? '请先绑定手机号后再使用社交功能' : '暂时无法确认社交资格，请重试', access.allowed !== false, access.allowed === false ? 403 : 503)
   }
 
   async openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload> {

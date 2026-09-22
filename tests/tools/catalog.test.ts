@@ -29,6 +29,7 @@ describe('Arkme tool catalog', () => {
       'arkme_directory_list',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_social_access',
       'arkme_background_sound_status',
       'arkme_background_sound_disable',
       'arkme_id_set',

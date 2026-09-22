@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { describe, expect, it, vi } from 'vitest'
 import { CalendarService } from '../src/services/calendar-service.js'
 import { ArkmePluginError, ServiceRuntime } from '../src/services/service.js'
@@ -17,7 +19,7 @@ function fixture() {
     requireSession: vi.fn(async () => ({ userId: 42 })),
     authenticatedPost: vi.fn(),
     authenticatedCalendarPost: vi.fn(async () => ({ ...context, daily_data: [summary()] })),
-  }
+   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
   const source = {
     openSourceRef: vi.fn(async ref => ({ kind: ref === 'all' ? 'send_to_self' : ref === 'uncategorized' ? 'default_category'
       : ref === 'chat' ? 'private_chat' : 'topic', ownerRef: ref })),
@@ -25,7 +27,7 @@ function fixture() {
     searchTargetSource: vi.fn(async () => undefined),
     chatSourcesBySessionUids: vi.fn(async () => new Map()),
     hydrateDirectoryPage: vi.fn(async () => []),
-  }
+   get openAccessibleSourceRef() { return this.openSourceRef }}
   const privacy = { lockedRecordUids: vi.fn(async () => new Set()) }
   const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
   const record = { recordTimelineItemFromRaw: vi.fn(() => ({ textContent: '历史内容', senderAvatarUrl: 'historical-avatar' })) }

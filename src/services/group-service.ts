@@ -87,7 +87,7 @@ export class GroupService {
   ) {}
 
   async groupInvitePreview(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupInvitePreview> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持邀请群聊协作者', false)
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -110,7 +110,7 @@ export class GroupService {
     sourceRef: string,
     options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberCandidateList> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持向群聊添加成员', false)
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
@@ -293,7 +293,7 @@ export class GroupService {
     candidateRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ArkmeGroupMemberAddResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持向群聊添加成员', false)
     const refs = candidateRefs.map(value => value.trim())
@@ -401,7 +401,7 @@ export class GroupService {
     if (!UUID.test(clientMutationId)) {
       throw new ArkmePluginError('client-mutation-id-invalid', '群聊操作标识无效', false)
     }
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -436,7 +436,7 @@ export class GroupService {
     sourceRef: string,
     options: { activeOnly?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberList> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊成员', false)
@@ -503,7 +503,7 @@ export class GroupService {
   }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊设置', false)
@@ -548,7 +548,7 @@ export class GroupService {
     enabled: boolean,
     signal?: AbortSignal,
   ): Promise<ArkmeGroupNotificationResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持设置群聊消息免打扰', false)
@@ -563,7 +563,7 @@ export class GroupService {
   }
 
   async renameGroup(sourceRef: string, title: string, signal?: AbortSignal): Promise<ArkmeGroupProjectionResult> {
-    const session = await this.runtime.requireSession()
+    const session = await this.runtime.requireSocialSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const normalizedTitle = title.trim()
     if (source.kind !== 'group_chat') {

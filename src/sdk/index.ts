@@ -730,6 +730,11 @@ export class ArkmeSdk {
     return await this.call<ArkmeCallSummaryRetryResult>('calls.history.summary.retry', { callRef: normalized }, signal)
   }
 
+  async socialAccess(signal?: AbortSignal): Promise<import('../types.js').ArkmeSocialAccessSnapshot> {
+    if ((await this.capabilities(signal)).features.socialAccess !== true) throw new Error('当前 Provider 不支持社交资格查询')
+    return await this.call<import('../types.js').ArkmeSocialAccessSnapshot>('social.access', undefined, signal)
+  }
+
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {
     return await this.call<ArkmeUserProfileSnapshot>(
       options.refresh === true ? 'user.profile.refresh' : 'user.profile',
@@ -2295,3 +2300,5 @@ export async function callArkme<T>(
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
 
 export type { ArkmeDshInputOrigin } from '../types.js'
+
+export type { ArkmeSocialAccessSnapshot } from '../types.js'

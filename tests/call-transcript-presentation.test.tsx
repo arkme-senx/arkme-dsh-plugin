@@ -8,7 +8,7 @@ describe('call transcript identity and time', () => {
     const start = 1788949920000
     const runtime = {
       stateStore: { uniqueCode: async () => 'test-key' },
-      requireSession: async () => ({ userId: 42 }), requestScope: () => 'test',
+      requireSocialSession: async () => ({ userId: 42 }), requireSession: async () => ({ userId: 42 }), requestScope: () => 'test',
       authenticatedWebrtcPost: async () => ({
         caller_user_id: 42, callee_user_ids: [77], call_result: 'NormalEnd', start_time: start / 1000,
         accept_time: start / 1000, end_time: start / 1000 + 9, call_media_type: 0,

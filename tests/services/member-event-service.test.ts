@@ -20,9 +20,9 @@ function fixture() {
       if (path.endsWith('/query')) return {items:[event],has_more:true,next_cursor:'server-cursor'}
       return event
     },
-  } as unknown as ServiceRuntime,{
+   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as unknown as ServiceRuntime,{
     openSourceRef:async(ref:string)=>({kind:'group_chat',ownerRef:ref}),
-  } as unknown as SourceService,{
+   get openAccessibleSourceRef() { return this.openSourceRef }} as unknown as SourceService,{
     publicProfileSummariesByUserIds:async()=>{profileReads++;return new Map([[88,{displayName:'李四新昵称'}]])},
   } as unknown as ProfileService,async userId=>{opened.push(userId);return {source:{sourceRef:'private-88'}} as never})
   return {service,requests,opened,profileReads:()=>profileReads,deny:()=>{denied=true},switchUser:()=>{user=99}}

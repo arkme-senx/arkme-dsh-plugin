@@ -1869,7 +1869,7 @@ export class ChatService {
     options: { activeOnly?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeConversationMemberList> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
       throw new ArkmePluginError('chat-members-source-invalid', '仅支持查看群聊或私聊成员', false)
     }
@@ -1915,7 +1915,7 @@ export class ChatService {
     options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeConversationMemberRecordPage> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
       throw new ArkmePluginError('chat-members-source-invalid', '仅支持查看群聊或私聊成员快记', false)
     }
@@ -1974,7 +1974,7 @@ export class ChatService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
       throw new ArkmePluginError('chat-members-source-invalid', '仅支持从聊天成员发起私聊', false)
     }
@@ -2160,7 +2160,7 @@ export class ChatService {
     merged: boolean,
     signal?: AbortSignal,
   ): Promise<ArkmeTopicTimelineRawStream> {
-    const opened = await this.source.openSourceRef(topic.sourceRef, session.userId)
+    const opened = await this.source.openAccessibleSourceRef(topic.sourceRef, session.userId)
     if (opened.kind !== 'topic') {
       throw new ArkmePluginError('topic-subtree-source-invalid', '下级主题信息无效，请刷新后重试', true, 409)
     }
@@ -2259,7 +2259,7 @@ export class ChatService {
       options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
     ): Promise<ArkmeTimelinePage> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
       if (source.kind === 'send_to_self') {
         const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
@@ -2536,7 +2536,7 @@ export class ChatService {
       throw new ArkmePluginError('chat-timeline-around-target-invalid', '要定位的快记信息不完整', false, 400)
     }
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('chat-timeline-around-source-invalid', '仅聊天中的快记支持精确定位', false, 400)
     }
@@ -2652,7 +2652,7 @@ export class ChatService {
 
   async groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef.trim(), session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
     const data = await this.memberRead(session, source.ownerRef, '/api/v1/chats/members/by-user-ids', {
       chat_session_uid: source.ownerRef, user_ids: [session.userId], active_only: true, include_stats: false,
@@ -2670,7 +2670,7 @@ export class ChatService {
     const value = nickname.trim()
     if (!value || [...value].length > 10) throw new ArkmePluginError('group-self-nickname-invalid', '昵称不能为空，且不能超过10个字', false, 400)
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef.trim(), session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/members/update', {
       chat_session_uid: source.ownerRef, target_user_id: session.userId, action: 4, display_name_snapshot: value,
@@ -2703,7 +2703,7 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     const normalizedSourceRef = sourceRef.trim()
     const normalizedMemberRef = memberRef.trim()
-    const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(normalizedSourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持移除群聊成员', false)
     }
@@ -2747,7 +2747,7 @@ export class ChatService {
   ): Promise<ArkmeGroupJoinRestrictionPage> {
     const session = await this.runtime.requireSession()
     const normalizedSourceRef = sourceRef.trim()
-    const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(normalizedSourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊限制名单', false)
     }
@@ -2836,7 +2836,7 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     const normalizedSourceRef = sourceRef.trim()
     const normalizedMemberRef = memberRef.trim()
-    const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(normalizedSourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('group-source-invalid', '仅支持设置群聊加入限制', false)
     }
@@ -3044,7 +3044,7 @@ export class ChatService {
   private async requireReadReceiptChatSource(sourceRef: string, userId: number): Promise<ArkmeSourceRefPayload & {
     kind: 'private_chat' | 'group_chat'
   }> {
-    const source = await this.source.openSourceRef(sourceRef, userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('message-read-receipt-chat-required', '消息已读状态只支持私聊或群聊', false, 400)
     }
@@ -3083,7 +3083,7 @@ export class ChatService {
       options: { signal?: AbortSignal } = {},
     ): Promise<ArkmeMessageCopyLinkResult> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const references = this.forwardReferencesOrderedForCommand(await this.openMessageActionRefs(actionRefs, session.userId, source))
       if (references.length === 0 || references.length > 100) {
         throw new ArkmePluginError('message-actions-selection-invalid', '请选择 1 至 100 条消息', false)
@@ -3289,7 +3289,7 @@ export class ChatService {
 
   async recordEditHistoryTarget(sourceRef: string, messageActionRef: string): Promise<RecordEditHistoryTarget> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef.trim(), session.userId)
     const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const identity = { viewerUserId: session.userId, recordUid: reference.recordUid }
     return reference.sourceKind === 'record' ? { ...identity, kind: 'owned' }
@@ -3302,7 +3302,7 @@ export class ChatService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtensionContext> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef.trim(), session.userId)
     const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const recordContext = source.kind === 'private_chat' || source.kind === 'group_chat'
       ? await this.loadChatMessageExtensions(reference, session, options.signal)
@@ -3337,7 +3337,7 @@ export class ChatService {
       throw new ArkmePluginError('record-file-assets-invalid', '延展内容过长或附件数量超限', false)
     }
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef.trim(), session.userId)
     const rootReference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''
     let reference = rootReference
@@ -3809,9 +3809,9 @@ export class ChatService {
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       if (options.sendAtMillis !== undefined && (!Number.isSafeInteger(options.sendAtMillis) || options.sendAtMillis <= 0)) throw new ArkmePluginError('message-actions-time-invalid', '发送时间无效', false)
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const targetSourceRef = options.targetSourceRef?.trim() || sourceRef
-      const targetSource = targetSourceRef === sourceRef ? source : await this.source.openSourceRef(targetSourceRef, session.userId)
+      const targetSource = targetSourceRef === sourceRef ? source : await this.source.openAccessibleSourceRef(targetSourceRef, session.userId)
       const commentText = options.commentText?.trim() ?? ''
       if (commentText.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容超过长度限制', false)
@@ -3940,7 +3940,7 @@ export class ChatService {
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次发送已取消', false, 409)
       }
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const text = textContent.trim()
       if (text === '' || text.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容为空或超过长度限制', false)
@@ -4468,7 +4468,7 @@ export class ChatService {
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       options.signal?.throwIfAborted()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       const title = input.title?.trim() ?? ''
       const textContent = input.textFormat === 'markdown' ? (input.textContent ?? '') : (input.textContent?.trim() ?? '')
       const assets = input.assets ?? []
@@ -4726,7 +4726,7 @@ export class ChatService {
     options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('favorite-sticker-chat-required', '收藏表情只能发送到聊天', false, 400)
     }
@@ -4775,7 +4775,7 @@ export class ChatService {
   async confirmLongArticlePublication(sourceRef: string, input: import('../types.js').ArkmeLongArticlePublishInput, userId: number, signal?: AbortSignal): Promise<ArkmeSourceSendResult> {
     const session = await this.runtime.requireSession()
     if (session.userId !== userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
-    const source = await this.source.openSourceRef(sourceRef, userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return { sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }
     const page = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chat/timeline/around', {
       chat_session_uid: source.ownerRef, record_uid: input.recordUid, record_owner_user_id: userId, before_limit: 1, after_limit: 1,
@@ -4791,7 +4791,7 @@ export class ChatService {
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal, actionRef?: string): Promise<ArkmeLongArticleDetail> {
     if (!actionRef) return await this.record.longArticleDetail(sourceRef, itemUid, signal)
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       return await this.record.longArticleDetail(sourceRef, itemUid, signal)
     }
@@ -4833,7 +4833,7 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     if (session.userId !== expectedUserId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
     const target = await this.source.selfTarget(signal)
-    const source = await this.source.openSourceRef(target.sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(target.sourceRef, session.userId)
     const detail = await this.record.longArticleDetail(target.sourceRef, itemUid, signal)
     if (!detail.editable) throw new ArkmePluginError('long-article-not-owned', '只能添加自己创建的长文', false, 403)
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
@@ -4958,7 +4958,7 @@ export class ChatService {
     }
     signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('message-preparing-unsupported', '当前会话不支持正在输入', false, 400)
     }
@@ -5003,7 +5003,7 @@ export class ChatService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceReadResult> {
       const session = await this.runtime.requireSession()
-      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
       if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
         throw new ArkmePluginError('source-read-unsupported', '当前数据源不支持聊天已读', false)
       }
@@ -5246,7 +5246,7 @@ export class ChatService {
     ): Promise<ArkmeRelatedQuickNoteSourceLocator> {
       const session = await this.runtime.requireSession()
       const normalizedSourceRef = sourceRef.trim()
-      const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+      const source = await this.source.openAccessibleSourceRef(normalizedSourceRef, session.userId)
       const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
       const ownerUserId = reference.recordOwnerUserId !== 0
         ? reference.recordOwnerUserId
@@ -5661,7 +5661,7 @@ export class ChatService {
     options: { signal?: AbortSignal; includeAttachments?: boolean } = {},
   ): Promise<ArkmeMessageSnapshotDetail> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const isChatSource = source.kind === 'private_chat' || source.kind === 'group_chat'
     const isRecordSource = source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic'
     if (!isChatSource && !isRecordSource) {
@@ -5921,7 +5921,7 @@ export class ChatService {
     options: { signal?: AbortSignal } = {},
   ): Promise<void> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const recordUid = itemUid.trim()
     if (recordUid === '' || !['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(source.kind)) {
       throw new ArkmePluginError('message-location-target-invalid', '当前消息不能写入位置快照', false, 400)
@@ -5960,7 +5960,7 @@ export class ChatService {
     signal?: AbortSignal,
   ): Promise<{ userId: number; displayName: string }> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('user-ban-private-chat-required', '封禁操作仅支持一对一私聊用户', false)
     }
@@ -6493,7 +6493,7 @@ export class ChatService {
       }
       if (input.sourceKind !== 'record' || sent.status !== 1) return withAction
       try {
-        const source = await this.source.openSourceRef(sent.sourceRef, session.userId)
+        const source = await this.source.openAccessibleSourceRef(sent.sourceRef, session.userId)
         if (source.kind !== 'send_to_self' && source.kind !== 'default_category' && source.kind !== 'topic') return withAction
         return { ...withAction, recordTopicAssignmentRef: sealRecordTopicAssignmentRef({
           userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,

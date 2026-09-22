@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
 import { ArkmeNavigation } from '../src/client/ArkmeVirtualWorkspace.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
@@ -217,3 +217,8 @@ describe('compact conversation directory styles', () => {
     } finally { dom.window.close() }
   })
 })
+
+// This suite renders the existing qualified-account layout.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(), useSocialAccess: () => true,
+}))

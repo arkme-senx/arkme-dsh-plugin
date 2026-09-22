@@ -57,6 +57,7 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 
 export interface ArkmeRecordSourceReader {
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
+  openAccessibleSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
 }
 
 function numberValue(value: unknown): number {
@@ -406,7 +407,7 @@ export class RecordService {
 
   private async acceptRecordReedit(input: ArkmeRecordReeditPrepareInput) {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(input.sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(input.sourceRef, session.userId)
     const identity = await this.recordReeditSourceIdentityKey(source)
     await this.submissions.settleKnownCompletions(session.userId, identity, input.itemUid)
     const previous = (await this.runtime.stateStore.listRecordReeditSubmissions(session.userId)).find(job => job.context.itemUid === input.itemUid && job.context.sourceIdentityKey === identity)
@@ -436,13 +437,13 @@ export class RecordService {
 
   async recordReeditSubmissions(sourceRef: string) {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     return await this.submissions.list(session.userId, await this.recordReeditSourceIdentityKey(source))
   }
 
   async resumeRecordReeditSubmissions(sourceRef: string, reconcile = false): Promise<void> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     await this.submissions.resume(session.userId, await this.recordReeditSourceIdentityKey(source), reconcile, sourceRef)
   }
 
@@ -489,7 +490,7 @@ export class RecordService {
     if (input.expectedVersion !== undefined && editor.owner.version !== input.expectedVersion) {
       throw new ArkmePluginError('record-reedit-conflict', '快记已在其他位置更新，草稿已保留，请检查后重新确认', false, 409)
     }
-    await this.source.openSourceRef(sourceRef, session.userId)
+    await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const context = await this.prepareRecordReeditCandidate({ ...input, sourceRef, itemUid }, editor.owner, session, draftOnly)
     return { context, ...editor }
   }
@@ -724,7 +725,7 @@ export class RecordService {
     if (session.userId !== context.expectedUserId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
     }
-    const source = await this.source.openSourceRef(context.sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(context.sourceRef, session.userId)
     const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
     if (sourceIdentityKey !== context.sourceIdentityKey) {
       throw new ArkmePluginError('record-reedit-source-changed', '重新编辑来源已变化，请重新发起', false, 409)
@@ -840,7 +841,7 @@ export class RecordService {
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const uid = itemUid.trim()
     if (uid === '') throw new ArkmePluginError('long-article-item-invalid', '长文记录标识无效', false)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
@@ -895,7 +896,7 @@ export class RecordService {
     }
     const session = await this.runtime.requireSession()
     const detail = await this.longArticleDetail(sourceRef, itemUid)
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
     this.assertLongArticleDraftHasNoAttachmentChanges(
       await this.runtime.stateStore.getRecordReeditDraft(session.userId, sourceIdentityKey, itemUid),
@@ -939,7 +940,7 @@ export class RecordService {
 
   async getLongArticleDraft(sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
     const richDraft = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid)
     if (uid === undefined || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
@@ -969,7 +970,7 @@ export class RecordService {
 
   async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(draft.sourceRef, session.userId)
+    const source = await this.source.openAccessibleSourceRef(draft.sourceRef, session.userId)
     const itemUid = draft.itemUid?.trim() || undefined
     if (draft.title.length > 100 || draft.textContent.length > 40000 || draft.durationMillis < 0) {
       throw new ArkmePluginError('long-article-draft-invalid', '长文草稿内容无效', false)
@@ -1069,7 +1070,7 @@ export class RecordService {
     session: ArkmeSessionCredentials,
     openedSource?: ArkmeSourceRefPayload,
   ): Promise<RecordReeditOwnerSnapshot> {
-    const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
+    const source = openedSource ?? await this.source.openAccessibleSourceRef(sourceRef, session.userId)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/detail', { record_uid: itemUid }, session,
     )

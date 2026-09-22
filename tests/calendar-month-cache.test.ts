@@ -21,6 +21,18 @@ function disk() {
 }
 
 describe('shared calendar month cache', () => {
+  it('separates cached personal/calendar counts from a previously eligible social scope', async () => {
+    const { storage } = disk()
+    const cache = new CalendarMonthCache(async q => page(q, q.socialAllowed ? 9 : 2), () => storage)
+    cache.activateAccount('a')
+    const allowed = { ...query(), socialAllowed: true }, restricted = { ...query(), socialAllowed: false }
+    await cache.ensure('a', allowed)
+    expect(cache.get('a', restricted).value).toBeUndefined()
+    await cache.ensure('a', restricted)
+    expect(cache.get('a', restricted).value?.days[0]?.count).toBe(2)
+    expect(cache.get('a', allowed).value?.days[0]?.count).toBe(9)
+  })
+
   it.each(['calendar-view-invalid', 'arkme-code-40001', 'arkme-code-50001'])('drops unsafe stale summaries and anchors after %s', async code => {
     let now = 100_000
     const { storage } = disk()

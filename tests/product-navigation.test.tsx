@@ -1,7 +1,7 @@
 import { readUiSource } from './helpers/ui-source.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it , vi } from 'vitest'
 import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
@@ -353,3 +353,8 @@ describe('Arkme product navigation', () => {
     expect(markup).not.toContain('和阿森视频通话')
   })
 })
+
+// This suite renders the existing qualified-account layout.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(), useSocialAccess: () => true,
+}))

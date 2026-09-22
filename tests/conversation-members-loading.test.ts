@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { ConversationMembersStore } from '../src/client/conversation-members-store.js'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ChatService } from '../src/services/chat-service.js'

@@ -1597,3 +1597,9 @@ describe('record re-edit attachment UI', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-reedit.draft.delete')).toHaveLength(0)
   })
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

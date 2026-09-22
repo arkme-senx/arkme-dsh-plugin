@@ -18,11 +18,11 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
   const emitted: ArkmeSourceList[] = []
   const source = { listSources: vi.fn(async (_directory, options) => { expect(options.limit).toBe(20); return await load(options.cursor) }),
     chatDirectorySourceKey: vi.fn(async (_userId: number, uid: string) => `key-${uid}`),
-    openSourceRef: vi.fn(async () => ({ userId })), hydrateDirectoryPage: vi.fn(async (items: ArkmeSourceItem[]) => items) }
+    openSourceRef: vi.fn(async () => ({ userId })), hydrateDirectoryPage: vi.fn(async (items: ArkmeSourceItem[]) => items) , get openAccessibleSourceRef() { return this.openSourceRef }}
   const preferences = { queryAffected: vi.fn(async (refs: string[], _bots: string[], expected: ReadonlyMap<string, number>) => ({
     items: refs.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: true })), matched: [...expected.keys()],
   })), query: vi.fn(async (refs: string[]) => ({ items: refs.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: false })) })) }
-  const runtime = { authenticatedChatPost: vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => ({ items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid }, current_policy: { user_id: userId, pin_state: 2, update_at: 20 } })) })), requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } }
+  const runtime = { authenticatedChatPost: vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => ({ items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid }, current_policy: { user_id: userId, pin_state: 2, update_at: 20 } })) })), requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
   const readBots = vi.fn(async () => ({ items: [] as import('../../src/types.js').ArkmeBotSummary[] }))
   const warmAvatar = vi.fn(async () => undefined)
   const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots)
@@ -617,4 +617,21 @@ it('bounds reconciliation under repeated visibility conflicts and recovers on ex
   await vi.advanceTimersByTimeAsync(1100)
   expect((await test.owner.read()).projection).toMatchObject({ phase: 'complete', visibility: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }] })
   expect(vi.getTimerCount()).toBe(0)
+})
+
+
+it('hides a nonempty cached human directory and keeps personal Bot badges without altering raw facts', async () => {
+  const test = setup(async () => page([row(1, { unreadCount: 4 })]))
+  test.preferences.query.mockImplementation(async (sources: string[], bots?: string[]) => ({ items: [...sources.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: false })), ...(bots ?? []).map(entryRef => ({ entryKind: 'bot' as const, entryRef, hidden: false }))] }))
+  await test.owner.read(); await test.owner.settled()
+  await test.owner.rememberBots([{ botRef: 'personal-bot', directoryKey: 'personal-bot', name: 'Personal Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true, unreadCount: 2 }], 1)
+  const allowedSnapshot = await test.owner.read()
+  test.runtime.socialAccess.status = async () => ({ userId: 42, allowed: false })
+  const denied = await test.owner.read()
+  expect(denied.items).toEqual([])
+  expect(denied.projection?.bots.map(bot => bot.botRef)).toEqual(['personal-bot'])
+  expect((await test.owner.attentionSummary()).badgeCount).toBe(2)
+  test.runtime.socialAccess.status = async () => ({ userId: 42, allowed: true })
+  expect((await test.owner.read()).items).toEqual(allowedSnapshot.items)
+  expect((await test.owner.attentionSummary()).badgeCount).toBe(6)
 })

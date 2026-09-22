@@ -7,8 +7,8 @@ function fixture(kind = 'private_chat') {
     authenticatedChatPost: vi.fn(async () => ({ daily_data: [
       { bucket_date: '2020-01-02', count: 12, first_record_uid: 'old', first_record_owner_user_id: '9223372036854775806', first_attach_at: 1577923200000 },
       { bucket_date: '2026-09-18', count: 1, first_record_uid: 'new', first_record_owner_user_id: 9, first_attach_at: 1789689600000 },
-    ] })) }
-  const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef: 'server-session' })) }
+    ] })) , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+  const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef: 'server-session' })) , get openAccessibleSourceRef() { return this.openSourceRef }}
   const service = new CalendarService(runtime as never, {} as never, {} as never, {} as never, source as never)
   const query = { sourceRef: 'opaque', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000 }
   return { runtime, source, service, query, invalidate: () => { revision++ } }

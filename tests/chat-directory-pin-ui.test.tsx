@@ -652,3 +652,9 @@ it('keeps a Bot opened before the Host directory snapshot in the same row-and-to
   expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Early Bot，2 条未读')).toBe(true)
   expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(2)
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

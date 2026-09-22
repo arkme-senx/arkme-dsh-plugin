@@ -16,7 +16,7 @@ function fixture() {
       topic_uid: body.topic_uid, kind: 1, privacy_state: body.topic_uid === 'locked-topic' ? 2 : 1, show_in_home: true,
     } })),
     authenticatedCalendarPost: vi.fn(),
-  }
+   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
   const source = {
     openSourceRef: vi.fn(async (ref: string) => ({
       kind: ref === 'all' ? 'send_to_self' : ref === 'uncategorized' ? 'default_category' : ref === 'chat' ? 'private_chat' : 'topic', ownerRef: ref,
@@ -25,7 +25,7 @@ function fixture() {
     searchTargetSource: vi.fn(async () => undefined),
     chatSourcesBySessionUids: vi.fn(async () => new Map()),
     hydrateDirectoryPage: vi.fn(async () => []),
-  }
+   get openAccessibleSourceRef() { return this.openSourceRef }}
   const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
   const record = { recordTimelineItemFromRaw: vi.fn(() => ({ textContent: '正文' })), isDSHAgentInput: (item: unknown) => Boolean((item as { agent?: boolean }).agent) }
   const privacy = { lockedRecordUids: vi.fn(async () => new Set(['locked-record'])) }

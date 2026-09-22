@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, useCallback } from 'react'
 import { CalendarMonthCache, arkmeCalendarMonths, type CalendarMonthQuery } from './calendar-month-cache.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
+import { useSocialAccess } from './social-access-store.js'
 
 /** Both calendar entry points observe the same per-account month resource. */
 export function useCalendarMonth(query: CalendarMonthQuery, enabled = true, account?: string) {
+  const socialAllowed = useSocialAccess()
   const [local] = useState(() => { const cache = new CalendarMonthCache(undefined, () => undefined); cache.activateAccount('local'); return cache })
   const cache = account ? arkmeCalendarMonths : local
   const owner = account ?? 'local'
-  const stable = useMemo(() => query, [query.scopeKey, query.sourceRef, query.startDate, query.endDate, query.timezone, query.timezoneOffsetMillis])
+  const stable = useMemo(() => ({ ...query, socialAllowed }), [query.scopeKey, query.sourceRef, query.startDate, query.endDate, query.timezone, query.timezoneOffsetMillis, socialAllowed])
   const subscribe = useCallback((notify: () => void) => enabled ? cache.subscribe(owner, stable, notify) : () => {}, [cache, owner, stable, enabled])
   const get = useCallback(() => cache.get(owner, stable), [cache, owner, stable])
   const snapshot = useSyncExternalStore(subscribe, get, get)

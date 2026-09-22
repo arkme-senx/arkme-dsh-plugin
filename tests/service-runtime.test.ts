@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { patchChatPolicy } from '../src/services/chat-policy.js'

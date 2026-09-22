@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { describe, expect, it } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'

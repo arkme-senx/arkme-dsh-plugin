@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SocialAccessService } from '../../src/services/social-access-service.js'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { arkmeChatConversationPreview, arkmeTimelineConversationPreview, SourceService } from '../../src/services/source-service.js'
 import type { ArkmeSourceItem, ArkmeSourceList } from '../../src/types.js'
+
+// These domain regressions exercise a qualified account; owner denial is tested separately.
+beforeEach(() => { vi.spyOn(SocialAccessService.prototype, 'status').mockResolvedValue({ userId: 42, allowed: true }) })
+afterEach(() => { vi.restoreAllMocks() })
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
@@ -22,7 +27,7 @@ describe('SourceService', () => {
         private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '周鹏' } }],
       has_more: !body.page_cursor, ...(!body.page_cursor ? { next_page_cursor: { id: 'second' } } : {}),
     }))
-    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, authenticatedChatPost: post,
       stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
     const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
     for (const query of [' 周鹏 ', '狗才']) {
@@ -46,7 +51,7 @@ describe('SourceService', () => {
   it('does not turn an empty remark into a nameless private conversation', async () => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const bundle = { session: { chat_session_uid: 'private', session_kind: 1 }, private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '  ', counterpart_name_snapshot: '' } }
-    const runtime = { config, requireSession: async () => session, authenticatedChatPost: async () => ({ items: [bundle], has_more: false }), stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, authenticatedChatPost: async () => ({ items: [bundle], has_more: false }), stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
     const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
     expect((await service.searchConversationNames({ query: '狗才' })).items[0]!.title).toBe('狗才')
     expect((await service.chatSourceFromBundle(bundle, session, undefined, [])).displayName).toBe('狗才')
@@ -55,7 +60,7 @@ describe('SourceService', () => {
   })
 
   it('reports broken name-search pagination instead of claiming complete results', async () => {
-    const runtime = { config, requireSession: async () => ({ userId: 42 }) } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => ({ userId: 42 }) } as unknown as ServiceRuntime
     const service = new SourceService(runtime, {} as ProfileService, {} as never)
     vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [], hasMore: true })
     await expect(service.searchConversationNames({ query: '周鹏' })).rejects.toMatchObject({ code: 'conversation-search-incomplete' })
@@ -63,7 +68,7 @@ describe('SourceService', () => {
 
   it('uses real profile nicknames when legacy chat snapshots contain the remark instead', async () => {
     const session = { userId: 42 }
-    const runtime = { config, requireSession: async () => session } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session } as unknown as ServiceRuntime
     const profiles = vi.fn(async () => new Map([[17, { nickname: '狗才' }]]))
     const service = new SourceService(runtime, { publicProfileSummariesByUserIds: profiles } as unknown as ProfileService, {} as never)
     vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [{ sourceRef: 'ref', kind: 'private_chat', peerUserId: 17, displayName: '周鹏', privateNickname: '周鹏', activeAtMillis: 0, unreadCount: 0 }], hasMore: false })
@@ -82,7 +87,7 @@ describe('SourceService', () => {
       private_counterpart: { user_id: 17, display_name_snapshot: '同事' },
       latest_preview: { record: { payload } }, unread_snapshot: { unread_count: 0 } }
     const post = vi.fn(async (_path: string) => ({ items: [bundle], has_more: false }))
-    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, authenticatedChatPost: post,
       stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
     const service = new SourceService(runtime, {} as ProfileService, {} as never)
     service.setChatSource(42, 'call-chat', { sourceRef: 'old', kind: 'private_chat', displayName: '同事',
@@ -101,7 +106,7 @@ describe('SourceService', () => {
 
   it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
     const service = new SourceService(runtime, {} as ProfileService, {} as never)
     const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerUserId: 17, peerMemberType: 'svip' }
     const bundle = { session: { chat_session_uid: 'private-1', session_kind: 1 }, private_counterpart: { user_id: 17, member_type: memberType } }
@@ -112,7 +117,7 @@ describe('SourceService', () => {
 
   it('keeps counterpart identity through realtime cache replacement so calendar avatar hydration can resolve it', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
     const readProfiles = vi.fn(async () => new Map([[17, { avatarUrl: 'https://avatar.test/image' }]]))
     const profile = { publicProfileSummariesByUserIds: readProfiles, sealProfileImageRef: async () => 'opaque-peer-avatar' } as unknown as ProfileService
     const service = new SourceService(runtime, profile, {} as never)
@@ -138,7 +143,7 @@ describe('SourceService', () => {
       topic_core: { topic_uid: 'archive', kind: 3, privacy_state: 1, show_in_home: false },
       show_in_home: true,
     })
-    const runtime = { config, requireSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const runtime = { config, socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }, requireSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
     const service = new SourceService(runtime, {} as ProfileService, {} as never)
     vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'archive', displayName: 'Archive' })
     const invalidate = vi.spyOn(service, 'invalidateSourceListCache').mockImplementation(() => {})

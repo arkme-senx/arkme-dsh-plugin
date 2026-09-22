@@ -1,3 +1,4 @@
+import { isSocialSource, useSocialAccess } from './social-access-store.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -905,6 +906,7 @@ export function ArkmeNavigation({
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   useArkmeLocale()
+  const socialAllowed = useSocialAccess()
   const activeRef = useRef(active)
   activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -1014,7 +1016,7 @@ export function ArkmeNavigation({
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
-    authenticated && directory === 'root' && chatDirectory.baselineReady)
+    authenticated && socialAllowed && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
     const anchor = selfEntryRef.current
     if (anchor === null || !active || !authenticated || directory !== 'root') return
@@ -1343,7 +1345,7 @@ export function ArkmeNavigation({
     const legacy = readBotDirectoryPreferences(authenticated ? auth?.userId : undefined)
     setBotDirectoryPreferences({ pinnedKeys: [...new Set([...(cached?.botPinnedKeys ?? []), ...legacy.pinnedKeys])] })
     setBots(sortArkmeBotsByCreatedAt(cached?.bots ?? []))
-  }, [authenticated, auth?.userId])
+  }, [authenticated, auth?.userId, socialAllowed])
   useEffect(() => {
     if (!authenticated || !chatDirectory.baselineReady || chatDirectory.projection !== undefined) return
     const controller = new AbortController()
@@ -1415,7 +1417,7 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.environment, auth?.userId, bots, chatRevision, directory, rootSources, chatDirectory.projection])
   useEffect(() => {
-    if (!authenticated) {
+    if (!authenticated || !socialAllowed) {
       setOfficialAuthorProfile(undefined)
       return
     }
@@ -2120,8 +2122,8 @@ export function ArkmeNavigation({
             onActivateSurface?.()
           }}
         />}
-        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
-        {authenticated && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
+        {authenticated && socialAllowed && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && socialAllowed && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
           {...(officialAuthorProfile === undefined ? {} : { profile: officialAuthorProfile })}
           busy={officialAuthorOpening}
           onClick={() => { void openOfficialAuthor() }}
@@ -2149,7 +2151,7 @@ export function ArkmeNavigation({
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{removalFeedback.rows.map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{removalFeedback.rows.filter(row => socialAllowed || row.kind === 'bot' || !isSocialSource(row.source)).map(row => {
           if (row.kind === 'bot') {
             const { bot } = row
             const removalPhase = removalFeedback.phases.get(`bot:${conversationBotVisibilityKey(bot)}`)
@@ -2263,7 +2265,7 @@ export function ArkmeNavigation({
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </button>
         })}</ArkmeDirectoryWindow>
-        {privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
+        {socialAllowed && privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
           {tr(privateInteractionDirectory.error)}
         </button>}

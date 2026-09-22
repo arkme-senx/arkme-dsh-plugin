@@ -1,3 +1,5 @@
+import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { InterwovenService } from '../../src/services/interwoven-service.js'
@@ -62,12 +64,12 @@ describe('InterwovenService', () => {
         }
         throw new Error(`unexpected chat route: ${path}`)
       }),
-    }
+     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
     const source = {
       openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'private-chat-1', displayName: '同事',
       })),
-    }
+     get openAccessibleSourceRef() { return this.openSourceRef }}
     const profile = {
       interwovenProfilesByUserIds: vi.fn(async () => new Map([[13, { displayName: 'B 用户', hasAvatar: false }]])),
     }
