@@ -111,7 +111,7 @@ export class DshCloudNativeTransport {
     if (mode === 'close') { this.release(id); return { done: true } }
     if (mode === 'pull' && body.endpoint === undefined) {
       const lease = this.streams.get(id)
-      if (!lease) throw new DshRemoteError('REMOTE_NOT_FOUND', '云端订阅已结束')
+      if (!lease) throw new DshRemoteError('REMOTE_NOT_FOUND', '云端订阅已结束', true)
       if (lease.busy) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '云端订阅请求冲突')
       lease.busy = true; lease.touched = Date.now()
       try { await delay(20_000, undefined, { signal: AbortSignal.any([signal, lease.controller.signal]) }); return { items: [] } }

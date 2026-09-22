@@ -69,19 +69,27 @@ function installNativeTransport(route: string): void {
     writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
     select(id: string | undefined) { selected = id; availability() },
   } satisfies HarnessNativeDirectory })
+  const carrierFailure = (message: string) => Object.assign(new Error(message), { dshRemoteStreamFailure: { kind: 'carrier' } })
+  const remoteFailure = (error?: { message?: string; code?: string; retryable?: boolean }) => {
+    const message = error?.message ?? '原生远程连接已断开'
+    return error?.retryable === true ? carrierFailure(message) : Object.assign(new Error(message), {
+      dshRemoteStreamFailure: { kind: 'remote', code: error?.code ?? 'REMOTE_TRANSPORT_FAILED', details: {} },
+    })
+  }
+  const isCarrierFailure = (error: any) => error?.dshRemoteStreamFailure?.kind === 'carrier'
   let socket: WebSocket | undefined
   const pending = new Map<string, { frame: string; resolve(value: unknown): void; reject(error: Error): void; stop(): void }>()
   const streamRequest = (params: object, signal: AbortSignal) => new Promise<unknown>((resolve, reject) => {
     signal.throwIfAborted()
     if (pending.size >= 64) throw new Error('原生订阅请求数量超限')
     if (!socket || socket.readyState > WebSocket.OPEN) {
-      for (const item of pending.values()) { item.stop(); item.reject(new Error('原生远程连接已断开')) }
+      for (const item of pending.values()) { item.stop(); item.reject(carrierFailure('原生远程连接已断开')) }
       pending.clear()
       const next = socket = new WebSocket(`${route}/native-streams`)
       const closed = () => {
         if (socket !== next) return
         socket = undefined
-        for (const item of pending.values()) { item.stop(); item.reject(new Error('原生远程连接已断开')) }
+        for (const item of pending.values()) { item.stop(); item.reject(carrierFailure('原生远程连接已断开')) }
         pending.clear()
       }
       next.onopen = () => { if (socket !== next) return; for (const item of pending.values()) next.send(item.frame) }
@@ -108,7 +116,7 @@ function installNativeTransport(route: string): void {
   const request = async (runtimeRef: string, body: object, signal?: AbortSignal) => {
     const scoped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
     const params = { runtimeRef, body, requestRef: crypto.randomUUID() }
-    let result: { ok: boolean; value: unknown; error?: { message?: string } }
+    let result: { ok: boolean; value: unknown; error?: { message?: string; code?: string; retryable?: boolean } }
     if (['pull', 'close'].includes(String((body as { mode?: string }).mode))) {
       result = await streamRequest(params, scoped) as typeof result
     } else {
@@ -117,9 +125,9 @@ function installNativeTransport(route: string): void {
         body: JSON.stringify({ operation: 'remote.session.native', params }), signal: scoped,
       })
       result = await response.json() as typeof result
-      if (!response.ok) throw new Error(result.error?.message ?? '原生远程连接已断开')
+      if (!response.ok) throw remoteFailure(result.error)
     }
-    if (!result.ok) throw new Error(result.error?.message ?? '原生远程连接已断开')
+    if (!result.ok) throw remoteFailure(result.error)
     const value = result.value as { sourceWritable?: boolean }
     if (value.sourceWritable !== undefined) { writable.set(runtimeRef, value.sourceWritable); availability() }
     return result.value
@@ -135,7 +143,7 @@ function installNativeTransport(route: string): void {
     if (!localSocket || localSocket.readyState > WebSocket.OPEN) {
       const url = new URL('/api/remote.mux', window.location.href); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       const next = localSocket = new WebSocket(url)
-      const closed = () => { if (localSocket !== next) return; localSocket = undefined; for (const item of localStreams.values()) item.queue.fail(new Error('本机连接已断开')); localStreams.clear() }
+      const closed = () => { if (localSocket !== next) return; localSocket = undefined; for (const item of localStreams.values()) item.queue.fail(carrierFailure('本机连接已断开')); localStreams.clear() }
       next.onopen = () => { if (localSocket === next) for (const item of localStreams.values()) next.send(item.frame) }
       next.onclose = closed; next.onerror = () => { closed(); next.close() }
       next.onmessage = event => {
@@ -144,7 +152,7 @@ function installNativeTransport(route: string): void {
           if (!item) return
           if (frame.type === 'item') item.queue.push(frame.value)
           else if (frame.type === 'end') item.queue.end()
-          else if (frame.type === 'error') item.queue.fail(new Error(frame.error?.message || '本机订阅失败'))
+          else if (frame.type === 'error') item.queue.fail(remoteFailure(frame.error))
           else throw new Error('原生订阅帧无效')
         } catch { closed(); next.close() }
       }
@@ -156,16 +164,31 @@ function installNativeTransport(route: string): void {
     finally { localStreams.delete(id); if (carrier.readyState === WebSocket.OPEN) carrier.send(JSON.stringify({ type: 'cancel', streamId: id })) }
   }
   async function* remoteStream(runtime: string, endpoint: string, payload: unknown, signal: AbortSignal) {
-    const streamRef = crypto.randomUUID()
-    let opening = true
-    try {
-      while (!signal.aborted) {
-        const page = await request(runtime, { mode: 'pull', streamRef, ...(opening ? { endpoint, payload } : {}) }, signal) as Json
-        opening = false
-        for (const value of page.items) { signal.throwIfAborted(); yield value }
-        if (page.done) return
-      }
-    } finally { void request(runtime, { mode: 'close', streamRef }).catch(() => undefined) }
+    let delivered = false
+    while (!signal.aborted) {
+      const streamRef = crypto.randomUUID()
+      let opening = true
+      try {
+        while (!signal.aborted) {
+          const page = await request(runtime, { mode: 'pull', streamRef, ...(opening ? { endpoint, payload } : {}) }, signal) as Json
+          opening = false
+          for (const value of page.items) {
+            signal.throwIfAborted(); delivered = true
+            const source = sources.get(runtime); if (source) source.retryDelay = 250
+            yield value
+          }
+          if (page.done) return
+        }
+      } catch (error) {
+        signal.throwIfAborted()
+        writable.set(runtime, false); availability()
+        if (!isCarrierFailure(error) || delivered) throw error
+        // Before the first frame it is safe to reopen in this generation. After
+        // a baseline, let DSH create a new generation and reconcile its journal.
+        await retrySource(runtime, signal)
+      } finally { void request(runtime, { mode: 'close', streamRef }, AbortSignal.timeout(3_000)).catch(() => undefined) }
+    }
+    signal.throwIfAborted()
   }
   // Decode only declared routing fields. Never recursively rewrite user content.
   function addressed(payload: unknown) {
@@ -189,12 +212,32 @@ function installNativeTransport(route: string): void {
     return { ...frame, ...(frame.header ? { header: { ...frame.header, id: identity(runtime, frame.header.id) } } : {}),
       ...(frame.sessionId ? { sessionId: identity(runtime, frame.sessionId) } : {}) }
   }
-  const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: Map<string, { value: Json; bytes: number }>; bytes: number }>()
+  const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: Map<string, { value: Json; bytes: number }>; bytes: number; retryDelay: number; retry: Promise<void> | undefined }>()
+  async function retrySource(runtime: string, signal: AbortSignal): Promise<void> {
+    const source = sources.get(runtime)
+    if (!source) { signal.throwIfAborted(); throw carrierFailure('源订阅已释放') }
+    if (!source.retry) {
+      const scoped = AbortSignal.any([source.abort.signal, lifetime.signal])
+      source.retry = new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); scoped.removeEventListener('abort', done); resolve() }
+        const timer = setTimeout(done, source.retryDelay + Math.floor(Math.random() * source.retryDelay / 4))
+        scoped.addEventListener('abort', done, { once: true }); if (scoped.aborted) done()
+      }).finally(() => { source.retry = undefined })
+      source.retryDelay = Math.min(5_000, source.retryDelay * 2)
+    }
+    // One runtime retry clock; a departing consumer must not cancel its peers.
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+      signal.addEventListener('abort', abort, { once: true })
+      source.retry!.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+      if (signal.aborted) abort()
+    })
+  }
   function retainSource(runtime: string, signal: AbortSignal): () => void {
     let source = sources.get(runtime)
     if (!source) {
       if (sources.size >= 8) throw new Error('打开的远程实例过多')
-      const state = source = { users: 0, abort: new AbortController(), frames: new Map<string, { value: Json; bytes: number }>(), bytes: 0 }; sources.set(runtime, state)
+      const state = source = { users: 0, abort: new AbortController(), frames: new Map<string, { value: Json; bytes: number }>(), bytes: 0, retryDelay: 250, retry: undefined as Promise<void> | undefined }; sources.set(runtime, state)
       const scoped = AbortSignal.any([state.abort.signal, lifetime.signal])
       // Keep only the latest control value per field, to replay after a local
       // reconnect baseline. Journals/history remain in the native session store.
@@ -230,11 +273,13 @@ function installNativeTransport(route: string): void {
               for (const [id, block] of Object.entries(frame.value.projections) as Array<[string, Json]>) for (const [key, value] of Object.entries(block.values)) publish({ type: 'projection', sessionId: identity(runtime, id), key, value, seq: block.asOfSeq })
             } else publish(nativeFrame(runtime, frame))
           }
-        } catch { if (!scoped.aborted) { writable.set(runtime, false); availability() } }
-        if (!scoped.aborted) await new Promise<void>(resolve => {
-          const done = () => { clearTimeout(timer); scoped.removeEventListener('abort', done); resolve() }
-          const timer = setTimeout(done, 1000); scoped.addEventListener('abort', done, { once: true })
-        })
+          return
+        } catch (error) {
+          if (scoped.aborted) return
+          writable.set(runtime, false); availability()
+          if (!isCarrierFailure(error)) return
+          await retrySource(runtime, scoped).catch(() => undefined)
+        }
         }
       }
       void pump('$events'); void pump('session/control')
