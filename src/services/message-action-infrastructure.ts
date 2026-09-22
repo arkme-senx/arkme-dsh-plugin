@@ -1,4 +1,5 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { postChatMessageCreation } from './direct-message-admission-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -17,36 +18,9 @@ function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-export class LocalMessageActionCapabilityCodec implements MessageActionCapabilityCodec {
-  constructor(private readonly uniqueCode: () => Promise<string>) {}
-
-  async seal(prefix: string, payload: unknown): Promise<string> {
-    const iv = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', await this.key(prefix), iv)
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
-    return `${prefix}.${iv.toString('base64url')}.${encrypted.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}`
-  }
-
-  async open(prefix: string, value: string): Promise<Record<string, unknown>> {
-    const parts = value.trim().split('.')
-    if (parts.length !== 4 || parts[0] !== prefix) {
-      throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400)
-    }
-    try {
-      const decipher = createDecipheriv('aes-256-gcm', await this.key(prefix), Buffer.from(parts[1] ?? '', 'base64url'))
-      decipher.setAuthTag(Buffer.from(parts[3] ?? '', 'base64url'))
-      const encoded = Buffer.concat([
-        decipher.update(Buffer.from(parts[2] ?? '', 'base64url')),
-        decipher.final(),
-      ]).toString('utf8')
-      return objectValue(JSON.parse(encoded) as unknown)
-    } catch (error) {
-      throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause: error })
-    }
-  }
-
-  private async key(prefix: string): Promise<Buffer> {
-    return createHash('sha256').update(await this.uniqueCode()).update(`\0${prefix}`).digest()
+export class LocalMessageActionCapabilityCodec extends EncryptedReferenceCodec implements MessageActionCapabilityCodec {
+  constructor(uniqueCode: () => Promise<string>) {
+    super(uniqueCode, cause => new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause }))
   }
 }
 

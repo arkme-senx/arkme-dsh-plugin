@@ -1,3 +1,4 @@
+import { openTeamMessages } from '../../team-messaging-events.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -47,7 +48,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
       return { ...withoutMessage, loadingMore: true }
     })
     try {
-      const page = await callArkme<ArkmeTeamMemberPage>('team.members.list', {
+      const page = await callArkme<ArkmeTeamMemberPage>('team.app.members', {
         teamRef,
         limit: 50,
         ...(pageCursor === undefined ? {} : { pageCursor }),
@@ -106,6 +107,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
         </span>
       </div>
     </header>
+    <button type="button" onClick={() => { openTeamMessages({ kind: 'team', teamRef }) }}>团队消息通道与成员管理</button>
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <h2>{tr("团队成员")}</h2>

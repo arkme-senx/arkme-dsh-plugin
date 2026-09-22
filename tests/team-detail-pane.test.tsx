@@ -93,13 +93,13 @@ describe('TeamDetailPane', () => {
       ],
       totalCount: 2,
     })
-    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.members.list'
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members'
       ? teamPage
       : { mediaType: 'image/png', bytes: 1, dataBase64: 'AA==' })
 
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.members.list', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.app.members', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBeDefined()
     expect(text(renderer!.root)).toContain('团队 A')
     expect(text(renderer!.root)).toContain('@team_a')
@@ -122,7 +122,7 @@ describe('TeamDetailPane', () => {
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
     await act(async () => { button(renderer!, '加载更多成员').props.onClick(); await tick() })
-    expect(mocks.callArkme).toHaveBeenLastCalledWith('team.members.list', {
+    expect(mocks.callArkme).toHaveBeenLastCalledWith('team.app.members', {
       teamRef: teamRefA,
       limit: 50,
       pageCursor: 'cursor_v1_next',
