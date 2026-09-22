@@ -1,5 +1,5 @@
 import {ArkmeScreenshotTooltip} from './ArkmeScreenshotTooltip.js'
-import {screenshotShortcutBridge,shortcutLabel,useScreenshotShortcut} from './screenshot-shortcut.js'
+import {shortcutLabel,useScreenshotShortcut} from './screenshot-shortcut.js'
 import { captureNativeScreenshot, nativeScreenshotBridge } from './native-screenshot.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
@@ -26,8 +26,6 @@ export function ArkmeComposerScreenshotButton(props: {
   const tooltipAnchor = useRef<HTMLButtonElement>(null)
   const [tooltipVisible, setTooltipVisible] = useState(false)
   const closeTooltip = useCallback(() => setTooltipVisible(false), [])
-  const trigger = useRef<() => void>(() => {})
-  useEffect(() => screenshotShortcutBridge()?.onTrigger(() => trigger.current()), [])
   const latest = useRef(props)
   latest.current = props
   const active = useRef<AbortController>()
@@ -116,7 +114,6 @@ export function ArkmeComposerScreenshotButton(props: {
       if (active.current === controller) { active.current = undefined; setBusy(false) }
     }
   }
-  trigger.current = () => { void capture() }
   const title = busy ? '正在截屏，按 Esc 取消' : !nativeDesktop ? browserScreenshotUnavailable() ?? '截屏（选择屏幕或窗口后裁剪）'
     : capability?.available === true ? nativeBridge ? '截屏（框选并编辑后添加到草稿，Esc 取消）' : '截屏（框选后添加到草稿，Esc 取消）' : capability?.reason ?? '正在检查截屏能力'
   const tooltipText = shortcut?.recording ? '正在设置截图快捷键，截图已暂停' : busy ? title : shortcut ? `截图（${shortcutLabel(shortcut.accelerator)}）${shortcut.available ? '' : ' · 快捷键不可用'}` : title

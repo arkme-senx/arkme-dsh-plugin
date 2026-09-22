@@ -2,7 +2,7 @@ import {createRoot} from 'react-dom/client'
 import {ArkmeScreenshotEditor} from '../../src/client/ArkmeScreenshotEditor.js'
 import {paintScreenshot,exportScreenshot} from '../../src/client/screenshot-editor-render.js'
 import type {Annotation} from '../../src/client/screenshot-editor-model.js'
-const qa=window as typeof window & {qa:any};qa.qa={saved:0,completed:0,ready:false,errors:[]}
+const qa=window as typeof window & {qa:any};qa.qa={asked:0,saved:0,completed:0,ready:false,errors:[]}
 window.addEventListener('error',e=>qa.qa.errors.push(e.message))
 const base=document.createElement('canvas');base.width=1200;base.height=800
 const c=base.getContext('2d')!;c.fillStyle='#eef1f7';c.fillRect(0,0,1200,800)
@@ -27,6 +27,7 @@ qa.qa.pixelTest=async()=>{
 base.toBlob(blob=>{
  createRoot(document.getElementById('root')!).render(<ArkmeScreenshotEditor frame={{blob:blob!,width:1200,height:800}} desktop windows={[{x:700,y:260,width:340,height:120},{x:80,y:80,width:1040,height:640}]}
  onClose={()=>{qa.qa.closed=true}} onReady={()=>{qa.qa.ready=true}} onSelect={async()=>true}
+ onAskDsh={async blob=>{qa.qa.asked++;qa.qa.askSize=blob.size}}
  onSave={async()=>{qa.qa.saved++;return true}} onComplete={async blob=>{qa.qa.completed++;qa.qa.outputSize=blob.size}}/>)
 },'image/png')
 
