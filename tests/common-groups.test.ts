@@ -51,6 +51,12 @@ describe('persistent common groups', () => {
       f.db.commonGroups.apply('s','p',next,{items:[{...rows(1)[0]!,title:'new'}],removed:['002'],phase:'complete',after:''})
       expect(f.db.commonGroups.read('s','p').items).toEqual([{uid:'001',title:'new',memberCount:2}])
       expect(f.db.commonGroups.read('s','p').checkpoint.syncedAtMillis).toBeGreaterThan(0)
+      raw.exec("CREATE TRIGGER no_redundant_update BEFORE UPDATE ON common_group_relation BEGIN SELECT RAISE(ABORT,'unchanged row updated'); END")
+      const unchanged = f.db.commonGroups.read('s', 'p')
+      expect(f.db.commonGroups.apply('s', 'p', unchanged.checkpoint, {
+        items: unchanged.items, removed: [], phase: 'complete', after: '',
+      })).toBe(true)
+      expect(f.db.commonGroups.read('s', 'p').checkpoint.revision).toBe(unchanged.checkpoint.revision + 1)
     } finally { raw.close(); await f.close() }
   })
   it('rejects incomplete, duplicate and unauthorized deletion evidence', () => {

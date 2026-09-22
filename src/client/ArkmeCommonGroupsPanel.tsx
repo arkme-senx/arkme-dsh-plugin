@@ -73,7 +73,17 @@ export function ArkmeCommonGroupsPanel({ source, onClose, onOpen, returnFocusRef
         if (!result.syncHasMore) return
       }
       throw new Error(tr('同步尚未完成，请继续同步'))
-    })().catch(() => { if (!controller.signal.aborted) setError(tr('暂时无法读取共同群聊，请重试')) })
+    })().catch(async () => {
+      if (controller.signal.aborted) return
+      // Earlier server batches may already be committed. Keep them pageable even
+      // when a later batch fails, without discarding the currently visible rows.
+      if (currentPage.current) {
+        await pendingRead.current?.catch(() => {})
+        if (controller.signal.aborted) return
+        await read(controller.signal).catch(() => {})
+      }
+      if (!controller.signal.aborted) setError(tr('暂时无法读取共同群聊，请重试'))
+    })
       .finally(() => { if (!controller.signal.aborted) setSyncing(false) })
     return () => controller.abort()
   }, [source.sourceRef, read, refresh])

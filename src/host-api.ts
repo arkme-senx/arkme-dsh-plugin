@@ -2174,7 +2174,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'botRef'),
     )
-    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
+    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.notification.set': return await service.setGroupMessageDnd(
       stringParam(params, 'sourceRef'),
       params.enabled === true,

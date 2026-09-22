@@ -168,3 +168,21 @@ it('retries a failed page without clearing rows or duplicating them', async () =
   expect(host.querySelector('[role="alert"]')).toBeNull()
   expect(api.mock.calls.filter(c => c[1]?.cursor)).toHaveLength(2)
 })
+
+it('exposes committed cache pages when a later server batch fails', async () => {
+  let count = 0, batch = 0
+  api.mockImplementation(async (operation: string, params: { cursor?: string }) => {
+    const cached = () => ({ ...page(1, Math.min(count, 20)), totalCached: count,
+      hasMore: count > 20, ...(count > 20 ? { nextCursor: 'group-20' } : { nextCursor: undefined }) })
+    if (operation.endsWith('.sync')) {
+      if (++batch === 3) throw Error('network lost after two committed batches')
+      count += 20
+      return { ...cached(), syncHasMore: true }
+    }
+    return params.cursor ? { ...page(21, 20), totalCached: count, hasMore: false } : cached()
+  })
+  await mount()
+  expect(host.querySelector('[role="alert"]')).not.toBeNull()
+  await scrollBottom()
+  expect(api.mock.calls.some(c => c[0] === 'group.common.list' && c[1].cursor === 'group-20')).toBe(true)
+})
