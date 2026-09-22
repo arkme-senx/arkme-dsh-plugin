@@ -46,3 +46,5 @@ pnpm exec vitest run --config "$ARKME_PLUGIN_CHECKOUT/vitest.team-channel-e2e.co
 扩展真实浏览器 E2E：在页面加载后由其他成员回复，再于确认期间插入第二条回复；两次均显示最新正文并等待显式确认。编辑时模拟另一设备先保存，确认保留本机草稿、读取最新版本后再保存。服务端 Record 的真实错误码也由该链路验证。
 
 最终验证使用任务源码打包的不可变 tgz，经官方 CLI 安装；完整插件套件、类型检查、构建与真实 DSH E2E 结果记录在同任务 meta 的 pre-merge-review.md。IM 独立本地验收从同次 E2E 产生的真实 RabbitMQ 通知进入生产 HandleMessage/Hub/Gin HTTP SSE，未把它描述为已部署整套 IM 服务或系统级离线推送。
+
+再次审查补充：同一来访者成为成员后，会话视图与草稿标识包含侧别；切换收件箱/咨询立即清空旧侧选择并废弃旧查询。真实浏览器先复现切换竞态，再经重新打包及官方安装通过：两侧草稿互不覆盖。还验证第二个来访者隔离、空会话不进入收件箱、旧链接重置失效、既有会话保留及暂停拒绝新发送。最新证据见同任务 meta 的 final-merge-review.md。
