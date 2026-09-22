@@ -6,11 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeTopicDirectoryPopover, type ArkmeTopicCreateOpener } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
 import { readNavigationCache } from '../src/client/navigation-cache.js'
-import { resetSelfTopicDirectories, selfTopicDirectory } from '../src/client/self-topic-directory-cache.js'
+import { resetSelfTopicDirectories, selfTopicDirectory, type SelfTopicDirectoryCache } from '../src/client/self-topic-directory-cache.js'
 import { callArkme } from '../src/client/api.js'
 import type { ArkmeSourceItem, ArkmeTopicCreateResult } from '../src/types.js'
 
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
+vi.mock('../src/client/create-self-topic.js', () => ({
+  createSelfTopic: async (params: Record<string, unknown>, directory: SelfTopicDirectoryCache) => {
+    const result = await callArkme<ArkmeTopicCreateResult>('topic.create', params)
+    directory.upsert(result.source)
+    return result
+  },
+}))
 // State-transition tests use the test renderer; DOM tests below keep real portals.
 const portalMode = vi.hoisted(() => ({ dom: false }))
 vi.mock('react-dom', async importOriginal => {

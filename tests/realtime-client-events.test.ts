@@ -5,6 +5,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as providerInstance from '../src/client/provider-instance-runtime.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { selfTopicDirectory, resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
@@ -96,6 +97,54 @@ describe('Chat-owned Bot realtime invalidation', () => {
 })
 
 describe('realtime reconcile routing', () => {
+  it('keeps topic rows mounted through a burst of record hints and atomically applies one refresh', async () => {
+    vi.useFakeTimers()
+    let channel!: FakeWebSocket
+    class FakeWebSocket {
+      onopen = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor() { channel = this }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 42, environment: 'test' }
+    const rows = [
+      { sourceRef: 'self', kind: 'send_to_self', displayName: '全部' },
+      { sourceRef: 'default', kind: 'default_category', displayName: '未分类' },
+      { sourceRef: 'old', topicHierarchyKey: 'old', kind: 'topic', displayName: '已有主题' },
+    ]
+    const reads = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: rows, hasMore: false })
+    function Harness() { useArkmeRealtimeClientEvents(auth, 1, false); return null }
+    let renderer!: ReactTestRenderer
+    let off = () => {}
+    try {
+      await act(async () => { renderer = create(createElement(Harness)) })
+      const cache = selfTopicDirectory(42, 'test')
+      await cache.ensure()
+      const sizes: number[] = []
+      off = cache.subscribe(() => { sizes.push(cache.getSnapshot().sources.length) })
+      const refreshed = Promise.withResolvers<unknown>()
+      reads.mockReturnValue(refreshed.promise)
+      await act(async () => {
+        for (const revision of [10, 11, 12]) channel.onmessage?.({ data: JSON.stringify({
+          type: 'projection-invalidated', projection: 'record', revision,
+        }) } as MessageEvent<string>)
+        await vi.advanceTimersByTimeAsync(250)
+      })
+      expect(cache.getSnapshot().sources).toEqual(rows)
+      expect(reads.mock.calls.filter(([op]) => op === 'sources.list')).toHaveLength(2)
+      // An authoritative removal (including a now-private topic) must still take effect.
+      refreshed.resolve({ items: rows.slice(0, 2), hasMore: false })
+      await cache.ensure()
+      expect(cache.getSnapshot().sources).toEqual(rows.slice(0, 2))
+      expect(sizes).not.toContain(0)
+    } finally {
+      off()
+      if (renderer) await act(async () => { renderer.unmount() })
+      resetSelfTopicDirectories()
+      vi.useRealTimers()
+    }
+  })
   it('joins startup instance preparation on first connection without clearing a newly loaded directory', async () => {
     let channel!: { onopen: (() => void) | null }
     class FakeWebSocket {
