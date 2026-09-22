@@ -27,7 +27,7 @@ function fixture() {
     authenticatedChatPost,
   }
   const source = {
-    openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })),
+    openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })),
   }
   const chat = new ChatService(
     runtime as never, source as never, {} as never, {} as never, {} as never,

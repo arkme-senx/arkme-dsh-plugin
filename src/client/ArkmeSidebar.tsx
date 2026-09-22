@@ -2,6 +2,7 @@ import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { AskDshIcon } from './AskDshIcon.js'
+import { isSocialSource, useSocialAccess } from './social-access-store.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layout.js'
@@ -2277,6 +2278,7 @@ export function ArkmeSurface({
   active = true,
 }: ArkmeSurfaceProps = {}) {
   const locale = useArkmeLocale()
+  const socialAllowed = useSocialAccess()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
@@ -2371,7 +2373,14 @@ export function ArkmeSurface({
     : activeSelfSourcesResolution?.status === 'ready'
       ? activeSelfSourcesResolution.error
       : undefined
-  const source = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
+  const candidateSource = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
+  const source = !socialAllowed && isSocialSource(candidateSource) ? aggregateSource : candidateSource
+  useEffect(() => {
+    if (!socialAllowed && (isSocialSource(ui.selectedSource) || ui.mode === 'world' || ui.mode === 'calls' || ui.mode === 'contact-add' || ui.productMode === 'contacts')) {
+      if (aggregateSource !== undefined) arkmeUi.selectSource(aggregateSource)
+      else arkmeUi.showHarness()
+    }
+  }, [socialAllowed, ui.mode, ui.productMode, ui.selectedSource, aggregateSource])
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
@@ -8221,7 +8230,7 @@ export function ArkmeSurface({
   const forwardDialog = forwardTargetPicker?.native && forwardDialogContent ? createPortal(forwardDialogContent, document.body) : forwardDialogContent
   const retainedCallPage = authView === 'content' && <ArkmeRetainedCallPage
     key={`calls:${auth?.status}:${auth?.environment}:${auth?.userId}`}
-    active={active && ui.mode === 'calls'}
+    active={active && socialAllowed && ui.mode === 'calls'}
   />
 
   if (!active) return <>
@@ -8562,7 +8571,7 @@ export function ArkmeSurface({
             accountKey={`${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onBack={() => { const dateStamp = ui.recordingReturnDateStamp; if (dateStamp === undefined) arkmeUi.showRecordings(); else arkmeUi.showRecordingTarget(dateStamp, dateStamp) }}
           />
-          : ui.mode === 'world' ? <ArkmeWorldSurface
+          : ui.mode === 'world' && socialAllowed ? <ArkmeWorldSurface
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
@@ -9418,7 +9427,7 @@ export function ArkmeSurface({
             shareWebsite={shareWebsite}
           />
         </>}
-        {authView === 'content' && ui.mode === 'contact-add' && <div
+        {authView === 'content' && socialAllowed && ui.mode === 'contact-add' && <div
           style={styles.contactBackdrop}
           role="presentation"
           onMouseDown={event => { if (event.target === event.currentTarget) arkmeUi.showConversations() }}

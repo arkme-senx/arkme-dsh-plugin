@@ -30,8 +30,8 @@ describe('forwarded recording reads from the Record owner', () => {
       getRecordReeditDraft: async () => undefined,
       putRecordReeditDraft: vi.fn(async (_userId: number, draft: object) => ({ ...draft, draftRevision: 1 })),
     }
-    const runtime = { config: { maxTextLength: 20_000 }, stateStore, requireSession: async () => ({ userId: 42 }), authenticatedPost: vi.fn(async () => ({ record_core: core, ...(kind === 'topic' ? { topic_core: { topic_uid: 'target' } } : {}) })) }
-    const reader = new RecordService(runtime as never, {} as never, { openSourceRef: async () => ({ kind, ownerRef: 'target', userId: 42 }) } as never)
+    const runtime = { config: { maxTextLength: 20_000 }, stateStore, requireSession: async () => ({ userId: 42 }), authenticatedPost: vi.fn(async () => ({ record_core: core, ...(kind === 'topic' ? { topic_core: { topic_uid: 'target' } } : {}) })) , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    const reader = new RecordService(runtime as never, {} as never, { openSourceRef: async () => ({ kind, ownerRef: 'target', userId: 42 }) , get openAccessibleSourceRef() { return this.openSourceRef }} as never)
     await expect(reader.prepareRecordReedit({ sourceRef: 'source', itemUid: core.record_uid, newText: '不应替换录音快照' })).rejects.toMatchObject({ code: 'record-reedit-shape-unsupported' })
     expect(stateStore.putRecordReeditDraft).not.toHaveBeenCalled()
     expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
@@ -52,9 +52,10 @@ describe('forwarded recording reads from the Record owner', () => {
         expect(path).toBe(endpoint)
         return kind === 'send_to_self' ? { items: [raw], has_more: false } : { topic_uid: 'destination', privacy_state: 1, records: [raw], has_more: false }
       }),
-    }
+     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
     const source = {
       openSourceRef: async () => ({ kind, userId: 42, ownerRef: 'destination' }),
+      openAccessibleSourceRef: async () => ({ kind, userId: 42, ownerRef: 'destination' }),
       sourceItem: async () => ({ kind, sourceRef: 'target', displayName: '目标', unreadCount: 0, activeAtMillis: 0 }),
     }
     const media = { recordMediaUnavailable: () => false, richContentBlocks: () => [], hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() }) }
@@ -115,3 +116,9 @@ describe('forwarded recording reads from the Record owner', () => {
     expect(detail.includes(new Date(60_000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }))).toBe(true)
   })
 })
+
+// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))

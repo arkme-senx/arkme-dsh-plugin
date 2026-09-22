@@ -9,7 +9,7 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 export class OwnerRecordingForwardGateway implements RecordingForwardGateway {
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly source: Pick<SourceService, 'openSourceRef'>,
+    private readonly source: Pick<SourceService, 'openAccessibleSourceRef'>,
     private readonly realtime: { scheduleChatSessionProjection(sessionUid: string, sequence: number): void; invalidateRecordProjection(): Promise<void> },
     private readonly comments: Pick<ChatService, 'sendSourceText'>,
   ) {}
@@ -20,7 +20,7 @@ export class OwnerRecordingForwardGateway implements RecordingForwardGateway {
   }
 
   async forward(selection: RecordingForwardSelection, input: RecordingForwardInput, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingForwardReceipt> {
-    const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
+    const target = await this.source.openAccessibleSourceRef(input.targetSourceRef, session.userId)
     const segments = selection.segments.map(item => ({ child_id: item.childId, asr_item_index: item.asrItemIndex, transcript_source: item.transcriptSource }))
     if (target.kind === 'private_chat' || target.kind === 'group_chat') {
       const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime, '/api/v1/chats/records/forward', {

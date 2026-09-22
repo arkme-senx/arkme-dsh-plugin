@@ -189,6 +189,7 @@ describe('registerArkmeTools', () => {
       'arkme_user_profile',
       'arkme_ai_points',
       'arkme_ai_points_consumption',
+      'arkme_social_access',
       'arkme_background_sound_status',
       'arkme_background_sound_disable',
       'arkme_id_set',

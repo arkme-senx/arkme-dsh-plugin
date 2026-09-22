@@ -32,7 +32,7 @@ function runtime(overrides: Record<string, unknown> = {}) {
     authenticatedChatPost: vi.fn(async () => ({ sid: 'share-sid', url: 'https://jotmo.example/s/share-sid' })),
     authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }),
     ...overrides,
-  }
+   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
 }
 
 function messageActionService(
@@ -121,7 +121,7 @@ describe('MessageActionService', () => {
     const ownerRuntime = runtime({
       authenticatedChatPost: vi.fn(async () => ({ record_uid: forwardRecordUid, seq: 9, audit_status: 1 })),
     })
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) , get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const conversationRef = await service.agentConversationRef(userId, 88)
     const later = await service.agentHistoryItem(historyItem({ messageId: 102, text: '第二条', reasoning: '秘密二' }), userId)
@@ -152,7 +152,7 @@ describe('MessageActionService', () => {
 
   it('preserves Agent snapshot text while safely clipping the Record forward preview', async () => {
     const ownerRuntime = runtime()
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })), invalidateSourceListCache: vi.fn() }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })), invalidateSourceListCache: vi.fn() , get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const text = '文'.repeat(495) + '[jm_emoji:heart_eyes]'
     const conversationRef = await service.agentConversationRef(userId, 88)
@@ -170,7 +170,7 @@ describe('MessageActionService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })),
       invalidateSourceListCache: vi.fn(),
-    }
+     get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const conversationRef = await service.agentConversationRef(userId, 88)
     const projected = await service.agentHistoryItem(historyItem({
@@ -258,7 +258,7 @@ describe('MessageActionService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })),
       invalidateSourceListCache: vi.fn(),
-    }
+     get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const conversationRef = await service.agentConversationRef(userId, 88)
     const projected = await service.agentHistoryItem(historyItem(), userId)
@@ -286,7 +286,7 @@ describe('MessageActionService', () => {
 
   it('rejects malformed write identities before any forward mutation', async () => {
     const ownerRuntime = runtime()
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })) , get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const conversationRef = await service.agentConversationRef(userId, 88)
     const projected = await service.agentHistoryItem(historyItem(), userId)
@@ -300,7 +300,7 @@ describe('MessageActionService', () => {
 
   it('does not invent a Chat forward Record identity when the accepted response omits it', async () => {
     const ownerRuntime = runtime({ authenticatedChatPost: vi.fn(async () => ({ seq: 9, audit_status: 1 })) })
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) , get openAccessibleSourceRef() { return this.openSourceRef }}
     const service = messageActionService(ownerRuntime, source)
     const conversationRef = await service.agentConversationRef(userId, 88)
     const projected = await service.agentHistoryItem(historyItem(), userId)
@@ -317,7 +317,7 @@ describe('MessageActionService', () => {
         ? { record_uid: forwardRecordUid, seq: 9, audit_status: 1 }
         : { sid: 'unexpected', url: 'https://jotmo.example/unexpected' }),
     })
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-target' })) , get openAccessibleSourceRef() { return this.openSourceRef }}
     const bot = { openBotRef: vi.fn(async () => ({
       version: 1, userId, botId: 'bot-subject', target: { kind: 'subject', subjectUid: 'subject-one' },
     })) }
@@ -359,7 +359,7 @@ describe('native DSH snapshot forwarding', () => {
   const options = { targetSourceRef: 'target', requestId: 'native-attempt', recordUid: forwardRecordUid, commentRecordUid: forwardCommentUid, sendAtMillis: 1_786_000_123_000 }
   it('uses immutable Markdown snapshots and DSH identities without guessing Arkme Agent or Record IDs', async () => {
     const r = runtime({ authenticatedChatPost: vi.fn(async () => ({ record_uid: 'delivered', seq: 3 })) })
-    const service = messageActionService(r, { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'target-chat' }) })
+    const service = messageActionService(r, { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'target-chat' }) , get openAccessibleSourceRef() { return this.openSourceRef }})
     const result = await service.forwardNative(snapshot, userId, options)
     expect(result.itemUid).toBe('delivered')
     const body = r.authenticatedChatPost.mock.calls[0]?.[1] as Record<string, unknown>
@@ -371,7 +371,7 @@ describe('native DSH snapshot forwarding', () => {
   })
   it('creates a Record forward bundle without creating source records and preserves original timestamps', async () => {
     const r = runtime()
-    const source = { openSourceRef: async () => ({ kind: 'topic', ownerRef: 'topic' }), invalidateSourceListCache: vi.fn() }
+    const source = { openSourceRef: async () => ({ kind: 'topic', ownerRef: 'topic' }), invalidateSourceListCache: vi.fn() , get openAccessibleSourceRef() { return this.openSourceRef }}
     await messageActionService(r, source).forwardNative(snapshot, userId, options)
     expect(r.authenticatedPost).toHaveBeenCalledTimes(1)
     const [path, body] = r.authenticatedPost.mock.calls[0] as unknown as [string, { content_payload: { forward_records: { source_record_uids: string[]; items: Array<Record<string, unknown>> } } }]
@@ -385,7 +385,7 @@ describe('native DSH snapshot forwarding', () => {
   })
   it('rejects account mismatch, duplicate identities, wrong order, unsupported roles and oversized text before writes', async () => {
     const r = runtime(); const target = vi.fn()
-    const service = messageActionService(r, { openSourceRef: target })
+    const service = messageActionService(r, { openSourceRef: target , get openAccessibleSourceRef() { return this.openSourceRef }})
     await expect(service.forwardNative(snapshot, 99, options)).rejects.toMatchObject({ code: 'native-forward-account-changed' })
     for (const invalid of [null, {}, { ...snapshot, messages: [] }, { ...snapshot, messages: [...snapshot.messages].reverse() },
       { ...snapshot, messages: [snapshot.messages[0], snapshot.messages[0]] },
@@ -411,14 +411,14 @@ describe('Record forwarding receipt facts', () => {
   ])('does not invent confirmed delivery from incomplete or mismatched $kind receipts', async ({ kind, receipt }) => {
     const r = runtime({ authenticatedPost: vi.fn(async () => receipt) })
     const invalidateSourceListCache = vi.fn()
-    const service = messageActionService(r, { openSourceRef: async () => ({ kind, ownerRef: 'topic' }), invalidateSourceListCache })
+    const service = messageActionService(r, { openSourceRef: async () => ({ kind, ownerRef: 'topic' }), invalidateSourceListCache , get openAccessibleSourceRef() { return this.openSourceRef }})
     await expect(service.forwardNative(snapshot, userId, { ...options, commentText: 'note' })).rejects.toMatchObject({ code: 'message-actions-forward-outcome-unknown' })
     expect(r.authenticatedPost).toHaveBeenCalledTimes(1)
     expect(invalidateSourceListCache).not.toHaveBeenCalled()
   })
   it('distinguishes confirmed primary content from an unconfirmed comment', async () => {
     const r = runtime({ authenticatedPost: vi.fn().mockResolvedValueOnce({ record_uid: forwardRecordUid, status: 1 }).mockResolvedValueOnce({}) })
-    const result = await messageActionService(r, { openSourceRef: async () => ({ kind: 'send_to_self', ownerRef: 'self' }), invalidateSourceListCache() {} }).forwardNative(snapshot, userId, { ...options, commentText: 'note' })
+    const result = await messageActionService(r, { openSourceRef: async () => ({ kind: 'send_to_self', ownerRef: 'self' }), invalidateSourceListCache() {} , get openAccessibleSourceRef() { return this.openSourceRef }}).forwardNative(snapshot, userId, { ...options, commentText: 'note' })
     expect(result.itemUid).toBe(forwardRecordUid)
     expect(result.warningText).toBe('转发已完成，附言发送失败')
   })

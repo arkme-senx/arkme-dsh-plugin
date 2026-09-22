@@ -1,3 +1,6 @@
+import { SocialAccessService } from '../../src/services/social-access-service.js'
+import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
+qualifiedSocialAccountFixture()
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { MediaService } from '../../src/services/media-service.js'
@@ -157,6 +160,7 @@ describe('WorldService', () => {
   })
 
   it('does not write a Record when the current account is not allowed to publish', async () => {
+    vi.spyOn(SocialAccessService.prototype, 'status').mockResolvedValue({ userId: 42, allowed: false })
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -172,7 +176,7 @@ describe('WorldService', () => {
 
     await expect(service.publishWorldText({
       clientMutationId: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', textContent: '世界正文',
-    })).resolves.toMatchObject({ recordSaved: false, worldPublished: false, retryable: false })
+    })).rejects.toMatchObject({ code: 'PHONE_BINDING_REQUIRED', retryable: false })
     expect(record.createTextForConversation).not.toHaveBeenCalled()
     expect(fetchImpl).not.toHaveBeenCalled()
   })

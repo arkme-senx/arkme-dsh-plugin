@@ -1,4 +1,5 @@
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
+import { SocialAccessService } from './social-access-service.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
 import { retryAfterMillis } from '../http-retry-after.js'
@@ -277,6 +278,7 @@ export function joinUrl(baseUrl: string, path: string): string {
 }
 
 export class ServiceRuntime {
+  readonly socialAccess: SocialAccessService
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
@@ -295,6 +297,7 @@ export class ServiceRuntime {
     accountSessions?: ArkmeAccountSessionOwner,
   ) {
     this.accountSessions = accountSessions ?? new ArkmeAccountSessionOwner(sessionStore)
+    this.socialAccess = new SocialAccessService(this)
   }
 
   async startAccountScope(): Promise<void> { await this.accountSessions.start() }
@@ -411,9 +414,17 @@ export class ServiceRuntime {
   }
 
   dispose(): void {
+    this.socialAccess.dispose()
     this.refreshInFlightByUserId.clear()
     this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
+  }
+
+  async requireSocialSession(): Promise<ArkmeSessionCredentials> {
+    const session = await this.requireSession()
+    await this.socialAccess.require()
+    if ((await this.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换，请重新操作', false, 409)
+    return session
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
@@ -686,6 +697,9 @@ export class ServiceRuntime {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
       if (!successCodes.includes(envelope.code)) {
+        if (envelope.code === 24001) throw new ArkmePluginError('PHONE_BINDING_REQUIRED', '绑定手机号后可使用社交功能', false)
+        if (envelope.code === 24002) throw new ArkmePluginError('SOCIAL_ACCESS_UNAVAILABLE', '社交服务暂时不可用，请稍后重试', true, 503)
+
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
         const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''
@@ -788,6 +802,9 @@ export class ServiceRuntime {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
       if (!successCodes.includes(envelope.code)) {
+        if (envelope.code === 24001) throw new ArkmePluginError('PHONE_BINDING_REQUIRED', '绑定手机号后可使用社交功能', false)
+        if (envelope.code === 24002) throw new ArkmePluginError('SOCIAL_ACCESS_UNAVAILABLE', '社交服务暂时不可用，请稍后重试', true, 503)
+
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
         const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''

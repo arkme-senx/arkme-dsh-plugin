@@ -5,6 +5,12 @@ import type { ArkmeDirectoryEntryOwnerProps } from '../src/client/slots-contract
 
 const testState = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
+// This existing notification race scenario is an eligible social account.
+vi.mock('../src/client/social-access-store.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
+  useSocialAccess: () => true,
+}))
+
 vi.mock('../src/client/api.js', () => ({
   callArkme: testState.callArkme,
   ArkmeClientError: class ArkmeClientError extends Error {},
