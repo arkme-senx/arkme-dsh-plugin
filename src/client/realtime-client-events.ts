@@ -288,7 +288,9 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection !== 'record') return
-          invalidateSelfTopicDirectories(update.retainTopicCounts !== true)
+          // A metadata-only hint does not identify a removed/locked topic. Reconcile
+          // the existing directory atomically; account changes and access errors still clear it.
+          invalidateSelfTopicDirectories()
           arkmeInterwovenInvalidation.invalidate()
           // Includes privacy/hierarchy changes: never retain an old visible count.
           arkmeCalendarInvalidations.publishAll({ hard: true })

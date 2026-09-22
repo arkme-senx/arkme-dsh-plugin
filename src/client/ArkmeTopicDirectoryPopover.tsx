@@ -4,9 +4,9 @@ import {
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
-  ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
+  ArkmeEnvironment, ArkmeSourceItem,
 } from '../types.js'
-import { callArkme } from './api.js'
+import { createSelfTopic } from './create-self-topic.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,
@@ -19,7 +19,7 @@ import {
   type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import {
-  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -285,7 +285,7 @@ export function ArkmeTopicDirectoryPopover({
     [cardMode, directorySources, sourceSort],
   )
   const rows = useMemo(
-    () => flattenVisibleArkmeSourceTree(buildArkmeSourceTree(filteredSources), collapsedSourceRefs),
+    () => flattenVisibleArkmeSourceTree(sortArkmeSourceTree(buildArkmeSourceTree(filteredSources), 'custom'), collapsedSourceRefs),
     [collapsedSourceRefs, filteredSources],
   )
 
@@ -334,15 +334,14 @@ export function ArkmeTopicDirectoryPopover({
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
-      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+      const result = await createSelfTopic({
         title,
         contextSourceRef: contextSource.sourceRef,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
-      })
+      }, directory)
       if (createRequestRef.current !== request) return
-      const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
+      const nextSources = mergeCreatedTopicSource(result.sources ?? sourcesRef.current, result.source)
       sourcesRef.current = nextSources
-      directory.upsert(result.source)
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)

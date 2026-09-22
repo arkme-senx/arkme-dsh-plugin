@@ -21,6 +21,8 @@ export function mergeSelfTopicSources(current: readonly ArkmeSourceItem[], incom
 
 /** One account-owned read survives menu unmounts; complete snapshots are replaced atomically. */
 export class SelfTopicDirectoryCache {
+  private readonly lifetime = new AbortController()
+  readonly signal = this.lifetime.signal
   private snapshot: SelfTopicDirectorySnapshot
   private listeners = new Set<() => void>()
   private pending: Promise<void> | undefined
@@ -64,6 +66,7 @@ export class SelfTopicDirectoryCache {
     } satisfies ArkmeNavigationCache)
   }
   ensure(force = false): Promise<void> {
+    if (this.signal.aborted) return Promise.resolve()
     if (this.pending) { this.dirty ||= force; return this.pending }
     if (!force && !this.dirty && this.snapshot.complete && this.now() - this.snapshot.refreshedAtMillis < FRESH_MS) return Promise.resolve()
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined }
@@ -109,11 +112,19 @@ export class SelfTopicDirectoryCache {
     return this.pending
   }
   /** Use confirmed mutation results, never guessed count deltas. Preserve them against an older read. */
-  upsert(source: ArkmeSourceItem): void {
+  upsert(source: ArkmeSourceItem, relatedSources: readonly ArkmeSourceItem[] = []): void {
+    if (this.signal.aborted) return
     const next = { ...this.snapshot.sources.find(item => identity(item) === identity(source)), ...source }
-    if (this.pending) this.patches.set(identity(next), next)
-    this.publish({ sources: mergeSelfTopicSources(this.snapshot.sources, [next]) })
+    const incoming = [...relatedSources, next]
+    if (this.pending) for (const item of incoming) this.patches.set(identity(item), item)
+    this.publish({ sources: mergeSelfTopicSources(this.snapshot.sources, incoming) })
     this.persist()
+  }
+  /** Join older reads, then coalesce mutations into one authoritative background refresh. */
+  async refreshAfterMutation(): Promise<void> {
+    this.dirty = true
+    if (this.pending) await this.pending
+    if (this.dirty && !this.signal.aborted) await this.ensure(true)
   }
   invalidate(hard = false): void {
     this.dirty = true
@@ -128,6 +139,7 @@ export class SelfTopicDirectoryCache {
     this.timer = setTimeout(() => { this.timer = undefined; if (this.listeners.size) void this.ensure(true) }, 250)
   }
   dispose(): void {
+    this.lifetime.abort()
     this.controller?.abort(); this.controller = undefined; this.pending = undefined
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
