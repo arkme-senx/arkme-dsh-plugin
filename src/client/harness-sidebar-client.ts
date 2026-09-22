@@ -28,7 +28,7 @@ export function apply(ctx: ClientContext): void {
         }, () => null))
         restoreDefault = installHarnessSessionListDefault(ctx)
         restoreAccountSessions = installHarnessAccountSessions(ctx, surface)
-        restoreSummary = installHarnessSessionSummary(ctx)
+        restoreSummary = installHarnessSessionSummary(ctx, surface)
         restoreActivity = installHarnessActivityReporter(ctx, surface)
         restoreDropdown = installHarnessSessionDropdown(document)
       } else if (!authenticated) {

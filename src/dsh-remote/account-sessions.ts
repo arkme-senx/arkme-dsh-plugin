@@ -24,7 +24,7 @@ function ref(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '会话引用无效')
   return value
 }
-interface Runtime { capabilities: string[]; target: DshRemoteRuntimeTarget; generation: number; presence: string; desktopRef: string; desktopName: string; runtimeName: string }
+interface Runtime { checkedAt: number; capabilities: string[]; target: DshRemoteRuntimeTarget; generation: number; presence: string; desktopRef: string; desktopName: string; runtimeName: string }
 interface Channel {
   transport: DshRemoteRealtimeTransport
   controller: AbortController
@@ -39,6 +39,8 @@ export class DshAccountSessions {
   private lifetime = new AbortController()
   private readonly cloud: DshCloudNativeTransport
   private readonly nativeHistories = new Map<string, { key: string; address: Record<string, unknown>; touched: number }>()
+  private discovery: { promise: Promise<Map<string, Runtime>>; controller: AbortController; users: number } | undefined
+  private readonly nativeStreams = new Map<string, { channel: Channel; release: () => void; timer: ReturnType<typeof setTimeout> }>()
   private readonly channels = new Map<string, Channel>()
   constructor(private readonly options: {
     request: DshRemoteHttpRequester
@@ -53,7 +55,8 @@ export class DshAccountSessions {
 
   close(): void {
     this.lifetime.abort(new Error('会话账号已切换'))
-    for (const channel of this.channels.values()) { channel.controller.abort(); void channel.transport.disconnect() }
+    for (const channel of this.channels.values()) channel.controller.abort()
+    this.discovery = undefined
     this.channels.clear()
     this.nativeHistories.clear()
     this.cloud.close()
@@ -67,7 +70,33 @@ export class DshAccountSessions {
     return scoped
   }
 
+  private async wait<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted()
+    return await new Promise<T>((resolve, reject) => {
+      const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+      signal.addEventListener('abort', abort, { once: true })
+      promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+    })
+  }
+
   private async runtimes(signal: AbortSignal): Promise<Map<string, Runtime>> {
+    signal.throwIfAborted()
+    let flight = this.discovery
+    if (!flight) {
+      const controller = new AbortController()
+      const scoped = AbortSignal.any([controller.signal, this.lifetime.signal, AbortSignal.timeout(30_000)])
+      flight = { promise: this.loadRuntimes(scoped), controller, users: 0 }
+      this.discovery = flight
+    }
+    const current = flight
+    current.users++
+    try { return await this.wait(current.promise, signal) }
+    finally {
+      if (--current.users === 0) { current.controller.abort(); if (this.discovery === current) this.discovery = undefined }
+    }
+  }
+
+  private async loadRuntimes(signal: AbortSignal): Promise<Map<string, Runtime>> {
     const result = await this.options.request.post(`${BASE}/desktops/list`, {}, signal)
     signal.throwIfAborted()
     const values = new Map<string, Runtime>()
@@ -76,6 +105,7 @@ export class DshAccountSessions {
       for (const row of array(desktop.runtimes)) {
         const view = object(row), runtime = object(view.runtime), presence = object(view.presence)
         values.set(ref(runtime.runtime_ref), {
+          checkedAt: Date.now(),
           target: { runtimeRef: ref(runtime.runtime_ref), hostProfileRef: ref(runtime.profile_ref), hostClientRef: ref(runtime.host_client_ref), hostLeaseGeneration: Number(presence.lease_generation ?? 0) },
           capabilities: Array.isArray(runtime.capabilities) ? runtime.capabilities.filter((v): v is string => typeof v === 'string') : [],
           generation: Number(runtime.host_generation), presence: String(presence.presence),
@@ -135,7 +165,11 @@ export class DshAccountSessions {
   }
 
   private async runtime(runtimeRef: unknown, signal: AbortSignal): Promise<Runtime> {
-    const runtime = (await this.runtimes(signal)).get(ref(runtimeRef))
+    const key = ref(runtimeRef), active = this.channels.get(key)
+    // Short routing reuse only while a live subscription owns the exact lease.
+    // Realtime still checks that lease on every request; errors invalidate it.
+    if (active && !active.controller.signal.aborted && Date.now() - active.runtime.checkedAt < 5_000) return active.runtime
+    const runtime = (await this.runtimes(signal)).get(key)
     if (!runtime) throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该实例')
     return runtime
   }
@@ -145,7 +179,7 @@ export class DshAccountSessions {
     const key = runtime.target.runtimeRef
     let channel = this.channels.get(key)
     if (channel && (channel.runtime.generation !== runtime.generation || channel.runtime.target.hostLeaseGeneration !== runtime.target.hostLeaseGeneration)) {
-      channel.controller.abort(); await channel.transport.disconnect(); this.channels.delete(key); channel = undefined
+      channel.controller.abort(); channel = undefined
     }
     if (!channel) {
       if (this.channels.size >= 8) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '打开的远程实例过多')
@@ -154,7 +188,12 @@ export class DshAccountSessions {
       const current = channel, reader = new DshRemoteFragmentReader()
       this.channels.set(key, channel)
       const stopDisconnect = transport.subscribeDisconnect(error => controller.abort(error))
-      controller.signal.addEventListener('abort', stopDisconnect, { once: true })
+      controller.signal.addEventListener('abort', () => {
+        stopDisconnect()
+        if (this.channels.get(key) === current) this.channels.delete(key)
+        for (const [id, stream] of this.nativeStreams) if (stream.channel === current) this.releaseStream(id)
+        void transport.disconnect().catch(() => undefined)
+      }, { once: true })
       channel.ready = (async () => {
         await transport.connect({ profileRef: this.options.profileRef, clientRef: `${this.options.clientRef}_${key}`, signal: controller.signal })
         await transport.subscribe({ target: runtime.target, signal: controller.signal, onEvent: (raw, metadata) => {
@@ -167,6 +206,7 @@ export class DshAccountSessions {
         } })
       })()
     }
+    channel.runtime = runtime
     const current = channel
     current.users++
     let released = false
@@ -176,20 +216,37 @@ export class DshAccountSessions {
       signal.removeEventListener('abort', release)
       if (--current.users === 0) {
         current.controller.abort()
-        void current.transport.disconnect()
-        if (this.channels.get(key) === current) this.channels.delete(key)
       }
     }
     signal.addEventListener('abort', release, { once: true })
-    try { await current.ready; signal.throwIfAborted(); current.controller.signal.throwIfAborted(); return { channel: current, release } }
+    try { await this.wait(current.ready, AbortSignal.any([signal, current.controller.signal])); signal.throwIfAborted(); current.controller.signal.throwIfAborted(); return { channel: current, release } }
     catch (error) { release(); throw error }
   }
 
-  private async rpc(runtime: Runtime, operation: string, body: Record<string, unknown>, requestRef: string, signal: AbortSignal): Promise<unknown> {
+  private releaseStream(key: string): void {
+    const stream = this.nativeStreams.get(key)
+    this.nativeHistories.delete(key)
+    if (!stream) return
+    this.nativeStreams.delete(key); clearTimeout(stream.timer); stream.release()
+  }
+
+  private retainStream(key: string, channel: Channel): void {
+    const stream = this.nativeStreams.get(key)
+    if (stream) { stream.timer.refresh(); return }
+    if (this.nativeStreams.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '原生订阅数量超限')
+    channel.users++
+    // Match the source Host's 45-second idle stream lease, including lost close frames.
+    const timer = setTimeout(() => this.releaseStream(key), 45_000)
+    timer.unref()
+    this.nativeStreams.set(key, { channel, timer, release: () => { if (--channel.users === 0) channel.controller.abort() } })
+  }
+
+  private async rpc(runtime: Runtime, operation: string, body: Record<string, unknown>, requestRef: string, signal: AbortSignal, streamKey?: string): Promise<unknown> {
     const now = Date.now()
     const request = parseDshRemoteRequest({ protocol: 'dsh.remote', protocol_major: 1, kind: 'request', request_ref: requestRef, host_generation: runtime.generation, issued_at: now, execute_before: now + 30_000, operation, body }, { expectedHostGeneration: runtime.generation, nowMillis: now })
     const { channel, release } = await this.acquire(runtime, signal)
     try {
+      if (streamKey) this.retainStream(streamKey, channel)
       return await new Promise((resolve, reject) => {
         const abort = () => finish(() => reject(combined.reason))
         const combined = AbortSignal.any([signal, channel.controller.signal, AbortSignal.timeout(30_000)])
@@ -202,10 +259,14 @@ export class DshAccountSessions {
               CAPABILITY_UNSUPPORTED: '源实例不支持该操作', WORKSPACE_UNAVAILABLE: '源工作区不可用',
               SESSION_NOT_FOUND: '源会话不存在', COMMAND_EXPIRED: '命令已过期', COMMAND_OUTCOME_UNKNOWN: '命令结果未知，请核对源会话',
               INTERACTION_RESOLVED: '该交互已处理', HOST_GENERATION_STALE: '源实例已重启，请重新连接',
+              REMOTE_NOT_FOUND: '远程订阅已结束，请重新连接', RUNTIME_OFFLINE: '源电脑暂不可执行',
+              HOST_CHANNEL_NOT_READY: '源连接尚未就绪', CONNECTION_REPLACED: '源连接已替换',
+              REMOTE_LOGIN_REQUIRED: '请先登录', REMOTE_PROTOCOL_UNSUPPORTED: '源协议不兼容',
               SESSION_STATE_CHANGED: '会话状态已变化，请刷新', REMOTE_REQUEST_INVALID: '会话操作参数无效',
             }
             const code = String(error.code) as DshRemoteErrorCode
             finish(() => reject(new DshRemoteError(safe[code] ? code : 'REMOTE_TRANSPORT_FAILED', safe[code] ?? '源电脑操作失败', error.retryable === true)))
+            if (['HOST_GENERATION_STALE', 'CONNECTION_REPLACED', 'HOST_CHANNEL_NOT_READY', 'RUNTIME_OFFLINE'].includes(code)) channel.controller.abort()
             return
           }
           if (['accepted', 'completed', 'duplicate'].includes(String(payload.status))) finish(() => resolve(payload.result))
@@ -265,6 +326,7 @@ export class DshAccountSessions {
     const stream = `${account}:${runtime.target.runtimeRef}:${String(body.streamRef)}`
     const sourceWritable = runtime.presence === 'online' && runtime.target.hostLeaseGeneration > 0 && runtime.capabilities.includes('session.native')
     if (!sourceWritable) {
+      this.releaseStream(stream)
       const value = await this.cloud.call(runtime.target.runtimeRef, body, stream, signal, cache && typeof account === 'string'
         ? { store: { snapshot: key => this.cached(() => cache.snapshot(key)), page: (key, through, before) => this.cached(() => cache.page(key, through, before)), write: (key, records, snapshot) => { this.cached(() => cache.write(key, records, snapshot)) } }, key: session => DshNativeHistoryCache.key(account, runtime.target.runtimeRef, { kind: 'session', sessionId: session }) } : undefined)
       return { ...value, sourceWritable: false }
@@ -297,7 +359,11 @@ export class DshAccountSessions {
     }
     const history = this.nativeHistories.get(stream)
     if (history) history.touched = Date.now()
-    const value = object(await this.rpc(runtime, 'session.native', body, ref(params.requestRef), signal))
+    let value: Record<string, unknown>
+    try { value = object(await this.rpc(runtime, 'session.native', body, ref(params.requestRef), signal, body.mode === 'pull' ? stream : undefined)); signal.throwIfAborted() }
+    catch (error) { this.releaseStream(stream); throw error }
+    if (body.mode === 'close' || value.done === true) this.releaseStream(stream)
+    else if (body.mode === 'pull') { const retained = this.nativeStreams.get(stream); if (retained) this.retainStream(stream, retained.channel) }
     signal.throwIfAborted()
     if (body.mode === 'close' || value.done === true) this.nativeHistories.delete(stream)
     if (!cache) return { ...value, sourceWritable: true }

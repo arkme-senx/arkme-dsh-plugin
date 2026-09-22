@@ -4,6 +4,7 @@ import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { dshRemoteRequestIdentity } from './protocol-v1.js'
 import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
 import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from './transport-fragment.js'
+import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES } from './types.js'
 import type {
   DshRemoteRealtimePayload,
   DshRemoteRealtimeTransport,
@@ -44,7 +45,12 @@ export class DshRemoteHostChannelManager {
   private target: DshRemoteRuntimeTarget
   private lastTransportSequence = 0
   private persistedTransportSequence = 0
-  private outboundTail: Promise<void> = Promise.resolve()
+  // Two bounded lanes: preserve bulk/event ordering while reserving one slot
+  // for interactive replies. Never parallelize fragments within a lane.
+  private readonly outbound = {
+    bulk: { tail: Promise.resolve(), count: 0, bytes: 0 },
+    control: { tail: Promise.resolve(), count: 0, bytes: 0 },
+  }
   private readonly pendingEvents: Array<{ payload: DshRemoteRealtimePayload; metadata: DshRemoteTrustedEventMetadata }> = []
   private readonly requestFragments = new DshRemoteFragmentReader()
   private closed = false
@@ -210,7 +216,7 @@ export class DshRemoteHostChannelManager {
           ...diagnostic, completed: timing.completed,
           queue_ms: Math.round(timing.queueMs), publish_ack_ms: Math.round(timing.publishMs),
         })
-      })
+      }, !(identity?.operation === 'session.history' || (identity?.operation === 'session.native' && body !== null && typeof body === 'object' && ('mode' in body && body.mode === 'pull' || 'endpoint' in body && body.endpoint === 'session/page'))))
       if (!published) this.diagnostic('host_response_publish_failed', { ...diagnostic, error_code: 'HOST_CHANNEL_NOT_READY', retryable: true })
     } catch (error) {
       this.diagnostic('host_response_publish_failed', { ...diagnostic, error_code: asDshRemoteError(error).code, retryable: asDshRemoteError(error).retryable })
@@ -227,7 +233,15 @@ export class DshRemoteHostChannelManager {
     commandId: string,
     direction: 'event' | 'response',
     onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void,
+    interactive = false,
   ): Promise<void> {
+    const bytes = Buffer.byteLength(JSON.stringify(envelope))
+    if (bytes > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '完整 DSH 事件超过 64MiB 安全上限', false, { logicalTooLarge: true, payloadBytes: bytes })
+    const lane = interactive && bytes <= 32 * 1024 ? this.outbound.control : this.outbound.bulk
+    if (lane.count >= 64 || this.outbound.bulk.bytes + this.outbound.control.bytes + bytes > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) {
+      throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '远程发送队列已满', true)
+    }
+    lane.count++; lane.bytes += bytes
     const queuedAt = performance.now()
     const publish = async (): Promise<void> => {
       const startedAt = performance.now()
@@ -260,8 +274,8 @@ export class DshRemoteHostChannelManager {
         catch { /* Timing cannot affect delivery. */ }
       }
     }
-    const result = this.outboundTail.then(publish)
-    this.outboundTail = result.catch(() => undefined)
+    const result = lane.tail.then(publish).finally(() => { lane.count--; lane.bytes -= bytes })
+    lane.tail = result.catch(() => undefined)
     await result
   }
 

@@ -331,3 +331,36 @@ it('reassembles native attachment requests only from the current authenticated c
   expect(fatals).toEqual([])
   await manager.close()
 })
+
+it('publishes command replies while a history event is waiting for acknowledgement', async () => {
+  const f = managerFixture()
+  await f.manager.prepare(); f.manager.activate(9)
+  let unblock!: () => void
+  const blocked = new Promise<void>(resolve => { unblock = resolve })
+  const publish = f.realtime.publish.bind(f.realtime)
+  f.realtime.publish = async input => { if (input.commandId === 'blocked-history') await blocked; return publish(input) }
+  const history = f.manager.publishProjectionEvent({ ...response('history'), kind: 'event' } as never, 'blocked-history')
+  await Promise.resolve()
+  f.realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+  await vi.waitFor(() => expect(f.dispatch).toHaveBeenCalledOnce())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(f.realtime.publishes.map(frame => frame.direction)).toEqual(['response'])
+  unblock(); await history
+  await vi.waitFor(() => expect(f.realtime.publishes).toHaveLength(2))
+  expect(f.realtime.publishes.map(frame => frame.direction)).toEqual(['response', 'event'])
+  await f.manager.close()
+})
+
+it('bounds the bulk backlog and drains cancelled entries without sending them', async () => {
+  const f = managerFixture()
+  await f.manager.prepare(); f.manager.activate(9)
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const publish = f.realtime.publish.bind(f.realtime)
+  f.realtime.publish = async input => { await blocked; return publish(input) }
+  const pending = Array.from({ length: 64 }, (_, i) => f.manager.publishProjectionEvent({ value: i }, `event-${i}`))
+  await expect(f.manager.publishProjectionEvent({ value: 65 }, 'overflow')).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED', retryable: true })
+  await Promise.resolve()
+  await f.manager.close(); release(); await Promise.all(pending)
+  expect(f.realtime.publishes).toHaveLength(1)
+})

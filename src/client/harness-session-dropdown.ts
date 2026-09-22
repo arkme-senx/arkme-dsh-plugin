@@ -140,6 +140,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   mark(statusLabel, 'status-label')
   statusLabel.setAttribute('aria-hidden', 'true')
   const labelText = doc.createElement('span')
+  mark(labelText, 'label-text')
   label.append(status, labelText, statusLabel)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -202,6 +203,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
     }
     [${PREFIX}status-label]:not(:empty) { display: inline-block; }
+    [${PREFIX}trigger] > span:first-child { display: flex; align-items: center; }
+    [${PREFIX}label-text] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     [${PREFIX}header] { padding-left: 20px; padding-right: 20px; container: arkme-session-header / inline-size; }
     [${PREFIX}title-row] {
       --arkme-header-side: max(calc((100% - 8px) / 4), var(--arkme-header-utilities-width, 0px));
@@ -225,6 +228,21 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * { font-size: inherit; line-height: inherit; }
     [${PREFIX}turn-count] { display: inline-flex; align-items: center; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * + [${PREFIX}turn-count]::before { content: '·'; margin: 0 7px; }
+    [${PREFIX}summary]:has([${PREFIX}computer]) { overflow: visible; }
+    [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) { display: flex; align-items: center; overflow: visible; min-width: 0; }
+    [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) > :not([${PREFIX}computer]) { flex: none; }
+    [${PREFIX}computer] { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 240px; }
+    [${PREFIX}computer]::before { content: ''; flex: none; height: 12px; border-left: 1px solid var(--dsw-alias-border-l3, #d4d6da); margin: 0 6px; }
+    [${PREFIX}computer]:first-child::before { display: none; }
+    [${PREFIX}remote-label] { flex: none; color: var(--dsw-alias-label-secondary, #626872); }
+    [${PREFIX}computer-name] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    [${PREFIX}computer]:focus-visible { outline: 2px solid #4c70ef; outline-offset: 2px; border-radius: 2px; }
+    /* Narrow headers give the metadata the full row; keep native React ancestry. */
+    @container arkme-session-header (max-width: 600px) {
+      [${PREFIX}title-row]:has([${PREFIX}computer]) { position: relative; padding-bottom: 22px; }
+      [${PREFIX}summary]:has([${PREFIX}computer]) { position: absolute; left: 0; right: 0; bottom: 0; }
+      [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) { max-width: 100%; }
+    }
     /* The embedded conversation can be much narrower than the browser. Keep
        native controls in their React ancestry, wrapping only in that case. */
     @container arkme-session-header (max-width: 360px) {

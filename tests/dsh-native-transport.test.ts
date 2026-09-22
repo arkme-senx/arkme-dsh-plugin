@@ -50,7 +50,7 @@ it('rejects stale accounts and closes native subscriptions', async () => {
   await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, { ...f.scope, accountId: 'other' })).rejects.toMatchObject({ code: 'REMOTE_REQUEST_INVALID' })
   f.relay.close()
   await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce())
-  await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, f.scope)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
+  await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, f.scope)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND', retryable: true })
   f.controller.abort()
   await expect(f.relay.request({ mode: 'call', endpoint: 'session/list', payload: { args: {} } }, f.scope)).rejects.toThrow()
 })
