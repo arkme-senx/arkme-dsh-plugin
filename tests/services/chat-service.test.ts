@@ -3595,3 +3595,57 @@ describe('received Markdown long article detail', () => {
     expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
   })
 })
+
+
+it('returns the hydrated original attachment snapshot only when requested for Ask DSH', async () => {
+  const raw = { record_uid: 'record-snapshot-1', title: '完整标题', text_content: '完整正文', media_refs: [{ file_asset_uid: 'file-1' }] }
+  const runtime = {
+    stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' },
+    requireSession: async () => ({ userId: 42 }),
+    authenticatedChatPost: async () => ({ item: { record: raw } }),
+    authenticatedPost: vi.fn(async (path: string) => {
+      if (path.endsWith('/context/get')) throw new Error('Ask DSH must not query location')
+      return { record_core: raw }
+    }),
+  }
+  const block = { kind: 'file', originalRef: 'original', fileName: '报告.pdf' }
+  const media = {
+    hydrateRecordSnapshotMediaPage: async () => [[{ file_asset_uid: 'file-1' }]],
+    richContentBlocks: () => [block], recordMediaUnavailable: () => false,
+  }
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
+    { publicProfileSummariesByUserIds: async () => new Map([[42, { displayName: '本人昵称' }]]) } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+  const result = await chat.messageSnapshotDetail('source', snapshotActionRef(), { includeAttachments: true })
+  expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
+  expect(runtime.authenticatedPost.mock.calls[0]![0]).toBe('/api/v1/records/detail')
+  expect(result).toMatchObject({ title: '完整标题', textContent: '完整正文', contentBlocks: [block], mediaUnavailable: false })
+})
+
+
+it.each(['private_chat', 'group_chat'])('exports received notes through authorized %s detail only', async kind => {
+  const raw = { relation: { rel_uid: 'rel-snapshot-1' }, record: { payload: {
+    record_uid: 'record-snapshot-1', owner_user_id: 99, text_content: '# 完整正文',
+    title: '他人快记', content_payload: { text_format: 'markdown' },
+  } } }
+  const runtime = {
+    stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' }, requireSession: async () => ({ userId: 42 }),
+    authenticatedChatPost: vi.fn(async () => ({ item: raw })), authenticatedPost: vi.fn(),
+  }
+  const media = { hydrateRecordSnapshotMediaPage: vi.fn(async () => [[]]), richContentBlocks: () => [], recordMediaUnavailable: () => false }
+  const remarks = vi.fn(async () => { throw new Error('must reuse local names') })
+  const profiles = vi.fn(async () => { throw new Error('must reuse local names') })
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
+    { publicProfileSummariesByUserIds: profiles } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+  const ref = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99 })
+  await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).resolves.toMatchObject({
+    itemUid: 'record-snapshot-1', title: '他人快记', textContent: '# 完整正文', textFormat: 'markdown', contentBlocks: [],
+  })
+  expect(runtime.authenticatedPost).not.toHaveBeenCalled()
+  expect(media.hydrateRecordSnapshotMediaPage).toHaveBeenCalledWith([raw], expect.anything(), {
+    chatSessionUid: 'chat-1', recordUid: 'record-snapshot-1', recordOwnerUserId: 99, relationUid: 'rel-snapshot-1',
+  }, undefined)
+  expect(remarks).not.toHaveBeenCalled()
+  expect(profiles).not.toHaveBeenCalled()
+  raw.record.payload.owner_user_id = 7
+  await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).rejects.toMatchObject({ code: 'message-snapshot-detail-unavailable' })
+})

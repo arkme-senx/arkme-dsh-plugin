@@ -1968,7 +1968,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-snapshot.detail': return await service.messageSnapshotDetail(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'actionRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(requestSignal === undefined ? {} : { signal: requestSignal }), includeAttachments: params.includeAttachments === true },
     )
     case 'source.message-location.set': {
       await service.saveMessageLocation(

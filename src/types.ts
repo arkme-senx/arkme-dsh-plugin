@@ -1719,6 +1719,11 @@ export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
 }
 
 export interface ArkmeMessageSnapshotDetail {
+  /** Included only when explicitly requesting the full attachment snapshot. */
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: boolean
+  title?: string
+  sourceUrl?: string
   itemUid: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
@@ -1752,6 +1757,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Original media refs were not fully projected, even when rich-media rendering is disabled. */
+  attachmentSnapshotUnavailable?: boolean
   /** Even an absent snapshot must not fall back to today's account avatar. */
   avatarSnapshot?: boolean
   /** Record owner manual-edit fact; independent of AI polish and content version. */

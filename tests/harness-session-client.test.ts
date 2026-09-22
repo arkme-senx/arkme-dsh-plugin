@@ -143,3 +143,21 @@ it('distinguishes missing local sessions from failed Remote lists and silent ref
   list.mockRejectedValueOnce(new Error('offline'))
   await expect(bridge.has('other-machine')).rejects.toThrow('offline')
 })
+
+
+it('registers the configured default workspace before creating an attachment conversation', async () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
+  let stop!: () => void
+  vi.stubGlobal('window', { frameElement: { parentElement: { isConnected: true, getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: (selector: string) => selector.includes('arkme-default-workspace') ? { content: encodeURIComponent('/默认 workspace') } : null }))
+  const createWorkspace = vi.fn(async () => ({ workspaceId: 'default-id' }))
+  const createSession = vi.fn(async () => { throw new Error('stop after create') })
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, get: (key: string) => key === 'workspaces' ? { create: createWorkspace } : undefined,
+    sessions: { create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
+  } as unknown as ClientContext)
+  const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
+  await expect(bridge.prepare({ operationId: 'default-workspace', files: [], signal: new AbortController().signal })).rejects.toThrow('stop after create')
+  expect(createWorkspace).toHaveBeenCalledWith({ path: '/默认 workspace' })
+  expect(createSession).toHaveBeenCalledWith({ sessionId: expect.any(String), workspaceId: 'default-id' })
+  stop()
+})

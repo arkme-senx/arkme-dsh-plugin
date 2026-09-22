@@ -1835,6 +1835,7 @@ export class RecordService {
       ...(extensionProjection === undefined ? {} : extensionProjection),
       ...(options.selfTopic === undefined ? {} : { selfTopic: options.selfTopic }),
       ...(options.mediaUnavailable === true || this.media.recordMediaUnavailable(raw, contentBlocks) ? { mediaUnavailable: true } : {}),
+      ...(this.media.recordMediaUnavailable(raw, contentBlocks, true) ? { attachmentSnapshotUnavailable: true } : {}),
     }
   }
 
