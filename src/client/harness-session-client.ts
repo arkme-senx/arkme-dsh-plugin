@@ -1,3 +1,4 @@
+import { createHarnessDraftBridge, HARNESS_ATTACHMENT_DRAFT_KEY, type DraftSessions, type HarnessDraftWindow } from './harness-attachment-draft.js'
 import type { HarnessNativeWindow } from '../harness-native-transport-script.js'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 
@@ -119,8 +120,23 @@ export function apply(ctx: ClientContext): void {
       sessions.open(sessionId as SessionId)
       document.dispatchEvent(new Event(HARNESS_LOCAL_SESSION_OPEN))
     } }
+    const accountId = surface.getAttribute('data-arkme-account-id')
+    const accountScope = surface.getAttribute('data-arkme-account-scope')
+    const drafts = createHarnessDraftBridge(sessions as unknown as DraftSessions, () => surface.isConnected
+      && surface.getAttribute('data-arkme-account-id') === accountId
+      && surface.getAttribute('data-arkme-account-scope') === accountScope, async () => {
+        const encoded = document.querySelector<HTMLMetaElement>('meta[name="arkme-default-workspace"]')?.content
+        const workspaces = (ctx as unknown as { get(key: string): unknown }).get('workspaces') as { create(request: { path: string }): Promise<{ workspaceId: string }> } | undefined
+        if (!encoded || !workspaces?.create) throw new Error('当前 DSH 无法选择默认工作区，请升级客户端后重试')
+        const workspace = await workspaces.create({ path: decodeURIComponent(encoded) })
+        return workspace.workspaceId
+      })
+    ;(window as HarnessDraftWindow)[HARNESS_ATTACHMENT_DRAFT_KEY] = drafts
     frameWindow[HARNESS_SESSION_NAVIGATION_KEY] = navigation
     const disposeNavigation = () => {
+      drafts.dispose()
+      if ((window as HarnessDraftWindow)[HARNESS_ATTACHMENT_DRAFT_KEY] === drafts) delete (window as HarnessDraftWindow)[HARNESS_ATTACHMENT_DRAFT_KEY]
+
       requestedSession = null
       stopPersistence()
       stopRequested()

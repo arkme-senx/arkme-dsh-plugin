@@ -82,6 +82,23 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('executes common-group reads with paging and cancellation, and keeps sync separate from paging', async () => {
+    const ctx = await setup()
+    const result = {items:[],totalCached:0,hasMore:false,syncHasMore:false,syncedAtMillis:1,revision:1}
+    const listCommonGroups = vi.fn(async()=>result), syncCommonGroups = vi.fn(async()=>result)
+    const mounted = await mountArkmeTools(ctx,'business',{...ports,listCommonGroups,syncCommonGroups} as unknown as ArkmeToolPorts)
+    const agent = {id:SessionId('common-groups'),session:{events:sessionEvents()}} as unknown as Agent
+    const signal=new AbortController().signal
+    const run=(args:Record<string,unknown>)=>ctx.tools.execute({callId:CallId('common-groups-call'),name:'arkme_common_groups',arguments:args,agent,signal})
+    expect((await run({source_ref:'p',cursor:'c'})).isError).toBe(false)
+    expect(listCommonGroups).toHaveBeenCalledExactlyOnceWith('p',{cursor:'c',signal:expect.any(AbortSignal)})
+    expect((await run({source_ref:'p',sync:true})).isError).toBe(false)
+    expect(syncCommonGroups).toHaveBeenCalledExactlyOnceWith('p',expect.any(AbortSignal))
+    expect((await run({source_ref:'p',sync:true,cursor:'c'})).isError).toBe(true)
+    expect(syncCommonGroups).toHaveBeenCalledTimes(1)
+    await mounted.dispose()
+  })
+
   it.each(['business', 'hybrid'] as const)('keeps attachment-only re-edit instructions consistent in the %s profile', profile => {
     const prompt = promptForArkmeToolProfile(profile)
     expect(prompt).toContain('text, title, or attachments')
@@ -203,6 +220,9 @@ describe('registerArkmeTools', () => {
       'arkme_sources_list',
       'arkme_bot_conversation_pin',
       'arkme_topic_home_visibility',
+      'arkme_archives_list',
+      'arkme_archive_state',
+      'arkme_archive_set',
       'arkme_unread_conversations',
       'arkme_private_interaction_summary',
       'arkme_private_interactions_query',
@@ -213,6 +233,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_join_restriction_set',
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
+      'arkme_common_groups',
       'arkme_source_read',
       'arkme_copy_link_extend',
       'arkme_source_members',

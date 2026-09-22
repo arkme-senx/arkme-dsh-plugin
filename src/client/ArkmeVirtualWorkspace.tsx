@@ -3,6 +3,7 @@ import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { directorySearchLayout } from './directory-search-layout.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import type { ArkmeArchiveState } from '../archive-contract.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useHarnessActivity } from './use-harness-activity.js'
 import { watchHarnessSessionHover } from './harness-session-hover.js'
@@ -24,11 +25,12 @@ import type {
   ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeConversationDirectoryVisibility,
   ArkmeOfficialAuthorProfile, ArkmeOpenPrivateChatResult,
   ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
-  ArkmeTopicCreateResult, ArkmeSourceDirectoryPinResult,
+  ArkmeSourceDirectoryPinResult,
 } from '../types.js'
 import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
+import { createSelfTopic } from './create-self-topic.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeChatPreviewDialog, arkmeCanPreviewChat } from './ArkmeChatPreviewDialog.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
@@ -45,6 +47,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { startEmbeddedHarnessSession } from './harness-new-session.js'
@@ -90,7 +93,7 @@ import {
   type ConversationVisibilityOverlay,
 } from './conversation-directory-visibility-overlay.js'
 import {
-  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
 import { watchSelfTopicMenuHover } from './self-topic-menu-hover.js'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
@@ -905,6 +908,7 @@ export function ArkmeNavigation({
   const activeRef = useRef(active)
   activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
+  const topicDirectoryRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getTopicDirectoryRevision, arkmeUi.getTopicDirectoryRevision)
   const recordRevision = useSyncExternalStore(
     arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision,
   )
@@ -1063,7 +1067,7 @@ export function ArkmeNavigation({
     () => arkmeSelfDirectorySources(sources),
     [sources],
   )
-  const sourceTree = useMemo(() => buildArkmeSourceTree(directorySources), [directorySources])
+  const sourceTree = useMemo(() => sortArkmeSourceTree(buildArkmeSourceTree(directorySources), 'custom'), [directorySources])
   const visibleSourceRows = useMemo(
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
     [collapsedSourceRefs, sourceTree],
@@ -1259,7 +1263,14 @@ export function ArkmeNavigation({
       const loaded: ArkmeSourceItem[] = next === 'root'
         ? await arkmeChatDirectory.refreshRoot({ force })
         : []
-      if (next !== 'root') {
+      if (next === 'send_to_self') {
+        const auth = arkmeAuthStore.getSnapshot().auth
+        if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+        const topics = selfTopicDirectory(auth.userId, auth.environment)
+        await topics.ensure(force)
+        if (topics.getSnapshot().error) throw new Error(topics.getSnapshot().error)
+        loaded.push(...topics.getSnapshot().sources)
+      } else if (next !== 'root') {
         let cursor: string | undefined
         for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
           const page = await callArkme<ArkmeSourceList>('sources.list', {
@@ -1284,8 +1295,14 @@ export function ArkmeNavigation({
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
+      let archivedSelection: ArkmeSourceItem | undefined
+      if (next === 'send_to_self' && selected?.kind === 'topic' && reconcileSelectedSource(selected, loaded) === undefined) {
+        const states = await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [selected.sourceRef] }, controller.signal)
+        if (controller.signal.aborted || arkmeUi.getSnapshot().selectedSource?.sourceRef !== selected.sourceRef) return
+        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) archivedSelection = selected
+      }
       const restored = activeRef.current && uiSnapshot.mode === 'source'
-        ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
+        ? reconcileSelectedSource(selected ?? cachedSelected, loaded) ?? archivedSelection
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
       if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
@@ -1304,6 +1321,11 @@ export function ArkmeNavigation({
   const authStatus = auth?.status
   const authEnvironment = auth?.environment
   const authUserId = auth?.userId
+  useEffect(() => {
+    if (directory !== 'send_to_self' || authStatus !== 'authenticated' || authUserId === undefined || authEnvironment === undefined) return
+    const topics = selfTopicDirectory(authUserId, authEnvironment)
+    return topics.subscribe(() => { setSources(topics.getSnapshot().sources) })
+  }, [directory, authStatus, authUserId, authEnvironment])
   useEffect(() => { reconcileAuth(authStatus, authEnvironment, authUserId) }, [authStatus, authEnvironment, authUserId, reconcileAuth])
   useEffect(() => {
     conversationVisibilityEpochRef.current += 1
@@ -1442,9 +1464,9 @@ export function ArkmeNavigation({
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self' || recordRevision === 0) return
+    if (!authenticated || directory !== 'send_to_self' || (recordRevision === 0 && topicDirectoryRevision === 0)) return
     void loadDirectory('send_to_self')
-  }, [authenticated, directory, loadDirectory, recordRevision])
+  }, [authenticated, directory, loadDirectory, recordRevision, topicDirectoryRevision])
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     arkmeArkoProfileStore.activateUser(userId)
@@ -1830,13 +1852,15 @@ export function ArkmeNavigation({
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
-      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+      if (auth?.status !== 'authenticated' || auth.userId === undefined) throw new Error('请先登录')
+      const topics = selfTopicDirectory(auth.userId, auth.environment)
+      const result = await createSelfTopic({
         title,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
-      })
-      const nextSources = mergeCreatedTopicSource(sources, result.source)
+      }, topics)
+      const nextSources = topics.getSnapshot().sources
       setSources(nextSources)
-      persistCache({ directory: 'send_to_self', sources: { send_to_self: nextSources } })
+      persistCache({ directory: 'send_to_self', sources: { send_to_self: topics.getConfirmedSnapshot().sources } })
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
       setHoveredSourceRef(undefined)
       setTopicCreateParent(undefined)

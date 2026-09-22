@@ -5,6 +5,8 @@ import { ArkmeDesktopScreenshot } from './desktop-screenshot.js'
 import { RecordEditHistoryService } from './services/record-edit-history-service.js'
 import type { ArkmeRecordEditHistoryPage } from './record-edit-history.js'
 import { arkmeRecordTextFormat } from './markdown.js'
+import { ArchiveService } from './services/archive-service.js'
+import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from './archive-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 import { RecordDeletionService } from './services/record-deletion-service.js'
 import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
@@ -80,6 +82,7 @@ import { CommunityService } from './services/community-service.js'
 import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './services/extension-review-service.js'
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
+import { CommonGroupService } from './services/common-group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
 import {
   ArkmeLinkMetadataService,
@@ -321,6 +324,7 @@ export class ArkmeService {
   private readonly media: MediaService
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly archives: ArchiveService
   private readonly source: SourceService
   private readonly conversationDirectoryVisibility: ConversationDirectoryVisibilityService
   private readonly recordDeletion: RecordDeletionService
@@ -334,6 +338,7 @@ export class ArkmeService {
   private readonly world: WorldService
   private readonly arko: ArkoService
   private readonly group: GroupService
+  private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
@@ -397,6 +402,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.archives = new ArchiveService(this.runtime, this.source)
     this.recordDeletion = new RecordDeletionService(this.runtime, this.source)
     this.recordTopicAssignment = new RecordTopicAssignmentService(this.runtime, this.source)
     this.record = new RecordService(this.runtime, this.media, this.source, this.privacy, {
@@ -436,6 +442,7 @@ export class ArkmeService {
       this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions)
+    this.commonGroups = new CommonGroupService(this.runtime, this.source)
     this.group = new GroupService(this.runtime, this.source, this.profile, {
       sendPrivateText: async (sourceRef, chatSessionUid, text, recordUid, relationUid, session, signal) => {
         await this.chat.sendChatSourceTextRaw(
@@ -595,6 +602,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.calendar.dispose()
     this.directory.reset()
@@ -828,7 +836,9 @@ export class ArkmeService {
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        entityArchive: true,
         groupSelfNickname: true,
+        ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         sourceTimeline: true,
@@ -944,6 +954,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.directory.dispose()
     this.record.dispose()
@@ -1205,6 +1216,18 @@ export class ArkmeService {
     return await this.source.renameTopic(sourceRef, title)
   }
 
+  async listArchives(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
+    return this.archives.list(cursor, signal)
+  }
+  async getArchiveStates(sourceRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeArchiveState[]> {
+    return this.archives.states(sourceRefs, signal)
+  }
+  async setArchiveState(input: ArkmeArchiveSetInput, signal?: AbortSignal): Promise<ArkmeArchiveSetResult> {
+    const result = await this.archives.set(input, signal)
+    if (result.stateChanged) await this.realtime.invalidateTopicDirectoryProjection()
+    return result
+  }
+
   async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
     const result = await this.source.topicHomeVisibility(sourceRef, showInHome, signal)
     if (showInHome !== undefined) await this.realtime.invalidateRecordProjection()
@@ -1385,6 +1408,9 @@ export class ArkmeService {
   ): Promise<ArkmeGroupAiPolishMutationResult> {
     return await this.aiPolish.confirmDisableGroupAiPolish(confirmationRef, options)
   }
+
+  async listCommonGroups(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}) { return await this.commonGroups.list(sourceRef, options) }
+  async syncCommonGroups(sourceRef: string, signal?: AbortSignal) { return await this.commonGroups.sync(sourceRef, signal) }
 
   async listGroupMembers(
     sourceRef: string,
@@ -1596,7 +1622,7 @@ export class ArkmeService {
     return result
   }
 
-  async messageSnapshotDetail(sourceRef: string, actionRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageSnapshotDetail> { return await this.chat.messageSnapshotDetail(sourceRef, actionRef, options) }
+  async messageSnapshotDetail(sourceRef: string, actionRef: string, options: { signal?: AbortSignal; includeAttachments?: boolean } = {}): Promise<ArkmeMessageSnapshotDetail> { return await this.chat.messageSnapshotDetail(sourceRef, actionRef, options) }
   async saveMessageLocation(sourceRef: string, itemUid: string, location: ArkmeRecordLocationCapture, recordVersion?: number, options: { signal?: AbortSignal } = {}): Promise<void> { await this.chat.saveMessageLocation(sourceRef, itemUid, location, recordVersion, options) }
 
   async messageReadReceiptSummaries(sourceRef: string, items: readonly ArkmeMessageReadReceiptQueryItem[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptSummaryList> { return await this.chat.messageReadReceiptSummaries(sourceRef, items, options) }

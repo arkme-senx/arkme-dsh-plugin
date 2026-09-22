@@ -1,5 +1,16 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '共同群聊': 'Shared groups',
+  '调整共同群聊宽度': 'Resize shared groups',
+  '同步尚未完成，请继续同步': 'Sync is incomplete. Continue syncing.',
+  '暂时无法打开群聊，请重试': 'Could not open this group. Try again.',
+  '第 {v0} 页': 'Page {v0}',
+  '暂时无法读取共同群聊，请重试': 'Could not read shared groups. Try again.',
+  '正在获取共同群聊…': 'Loading shared groups…',
+  '暂无共同群聊': 'No shared groups',
+  '共同群聊读取失败': 'Could not read shared groups',
+  '正在同步…': 'Syncing…',
+
   '账号已切换，无法保存；请保留窗口或复制内容后再关闭': 'Account changed. Keep this window open or copy the content before closing.',
   '发送到：': 'Send to: ',
   '草稿已保存': 'Draft saved',

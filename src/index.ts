@@ -802,6 +802,8 @@ export function apply(ctx: Context, config: Config): void {
       external: ['react'],
     },
     sessionClient: {
+      // The desktop supervisor launches DSH in its configured default workspace.
+      defaultWorkspacePath: process.cwd(),
       revision: createHash('sha256').update(sessionClient.source).digest('hex').slice(0, 12),
       ...('apiPath' in sessionClient ? { apiPath: sessionClient.apiPath } : {}),
     },
@@ -1180,3 +1182,5 @@ export type {
 } from './outgoing-call-contract.js'
 export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'
+
+export type { ArkmeCommonGroupPage } from './common-groups.js'

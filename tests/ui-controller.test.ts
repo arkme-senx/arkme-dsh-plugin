@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 
+it('directory invalidation retains the content revision and stable view snapshot', () => {
+  const controller = new ArkmeUiController()
+  const view = controller.getViewSnapshot()
+  controller.topicDirectoryChanged()
+  expect(controller.getTopicDirectoryRevision()).toBe(1)
+  expect(controller.getRecordRevision()).toBe(0)
+  expect(controller.getViewSnapshot()).toBe(view)
+})
+
 describe('ArkmeUiController', () => {
   it('returns from a contact personal World to that contact, while other personal Worlds return to World', () => {
     const controller = new ArkmeUiController()
@@ -163,6 +172,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'recordings',
     })
 
@@ -172,6 +182,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'source',
       selectedSource: source,
       calendarOpen: true,
@@ -184,6 +195,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'world',
       worldInitialScope: 'all',
       worldNavigationRevision: 1,
@@ -195,6 +207,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'arko',
     })
     controller.authChanged(true)
@@ -223,9 +236,9 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.focusSendToSelf()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'source' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'source' })
     controller.showLogin()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'login' })
     controller.authChanged(true)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
@@ -248,7 +261,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({ mode: 'harness', webLoginDialogOpen: true })
 
     controller.closeWebLoginDialog()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'harness' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'harness' })
   })
 
   it('opens search without retaining a conversation source', () => {
@@ -260,7 +273,7 @@ describe('ArkmeUiController', () => {
     controller.showSearch()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'search',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'search',
     })
   })
 
@@ -291,7 +304,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'calls',
     })
     controller.showConversations()
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
@@ -305,7 +318,7 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'contact-add',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'contact-add',
       selectedSource: source,
     })
     controller.showConversations()
@@ -318,7 +331,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'extensions',
     })
   })
 
@@ -349,6 +362,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'extensions',
       extensionAuthorFilter: { ownerUserId: 7, ownerName: 'Lucis 测试' },
     })
@@ -358,6 +372,7 @@ describe('ArkmeUiController', () => {
       authRevision: 0,
       chatRevision: 0,
       recordRevision: 0,
+      topicDirectoryRevision: 0,
       mode: 'extensions',
     })
     expect(() => { controller.showAuthorExtensions(0, '无效') }).toThrow('插件作者用户 ID')
@@ -391,7 +406,7 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'world',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'world',
       worldInitialScope: 'all', worldNavigationRevision: 1,
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
@@ -406,7 +421,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'calls',
     })
   })
 
@@ -432,7 +447,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'extensions',
     })
   })
 

@@ -1,3 +1,4 @@
+import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
 import { screenshotWindowRequested } from './native-screenshot.js'
 import { registerConversationWindowRoot } from './conversation-window-root.js'
@@ -42,7 +43,7 @@ import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installHarnessConversationLayoutLoader } from './harness-conversation-layout.js'
-import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { installArkmeSettingsNavIcons } from './settings-nav-icons.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
@@ -165,6 +166,7 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => bindScreenshotAskDsh(), 'dsh-arkme: screenshot ask DSH')
   ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation window lifetime')
   ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
   ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: attachment preview account lifetime')
@@ -357,8 +359,8 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-arkme: install redesign visual system')
 
   ctx.effect(
-    () => installArkmeAccountSettingsNavIcon(),
-    'dsh-arkme: render account settings navigation icon',
+    () => installArkmeSettingsNavIcons(),
+    'dsh-arkme: render Arkme settings navigation icons',
   )
 
   ctx.effect(() => {
@@ -393,7 +395,7 @@ export function apply(ctx: ClientContext): void {
   }, ArkmeAccountUsageSettings))
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'arkme-data', order: -1, label: () => tr('数据管理'),
+    name: 'settings.section', id: 'arkme-data', order: -2.5, label: () => tr('数据管理'),
   }, ArkmeDataManagementSettings))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({

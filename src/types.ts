@@ -1275,8 +1275,10 @@ export interface ArkmeProviderCapabilities {
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
+    commonGroups?: true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
@@ -1719,6 +1721,11 @@ export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
 }
 
 export interface ArkmeMessageSnapshotDetail {
+  /** Included only when explicitly requesting the full attachment snapshot. */
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: boolean
+  title?: string
+  sourceUrl?: string
   itemUid: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
@@ -1752,6 +1759,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Original media refs were not fully projected, even when rich-media rendering is disabled. */
+  attachmentSnapshotUnavailable?: boolean
   /** Even an absent snapshot must not fall back to today's account avatar. */
   avatarSnapshot?: boolean
   /** Record owner manual-edit fact; independent of AI polish and content version. */
@@ -3517,7 +3526,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'record' | 'chat.direct_message_admission'
+  projection: 'record' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -3747,6 +3756,8 @@ export type ArkmePluginOperation =
   | 'source.ai-polish.confirm-disable'
   | 'source.ai-polish.retry'
   | 'group.members'
+  | 'group.common.list'
+  | 'group.common.sync'
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
@@ -3841,6 +3852,9 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'archives.list'
+  | 'archives.state'
+  | 'archives.set'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

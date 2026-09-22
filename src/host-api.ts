@@ -1738,6 +1738,14 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'title'),
     )
+    case 'archives.list': return service.listArchives(stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'archives.state': return service.getArchiveStates(stringListParam(params, 'sourceRefs'), requestSignal)
+    case 'archives.set': {
+      if (typeof params.selfArchived !== 'boolean' || !Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0) {
+        throw new ArkmePluginError('archive-input-invalid', '归档参数不完整，请刷新重试', false, 400)
+      }
+      return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
+    }
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
@@ -1968,7 +1976,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-snapshot.detail': return await service.messageSnapshotDetail(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'actionRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(requestSignal === undefined ? {} : { signal: requestSignal }), includeAttachments: params.includeAttachments === true },
     )
     case 'source.message-location.set': {
       await service.saveMessageLocation(
@@ -2101,6 +2109,10 @@ export async function dispatchArkmeHostOperation(
     case 'source.ai-polish.retry': return await service.retryGroupAiPolish(
       stringParam(params, 'retryRef'),
     )
+    case 'group.common.list': return await service.listCommonGroups(stringParam(params, 'sourceRef'), {
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}),
+    })
+    case 'group.common.sync': return await service.syncCommonGroups(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.members': return await service.listGroupMembers(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
@@ -2170,7 +2182,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'botRef'),
     )
-    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
+    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.notification.set': return await service.setGroupMessageDnd(
       stringParam(params, 'sourceRef'),
       params.enabled === true,

@@ -1,6 +1,10 @@
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
+import type { ArkmeCommonGroupPage } from '../common-groups.js'
+export type { ArkmeCommonGroupPage } from '../common-groups.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
+export type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveEntry, ArkmeArchiveSetInput, ArkmeArchiveSetResult, ArkmeArchivePort } from '../archive-contract.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
@@ -1352,12 +1356,42 @@ export class ArkmeSdk {
     await this.call('conversation.directory.bot-pin', { botRef, pinned }, signal)
   }
 
+  /** List effective archives, including topics covered by an ancestor. */
+  async listArchives(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
+    await this.requireArchiveCapability(signal)
+    return this.call('archives.list', { ...(cursor === undefined ? {} : { cursor }) }, signal)
+  }
+  async getArchiveStates(sourceRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeArchiveState[]> {
+    await this.requireArchiveCapability(signal)
+    return this.call('archives.state', { sourceRefs }, signal)
+  }
+  async setArchiveState(input: ArkmeArchiveSetInput, signal?: AbortSignal): Promise<ArkmeArchiveSetResult> {
+    await this.requireArchiveCapability(signal)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0 || typeof input.selfArchived !== 'boolean') throw new TypeError('Invalid archive precondition')
+    return this.call('archives.set', { ...input }, signal)
+  }
+  private async requireArchiveCapability(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.entityArchive !== true) throw new Error('当前 Provider 不支持归档管理')
+  }
+
   /** Read or explicitly set the existing topic home preference. */
   async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme topic source reference must not be empty')
     return await this.call('topic.home-visibility', {
       sourceRef, ...(showInHome === undefined ? {} : { showInHome }),
     }, signal)
+  }
+
+  async listCommonGroups(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeCommonGroupPage> {
+    if (!sourceRef.trim()) throw new TypeError('Private chat reference is required')
+    if ((await this.capabilities(options.signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
+    return await this.call('group.common.list', { sourceRef, ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+  }
+
+  async syncCommonGroups(sourceRef: string, signal?: AbortSignal): Promise<ArkmeCommonGroupPage> {
+    if (!sourceRef.trim()) throw new TypeError('Private chat reference is required')
+    if ((await this.capabilities(signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
+    return await this.call('group.common.sync', { sourceRef }, signal)
   }
 
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {

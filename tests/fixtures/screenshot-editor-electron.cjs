@@ -18,6 +18,14 @@ app.whenReady().then(async()=>{
   const snap=await run(`(()=>{const el=document.querySelector('[data-arkme-screenshot-selection]'),r=document.querySelector('[data-arkme-screenshot-stage]').getBoundingClientRect();return {x:Math.round(parseFloat(el.style.left)*1200/r.width),y:Math.round(parseFloat(el.style.top)*800/r.height),width:Math.round(parseFloat(el.style.width)*1200/r.width),height:Math.round(parseFloat(el.style.height)*800/r.height)}})()`);
   assert.deepEqual(snap,{x:700,y:260,width:340,height:120});
   await fs.writeFile(path.join(directory,'window-selected.png'),(await window.webContents.capturePage()).toPNG());
+  const toolbarBefore=await run(`(()=>{const r=document.querySelector('[role="toolbar"]').getBoundingClientRect();const h=document.querySelector('[aria-label="拖动截图工具栏"]').getBoundingClientRect();return {left:r.left,top:r.top,x:Math.round(h.left+h.width/2),y:Math.round(h.top+h.height/2),selection:document.querySelector('[data-arkme-screenshot-selection]').style.cssText}})()`);
+  window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:toolbarBefore.x,y:toolbarBefore.y});
+  window.webContents.sendInputEvent({type:'mouseMove',x:toolbarBefore.x-80,y:toolbarBefore.y+60});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:toolbarBefore.x-80,y:toolbarBefore.y+60});await new Promise(r=>setTimeout(r,80));
+  const toolbarAfter=await run(`(()=>{const r=document.querySelector('[role="toolbar"]').getBoundingClientRect();return {left:r.left,top:r.top,selection:document.querySelector('[data-arkme-screenshot-selection]').style.cssText}})()`);
+  assert.equal(toolbarAfter.left,toolbarBefore.left-80);assert.equal(toolbarAfter.top,toolbarBefore.top+60);assert.equal(toolbarAfter.selection,toolbarBefore.selection);
+  await fs.writeFile(path.join(directory,'toolbar-drag.png'),(await window.webContents.capturePage()).toPNG());
+
   await run(`document.querySelector('button[aria-label="重选"]').click()`);await new Promise(r=>setTimeout(r,30));
   const arrows=await run('(()=>{try{return window.qa.arrowPixelTest()}catch(e){return {error:e.message}}})()');
   assert.equal(arrows.error,undefined);
@@ -41,6 +49,10 @@ app.whenReady().then(async()=>{
   await run(`window.clickTool('撤销')`);await new Promise(r=>setTimeout(r,20));assert.equal(await run(`document.querySelector('button[aria-label="重做"]').disabled`),false);
   await run(`window.clickTool('重做')`);await new Promise(r=>setTimeout(r,20));
   await fs.writeFile(path.join(directory,'editor.png'),(await window.webContents.capturePage()).toPNG());
+  assert.equal(await run(`document.querySelector('[aria-label="问dsh"]').title`),'问dsh');
+  await run(`window.clickTool('问dsh')`);await new Promise(r=>setTimeout(r,80));
+  assert.equal(await run('window.qa.asked'),1);assert.ok(await run('window.qa.askSize>0'));
+  assert.equal(await run('window.qa.saved'),0);assert.equal(await run('window.qa.completed'),0);
   await run(`window.clickTool('保存')`);await new Promise(r=>setTimeout(r,80));assert.equal(await run('window.qa.saved'),1);
   await run(`window.clickTool('完成')`);await new Promise(r=>setTimeout(r,80));assert.equal(await run('window.qa.completed'),1);
   // Small viewport and top-edge selection keep every icon reachable and tooltips below.

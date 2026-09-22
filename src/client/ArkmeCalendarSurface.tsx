@@ -928,7 +928,7 @@ export function ArkmeCalendarSurface({
               <NotePencil size={23} style={styles.emptyIcon} aria-hidden />
               <strong>{tr("这一天还没有快记")}</strong>
             </div>
-              : <ArkmeDirectoryWindow activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
+              : <ArkmeDirectoryWindow scrollRootRef={listRef} activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
                 onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource}
                 {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}</ArkmeDirectoryWindow>}
           {records?.hasMore === true && records.nextCursor !== undefined && <div ref={loadMoreSentinel} style={{ minHeight: 1 }}>

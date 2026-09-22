@@ -1,4 +1,5 @@
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
+import { archiveToolModules } from './conversation/archive.js'
 import { memberPageToolModules } from './conversation/member-pages.js'
 import { arkoToolModules } from './arko/index.js'
 import { botToolModules } from './bots/index.js'
@@ -78,6 +79,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   pinBotDirectoryToolModule,
   topicHomeVisibilityToolModule,
+  ...archiveToolModules,
   unreadConversationsToolModule,
   privateInteractionSummaryToolModule,
   privateInteractionsQueryToolModule,

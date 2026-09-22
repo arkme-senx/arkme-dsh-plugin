@@ -3,6 +3,7 @@ import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from 
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { CommonGroupDatabase } from './common-group-database.js'
 import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
@@ -77,6 +78,7 @@ interface ProfileRow {
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly commonGroups: CommonGroupDatabase
   private readonly path: string
   private readonly database: DatabaseSync
   private readonly migrations = new Map<number, Promise<void>>()
@@ -192,6 +194,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         this.database.exec('UPDATE conversation_member_cache SET payload_bytes = LENGTH(CAST(snapshot_json AS BLOB))')
       }
     })
+    this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
     if (!recordColumns.some(column => column.name === 'sender_avatar_ref')) {
       this.database.exec('ALTER TABLE record_cache ADD COLUMN sender_avatar_ref TEXT')
