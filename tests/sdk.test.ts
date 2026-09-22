@@ -19,6 +19,26 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes local-first common-group reads and one-batch sync through the same Host contract', async () => {
+    const calls: Array<{operation: string; params?: unknown}> = []
+    const signal = new AbortController().signal
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)); calls.push(request)
+      if (request.operation === 'provider.capabilities') return success({ contractVersion: 1, features: { commonGroups: true } })
+      expect(init?.signal).toBe(signal)
+      return success({ items: [], totalCached: 0, hasMore: false, syncedAtMillis: 0, revision: 0, syncHasMore: true })
+    } })
+    await sdk.listCommonGroups('private-ref', {cursor:'page-ref',signal})
+    await sdk.syncCommonGroups('private-ref',signal)
+    expect(calls.filter(c => c.operation !== 'provider.capabilities')).toEqual([
+      {operation:'group.common.list',params:{sourceRef:'private-ref',cursor:'page-ref'}},
+      {operation:'group.common.sync',params:{sourceRef:'private-ref'}},
+    ])
+    await expect(sdk.listCommonGroups(' ')).rejects.toThrow('reference')
+    const unavailable = createArkmeSdk({fetchImpl:async()=>success({contractVersion:1,features:{}})})
+    await expect(unavailable.syncCommonGroups('private-ref')).rejects.toThrow('不支持共同群聊')
+  })
+
   it('reads calendar location using only the issued reference', async () => {
     const calls: unknown[] = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {

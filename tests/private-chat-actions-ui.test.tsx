@@ -212,3 +212,19 @@ it('retains the same explicit recovery action when ban read-back already changed
   expect(items[0]!.label).toBe('重试封禁用户'); items[0]!.invoke()
   expect(changeBan).toHaveBeenCalledWith(true)
 })
+
+it('opens common groups from the private menu without depending on recording or management eligibility', () => {
+  const openCommonGroups = vi.fn()
+  const items = privateChatActionItems({ canManage: false, relatedAllowed: false,
+    relatedError: undefined, refreshRelated: vi.fn(), changeBan: vi.fn(), ban: privateChatActions.ban.empty,
+  }, { applicable: false } as ReturnType<typeof useDirectMessageAdmission>, vi.fn(),
+  { busy: false, processed: 0, invoke: vi.fn() }, openCommonGroups)
+  expect(items.map(item => item.label)).toEqual(['共同群聊', '导出'])
+  act(() => { root.render(<ConversationActionsMenu items={items} host={host} anchor={anchor} onClose={close} />) })
+  expect(rows()[0]!.getAttribute('aria-checked')).not.toBe('true')
+  act(() => { rows()[0]!.click() })
+  expect(close).toHaveBeenCalledOnce()
+  expect(openCommonGroups).toHaveBeenCalledOnce()
+  act(() => { root.render(null) })
+  expect(document.activeElement).toBe(trigger)
+})

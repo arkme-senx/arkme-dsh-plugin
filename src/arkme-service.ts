@@ -82,6 +82,7 @@ import { CommunityService } from './services/community-service.js'
 import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './services/extension-review-service.js'
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
+import { CommonGroupService } from './services/common-group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
 import {
   ArkmeLinkMetadataService,
@@ -337,6 +338,7 @@ export class ArkmeService {
   private readonly world: WorldService
   private readonly arko: ArkoService
   private readonly group: GroupService
+  private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
@@ -440,6 +442,7 @@ export class ArkmeService {
       this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions)
+    this.commonGroups = new CommonGroupService(this.runtime, this.source)
     this.group = new GroupService(this.runtime, this.source, this.profile, {
       sendPrivateText: async (sourceRef, chatSessionUid, text, recordUid, relationUid, session, signal) => {
         await this.chat.sendChatSourceTextRaw(
@@ -599,6 +602,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.calendar.dispose()
     this.directory.reset()
@@ -834,6 +838,7 @@ export class ArkmeService {
         topicHomeVisibility: true,
         entityArchive: true,
         groupSelfNickname: true,
+        ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         sourceTimeline: true,
@@ -949,6 +954,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.directory.dispose()
     this.record.dispose()
@@ -1402,6 +1408,9 @@ export class ArkmeService {
   ): Promise<ArkmeGroupAiPolishMutationResult> {
     return await this.aiPolish.confirmDisableGroupAiPolish(confirmationRef, options)
   }
+
+  async listCommonGroups(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}) { return await this.commonGroups.list(sourceRef, options) }
+  async syncCommonGroups(sourceRef: string, signal?: AbortSignal) { return await this.commonGroups.sync(sourceRef, signal) }
 
   async listGroupMembers(
     sourceRef: string,

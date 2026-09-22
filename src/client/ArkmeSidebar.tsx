@@ -1,4 +1,5 @@
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
+import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
 import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
@@ -3278,6 +3279,8 @@ export function ArkmeSurface({
   const privateActions = usePrivateChatActions(authenticatedAccountKey, authenticatedUserId, source, activeConversation, relatedMenuOpen)
   useEffect(() => { if (relatedMenuOpen) directAdmission.refresh() }, [relatedMenuOpen, directAdmission.refresh])
   const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
+  const [commonGroupsOpen, setCommonGroupsOpen] = useState(false)
+  useEffect(() => { setCommonGroupsOpen(false) }, [conversationKey, authenticatedAccountKey])
   const [relatedState, setRelatedState] = useState<'loading' | ArkmeRelatedRecordingPageState>('loading')
   const [relatedStateMessage, setRelatedStateMessage] = useState('')
   const [relatedError, setRelatedError] = useState('')
@@ -3526,7 +3529,8 @@ export function ArkmeSurface({
     return next
   }, [])
 
-  function activateContextPanel(kind: 'note' | 'members' | 'records' | 'moment' | 'related') {
+  function activateContextPanel(kind: 'note' | 'members' | 'records' | 'moment' | 'related' | 'common-groups') {
+    setCommonGroupsOpen(kind === 'common-groups')
     if (kind !== 'note') setDrawer(undefined)
     setGroupMembersOpen(kind === 'members')
     if (kind !== 'records') setMemberRecords(undefined)
@@ -7159,6 +7163,7 @@ export function ArkmeSurface({
     || relatedMenuOpen
     || selfMenuOpen
     || relatedPanelOpen
+    || commonGroupsOpen
     || relatedDetail !== undefined
     || memberMenu !== undefined
     || messageMenu !== undefined
@@ -7702,7 +7707,8 @@ export function ArkmeSurface({
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
-            })}
+            }, source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0
+              ? () => activateContextPanel('common-groups') : undefined)}
               anchor={relatedMenuButtonRef}
               onClose={() => { setRelatedMenuOpen(false) }}
               trigger={{
@@ -8834,6 +8840,9 @@ export function ArkmeSurface({
           </section>
         </div>}
       </section>
+      {activeConversation && commonGroupsOpen && source?.kind === 'private_chat' && <ArkmeCommonGroupsPanel
+        key={`${authenticatedAccountKey}:${conversationKey}`} source={source} returnFocusRef={relatedMenuButtonRef}
+        onClose={() => setCommonGroupsOpen(false)} onOpen={target => { activateSource(target); setCommonGroupsOpen(false) }} />}
       {activeConversation && relatedPanelOpen && source?.kind === 'private_chat' && <RelatedRecordingsPanel
         contactName={source.displayName}
         {...(source.avatarRef === undefined ? {} : { contactAvatarRef: source.avatarRef })}
