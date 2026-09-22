@@ -12,8 +12,14 @@ import { registerArkmeTools } from '../src/tools/registry/registrar.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../src/types.js'
+import { CommonGroupService } from '../src/services/common-group-service.js'
+import { ArkmeLocalDatabase } from '../src/local-database.js'
+import { ArkmeStateStore } from '../src/state-store.js'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-function fixture(initial: boolean | null) {
+function fixture(initial: boolean | null, state?: StateStore) {
   let allowed = initial
   let personalBot = false
   const session = { userId: 42, accessToken: 'fixture-access', refreshToken: 'fixture-refresh' }
@@ -29,12 +35,59 @@ function fixture(initial: boolean | null) {
     throw new Error(`Unexpected business request: ${path}`)
   })
   const runtime = new ServiceRuntime({ environment: 'test', authBaseUrl: 'https://auth.test', chatBaseUrl: 'https://chat.test', requestTimeoutMs: 100 } as ArkmeServiceConfig,
-    sessions, { uniqueCode: async () => 'fixture-signing-key' } as StateStore, fetcher)
+    sessions, state ?? { uniqueCode: async () => 'fixture-signing-key' } as StateStore, fetcher)
   const source = new SourceService(runtime, {} as never, {} as never)
   return { runtime, source, sessions, fetcher, setAllowed(value: boolean | null) { allowed = value }, setPersonalBot() { personalBot = true } }
 }
 
 describe('social business boundaries with the real account adapter', () => {
+  it.each([false, null])('checks eligibility before returning persisted common groups through Host, SDK and Tool: %s', async allowed => {
+    const path = await mkdtemp(join(tmpdir(), 'social common groups '))
+    const db = new ArkmeLocalDatabase(path, new ArkmeStateStore(path))
+    const f = fixture(true, db)
+    const owner = new CommonGroupService(f.runtime, f.source)
+    const ctx = new Context()
+    const scope = JSON.stringify(['test', 'https://chat.test', 42])
+    const peer = 'private-peer'
+    const checkpoint = db.commonGroups.read(scope, peer).checkpoint
+    db.commonGroups.apply(scope, peer, checkpoint, { items: [{ uid: 'group', title: 'Existing group', memberCount: 3 }], removed: [], phase: 'complete', after: '' })
+    const service = {
+      listCommonGroups: owner.list.bind(owner), syncCommonGroups: owner.sync.bind(owner),
+      providerCapabilities: () => ({ contractVersion: ARKME_PROVIDER_CONTRACT_VERSION, features: { commonGroups: true } }),
+    }
+    try {
+      const ref = await f.source.sealSourceRef(42, 'private_chat', peer, 'Peer')
+      expect((await owner.list(ref)).items[0]?.source.displayName).toBe('Existing group')
+      f.setAllowed(allowed)
+      const read = vi.spyOn(db.commonGroups, 'read')
+      const code = allowed === false ? 'PHONE_BINDING_REQUIRED' : 'SOCIAL_ACCESS_UNAVAILABLE'
+      for (const operation of ['group.common.list', 'group.common.sync'] as const) {
+        await expect(dispatchArkmeHostOperation(service as never, operation, { sourceRef: ref })).rejects.toMatchObject({ code })
+      }
+      const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body))
+        return Response.json({ ok: true, value: await dispatchArkmeHostOperation(service as never, request.operation, request.params ?? {}) })
+      } })
+      await expect(sdk.listCommonGroups(ref)).rejects.toMatchObject({ code })
+      await expect(sdk.syncCommonGroups(ref)).rejects.toMatchObject({ code })
+      await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
+      const session = ctx.sessions.create(); const agent = { id: session.id, session }
+      registerArkmeTools(ctx, service as never, 'business')
+      for (const sync of [false, true]) {
+        const result = await ctx.tools.execute({ callId: CallId(`common-social-${sync}`), agent: agent as never,
+          signal: new AbortController().signal, name: 'arkme_common_groups', arguments: { source_ref: ref, sync } })
+        expect(result.isError).toBe(true)
+        expect(JSON.stringify(result)).toContain(allowed === false ? '绑定手机号后可使用社交功能' : '社交服务暂时不可用')
+      }
+      expect(read).not.toHaveBeenCalled()
+      expect(f.fetcher.mock.calls.every(([input]) => String(input).endsWith('/social-access/status'))).toBe(true)
+      expect(f.sessions.write).not.toHaveBeenCalled(); expect(f.sessions.delete).not.toHaveBeenCalled()
+      f.setAllowed(true)
+      expect((await sdk.listCommonGroups(ref)).items[0]?.source.displayName).toBe('Existing group')
+      expect(db.commonGroups.read(scope, peer).checkpoint.revision).toBe(1)
+    } finally { owner.dispose(); f.source.dispose(); f.runtime.dispose(); db.close(); await ctx.fiber.dispose(); await rm(path, { recursive: true, force: true }) }
+  })
+
   it.each([false, null])('hides root and rejects human operations before business/cache reads: %s', async allowed => {
     const f = fixture(allowed)
     try {
