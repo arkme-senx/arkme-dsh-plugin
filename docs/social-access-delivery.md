@@ -35,3 +35,11 @@ UI 按浏览器 origin、环境和账号保存最近一次后端明确 bool。�
 这是纯客户端展示缓存，不新增 Host API、服务端持久化、Tools 或 SDK 业务能力。能力矩阵：UI 为修改/验收面；Host / Tools / SDK 新增能力 N/A，仍使用原账号服务实时权限 owner，原拒绝和跨消费面回归通过。没有修改登录、版本号、根 README、DSH 或生产配置。
 
 全量 740 文件 / 8764 用例通过，9 文件 / 13 用例跳过；后续新增官方联系人恢复用例的独立结果见跨仓首屏记录。类型构建及 tgz 通过。新增 tests/fixtures/social-access-startup-entry.tsx 使用生产边界与导航、隔离的本地 Host 响应做浏览器组件验收：无缓存首次 350ms 查询和缓存重启各 120 帧，均无“个人可见而联系人未补齐”的帧；刷新失败保留导航和输入，明确 false 隐藏联系人/通话/世界。该 fixture 不等于完整 DSH 验收。当前 DSH peer/runtime 缺口仍如上，不将历史包结果冒充最新运行证明。
+
+## 最新 dev 集成后的复审
+
+本轮纳入 dev 的共同群聊与“问 DSH／本地 Markdown”能力。共同群聊的持久缓存列表原先只检查登录，旧引用可能绕过社交资格；现在 list/sync 在 CommonGroupService.context 统一调用 requireSocialSession，再读取引用及缓存。页面、SDK、Tool 共用此入口，不新增持久状态、配置或结构。拒绝/依赖失败不读取本地群关系，不修改账号、群关系或缓存；恢复资格后原缓存可继续读取。
+
+新增真实 ServiceRuntime + SQLite + Host/SDK/官方 DSH Tool runtime 测试覆盖 true → false/unavailable → true。真实 Chat + Mongo 的两条 opt-in 用例通过：工具分页 20/20/1、重启续读、显式移除；页面菜单、抽屉、分页、Chat 故障期间已获准缓存读取、恢复、改名和打开群聊。账号服务不可用时仍拒绝新的 Host 读取，UI 已确认的展示可保留；没有把完整离线读取算作通过。
+
+“问 DSH”远程快记详情继续经过 openAccessibleSourceRef，纯本地文本导出使用已呈现内容；资格变化使会话 scope 切换并取消准备中的附件任务。同步更新了新增基线测试的已获准来源夹具、Host includeAttachments 默认参数和异步分页等待，未改变基线业务协议。全量 747 文件 / 8829 项通过，11 文件 / 15 项跳过；另行开启的两条 Chat E2E 均通过。类型检查、构建和 tgz 打包通过。完整 DSH 安装运行与实际平台限制，以同任务 Meta 最新合并前审核记录为准。

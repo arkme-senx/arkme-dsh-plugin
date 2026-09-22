@@ -20,7 +20,7 @@ import { ConversationActionsMenu, privateChatActionItems, type usePrivateChatAct
 import type { useDirectMessageAdmission } from '../src/client/direct-message-admission.js'
 
 const endpoint = process.env.JOTMO_COMMON_GROUP_E2E_URL
-it.skipIf(!endpoint)('walks menu, drawer, durable paging, offline restart and server reconciliation through the real Host owner', async () => {
+it.skipIf(!endpoint)('walks menu, drawer, durable paging, Chat outage and server reconciliation through the real Host owner', async () => {
   expect(endpoint).toMatch(/^https:\/\/127\.0\.0\.1:\d+$/)
   expect((await fetch(`${endpoint}/fixture/reset`, { method: 'POST' })).ok).toBe(true)
   const path = await mkdtemp(join(tmpdir(), 'common groups UI e2e '))
@@ -28,7 +28,10 @@ it.skipIf(!endpoint)('walks menu, drawer, durable paging, offline restart and se
   const sessions = { async read() { return session }, async write() {}, async delete() {} }
   const config = { environment: 'test', chatBaseUrl: endpoint, authBaseUrl: endpoint, requestTimeoutMs: 10000 } as ArkmeServiceConfig
   let online = true
-  const request: typeof fetch = (...args) => online ? fetch(...args) : Promise.reject(new Error('offline'))
+  // Chat may be down while the account owner still authorizes local social reads.
+  // Total account-owner failure is explicitly denied in social-access-boundaries.
+  const request: typeof fetch = (...args) => online || String(args[0]).endsWith('/social-access/status')
+    ? fetch(...args) : Promise.reject(new Error('offline'))
   const create = () => {
     const db = new ArkmeLocalDatabase(path, new ArkmeStateStore(path))
     const runtime = new ServiceRuntime(config, sessions, db, request)
@@ -47,8 +50,12 @@ it.skipIf(!endpoint)('walks menu, drawer, durable paging, offline restart and se
     observe(target: Element) { this.entry.targets.add(target) }
     disconnect() { observers.delete(this.entry) }
   })
-  api.mockImplementation((op: ArkmePluginOperation, params: Record<string, unknown>, signal: AbortSignal) =>
-    dispatchArkmeHostOperation(local.service, op, params, undefined, undefined, undefined, undefined, signal))
+  let pendingRequests = 0
+  api.mockImplementation(async (op: ArkmePluginOperation, params: Record<string, unknown>, signal: AbortSignal) => {
+    pendingRequests++
+    try { return await dispatchArkmeHostOperation(local.service, op, params, undefined, undefined, undefined, undefined, signal) }
+    finally { pendingRequests-- }
+  })
   const host = document.createElement('div'); document.body.append(host)
   let root = createRoot(host)
   const anchor = createRef<HTMLButtonElement>()
@@ -83,8 +90,12 @@ it.skipIf(!endpoint)('walks menu, drawer, durable paging, offline restart and se
     await open()
     await settle(() => expect(host.textContent).toContain('共同群 01'))
     await vi.waitFor(async () => expect(await total()).toBe(41), { timeout: 15000 })
-    await settle(() => expect(host.querySelector('[role="status"]')).toBeNull())
-    await bottom(); await bottom()
+    await settle(() => expect(pendingRequests).toBe(0))
+    await settle(() => expect([...observers].some(observer => [...observer.targets].some(target => target.hasAttribute('data-arkme-common-groups-more')))).toBe(true))
+    await bottom()
+    await settle(() => expect(host.querySelectorAll('[data-arkme-directory-chunk]')).toHaveLength(2))
+    await bottom()
+    await settle(() => expect(host.querySelectorAll('[data-arkme-directory-chunk]')).toHaveLength(3))
     expect(api.mock.calls.filter(call => call[0] === 'group.common.list' && call[1].cursor)).toHaveLength(2)
     const close = host.querySelector<HTMLButtonElement>('[aria-label="关闭详情"]')!
     await act(async () => close.click())
@@ -110,7 +121,8 @@ it.skipIf(!endpoint)('walks menu, drawer, durable paging, offline restart and se
     await act(async () => group.click())
     await settle(() => expect(opened).toHaveBeenCalledOnce())
     expect(opened.mock.calls[0]![0]).toMatchObject({ kind: 'group_chat', displayName: '改名后的共同群' })
-    expect(api.mock.calls.slice(-2).map(call => call[0])).toEqual(['group.settings', 'directory.group.open-chat'])
+    expect(api.mock.calls.map(call => call[0]).filter(op => op === 'group.settings' || op === 'directory.group.open-chat'))
+      .toEqual(['group.settings', 'directory.group.open-chat'])
   } finally {
     await act(async () => root.unmount()); host.remove(); local.close(); vi.unstubAllGlobals(); await rm(path, { recursive: true, force: true })
   }

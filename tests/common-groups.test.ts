@@ -77,7 +77,7 @@ describe('persistent common groups', () => {
       const batch=all.slice(0,20)
       return {items:batch.map(x=>({chat_session_uid:x.uid,title:x.title,member_count:x.memberCount})),removed:known?.filter(x=>!all.some(y=>y.uid===x))??[],has_more:!known&&all.length>20,...(!known&&all.length>20?{next_after:batch.at(-1)!.uid}:{})}
     })
-    const runtime={config:{environment:'test',chatBaseUrl:'https://chat.invalid'},stateStore:f.db,requireSession:async()=>({userId:1}),authenticatedChatPost:remote} as unknown as ServiceRuntime
+    const runtime={config:{environment:'test',chatBaseUrl:'https://chat.invalid'},stateStore:f.db,requireSocialSession:async()=>({userId:1}),requireSession:async()=>({userId:1}),authenticatedChatPost:remote} as unknown as ServiceRuntime
     const source={hydrateDirectoryPage:async(items:unknown[])=>items,openSourceRef:async(ref:string,userId:number)=>({kind:ref==='private'?'private_chat':'group_chat',ownerRef:ref,userId}),sourceItem:async(row:{ownerRef:string;displayName:string})=>({sourceRef:row.ownerRef,displayName:row.displayName,kind:'group_chat'})} as unknown as SourceService
     const service=new CommonGroupService(runtime,source)
     try {
@@ -99,7 +99,7 @@ describe('persistent common groups', () => {
     let userId=1, resolve: (value:unknown)=>void = ()=>{}, sharedSignal:AbortSignal|undefined
     const queryStarted=vi.fn()
     const runtime={config:{environment:'test',chatBaseUrl:'https://chat.invalid'},stateStore:f.db,
-      requireSession:async()=>({userId}),authenticatedChatPost:async(path:string,_body:unknown,_session:unknown,signal:AbortSignal)=>{
+      requireSocialSession:async()=>({userId}),requireSession:async()=>({userId}),authenticatedChatPost:async(path:string,_body:unknown,_session:unknown,signal:AbortSignal)=>{
         if(path.endsWith('/detail'))return {private_counterpart:{user_id:2}}
         sharedSignal=signal;queryStarted()
         return await new Promise(done=>{resolve=done})
