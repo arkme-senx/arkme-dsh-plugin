@@ -5233,6 +5233,7 @@ export class ChatService {
           displayKind: numberValue(payload.display_kind),
           contentBlocks,
           ...(this.media.recordMediaUnavailable(item, contentBlocks) ? { mediaUnavailable: true } : {}),
+          ...(this.media.recordMediaUnavailable(item, contentBlocks, true) ? { attachmentSnapshotUnavailable: true } : {}),
         })
       }
       this.hydrateTimelineExtensionParents(items)
@@ -5657,7 +5658,7 @@ export class ChatService {
   async messageSnapshotDetail(
     sourceRef: string,
     actionRef: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; includeAttachments?: boolean } = {},
   ): Promise<ArkmeMessageSnapshotDetail> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
@@ -5674,7 +5675,7 @@ export class ChatService {
     if (reference.recordUid === '') {
       throw new ArkmePluginError('message-snapshot-record-invalid', '快记记录身份无效，请刷新后重试', false, 400)
     }
-    if (reference.senderUserId !== session.userId) {
+    if (reference.senderUserId !== session.userId && !(options.includeAttachments && isChatSource && reference.sourceKind === 'chat_relation')) {
       throw new ArkmePluginError('message-snapshot-not-owned', '只能查看自己发送的快记详情', false, 403)
     }
     const recordOwnerUserId = reference.recordOwnerUserId !== 0
@@ -5716,13 +5717,38 @@ export class ChatService {
     if (Object.keys(chatRaw).length === 0) {
       throw new ArkmePluginError('message-snapshot-detail-unavailable', '完整快记详情暂时无法读取，请稍后重试', true, 502)
     }
+    if (options.includeAttachments && recordOwnerUserId !== session.userId) {
+      // Received notes are readable only through the signed chat relation. Never
+      // query the author's private record or capture-context endpoints.
+      const record = objectValue(chatRaw.record)
+      const core = objectValue(record.payload ?? chatRaw.record_core ?? chatRaw.record)
+      if (stringValue(core.record_uid) !== reference.recordUid
+        || numberValue(core.owner_user_id) !== recordOwnerUserId
+        || stringValue(objectValue(chatRaw.relation).rel_uid) !== reference.relationUid
+        || (typeof core.text_content !== 'string' && !(core.text_content == null
+          && Array.isArray(objectValue(core.content_payload).media_refs)
+          && (objectValue(core.content_payload).media_refs as unknown[]).length > 0))) {
+        throw new ArkmePluginError('message-snapshot-detail-unavailable', '完整快记详情身份或正文不完整，请刷新后重试', true, 502)
+      }
+      const [display] = await this.media.hydrateRecordSnapshotMediaPage([chatRaw], session, {
+        chatSessionUid: reference.chatSessionUid, recordUid: reference.recordUid,
+        recordOwnerUserId, relationUid: reference.relationUid,
+      }, options.signal)
+      const contentBlocks = this.media.richContentBlocks(chatRaw, session.userId, display ?? [])
+      return {
+        ...snapshotDetailFromChatRaw(chatRaw, { itemUid: reference.recordUid, textContent: '', sendAtMillis: reference.sendAtMillis }),
+        itemUid: reference.recordUid, title: stringValue(core.title), textContent: stringValue(core.text_content),
+        textFormat: arkmeRecordTextFormat(core), contentBlocks,
+        mediaUnavailable: this.media.recordMediaUnavailable(chatRaw, contentBlocks, true),
+      }
+    }
     return this.hydratedMessageSnapshotDetail(reference, session, options, chatRaw)
   }
 
   private async hydratedMessageSnapshotDetail(
     reference: ArkmeMessageActionRefPayload,
     session: ArkmeSessionCredentials,
-    options: { signal?: AbortSignal },
+    options: { signal?: AbortSignal; includeAttachments?: boolean },
     chatRaw: Record<string, unknown> = {},
   ): Promise<ArkmeMessageSnapshotDetail> {
     // Flutter follows a verified chat-detail lookup with the owner's record
@@ -5801,7 +5827,7 @@ export class ChatService {
     // desktop detail dialog shows. This enrichment is optional for legacy
     // records: an unavailable context must not hide the otherwise complete
     // snapshot.
-    const locationContext = await this.runtime.authenticatedPost<Record<string, unknown>>(
+    const locationContext = options.includeAttachments ? undefined : await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/location/context/get',
       { record_uid: reference.recordUid },
       session,
@@ -5838,6 +5864,18 @@ export class ChatService {
     )
     if (detail.itemUid !== reference.recordUid) {
       throw new ArkmePluginError('message-snapshot-detail-mismatch', '快记详情与当前消息不匹配，请刷新后重试', true, 502)
+    }
+    if (options.includeAttachments) {
+      const snapshot = raw
+      const chat = reference.sourceKind === 'chat_relation' ? {
+        chatSessionUid: reference.chatSessionUid, recordUid: reference.recordUid,
+        recordOwnerUserId: reference.recordOwnerUserId, relationUid: reference.relationUid,
+      } : undefined
+      const [display] = await this.media.hydrateRecordSnapshotMediaPage([snapshot], session, chat, options.signal)
+      detail.contentBlocks = this.media.richContentBlocks(snapshot, session.userId, display ?? [])
+      detail.mediaUnavailable = this.media.recordMediaUnavailable(snapshot, detail.contentBlocks, true)
+      detail.title = stringValue(objectValue(raw.record).title) || reference.title
+      return detail
     }
     const backgroundValues = snapshotBackgroundValuesFromChatRaw(raw)
     const backgroundAssets = snapshotBackgroundMediaAssets(backgroundValues)
@@ -6137,6 +6175,7 @@ export class ChatService {
         contentBlocks,
         ...(forwardRecords === undefined ? {} : { forwardRecords }),
         ...(this.media.recordMediaUnavailable(item, contentBlocks) ? { mediaUnavailable: true } : {}),
+          ...(this.media.recordMediaUnavailable(item, contentBlocks, true) ? { attachmentSnapshotUnavailable: true } : {}),
         ...(sharedRecording === undefined ? {} : { sharedRecording }),
         ...(extensionProjection === undefined ? {} : extensionProjection),
       }) - 1

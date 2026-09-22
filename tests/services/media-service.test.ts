@@ -424,3 +424,11 @@ it('keeps all 100 long article snapshot images with local inline aliases', () =>
   expect(blocks[99]!.fileAssetUid).toBe('media-99')
   expect(JSON.stringify(blocks)).not.toContain('private-')
 })
+
+it('does not treat hidden rich media as a complete original-attachment export', () => {
+  const media = new MediaService({ config: { richMediaRenderEnabled: false } } as never, {} as never, {} as never, { recordUid: () => 'one' })
+  const raw = { content_payload: { media_refs: [{ file_asset_uid: 'original', file_kind: 4 }] } }
+  expect(media.recordMediaUnavailable(raw, [])).toBe(false)
+  expect(media.recordMediaUnavailable(raw, [], true)).toBe(true)
+  expect(media.recordMediaUnavailable({ payload: {} }, [], true)).toBe(false)
+})

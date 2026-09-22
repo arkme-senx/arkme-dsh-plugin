@@ -53,7 +53,7 @@ interface HarnessEmbedRouteOptions {
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
-  sessionClient?: { revision: string; apiPath?: string }
+  sessionClient?: { revision: string; apiPath?: string; defaultWorkspacePath?: string }
   onError?(error: unknown): void
 }
 
@@ -292,6 +292,10 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
       }
       if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
         html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
+      }
+      if (options.sessionClient?.defaultWorkspacePath) {
+        const path = encodeURIComponent(options.sessionClient.defaultWorkspacePath)
+        html = html.replace('</head>', `<meta name="arkme-default-workspace" content="${path}"></head>`)
       }
       if (options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
