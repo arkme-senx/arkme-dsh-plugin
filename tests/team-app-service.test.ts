@@ -58,6 +58,15 @@ describe('Team App owner adapter', () => {
     await expect(f.service.execute('team.app.channel', { teamRef: 'team-app-team.forged' })).rejects.toMatchObject({ code: 'team-reference-invalid' })
     expect(f.requests.length).toBe(count)
   })
+  it('keeps draft and view identities separate when a visitor later joins the same team', async () => {
+    let side = 'external'
+    const f = fixture(() => ({ items: [{ ...conversation, side }], has_more: false }))
+    const external = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    side = 'team'
+    const internal = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(internal.items[0]!.key).not.toBe(external.items[0]!.key)
+    expect((await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }).items[0]!.key).toBe(internal.items[0]!.key)
+  })
   it('drops a response completed after an account change', async () => {
     let release!: () => void
     const barrier = new Promise<void>(r => { release = r })
