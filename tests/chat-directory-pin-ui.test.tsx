@@ -657,4 +657,5 @@ it('keeps a Bot opened before the Host directory snapshot in the same row-and-to
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
   useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))
