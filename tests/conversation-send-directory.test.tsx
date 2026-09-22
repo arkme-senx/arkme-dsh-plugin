@@ -1828,12 +1828,13 @@ describe('conversation send directory projection', () => {
     const previous = mocks.callArkme.getMockImplementation()!
     let finishRead: ((value: unknown) => void) | undefined
     let delayed = false
+    let created = false
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
       if (operation === 'sources.list' && params?.directory === 'send_to_self') {
         if (delayed) return await new Promise(resolve => { finishRead = resolve })
-        return { items: [sendToSelf, uncategorized, parent], hasMore: false }
+        return { items: [sendToSelf, uncategorized, parent, ...(created ? [orphan] : [])], hasMore: false }
       }
-      if (operation === 'topic.create') return { source: orphan, warning }
+      if (operation === 'topic.create') { created = true; return { source: orphan, warning } }
       if (operation === 'source.timeline') return { source: sendToSelf, items: [], hasMore: false }
       if (operation === 'source.send-text') return {
         sourceRef: params?.sourceRef, itemUid: params?.recordUid, status: 1, localState: 'synced',
@@ -1850,11 +1851,13 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByType(ArkmeTopicCreateDialog)).toHaveLength(0)
     expect(JSON.stringify(renderer!.toJSON())).toContain(warning)
     expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    delayed = false
     await act(async () => { finishRead!({ items: [sendToSelf, uncategorized, parent], hasMore: false }) })
     expect(JSON.stringify(renderer!.toJSON())).toContain(warning)
     const breadcrumb = renderer!.root.findByType(ArkmeSourceBreadcrumb)
     expect(breadcrumb.props.error).toBeUndefined()
     expect(breadcrumb.props.loading).toBe(false)
+    expect(breadcrumb.props.sources).toContainEqual(orphan)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'topic.create')).toHaveLength(1)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('部分创建后继续发送') })

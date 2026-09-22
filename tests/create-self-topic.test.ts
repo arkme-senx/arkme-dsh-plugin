@@ -38,6 +38,29 @@ beforeEach(() => { vi.mocked(callArkme).mockReset() })
 afterEach(() => { for (const cache of caches.splice(0)) cache.dispose() })
 
 describe('creating a self topic without reloading the directory', () => {
+  it.each([false, true])('keeps a late child hidden while its parent archive is pending (partial=%s)', async partial => {
+    const parent = topic('parent'), child = topic('child', 0, 'parent')
+    const { cache, read } = directory([parent])
+    const creation = deferred<{ source: ArkmeSourceItem; warning?: string }>()
+    const background = deferred<ArkmeSourceList>()
+    read.mockReturnValue(background.promise)
+    vi.mocked(callArkme).mockReturnValueOnce(creation.promise)
+      .mockResolvedValueOnce({ sourceRef: 'child', siblingOrder: 1024 })
+    const pending = createSelfTopic({ title: 'child', parentSourceRef: 'parent' }, cache)
+    const settle = cache.beginArchive(parent)!
+    creation.resolve({ source: child, ...(partial ? { warning: '部分完成' } : {}) })
+    await pending
+    expect(cache.getSnapshot().sources).toEqual(roots)
+    expect(read).toHaveBeenCalledOnce()
+    // A read taken before the archive commits cannot undo the pending removal.
+    background.resolve({ items: [...roots, parent, child], hasMore: false })
+    await cache.ensure()
+    expect(cache.getSnapshot().sources).toEqual(roots)
+    settle(false)
+    expect(cache.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['self', 'default', 'parent', 'child'])
+    expect(vi.mocked(callArkme).mock.calls.filter(([op]) => op === 'topic.create')).toHaveLength(1)
+  })
+
   it('does not block a warm creation on an older read and reconciles its stale result afterward', async () => {
     const { cache, read } = directory([topic('old', 1024)])
     const old = deferred<ArkmeSourceList>()

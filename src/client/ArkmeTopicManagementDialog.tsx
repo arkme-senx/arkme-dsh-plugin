@@ -66,7 +66,7 @@ const styles: Record<string, CSSProperties> = {
   disabled: { background: arkmeTheme.accentSoft, color: arkmeTheme.tertiary, cursor: 'default' },
 }
 
-function ArkmeTopicDialogFrame({
+export function ArkmeTopicDialogFrame({
   title, submitting, onCancel, children,
 }: { title: string; submitting: boolean; onCancel(): void; children: ReactNode }) {
   const cancelFromBackdrop = (event: MouseEvent<HTMLDivElement>) => {

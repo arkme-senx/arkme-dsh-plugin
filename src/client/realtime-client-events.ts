@@ -287,6 +287,11 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'projection-invalidated') {
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
+          if (update.projection === 'topic-directory') {
+            invalidateSelfTopicDirectories()
+            arkmeUi.topicDirectoryChanged()
+            return
+          }
           if (update.projection !== 'record') return
           // A metadata-only hint does not identify a removed/locked topic. Reconcile
           // the existing directory atomically; account changes and access errors still clear it.

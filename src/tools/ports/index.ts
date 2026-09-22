@@ -1,3 +1,4 @@
+import type { ArkmeArchivePort } from '../../archive-contract.js'
 import type { ArkmeAiVideoToolPort } from './ai-video.js'
 import type { ArkmeArkoToolPort } from './arko.js'
 import type { ArkmeBotToolPort } from './bots.js'
@@ -21,6 +22,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeArchivePort,
   ArkmeDirectMessageAdmissionPort,
   ArkmeFileToolPort,
   ArkmeAiVideoToolPort,

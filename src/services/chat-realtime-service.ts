@@ -298,6 +298,11 @@ export class ChatRealtimeService {
       return
     }
     if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'entity_archive') {
+      void this.invalidateTopicDirectoryProjection()
+      return
+    }
+    if (notice.cause === 'projection-invalidation'
       && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()
       return
@@ -484,6 +489,22 @@ export class ChatRealtimeService {
       })
     } catch (error) {
       console.warn('dsh-arkme: Chat read receipt invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
+  /** Archive changes directory membership, not record content, privacy or calendar. */
+  async invalidateTopicDirectoryProjection(): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'owner-read:archives:')
+      this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.emitChatClientEvent({
+        type: 'projection-invalidated', projection: 'topic-directory',
+        revision: this.nextChatClientRevision(),
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Topic directory invalidation failed:', safeFailureMessage(error))
     }
   }
 

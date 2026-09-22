@@ -104,6 +104,7 @@ describe('official DSH client adapter', () => {
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'settings.section', id: 'arkme-data', order: -2.5, label: expect.any(Function) }),
       expect.objectContaining({
         name: 'sidebar',
         priority: -100,
@@ -132,7 +133,7 @@ describe('official DSH client adapter', () => {
     ]))
     expect(effect).toHaveBeenCalledWith(
       expect.any(Function),
-      'dsh-arkme: render account settings navigation icon',
+      'dsh-arkme: render Arkme settings navigation icons',
     )
 
     const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {

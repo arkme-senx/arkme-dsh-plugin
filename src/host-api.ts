@@ -1738,6 +1738,14 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'title'),
     )
+    case 'archives.list': return service.listArchives(stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'archives.state': return service.getArchiveStates(stringListParam(params, 'sourceRefs'), requestSignal)
+    case 'archives.set': {
+      if (typeof params.selfArchived !== 'boolean' || !Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0) {
+        throw new ArkmePluginError('archive-input-invalid', '归档参数不完整，请刷新重试', false, 400)
+      }
+      return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
+    }
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)

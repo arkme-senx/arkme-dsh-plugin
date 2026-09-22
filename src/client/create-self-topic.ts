@@ -36,6 +36,9 @@ export async function createSelfTopic(
   checkCreationScope()
   if (result.warning !== undefined) {
     directory.upsert(result.source)
+    // Even partial creation must reconcile membership: its parent may have
+    // been archived while the create request was in flight.
+    void directory.refreshAfterMutation()
     return result
   }
   try {
