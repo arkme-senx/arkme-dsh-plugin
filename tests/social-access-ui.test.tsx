@@ -45,6 +45,11 @@ describe('real social presentation lifecycle', () => {
     api.allowed = true
     await domAct(async () => { await socialAccessStore.refresh() })
     expect(api.calls).toHaveBeenCalledWith('calls.outgoing.intent.claim')
+    api.allowed = null
+    await domAct(async () => { await socialAccessStore.refresh() })
+    api.calls.mockClear()
+    await domAct(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(api.calls).toHaveBeenCalledWith('calls.outgoing.intent.claim')
     api.allowed = false
     await domAct(async () => { await socialAccessStore.refresh() })
     api.calls.mockClear()
@@ -53,7 +58,7 @@ describe('real social presentation lifecycle', () => {
     expect(document.querySelector('iframe')).toBe(null)
     expect(arkmeAuthStore.getSnapshot().auth).toMatchObject({ status: 'authenticated', userId: 42 })
   })
-  it('hides before resolution and on denial/failure, refreshes on focus, keeps personal navigation', async () => {
+  it('hides before resolution and on denial, retains confirmed navigation on refresh failure', async () => {
     let resolve!: (value: unknown) => void
     api.pending = new Promise(done => { resolve = done })
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
@@ -68,6 +73,9 @@ describe('real social presentation lifecycle', () => {
     expect(labels()).toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
     api.allowed = null
     await act(async () => { window.dispatchEvent(new Event('focus')); await socialAccessStore.refresh() })
+    expect(labels()).toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
+    api.allowed = false
+    await act(async () => { await socialAccessStore.refresh() })
     expect(labels()).not.toContain('world')
     expect(arkmeAuthStore.getSnapshot().auth).toMatchObject({ status: 'authenticated', userId: 42 })
   })
