@@ -1698,6 +1698,11 @@ describe('conversation send directory projection', () => {
         items: [sendToSelf, uncategorized, parent, ...(accepted ? [created] : [])], hasMore: false,
       }
       if (operation === 'topic.create') { accepted = true; return { source: created } }
+      if (operation === 'topic.hierarchy.move') {
+        created.siblingOrder = 1024
+        if (!child) parent.siblingOrder = 2048
+        return { sourceRef: created.sourceRef, siblingOrder: 1024 }
+      }
       if (operation === 'source.timeline') return {
         source: params?.sourceRef === created.sourceRef ? created : parent, items: [], hasMore: false,
       }
@@ -1716,6 +1721,11 @@ describe('conversation send directory projection', () => {
     })
     await act(async () => { renderer!.root.findByType(ArkmeTopicCreateDialog).props.onConfirm('新主题') })
     expect(arkmeUi.getSnapshot().selectedSource?.topicHierarchyKey).toBe(created.topicHierarchyKey)
+    expect(mocks.callArkme).toHaveBeenCalledWith('topic.hierarchy.move', {
+      sourceRef: created.sourceRef,
+      ...(child ? { currentParentSourceRef: parent.sourceRef, nextParentSourceRef: parent.sourceRef }
+        : { insertBeforeSourceRef: parent.sourceRef }),
+    }, expect.any(AbortSignal))
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('新主题第一条消息') })

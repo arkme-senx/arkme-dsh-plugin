@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => mocks)
 import { recordTopicAssignmentPort as port } from '../src/client/record-topic-assignment-port.js'
-afterEach(() => { vi.restoreAllMocks(); mocks.callArkme.mockReset() })
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
+afterEach(() => { resetSelfTopicDirectories(); vi.restoreAllMocks(); mocks.callArkme.mockReset() })
 describe('record topic assignment transport adapter', () => {
   it('passes server search and pagination while filtering aggregate entries', async () => {
     mocks.callArkme.mockResolvedValue({ items: [{ kind: 'send_to_self' }, { kind: 'topic', sourceRef: 't', topicHierarchyKey: 'stable-t' }], hasMore: true, nextCursor: 'next' })
@@ -17,7 +19,11 @@ describe('record topic assignment transport adapter', () => {
     await expect(port.listTopics('', undefined, new AbortController().signal)).rejects.toThrow('身份信息不完整')
   })
   it('binds new-topic creation to its originating account source', async () => {
-    mocks.callArkme.mockResolvedValue({ source: { sourceRef: 'created' } })
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+    mocks.callArkme.mockImplementation(async op => op === 'topic.create'
+      ? { source: { sourceRef: 'created', kind: 'topic' } }
+      : op === 'sources.list' ? { items: [{ sourceRef: 'signed-self', kind: 'send_to_self' },
+        { sourceRef: 'default', kind: 'default_category' }], hasMore: false } : { sourceRef: 'created', siblingOrder: 1024 })
     await port.createTopic('标题', 'signed-self', new AbortController().signal)
     expect(mocks.callArkme).toHaveBeenCalledWith('topic.create', { title: '标题', contextSourceRef: 'signed-self' }, expect.any(AbortSignal))
   })
