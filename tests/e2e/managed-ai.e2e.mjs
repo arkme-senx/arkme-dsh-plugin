@@ -16,6 +16,7 @@ const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
 const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
 const { connectFreshWorkspace } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
+const { createArkmeSdk } = await importFile(createRequire(join(profile, "package.json")).resolve("@senguoyun/dsh-arkme/sdk"))
 const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) throw new Error('Install an immutable tgz through dsh plugin first')
 const tokenParts = [{ alg: 'HS256', typ: 'JWT' }, { user_id: 42, client_id: 7, exp: Math.floor(Date.now() / 1000) + 600 }]
@@ -89,6 +90,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         ? [['live', 'Reply with exactly MODEL_PROXY_E2E_OK and stop.']]
         : [['saved', 'E2E_SUCCESS'], ['success', 'E2E_SUCCESS'], ['wrong-model', 'E2E_REJECT_MODEL'], ['missing-usage', 'E2E_MISSING_USAGE'], ['recovery', 'E2E_RECOVERY'], ['bailian', 'E2E_SUCCESS'], ['bailian-wrong-model', 'E2E_REJECT_MODEL'], ['bailian-recovery', 'E2E_RECOVERY']]
       let failures = 0
+      let lastSessionId
       for (const [label, prompt] of cases) {
         if (label === 'success' || label === 'live') {
           await trigger.click()
@@ -108,7 +110,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         await input.fill(prompt)
         const settled = scaffold.whenTurnSettled(60_000)
         await input.press('Enter')
-        await settled
+        lastSessionId = await settled
         await expect.poll(() => results.length).toBe(before + 1)
         const wrongModel = label.endsWith('wrong-model')
         expect(results.at(-1).status).toBe(wrongModel ? 502 : 200)
@@ -121,13 +123,44 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         }
         if (label === 'missing-usage') {
           failures++
-          await frame.getByText('PARTIAL_E2E', { exact: true }).waitFor()
           await frame.getByText('STREAM_CLOSED', { exact: true }).waitFor()
           await frame.getByText('Arkme AI 返回异常，请重新发送消息', { exact: true }).waitFor()
         }
         await expect.poll(() => frame.getByText('This turn failed', { exact: true }).count())
           .toBe(failures)
       }
+      // Public SDK consumer resolves the installed tgz export, never plugin source.
+      const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), init) })
+      const state = await sdk.state()
+      const scope = `${state.environment}:${state.userId}`
+      expect((await sdk.capabilities()).features.aiPoints).toBe(true)
+      const balance = await sdk.aiPointsAccount(scope)
+      expect(balance.unit).toBe('ai_points')
+      expect(balance.reservedPoints).toBe('0')
+      expect(balance.availablePoints).toBe(process.env.ARKME_E2E_GIFT_POINTS ? balance.grantedPoints : balance.purchasedPoints)
+      if (process.env.ARKME_E2E_GIFT_POINTS) expect(balance.purchasedPoints).toBe('0')
+      const month = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7)
+      const statement = await sdk.aiPointsConsumption(scope, { month })
+      expect(statement.items).toHaveLength(live ? 1 : 5)
+      expect(statement.items.every(item => item.chargedPoints !== '0')).toBe(true)
+      await expect(sdk.aiPointsAccount('test:other-account')).rejects.toThrow()
+      // Invoke the registered Tools in the real session's grant/visibility scope.
+      const agent = scaffold.ctx.agents.get(lastSessionId)
+      for (const [name, args] of [['arkme_ai_points', {}], ['arkme_ai_points_consumption', { month }]]) {
+        expect(scaffold.ctx.tools.get(name, agent)).toBeDefined()
+        const output = await scaffold.ctx.tools.execute({ callId: randomUUID(), name, arguments: args, agent, signal: new AbortController().signal })
+        expect(output.isError).toBe(false)
+        expect(JSON.stringify(output)).toContain('ai_points')
+        expect(JSON.stringify(output)).not.toContain('accountScope')
+      }
+      await page.locator('button.arkme-redesign-profile').click()
+      await page.locator('button.arkme-usage-summary').click()
+      const usage = page.locator('[data-arkme-settings-page="usage"]')
+      await expect.poll(() => usage.innerText()).toMatch(/AI 积分|AI points/)
+      await usage.locator('[data-usage-kind="ai-points"] button[aria-expanded]').click()
+      await usage.locator('details').first().waitFor()
+      expect(await usage.locator('details').count()).toBe(live ? 1 : 5)
+      expect(await usage.innerText()).not.toMatch(/月度赠送 Token|阿森有想法|实体提取/)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       await writeFile(process.env.ARKME_MANAGED_AI_RESULT, JSON.stringify(results))
     } catch (error) {

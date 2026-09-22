@@ -1,3 +1,4 @@
+import { formatAiPoints, nanoCnyToPoints } from '../ai-points.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import {
   useCallback, useEffect, useRef, useState,
@@ -40,12 +41,8 @@ export function formatArkmeBillingPrice(priceMinor: number, _currency: 'CNY'): s
   return `¥${(priceMinor / 100).toFixed(2)}`
 }
 
-export function formatArkmeNanoCny(value: string): string {
-  if (!/^(?:0|[1-9]\d*)$/.test(value)) return '—'
-  const roundedCents = (BigInt(value) + 5_000_000n) / 10_000_000n
-  const whole = roundedCents / 100n
-  const fraction = (roundedCents % 100n).toString().padStart(2, '0')
-  return `¥${whole.toLocaleString(arkmeIntlLocale())}.${fraction}`
+export function formatArkmePoints(value: string): string {
+  return `${formatAiPoints(nanoCnyToPoints(value))} ${tr('积分')}`
 }
 
 function errorMessage(error: unknown): string {
@@ -59,8 +56,8 @@ export interface ArkmeBalanceSettingsRowViewProps {
 
 export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewProps) {
   const description = props.quotaState.kind === 'ready'
-    ? formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)
-    : props.quotaState.kind === 'loading' ? '正在加载余额…' : '余额读取失败，点击重试'
+    ? formatArkmePoints(props.quotaState.quota.availableNanoCny)
+    : props.quotaState.kind === 'loading' ? '正在加载积分…' : '积分读取失败，点击重试'
   const reservedNanoCny = props.quotaState.kind === 'ready'
     ? props.quotaState.quota.reservedNanoCny
     : undefined
@@ -69,21 +66,21 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
     && BigInt(reservedNanoCny) > 0n
 
   return <div className={`arkme-redesign-setting-row arkme-redesign-balance-row${showReserved ? '' : ' is-without-reserved'}`}>
-    <button type="button" className="arkme-redesign-balance-main" aria-label={tr("账户余额 {v0}", { v0: description })} onClick={props.onOpen}>
+    <button type="button" className="arkme-redesign-balance-main" aria-label={tr("AI 积分 {v0}", { v0: description })} onClick={props.onOpen}>
       <small>{description}</small>
     </button>
     {showReserved && <div className="arkme-redesign-reserved-balance">
       <span className="arkme-redesign-reserved-title">
-        <strong>{tr("预占余额")}</strong>
+        <strong>{tr("预占积分")}</strong>
         <span
           className="arkme-redesign-reserved-help"
           tabIndex={0}
-          aria-label={tr("预占余额说明")}
+          aria-label={tr("预占积分说明")}
           aria-describedby="arkme-reserved-balance-tooltip"
         >?</span>
-        <span id="arkme-reserved-balance-tooltip" role="tooltip">{tr("当前运行的任务预先占用的余额，任务完成后将返还剩余余额。")}</span>
+        <span id="arkme-reserved-balance-tooltip" role="tooltip">{tr("当前运行的任务预先占用的积分，任务完成后将返还未用积分。")}</span>
       </span>
-      <small>{formatArkmeNanoCny(reservedNanoCny)}</small>
+      <small>{formatArkmePoints(reservedNanoCny)}</small>
     </div>}
     <button
       type="button"
@@ -129,10 +126,10 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
   const method = (paymentMethod: ArkmeBillingPaymentMethod) => selected?.paymentMethods.find(item => item.id === paymentMethod)
 
   return <div className="arkme-billing-backdrop">
-    <section role="dialog" aria-modal="true" aria-label={tr("余额充值")} className="arkme-billing-recharge-dialog">
+    <section role="dialog" aria-modal="true" aria-label={tr("积分充值")} className="arkme-billing-recharge-dialog">
       <header className="arkme-billing-dialog-header">
         <div>
-          <h2>{tr("余额充值")}</h2>
+          <h2>{tr("积分充值")}</h2>
           <p>{tr("充值后可在 DSH 会话中通过 Arkme 调用 AI 模型")}</p>
         </div>
         <button type="button" aria-label={tr("关闭充值弹窗")} onClick={props.onClose}>×</button>
@@ -140,9 +137,9 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
 
       <div className="arkme-billing-dialog-body">
         <div className="arkme-billing-dialog-balance">
-          <span>{tr("当前余额")}</span>
+          <span>{tr("可用积分")}</span>
           <strong>{props.quotaState.kind === 'ready'
-            ? formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)
+            ? formatArkmePoints(props.quotaState.quota.availableNanoCny)
             : props.quotaState.kind === 'loading' ? tr("正在加载…") : '读取失败'}</strong>
           <button type="button" onClick={props.onRefreshQuota}>{tr("刷新")}</button>
         </div>
@@ -167,11 +164,11 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
               aria-checked={product.productId === props.selectedProductId}
               className={product.productId === props.selectedProductId ? 'is-selected' : ''}
               key={product.productId}
-              title={product.title}
+              title={`${formatArkmePoints(product.creditNanoCny)} · ${formatArkmeBillingPrice(product.priceMinor, product.currency)}`}
               disabled={creating}
               onClick={() => props.onSelectProduct(product.productId)}
             >
-              <span>{product.title}</span>
+              <span>{formatArkmePoints(product.creditNanoCny)}</span>
               <strong>{formatArkmeBillingPrice(product.priceMinor, product.currency)}</strong>
             </button>)}
           </div>}
@@ -230,7 +227,7 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
   const paymentAction = screen === 'pending' ? props.order.paymentAction : undefined
   const qrDataUrl = paymentAction?.type === 'display_qr' ? billingQrDataUrl(paymentAction.qrContent) : ''
   const openUrl = paymentAction?.type === 'open_url' ? paymentAction.url : ''
-  const paidAmount = formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)
+  const paidAmount = formatArkmePoints(props.order.creditNanoCny)
   const statusProblem = props.statusError !== '' && (screen === 'pending' || screen === 'crediting')
   const title = statusProblem
     ? '正在确认支付'
@@ -290,12 +287,12 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
         </>}
         {!statusProblem && screen === 'pending' && qrDataUrl === '' && openUrl === '' && <p className="arkme-billing-error" role="alert">{tr("支付操作暂不可用")}</p>}
         {!statusProblem && screen === 'pending' && <p>{tr("支付金额")} {formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)} {tr("· 剩余")} {countdownText(props.order.expiresAtMillis - props.nowMillis)}</p>}
-        {!statusProblem && screen === 'crediting' && <><strong>{tr("支付已确认，无需重复支付")}</strong><p>{tr("余额到账中，到账后会自动刷新当前余额。")}</p></>}
+        {!statusProblem && screen === 'crediting' && <><strong>{tr("支付已确认，无需重复支付")}</strong><p>{tr("积分到账中，到账后会自动刷新可用积分。")}</p></>}
         {screen === 'paid' && <>
           <strong>{paidAmount} {tr("已到账")}</strong>
-          {props.quotaState.kind === 'loading' && <p>{tr("已到账，正在刷新当前余额")}</p>}
-          {props.quotaState.kind === 'ready' && <p>{tr("当前余额已刷新：")}{formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)}</p>}
-          {props.quotaState.kind === 'error' && <p className="arkme-billing-error" role="alert">{tr("余额暂未刷新：")}{props.quotaState.message}</p>}
+          {props.quotaState.kind === 'loading' && <p>{tr("已到账，正在刷新可用积分")}</p>}
+          {props.quotaState.kind === 'ready' && <p>{tr("可用积分已刷新：")}{formatArkmePoints(props.quotaState.quota.availableNanoCny)}</p>}
+          {props.quotaState.kind === 'error' && <p className="arkme-billing-error" role="alert">{tr("积分暂未刷新：")}{props.quotaState.message}</p>}
         </>}
         {screen === 'expired' && <strong>{tr("支付凭据已过期，请重新生成。")}</strong>}
         {screen === 'closed' && <strong>{tr("订单已关闭。")}</strong>}
@@ -304,7 +301,7 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
       </div>
       <footer className="arkme-billing-dialog-actions">
         {screen === 'expired' && <button type="button" className="arkme-billing-primary-action" onClick={props.onRegenerate}>{tr("重新生成")}</button>}
-        {screen === 'paid' && props.quotaState.kind === 'error' && <button type="button" onClick={props.onRefreshQuota}>{tr("刷新余额")}</button>}
+        {screen === 'paid' && props.quotaState.kind === 'error' && <button type="button" onClick={props.onRefreshQuota}>{tr("刷新积分")}</button>}
         <button type="button" onClick={props.onClose}>
           {screen === 'paid' ? '完成' : screen === 'pending' || screen === 'crediting' ? '稍后查看' : tr("关闭")}
         </button>
@@ -336,13 +333,14 @@ function BillingModalHost({ children, onClose }: { children: ReactNode; onClose:
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
-  return <dialog ref={ref} className="arkme-billing-modal-host" aria-label={tr("AI 余额充值流程")}
+  return <dialog ref={ref} className="arkme-billing-modal-host" aria-label={tr("AI 积分充值流程")}
     onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}
   >{children}</dialog>
 }
 
-export function ArkmeBillingSettings({ active = true, renderTrigger, modal = false }: {
+export function ArkmeBillingSettings({ active = true, renderTrigger, modal = false, onCreditsChanged }: {
   active?: boolean
+  onCreditsChanged?: () => void
   modal?: boolean
   renderTrigger?: (props: ArkmeBalanceSettingsRowViewProps & { onRefresh(): void }) => ReactNode
 } = {}) {
@@ -431,7 +429,7 @@ export function ArkmeBillingSettings({ active = true, renderTrigger, modal = fal
         setOrderStatusRetryable(false)
         setOrderStatusRetryInMillis(undefined)
         checkoutAttemptRef.current = checkoutAttemptAfterOrder(checkoutAttemptRef.current, latest.status)
-        if (latest.status === 'paid') void loadQuota()
+        if (latest.status === 'paid') { void loadQuota(); onCreditsChanged?.() }
       },
       onError: (error, retry) => {
         setOrderStatusError(errorMessage(error))
@@ -445,7 +443,7 @@ export function ArkmeBillingSettings({ active = true, renderTrigger, modal = fal
     })
     pollerRef.current = poller
     poller.start(nextOrder.orderId, nextOrder.expiresAtMillis, nextOrder.pollIntervalMillis, nextOrder.status)
-  }, [loadQuota])
+  }, [loadQuota, onCreditsChanged])
 
   const createPayment = useCallback(async (paymentMethod: ArkmeBillingPaymentMethod, forceNew = false) => {
     if (productsState.kind !== 'ready') return

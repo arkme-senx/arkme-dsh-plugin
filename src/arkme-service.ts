@@ -1,3 +1,5 @@
+import { AiPointsService } from './services/ai-points-service.js'
+import type { ArkmeAiPointsQuery } from './ai-points.js'
 import { stringValue } from './services/service.js'
 import { DayRecapService } from './services/day-recap-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
@@ -587,6 +589,9 @@ export class ArkmeService {
   async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
   async membershipCurrent(expectedUserId: number) { return await this.membershipOwner.current(expectedUserId) }
   async membershipCatalog(expectedUserId: number) { return await this.membershipOwner.catalog(expectedUserId) }
+  async aiPointsAccount(expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).account(expectedScope, signal) }
+  async aiPointsConsumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).consumption(query, expectedScope, signal) }
+
   async accountTokenUsage(expectedScope: string) { return await new AccountUsageService(this.runtime).tokens(expectedScope) }
   async accountStorageUsage(expectedScope: string) { return await new AccountUsageService(this.runtime).storage(expectedScope) }
   async accountVoiceUsage(expectedScope: string) { return await new AccountUsageService(this.runtime).voice(expectedScope) }
@@ -830,6 +835,7 @@ export class ArkmeService {
         revisionPolling: true,
         userProfile: true,
         accountSettings: true,
+        aiPoints: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,

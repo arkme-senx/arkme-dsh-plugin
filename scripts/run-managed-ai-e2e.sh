@@ -5,7 +5,10 @@ task_plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${ARKME_PACKED_PROFILE:?Install an immutable plugin tgz in a fresh DSH profile first}"
 : "${JOTMO_INTELLIGENT_CHECKOUT:?Set the Intelligent task checkout}"
 : "${MANAGED_AI_TEST_MYSQL_ADDR:?Set isolated loopback MySQL host:port}"
-git -C "$ARKME_DSH_CHECKOUT" diff --quiet origin/master HEAD --
+# A published official release is also a valid runtime target. This changes
+# only the test harness; it never checks out or modifies Harness source.
+task_dsh_ref="${ARKME_DSH_REF:-origin/master}"
+test "$(git -C "$ARKME_DSH_CHECKOUT" rev-parse HEAD)" = "$(git -C "$ARKME_DSH_CHECKOUT" rev-parse "$task_dsh_ref^{commit}")"
 test -z "$(git -C "$ARKME_DSH_CHECKOUT" status --porcelain --untracked-files=no)"
 task_tls_root="$(mktemp -d "${TMPDIR:-/tmp}/arkme-model-tls.XXXXXX")"
 trap 'rm -f "$task_tls_root/key.pem" "$task_tls_root/cert.pem"; rmdir "$task_tls_root"' EXIT

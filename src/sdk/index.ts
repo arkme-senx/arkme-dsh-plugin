@@ -1,3 +1,5 @@
+import type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery } from '../ai-points.js'
+export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, ArkmeAiPointsConsumption } from '../ai-points.js'
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
 import type { ArkmeCommonGroupPage } from '../common-groups.js'
 export type { ArkmeCommonGroupPage } from '../common-groups.js'
@@ -460,6 +462,16 @@ export class ArkmeSdk {
       throw new Error(`Unsupported Arkme provider contract version ${String(capabilities.contractVersion)}`)
     }
     return capabilities
+  }
+
+  async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
+    if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
+    return this.call('account.points.query', { expectedAccountScope }, signal)
+  }
+
+  async aiPointsConsumption(expectedAccountScope: string, query: ArkmeAiPointsQuery, signal?: AbortSignal): Promise<ArkmeAiPointsPage> {
+    if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
+    return this.call('account.points.consumption', { expectedAccountScope, ...query }, signal)
   }
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {

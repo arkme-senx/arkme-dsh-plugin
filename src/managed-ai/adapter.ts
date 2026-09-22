@@ -31,7 +31,7 @@ const ARKME_MANAGED_CATALOG_MAX_STALE_MS = 5 * ARKME_MANAGED_CATALOG_TTL_MS
 const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
 const ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS = 40_000_000
 const ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES = 1 << 30
-const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
+const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'AI 积分不足，请补充积分后重试'
 const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
 const ARKME_AUTH_FAILURE_CODES = new Set([
   'login-required',
@@ -97,6 +97,9 @@ function managedAiFailureFacts(error: unknown): ManagedAiFailureFacts {
 }
 
 function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string; message: string } {
+  if (facts.code === 'REQUEST_IN_PROGRESS') {
+    return { code: facts.code, message: '已有 AI 请求正在完成，请等待结果后重试' }
+  }
   if (facts.status === 402 || ['QUOTA', 'INSUFFICIENT_BALANCE'].includes(facts.code)) {
     return { code: 'INSUFFICIENT_BALANCE', message: ARKME_INSUFFICIENT_BALANCE_MESSAGE }
   }

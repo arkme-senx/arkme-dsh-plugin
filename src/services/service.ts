@@ -1166,7 +1166,7 @@ export class ServiceRuntime {
     try {
       return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403', 'invalid_access_token'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)

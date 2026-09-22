@@ -261,4 +261,41 @@ Arkme 用户 {v0}|Arkme user {v0}
 {v0}；录音仍保留在本机，可重试或下载|{v0}; recording remains on this device. Retry or download it.
 参与者: {v0}|Participants: {v0}
 说话人 {v0}|Speaker {v0}
+
+AI 积分|AI points
+积分|points
+赠送积分|Granted points
+充值积分|Purchased points
+赠送积分到期时间|Grant expires
+任务进行中暂占|Reserved by running tasks:
+积分，结束后返还未用部分|points; unused points return when the task finishes
+优先使用赠送积分，再使用充值积分。1 元 = 100 积分。|Granted points are used first, then purchased points. CNY 1 = 100 points.
+收起消费明细|Hide spending details
+查看消费明细|View spending details
+消费月份|Spending month
+本月消费|Spent this month
+本月暂无积分消费|No point spending this month
+暂时无法读取消费明细。|Spending details could not be loaded.
+精确消费|Exact charge
+输入 Token|Input tokens
+输出 Token|Output tokens
+缓存命中|Cache hit
+缓存未命中|Cache miss
+加载失败，已有明细已保留。|Loading failed. Existing entries have been kept.
+积分充值|Buy points
+可用积分|Available points
+预占积分|Reserved points
+预占积分说明|About reserved points
+当前运行的任务预先占用的积分，任务完成后将返还未用积分。|Running tasks reserve points. Unused points return when the task finishes.
+正在加载积分…|Loading points…
+积分读取失败，点击重试|Points could not be loaded. Click to retry.
+积分加载中…|Loading points…
+积分读取失败|Points could not be loaded
+积分到账中，到账后会自动刷新可用积分。|Your points are being credited. Available points will refresh automatically.
+已到账，正在刷新可用积分|Credited. Refreshing available points…
+可用积分已刷新：|Available points refreshed:
+积分暂未刷新：|Points have not refreshed:
+刷新积分|Refresh points
+AI 积分 {v0}|AI points {v0}
+AI 积分充值流程|AI point purchase
 `.trim().split('\n').map(line => { const p = line.indexOf('|'); return [line.slice(0, p), line.slice(p + 1)] }))

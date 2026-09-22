@@ -64,7 +64,7 @@ describe('Arkme billing payment feedback flow', () => {
       if (operation === 'billing.products') return products
       if (operation === 'billing.order.create') return {
         orderId: 'order-91cd', status: 'paid', paymentMethod: 'alipay_pc_web',
-        amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+        amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
       }
       throw new Error('unexpected operation: ' + operation)
     })
@@ -83,8 +83,8 @@ describe('Arkme billing payment feedback flow', () => {
     })
 
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(1)
-    expect(nodeText(renderer!.root)).toContain('¥10.00 已到账')
-    expect(nodeText(renderer!.root)).toContain('余额暂未刷新：余额网络中断')
+    expect(nodeText(renderer!.root)).toContain('1,000 积分 已到账')
+    expect(nodeText(renderer!.root)).toContain('积分暂未刷新：余额网络中断')
     expect(nodeText(renderer!.root)).toContain('完成')
 
     await act(async () => { button(renderer!, '完成').props.onClick(); await flush() })
@@ -111,13 +111,13 @@ describe('Arkme billing payment feedback flow', () => {
       if (operation === 'billing.products') return products
       if (operation === 'billing.order.create') return {
         orderId: 'order-91cd', status: 'pending', paymentMethod: 'alipay_pc_web',
-        amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+        amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
       }
       if (operation === 'billing.order.status') {
         statusCalls += 1
         return {
           orderId: 'order-91cd', status: 'crediting', paymentMethod: 'alipay_pc_web',
-          amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+          amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
         }
       }
       throw new Error('unexpected operation: ' + operation)
@@ -151,7 +151,7 @@ describe('Arkme billing payment feedback flow', () => {
       if (operation === 'billing.products') return products
       if (operation === 'billing.order.create') return {
         orderId: 'order-91cd', status: 'paid', paymentMethod: 'alipay_pc_web',
-        amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+        amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
       }
       throw new Error('unexpected operation: ' + operation)
     })
@@ -162,10 +162,10 @@ describe('Arkme billing payment feedback flow', () => {
     expect(quotaCalls).toBe(3)
 
     await act(async () => { afterPayment.resolve(refreshedQuota); await flush() })
-    expect(nodeText(renderer!.root)).toContain('当前余额已刷新：¥20.00')
+    expect(nodeText(renderer!.root)).toContain('可用积分已刷新：2,000 积分')
     await act(async () => { beforePayment.resolve(quota); await flush() })
-    expect(nodeText(renderer!.root)).toContain('当前余额已刷新：¥20.00')
-    expect(nodeText(renderer!.root)).not.toContain('当前余额已刷新：¥10.00')
+    expect(nodeText(renderer!.root)).toContain('可用积分已刷新：2,000 积分')
+    expect(nodeText(renderer!.root)).not.toContain('可用积分已刷新：1,000 积分')
   })
 
   it('manually retries a non-retryable polling failure immediately', async () => {
@@ -179,14 +179,14 @@ describe('Arkme billing payment feedback flow', () => {
       if (operation === 'billing.products') return products
       if (operation === 'billing.order.create') return {
         orderId: 'order-91cd', status: 'pending', paymentMethod: 'alipay_pc_web',
-        amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+        amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
       }
       if (operation === 'billing.order.status') {
         statusCalls += 1
         if (statusCalls === 1) throw { body: { message: '订单状态无效', retryable: false } }
         return {
           orderId: 'order-91cd', status: 'crediting', paymentMethod: 'alipay_pc_web',
-          amountMinor: 1_000, currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
+          amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: Date.now() + 300_000, pollIntervalMillis: 1_000,
         }
       }
       throw new Error('unexpected operation: ' + operation)

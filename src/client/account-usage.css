@@ -118,3 +118,9 @@
 .arkme-usage-dialog .arkme-usage-label strong { font-size: 14px; }
 .arkme-usage-dialog .arkme-usage-label > span, .arkme-usage-dialog .arkme-usage-metric small, .arkme-usage-dialog .arkme-usage-muted { font-size: 12px; }
 .arkme-usage-dialog .arkme-usage-track { height: 5px; margin-top: 9px; }
+
+.arkme-usage-summary-row[data-usage-kind="ai-points"] { grid-template-columns: minmax(0, 1fr) auto; }
+.arkme-usage-breakdown[data-usage-detail="points"] input { max-width: 100%; padding: 5px 7px; font: inherit; color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 6px; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary { cursor: pointer; padding: 10px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.arkme-usage-breakdown[data-usage-detail="points"] details { border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); }
+.arkme-usage-breakdown[data-usage-detail="points"] input:focus-visible, .arkme-usage-breakdown[data-usage-detail="points"] summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }

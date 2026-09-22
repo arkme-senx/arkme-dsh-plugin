@@ -2,7 +2,7 @@ import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import { ArkmeBillingSettings, formatArkmeNanoCny } from './ArkmeBillingSettings.js'
+import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
 import css from './arkme-model-select.css?inline'
 
 /** The public ModelDirectory face; DSH remains the sole directory and selection owner. */
@@ -98,8 +98,8 @@ export function ArkmeModelSelect({ directory, locked, available }: {
             <div className="arkme-model-group-heading">
               <span id={`${id}-${provider.id}`}>{provider.id === 'arkme-managed' ? 'Arkme' : provider.name}
                 {provider.id === 'arkme-managed' && <span aria-live="polite"> · {quotaState.kind === 'ready'
-                  ? formatArkmeNanoCny(quotaState.quota.availableNanoCny)
-                  : quotaState.kind === 'loading' ? '余额加载中…' : '余额读取失败'}</span>}
+                  ? formatArkmePoints(quotaState.quota.availableNanoCny)
+                  : quotaState.kind === 'loading' ? '积分加载中…' : '积分读取失败'}</span>}
               </span>
               {provider.id === 'arkme-managed' && <span className="arkme-model-balance-actions">
                 {quotaState.kind === 'error' && <button type="button" onClick={onRefresh}>{tr("重试")}</button>}

@@ -11,7 +11,7 @@ const noop = () => undefined
 
 const pendingOrder = {
   orderId: 'order-91cd', status: 'pending', paymentMethod: 'alipay_pc_web',
-  amountMinor: 1_000, currency: 'CNY', expiresAtMillis: 120_000, pollIntervalMillis: 1_000,
+  amountMinor: 1_000, creditNanoCny: '10000000000', currency: 'CNY', expiresAtMillis: 120_000, pollIntervalMillis: 1_000,
   paymentAction: { type: 'open_url', url: 'https://openapi.alipay.com/gateway.do?order=1' },
 } as const
 
@@ -46,9 +46,9 @@ describe('Arkme billing settings migration', () => {
       onOpen={noop}
     />)
 
-    expect(markup).toMatch(/账户余额[\s\S]*¥12\.80[\s\S]*预占余额[\s\S]*¥0\.30[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
-    expect(markup).toContain('class="arkme-redesign-reserved-help" tabindex="0" aria-label="预占余额说明" aria-describedby="arkme-reserved-balance-tooltip">?</span>')
-    expect(markup).toContain('id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的余额，任务完成后将返还剩余余额。</span>')
+    expect(markup).toMatch(/AI 积分[\s\S]*1,280\.17 积分[\s\S]*预占积分[\s\S]*30 积分[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toContain('class="arkme-redesign-reserved-help" tabindex="0" aria-label="预占积分说明" aria-describedby="arkme-reserved-balance-tooltip">?</span>')
+    expect(markup).toContain('id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的积分，任务完成后将返还未用积分。</span>')
     expect(markup).toContain('>充值</button><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
     expect(markup).not.toContain('总余额')
   })
@@ -66,9 +66,9 @@ describe('Arkme billing settings migration', () => {
     const markup = renderToStaticMarkup(<ArkmeBalanceSettingsRowView quotaState={quotaState} onOpen={noop} />)
 
     expect(markup).toContain('arkme-redesign-balance-row is-without-reserved')
-    expect(markup).not.toContain('预占余额')
+    expect(markup).not.toContain('预占积分')
     expect(markup).not.toContain('arkme-reserved-balance-tooltip')
-    expect(markup).toMatch(/账户余额[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/AI 积分[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
   })
 
   it('renders both available payment entries in the recharge dialog', () => {
@@ -88,13 +88,13 @@ describe('Arkme billing settings migration', () => {
     />)
 
     expect(markup).toContain('role="dialog"')
-    expect(markup).toContain('aria-label="余额充值"')
+    expect(markup).toContain('aria-label="积分充值"')
     expect(markup).toContain('充值后可在 DSH 会话中通过 Arkme 调用 AI 模型')
     expect(markup).not.toContain('选择充值套餐和支付方式')
-    expect(markup).toContain('<span>当前余额</span>')
+    expect(markup).toContain('<span>可用积分</span>')
     expect(markup).toMatch(/display:grid/)
     expect(markup).not.toMatch(/overflow-x:/)
-    expect(markup).toMatch(/AI 余额 ¥10[\s\S]*AI 余额 ¥50[\s\S]*AI 余额 ¥100[\s\S]*AI 余额支付测试/)
+    expect(markup).toMatch(/1,000 积分[\s\S]*5,000 积分[\s\S]*10,000 积分[\s\S]*0.01 积分/)
     expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*支付宝网页支付/)
     expect(markup).toMatch(/<svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*viewBox="0 0 1024 1024"[^>]*>[\s\S]*<path[^>]*fill="#009FE8"/)
     expect(markup).toMatch(/<button type="button"><svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*>[\s\S]*?<\/svg>支付宝网页支付<\/button>/)
@@ -173,11 +173,11 @@ describe('Arkme billing settings migration', () => {
       onOpenPaymentUrl={noop}
     />)
 
-    expect(renderPaid({ kind: 'loading' })).toMatch(/¥10\.00 已到账[\s\S]*正在刷新当前余额[\s\S]*>完成<\/button>/)
+    expect(renderPaid({ kind: 'loading' })).toMatch(/1,000 积分 已到账[\s\S]*正在刷新可用积分[\s\S]*>完成<\/button>/)
     expect(renderPaid({ kind: 'ready', quota: {
       availableNanoCny: '10000000000', totalNanoCny: '10000000000', reservedNanoCny: '0', currency: 'CNY',
-    } })).toMatch(/¥10\.00 已到账[\s\S]*当前余额已刷新[\s\S]*¥10\.00/)
-    expect(renderPaid({ kind: 'error', message: '网络中断' })).toMatch(/支付成功[\s\S]*¥10\.00 已到账[\s\S]*余额暂未刷新[\s\S]*>刷新余额<\/button>[\s\S]*>完成<\/button>/)
+    } })).toMatch(/1,000 积分 已到账[\s\S]*可用积分已刷新[\s\S]*1,000 积分/)
+    expect(renderPaid({ kind: 'error', message: '网络中断' })).toMatch(/支付成功[\s\S]*1,000 积分 已到账[\s\S]*积分暂未刷新[\s\S]*>刷新积分<\/button>[\s\S]*>完成<\/button>/)
   })
 
   it('offers immediate retry only for a retryable polling error and exposes terminal actions', () => {

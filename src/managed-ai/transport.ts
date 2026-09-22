@@ -297,6 +297,7 @@ function errorCode(status: number, body: unknown): string {
   const providerCode = typeof providerError?.code === 'string' ? providerError.code.toLowerCase() : ''
   if (status === 401 || status === 403) return 'AUTH'
   if (status === 402 || providerCode.includes('balance') || providerCode.includes('quota')) return 'QUOTA'
+  if (status === 409 && providerCode === 'request_in_progress') return 'REQUEST_IN_PROGRESS'
   if (status === 408 || status === 504) return 'TIMEOUT'
   if (status === 429) return 'RATE_LIMIT'
   if (status === 400 || status === 413 || status === 422) return 'INVALID_REQUEST'
