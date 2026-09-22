@@ -270,7 +270,7 @@ describe('Arkme account settings navigation icon', () => {
     expect(duplicateB.host).toBeUndefined()
     expect(wrongLocale.host?.dataset.arkmeAccountNavIcon).toBe('true')
     expect(missingIcon.host).toBeUndefined()
-    expect(harness.rendered).toHaveLength(2)
+    expect(harness.rendered).toHaveLength(3)
     expect(data.host?.dataset.arkmeDataNavIcon).toBe('true')
     expect(renderToStaticMarkup(harness.rendered[1])).not.toContain('user-shoulders')
     expect(renderToStaticMarkup(harness.rendered[0])).toContain('user-shoulders')

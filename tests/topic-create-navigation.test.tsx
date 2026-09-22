@@ -63,6 +63,21 @@ function submit() {
 }
 
 describe('navigate to a newly created self topic', () => {
+  it('revalidates a created topic directory membership when an ancestor was archived before its reply', async () => {
+    const onSelect = await openCreate(true)
+    const inherited = {...created, parentSourceRef: parent.sourceRef}
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return {items: [self, uncategorized], hasMore: false}
+      if (method === 'archives.state') return [{ownerAvailable: true, effectiveArchived: true}]
+      if (method === 'topic.create') return new Promise(resolve => { resolveCreate = resolve })
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { submit(); resolveCreate({source: inherited}) })
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(inherited)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+    expect(selfTopicDirectory(10001, 'prod').getSnapshot().sources).toEqual([self, uncategorized])
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
+  })
   it('refreshes directory membership on record invalidation without clearing an archived scene', async () => {
     const onSelect = vi.fn()
     const onInvalidated = vi.fn()

@@ -105,3 +105,19 @@ review9 的真实浏览器复现了此前遗漏的顺序：打开菜单后归档
 review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4deb4ff787e7f986`，官方 CLI 安装到全新临时 Profile 后，真实 Chrome reload → 菜单立即可用/零动作前置查询 → 点击后读取一次版本 → 提交一次归档 → 父子恢复完整链路 32 秒通过。直接内容读写、CAS、SDK 和 Session Tool 验证继续通过。日志为 `review-archive-demand-install11.log`、`review-archive-demand-cross-e2e-final.log`；`review-archive-demand-e2e.png.hover.png` 已核验。首次链路的业务断言通过但测试拦截器延迟了后续可取消的状态展示请求，出现重复响应处理错误；拦截范围收敛为首次写入前置读取后重跑通过，未屏蔽错误，业务包未改变，失败日志保留为 `review-archive-demand-cross-e2e.log`。
 
 本轮只提交原插件任务分支。版本、根 README、锁文件、官方 DSH 源码与用户 3081/Profile 均未修改；没有新增 Flutter/后端改动或生产写入。新截图来自隔离官方 DSH 0.1.5-rc.2 和真实 Record 测试服务。
+
+## 2026-09-22 rebase 最新 dev
+
+本次将归档开发分支 rebase 到 dev `a5b2c5b075d0686f817ae8e21eb8a1fec9edae72`，保留原开发分支备份。版本 0.1.76、依赖与发布元数据全部来自 dev；归档差异不修改这些字段。
+
+- dev 已有数据管理 owner，因此将「已归档主题」接入其首页与内容页，不重复注册第二个数据管理。最近删除、导入、导出以及账号切换隔离保留。导航中的数据管理紧接我的账户，中文/英文图标匹配均保留。
+- 主题归档使用 dev 的原生 DSH 行菜单，保留搜索、拖动、分配、排序与外置菜单。移除旧自绘菜单的悬停样式；只有点击归档才读取 CAS 前提，稳定 breadcrumb 持有写请求，只关闭行操作菜单，主题列表不卸载。隐藏的 picker trigger 不挂载不可见状态读取。
+- 重放时逐文件对照原分支与新基线合成结果，保留原合并提交中的读取 deadline、查询失败不丢草稿、创建回执到达后重新校验祖先归档等修复；对应并发场景测试保留。
+
+验证结果：
+
+- 完整测试 734 个文件通过、9 个跳过；8698 项通过、13 项跳过。类型检查、构建、打包及仓外 SDK Consumer 通过。
+- 最终不可变包 `senguoyun-dsh-arkme-rebase-final-20260922-0.1.76.tgz`，SHA-256 为 `29ea9c4a4154945a54f8207f09ebf817f6de548f334e38eb8e8ddf1a0f40aef5`。
+- 使用未修改的官方 DSH 0.1.5-rc.2（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）。空 Profile 自动解析预发布 peer 时因上游稳定版本范围而失败；正式安装时按目标 DSH 的包清单，通过官方 CLI 显式安装同版本运行时依赖及 tgz，未改宿主源码或插件依赖声明。
+- 真实 Chrome 中文界面 → 正式安装包 UI / SDK / 会话 Tool → 隔离 Record/Mongo 链路 32 秒通过。验证冷刷新后打开菜单零前置状态请求、正常悬停和键盘访问、一次点击一次归档、菜单及消息 DOM 保留且不出现加载行、不重读内容、独立父子归档恢复、数据管理入口及空态。测试改用官方中文工作区 helper 和新基线设置按钮；没有放宽业务断言。
+- 日志：`rebase-20260922-plugin-full-tests-final.log`、`rebase-20260922-plugin-typecheck.log`、`rebase-20260922-plugin-build-final.log`、`rebase-20260922-plugin-install-final.log`、`rebase-20260922-plugin-consumer.log`、`rebase-20260922-plugin-verified.log`。已查看 `rebase-20260922-plugin-verified.png` 的实际页面。验证范围仍为 macOS/Chrome；未替换用户常驻实例。

@@ -3,9 +3,9 @@ import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import type { ComponentType } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-const NAV_ICONS: { label: string; marker: string; Icon: ComponentType<{ size: number; className?: string | undefined }> }[] = [
-  { label: '我的账户', marker: 'arkmeAccountNavIcon', Icon: IconUserOutline16 },
-  { label: '数据管理', marker: 'arkmeDataNavIcon', Icon: Archive },
+const NAV_ICONS: { labels: readonly string[]; marker: string; Icon: ComponentType<{ size: number; className?: string | undefined }> }[] = [
+  { labels: ['我的账户', 'My account'], marker: 'arkmeAccountNavIcon', Icon: IconUserOutline16 },
+  { labels: ['数据管理', 'Data management'], marker: 'arkmeDataNavIcon', Icon: Archive },
 ]
 const NAV_ICON_SELECTOR = '[data-arkme-account-nav-icon], [data-arkme-data-nav-icon]'
 const SETTINGS_DIALOG_SELECTOR = '[role="dialog"]'
@@ -111,7 +111,7 @@ export function installArkmeSettingsNavIcons(
     for (const dialog of dialogs) {
       const buttons = [...dialog.querySelectorAll<HTMLButtonElement>(':scope > nav button')]
       for (const definition of NAV_ICONS) {
-        const matches = buttons.filter(button => button.textContent?.trim() === definition.label)
+        const matches = buttons.filter(button => definition.labels.includes(button.textContent?.trim() ?? ''))
         if (matches.length === 1) mountIcon(matches[0]!, definition)
       }
     }

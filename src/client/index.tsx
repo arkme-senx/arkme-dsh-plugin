@@ -7,7 +7,6 @@ import { createRoot } from 'react-dom/client'
 import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
-import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -394,7 +393,7 @@ export function apply(ctx: ClientContext): void {
   }, ArkmeAccountUsageSettings))
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'arkme-data', order: -1, label: () => tr('数据管理'),
+    name: 'settings.section', id: 'arkme-data', order: -2.5, label: () => tr('数据管理'),
   }, ArkmeDataManagementSettings))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({

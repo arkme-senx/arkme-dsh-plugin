@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { ArkmeDataManagementSettings } from '../src/client/ArkmeDataManagementSettings.js'
 import { ArkmeArchiveManagementPanel } from '../src/client/ArkmeArchive.js'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import type { ArkmeSourceItem } from '../src/types.js'
@@ -16,7 +17,7 @@ const inherited = { entityType: 'topic', sourceRef: 'child', ownerAvailable: tru
   source: { sourceRef: 'child', kind: 'topic', topicHierarchyKey: 'child-key', displayName: '长主题🌲'.repeat(30), unreadCount: 0, activeAtMillis: 10 } }
 const page = { items: [inherited, { ...inherited, sourceRef: 'private', privacyLocked: true, source: { ...inherited.source, sourceRef: 'private', topicHierarchyKey: 'private-key', displayName: '隐私主题' } }], hasMore: false }
 const click = async (text: string) => {
-  const node = [...host.querySelectorAll('button')].find(button => button.textContent === text || button.getAttribute('aria-label') === text)
+  const node = [...document.body.querySelectorAll('button')].find(button => button.textContent === text || button.getAttribute('aria-label') === text)
   expect(node, text).toBeDefined()
   await act(async () => { node!.click() })
 }
@@ -31,10 +32,10 @@ afterEach(async () => { await act(async () => { root.unmount() }); host.remove()
 
 it('shows inherited state without a misleading restore, masks private topics and opens by UID reference', async () => {
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  expect(host.textContent).toContain('数据管理')
+  expect(host.querySelector('[data-arkme-archive-management]')?.getAttribute('aria-label')).toBe('已归档主题')
   expect(host.textContent).toContain('随父主题归档')
   expect(host.textContent).not.toContain('取消归档')
-  expect([...host.querySelectorAll('button')].filter(button => button.getAttribute('aria-label')?.startsWith('打开主题：'))[1]!.disabled).toBe(true)
+  expect([...document.body.querySelectorAll('button')].filter(button => button.getAttribute('aria-label')?.startsWith('打开主题：'))[1]!.disabled).toBe(true)
   await click(`打开主题：${inherited.source.displayName}`)
   expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe('child')
   expect(host.querySelector('[role=dialog]')).toBeNull()
@@ -109,7 +110,7 @@ it('serializes paginated loading and ancestor lookup without leaving a stuck loa
   let reply: (value: unknown) => void = () => {}
   mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
   await click('加载更多')
-  const origin = [...host.querySelectorAll('button')].find(node => node.textContent === '查看来源')!
+  const origin = [...document.body.querySelectorAll('button')].find(node => node.textContent === '查看来源')!
   expect(origin.disabled).toBe(true)
   await act(async () => { reply({items: [], hasMore: false}) })
   expect(origin.disabled).toBe(false)
@@ -136,7 +137,7 @@ it('keeps a direct menu write and captured revision after its archived directory
   await click('选择主题')
   const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
   await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
-  await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="主题主题操作"]')!.click() })
+  await act(async () => { document.body.querySelector<HTMLButtonElement>('[aria-label="主题主题操作"]')!.click() })
   await click('归档')
   expect(host.querySelector('[role=dialog]')).toBeNull()
   const write = mock.call.mock.calls.find(call => call[0] === 'archives.set')!
@@ -158,7 +159,7 @@ async function openDirectoryArchive(key = 'initial') {
   const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
   await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
   await click('主题主题操作')
-  return [...row.querySelectorAll('button')].find(button => button.textContent === '归档')!
+  return [...document.body.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find(button => button.textContent === '归档')!
 }
 
 it('opens a ready Archive action without a state read, including a fresh mount after refresh', async () => {
@@ -180,7 +181,7 @@ it('reads the precondition only after click and keeps one operation alive after 
   expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state'])
   const signal = mock.call.mock.calls[0]![2] as AbortSignal
   await click('主题主题操作')
-  const duplicate = [...host.querySelectorAll('button')].find(button => button.textContent === '归档')!
+  const duplicate = [...document.body.querySelectorAll('button')].find(button => button.textContent === '归档')!
   expect(duplicate.disabled).toBe(true)
   await act(async () => { duplicate.click(); arkmeUi.topicDirectoryChanged() })
   expect(signal.aborted).toBe(false)
@@ -262,4 +263,31 @@ it('aborts writes and clears previous items when the same user switches environm
   await act(async () => { reply({...inherited, selfArchived: true}) })
   expect(arkmeUi.getTopicDirectoryRevision()).toBe(revision)
   expect(host.querySelector('[role=alert]')).toBeNull()
+})
+
+it('adds archives to the existing data management without replacing its other entries', async () => {
+  const close = vi.fn()
+  await act(async () => { root.render(<ArkmeDataManagementSettings close={close} />) })
+  for (const title of ['已归档主题', '最近删除', '导入数据', '导出数据']) expect(host.textContent).toContain(title)
+  expect(mock.call).not.toHaveBeenCalled()
+  await click('已归档主题')
+  expect(host.querySelectorAll('h2')).toHaveLength(1)
+  expect(host.querySelector('h2')?.textContent).toBe('已归档主题')
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.list'])
+  await click(`打开主题：${inherited.source.displayName}`)
+  expect(close).toHaveBeenCalledOnce()
+  await click('‹ 数据管理')
+  await click('导入数据')
+  expect(host.querySelector('a')?.getAttribute('href')).toBe('https://jiwo.cc/import')
+  await click('‹ 数据管理')
+  mock.call.mockResolvedValue({items: [], mayHaveMore: false, unverifiedCount: 0, accountScope: 'test:42'})
+  await click('最近删除')
+  expect(mock.call).toHaveBeenLastCalledWith('data.deleted', {expectedAccountScope: 'test:42'}, expect.any(AbortSignal))
+  expect(host.querySelector('[data-arkme-archive-management]')).toBeNull()
+})
+
+it('does not mount a status read in a hidden topic picker trigger', async () => {
+  await act(async () => { root.render(<ArkmeSourceBreadcrumb userId={42} selectedSource={directorySource}
+    trigger="none" sources={[directorySource]} onSelect={vi.fn()} onSelectAggregate={vi.fn()} />) })
+  expect(mock.call).not.toHaveBeenCalled()
 })

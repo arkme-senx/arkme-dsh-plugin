@@ -592,8 +592,7 @@ button.arkme-account-info-row { cursor: pointer; }
 .arkme-account-logout > button { min-width: 128px; min-height: 40px; padding: 8px 24px; border: 1px solid #e1e2e5; border-radius: 8px; background: transparent; color: #dc4d43; font: inherit; cursor: pointer; }
 .arkme-account-logout > button:disabled { cursor: default; opacity: .6; }
 [data-arkme-settings-view="general"] .arkme-redesign-settings-group:last-child { border-bottom: 0; }
-.arkme-about-heading, .arkme-archive-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
-.arkme-archive-group > h2 { border-bottom: 0; padding: 0 0 8px; color: var(--dsw-alias-label-primary, #272a34); font-size: 14px; font-weight: 500; }
+.arkme-about-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
 .arkme-archive-list { list-style: none; margin: 0; padding: 0; }
 .arkme-archive-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 48px; padding: 8px 0; }
 .arkme-archive-row + .arkme-archive-row::before { content: ""; position: absolute; top: 0; left: 28px; right: 0; height: 1px; background: var(--dsw-alias-border-standard, #ededee); }
@@ -1885,13 +1884,6 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 .arkme-conversation-profile-actions { grid-template-columns: minmax(0, 1fr); }
 
 body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #343434; }
-
-/* Native hover also updates when an async action becomes enabled beneath a
-   stationary pointer. Scope to the menu so workspace and body portals agree. */
-[data-arkme-self-topic-menu] button.arkme-self-topic-manage-action { background: transparent; }
-[data-arkme-self-topic-menu] button.arkme-self-topic-manage-action:not(:disabled):is(:hover, :focus-visible) {
-  background: var(--dsw-alias-interactive-bg-hover, #f3f4f7);
-}
 
 /* Match DSH\'s solid selector footer: shared rules live in conversation-selector-style.ts. */
 .arkme-self-topic-sort-option {

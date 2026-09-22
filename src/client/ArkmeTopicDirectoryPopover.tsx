@@ -218,7 +218,7 @@ export function ArkmeTopicDirectoryPopover({
         // Directory absence is not deletion: an archived UID remains a valid
         // content destination, and must not clear the open scene or its draft.
         const states = currentSelected?.kind === 'topic'
-          ? await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, controller.signal)
+          ? await withArkmeReadDeadline(signal => callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, signal), controller.signal)
           : []
         if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
         if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
@@ -231,6 +231,9 @@ export function ArkmeTopicDirectoryPopover({
       } else {
         persist(loaded, null)
       }
+    }).catch(() => {
+      // An unavailable archive read cannot prove deletion or discard a draft.
+      // The next directory refresh retries this owner check.
     })
     return () => { disposed = true; controller.abort() }
   }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
@@ -360,6 +363,9 @@ export function ArkmeTopicDirectoryPopover({
       const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
       sourcesRef.current = nextSources
       directory.upsert(result.source)
+      // A successful creation does not prove normal-directory membership: an
+      // ancestor may have been archived before this reply arrived.
+      directory.invalidate()
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)

@@ -16,7 +16,7 @@ if (!dshRoot || !profile || !recordOrigin || new URL(recordOrigin).hostname !== 
 }
 const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
 const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
-const { connectFreshWorkspace } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
+const { connectFreshWorkspaceZh } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(profileManifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) {
@@ -93,7 +93,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(10001)).toMatchObject({ status: 'authenticated', userId: 10001 })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
-      const browserContext = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
+      const browserContext = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'zh-CN' })
       const realtimePages = new Set()
       browserContext.on('page', clientPage => {
         clientPage.on('websocket', socket => {
@@ -120,7 +120,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
       const harnessPage = await frameElement.contentFrame()
       expect(harnessPage).not.toBeNull()
-      await connectFreshWorkspace(harnessPage, scaffold.workspaceCwd)
+      await connectFreshWorkspaceZh(harnessPage, scaffold.workspaceCwd)
       const input = harnessPage.locator('[data-composer-input]').first()
       await input.fill(prompt)
       const settled = scaffold.whenTurnSettled()
@@ -195,8 +195,8 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await page.route('**/arkme-self/api', holdArchiveState)
         await row.hover()
         await row.getByRole('button', {name: `${source.displayName}主题操作`, exact: true}).click()
-        const archiveAction = row.getByRole('menuitem', {name: '归档', exact: true})
-        const renameAction = row.getByRole('menuitem', {name: '重命名', exact: true})
+        const archiveAction = page.getByRole('menuitem', {name: '归档', exact: true})
+        const renameAction = page.getByRole('menuitem', {name: '重命名', exact: true})
         await renameAction.hover()
         const hoverBackground = await renameAction.evaluate(node => getComputedStyle(node).backgroundColor)
         expect(hoverBackground).not.toBe('rgba(0, 0, 0, 0)')
@@ -207,7 +207,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         if (source === B && process.env.ARKME_E2E_SCREENSHOT) {
           await page.locator('[data-arkme-self-topic-menu]').screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.hover.png`})
         }
-        for (const action of await row.getByRole('menuitem').all()) {
+        for (const action of await page.getByRole('menuitem').filter({hasText: /^(新建子主题|重命名|归档)$/}).all()) {
           await action.hover()
           expect(await action.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
         }
@@ -216,7 +216,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await renameAction.focus()
         await page.keyboard.press('Tab')
         expect(await archiveAction.evaluate(node => node.matches(':focus-visible'))).toBe(true)
-        expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
+        expect(await archiveAction.evaluate(node => node === document.activeElement)).toBe(true)
         await expect.poll(() => page.locator('[data-arkme-self-topic-loading]').count()).toBe(0)
         await page.locator('[data-arkme-self-topic-menu]').evaluate(menu => {
           const retained = [...menu.querySelectorAll('[data-arkme-self-topic-tree-row]')].find(node => node.textContent.includes('未分类'))
@@ -273,8 +273,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(laterRecord.localState).toBe('synced')
       expect((await service.readSource(B.sourceRef)).items.map(item => item.itemUid)).toEqual(expect.arrayContaining([existingRecord.itemUid, laterRecord.itemUid]))
       await page.getByRole('button', {name: '个人资料', exact: true}).click()
-      await page.getByRole('menuitem', {name: /设置.*打开 DSH 应用设置/}).click()
+      await page.getByRole('button', {name: '设置', exact: true}).click()
       await page.getByRole('button', {name: '数据管理', exact: true}).click()
+      await page.getByRole('button', {name: '已归档主题', exact: true}).click()
       await page.getByRole('heading', {name: '已归档主题', exact: true}).waitFor()
       const nav = page.locator('[role=dialog] > nav')
       const labels = await nav.getByRole('button').allTextContents()
@@ -304,7 +305,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path: process.env.ARKME_E2E_SCREENSHOT})
       await child.getByRole('button', {name: '取消归档', exact: true}).click()
       await page.getByRole('img', {name: '暂无已归档主题', exact: true}).waitFor()
-      expect(await page.locator('[data-arkme-archive-management]').innerText()).toBe('数据管理\n已归档主题')
+      expect(await page.locator('[data-arkme-archive-management]').innerText()).toBe('')
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.empty.png`})
       states = await sdk.getArchiveStates([B.sourceRef, D.sourceRef])
       expect(states.map(item => item.effectiveArchived)).toEqual([false, false])

@@ -145,8 +145,8 @@ it('uses the native horizontal icon and portaled action menu, retaining it acros
   await clickButton('工作主题操作')
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
   expect(menu.parentElement).toBe(document.body)
-  expect([...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent)).toEqual(['新建子主题', '重命名', '解散主题'])
-  expect(menu.querySelectorAll('[role="menuitem"] svg')).toHaveLength(3)
+  expect([...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent)).toEqual(['新建子主题', '重命名', '归档', '解散主题'])
+  expect(menu.querySelectorAll('[role="menuitem"] svg')).toHaveLength(4)
   expect(menu.style.width).toBe('')
   expect(menu.style.fontSize).toBe('')
   await act(async () => row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: menu })))

@@ -119,7 +119,7 @@ export function ArkmeArchiveStatus({ source }: { source: ArkmeSourceItem }) {
   </span>
 }
 
-export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: () => void } = {}) {
+export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: (() => void) | undefined } = {}) {
   const { userId, scope, revision, refresh } = useArchiveRefresh()
   const mutation = useArchiveMutation()
   const [items, setItems] = useState<ArkmeArchiveEntry[]>([])
@@ -169,11 +169,7 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
     finally { if (!controller.signal.aborted) setBusy(false) }
   }
   const open = (item: ArkmeArchiveEntry) => { arkmeUi.selectSource(item.source); closeSettings?.() }
-  return <div className="arkme-redesign-settings-surface" data-arkme-archive-management>
-    <div className="arkme-redesign-settings-shell">
-      <h1 className="arkme-archive-heading">数据管理</h1>
-      <section className="arkme-redesign-settings-group arkme-archive-group">
-        <h2>已归档主题</h2>
+  return <section className="arkme-archive-group" aria-label="已归档主题" data-arkme-archive-management>
         <div>
           {userId === undefined && <p className="arkme-archive-feedback">请先登录</p>}
           {error !== '' && <div className="arkme-archive-feedback" role="alert">{error} <button type="button" className="arkme-archive-action" onClick={refresh}>重试</button></div>}
@@ -200,7 +196,5 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
           {busy && <div className="arkme-archive-loading" role="status" aria-label="加载中"><CircleNotch size={18} aria-hidden /></div>}
           {cursor !== undefined && <button type="button" className="arkme-archive-action arkme-archive-more" disabled={busy} onClick={() => { void load(cursor) }}>加载更多</button>}
         </div>
-      </section>
-    </div>
-  </div>
+  </section>
 }

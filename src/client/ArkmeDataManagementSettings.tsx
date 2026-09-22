@@ -1,3 +1,5 @@
+import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
+import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
@@ -9,16 +11,16 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 
-export function ArkmeDataManagementSettings() {
+export function ArkmeDataManagementSettings({ close }: { close?: () => void } = {}) {
   useArkmeLocale()
   const { auth } = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   if (auth?.status !== 'authenticated' || auth.userId === undefined) return <p>{tr("登录后查看数据管理")}</p>
   const scope = `${auth.environment}:${auth.userId}`
-  return <DataManagement key={scope} scope={scope} />
+  return <DataManagement key={scope} scope={scope} close={close} />
 }
-function DataManagement({ scope }: { scope: string }) {
+function DataManagement({ scope, close }: { scope: string; close?: (() => void) | undefined }) {
   useArkmeLocale()
-  const [page, setPage] = useState<'home' | 'deleted' | 'import' | 'export'>('home')
+  const [page, setPage] = useState<'home' | 'archived' | 'deleted' | 'import' | 'export'>('home')
   const [revision, setRevision] = useState(0)
   const [deleted, setDeleted] = useState<ArkmeDeletedRecordPage>()
   const [preflight, setPreflight] = useState<ArkmeExportPreflight>()
@@ -57,15 +59,16 @@ function DataManagement({ scope }: { scope: string }) {
   }
   return <section className="arkme-data-settings" data-arkme-settings-page="data" aria-label={tr("数据管理")}>
     <header>{page !== 'home' && <button type="button" className="arkme-data-back" disabled={recovering} onClick={() => setPage('home')}>{tr("‹ 数据管理")}</button>}
-      <h2>{({ home: '数据管理', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
+      <h2>{({ home: '数据管理', archived: '已归档主题', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
     {page === 'home' ? <>
       <p className="arkme-data-hint">{tr("管理、迁入和保留属于你的记录。")}</p>
       <div className="arkme-data-entries">
+        <button type="button" onClick={() => setPage('archived')}><Archive size={20} aria-hidden /><span>{tr("已归档主题")}</span><CaretRight size={15} aria-hidden /></button>
         <button type="button" onClick={() => setPage('deleted')}><Trash size={20} aria-hidden /><span>{tr("最近删除")}</span><CaretRight size={15} aria-hidden /></button>
         <button type="button" onClick={() => setPage('import')}><ArrowSquareOut size={20} aria-hidden /><span>{tr("导入数据")}</span><CaretRight size={15} aria-hidden /></button>
         <button type="button" onClick={() => setPage('export')}><DownloadSimple size={20} aria-hidden /><span>{tr("导出数据")}</span><CaretRight size={15} aria-hidden /></button>
       </div>
-    </> : page === 'import' ? <div className="arkme-data-panel">
+    </> : page === 'archived' ? <ArkmeArchiveManagementPanel close={close} /> : page === 'import' ? <div className="arkme-data-panel">
       <h3>{tr("在网页中导入")}</h3><p>{tr("与 Flutter 桌面端使用同一个导入页面。请在网页中登录同一账号，再选择要导入的文件。")}</p>
       <a className="arkme-data-primary" href="https://jiwo.cc/import" target="_blank" rel="noopener noreferrer">{tr("打开导入网页 ↗")}</a>
       <small>{tr("不会自动上传文件，也不会通过链接传递你的登录凭证。")}</small>
