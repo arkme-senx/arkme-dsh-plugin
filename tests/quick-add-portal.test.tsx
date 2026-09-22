@@ -137,4 +137,5 @@ it('closes on outside pointer and Escape, returning keyboard focus to the add ic
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
   useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))

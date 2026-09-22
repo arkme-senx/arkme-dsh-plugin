@@ -1426,7 +1426,7 @@ export function ArkmeNavigation({
       .then(profile => { if (!controller.signal.aborted) setOfficialAuthorProfile(profile) })
       .catch(() => { if (!controller.signal.aborted) setOfficialAuthorProfile(undefined) })
     return () => { controller.abort() }
-  }, [authenticated, auth?.userId])
+  }, [authenticated, auth?.userId, socialAllowed])
   useEffect(() => {
     if (!active) return
     if (ui.searchTarget === undefined) return

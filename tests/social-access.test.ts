@@ -73,7 +73,7 @@ describe('account-owned social access', () => {
   const load = vi.fn(() => new Promise<{userId:number;allowed:boolean}>(done => { resolve=done }))
   const store=new SocialAccessStore(load);store.activate('test:7');const pending=store.refresh()
   expect(store.getSnapshot().allowed).toBeNull();store.activate('test:8');resolve({userId:7,allowed:true});await pending
-  expect(store.getSnapshot()).toEqual({accountKey:'test:8',allowed:null})
+  expect(store.getSnapshot()).toEqual({accountKey:'test:8',allowed:null,resolved:false})
   load.mockRejectedValueOnce(new Error('offline'));await store.refresh();expect(store.getSnapshot().allowed).toBeNull()
  })
  it('classifies human conversations without hiding personal bot sources', () => {

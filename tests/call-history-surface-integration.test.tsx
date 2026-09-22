@@ -23,4 +23,5 @@ describe('call history surface integration', () => {
 // This suite renders the existing qualified-account layout.
 vi.mock('../src/client/social-access-store.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/social-access-store.js')>(), useSocialAccess: () => true,
+  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
 }))
