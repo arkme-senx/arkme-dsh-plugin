@@ -2101,6 +2101,10 @@ export async function dispatchArkmeHostOperation(
     case 'source.ai-polish.retry': return await service.retryGroupAiPolish(
       stringParam(params, 'retryRef'),
     )
+    case 'group.common.list': return await service.listCommonGroups(stringParam(params, 'sourceRef'), {
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}),
+    })
+    case 'group.common.sync': return await service.syncCommonGroups(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.members': return await service.listGroupMembers(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },

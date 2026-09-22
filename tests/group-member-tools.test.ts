@@ -21,6 +21,7 @@ describe('group member tools', () => {
       'arkme_group_join_restriction_set',
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
+      'arkme_common_groups',
     ])
   })
 })

@@ -94,6 +94,7 @@ describe('Arkme tool catalog', () => {
       'arkme_group_join_restriction_set',
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
+      'arkme_common_groups',
       'arkme_source_read',
       'arkme_copy_link_extend',
       'arkme_source_members',

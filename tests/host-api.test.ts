@@ -1762,3 +1762,13 @@ describe('call sharing host cancellation', () => {
     expect(service.callShareViewers).toHaveBeenCalledWith('ref', '10:2', signal)
   })
 })
+
+
+it('routes common-group list and sync to one owner, without caller-owned viewer identity', async () => {
+  const service = {listCommonGroups:vi.fn(),syncCommonGroups:vi.fn()}
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service as never,'group.common.list',{sourceRef:'p',cursor:'c',userId:999},undefined,undefined,undefined,undefined,signal)
+  await dispatchArkmeHostOperation(service as never,'group.common.sync',{sourceRef:'p',userId:999},undefined,undefined,undefined,undefined,signal)
+  expect(service.listCommonGroups).toHaveBeenCalledExactlyOnceWith('p',{cursor:'c',signal})
+  expect(service.syncCommonGroups).toHaveBeenCalledExactlyOnceWith('p',signal)
+})

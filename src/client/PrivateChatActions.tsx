@@ -86,8 +86,15 @@ export function conversationExportActionItem(action: ConversationExportAction): 
 /** Ordered business declarations; adding an item never changes the menu's cache or event machinery. */
 export function privateChatActionItems(actions: ReturnType<typeof usePrivateChatActions>,
   admission: ReturnType<typeof useDirectMessageAdmission>, openRelated: () => void,
-  exportAction?: ConversationExportAction): ConversationActionItem[] {
+  exportAction?: ConversationExportAction, openCommonGroups?: () => void): ConversationActionItem[] {
   const items: ConversationActionItem[] = []
+  if (openCommonGroups !== undefined) items.push({ id: 'common-groups', label: '共同群聊',
+    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M8 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2" />
+      <path d="M5 7h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7l-4 3V9a2 2 0 0 1 2-2Z" />
+      <circle cx="8" cy="11" r="1.3" /><circle cx="13.2" cy="11" r="1.3" />
+      <path d="M5.8 15.5c0-2.6 4.4-2.6 4.4 0m.8 0c0-2.6 4.4-2.6 4.4 0" />
+    </svg>, invoke: openCommonGroups })
   if (actions.relatedAllowed) items.push({ id: 'related', label: '相关录音', icon: <Waveform size={20} aria-hidden />, invoke: openRelated,
     error: actions.relatedError === undefined ? '' : '暂时无法更新相关录音资格' })
   else if (actions.relatedError !== undefined) items.push({ id: 'related', label: '重新检查相关录音', icon: <Waveform size={20} aria-hidden />, invoke: actions.refreshRelated })

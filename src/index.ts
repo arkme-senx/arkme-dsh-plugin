@@ -1180,3 +1180,5 @@ export type {
 } from './outgoing-call-contract.js'
 export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'
+
+export type { ArkmeCommonGroupPage } from './common-groups.js'

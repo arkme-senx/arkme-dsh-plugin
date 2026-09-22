@@ -143,7 +143,24 @@ const setRestriction = defineArkmeCoreToolModule({
   },
 })
 
+const commonGroups = defineArkmeCoreToolModule({
+  meta: { id: 'business.group.common.v1', toolName: 'arkme_common_groups', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create(ports) {
+    return defineTool({ name: 'arkme_common_groups', description: 'Read locally persisted groups shared by the signed-in user and a private-chat peer, 20 per page. Use an unchanged private source_ref. sync=true applies one authoritative reconciliation batch; repeat while syncHasMore is true. Cached counts are not an exact current server total; inspect syncedAtMillis and syncHasMore. Listing does not join a group or mark messages read.',
+      parameters: { source_ref: { type: 'string', required: true, description: 'Account-bound private_chat source_ref.' },
+        cursor: { type: 'string', description: 'Unchanged nextCursor from a local list page.' },
+        sync: { type: 'boolean', description: 'Reconcile one server batch before reading the first local page. Do not combine with cursor.' } },
+      output: TEXT_OUTPUT,
+      async execute(args, exec) {
+        if (args.sync && args.cursor) throw new Error('同步与列表翻页必须分开')
+        return taggedJSON('Arkme 共同群聊', args.sync ? await ports.syncCommonGroups(args.source_ref, exec.signal)
+          : await ports.listCommonGroups(args.source_ref, { ...(args.cursor ? { cursor: args.cursor } : {}), signal: exec.signal }))
+      },
+    })
+  },
+})
+
 export const groupMemberToolModules: readonly ArkmeToolModule[] = [
-  candidates, add, remove, restrictions, setRestriction, selfNickname, setSelfNickname,
+  candidates, add, remove, restrictions, setRestriction, selfNickname, setSelfNickname, commonGroups,
 ]
 export const groupToolModules = [createGroupToolModule, renameGroupToolModule] as const

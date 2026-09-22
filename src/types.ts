@@ -1277,6 +1277,7 @@ export interface ArkmeProviderCapabilities {
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
+    commonGroups?: true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
@@ -3747,6 +3748,8 @@ export type ArkmePluginOperation =
   | 'source.ai-polish.confirm-disable'
   | 'source.ai-polish.retry'
   | 'group.members'
+  | 'group.common.list'
+  | 'group.common.sync'
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
