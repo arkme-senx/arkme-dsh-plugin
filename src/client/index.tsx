@@ -1,3 +1,4 @@
+import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
 import { screenshotWindowRequested } from './native-screenshot.js'
 import { registerConversationWindowRoot } from './conversation-window-root.js'
@@ -165,6 +166,7 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => bindScreenshotAskDsh(), 'dsh-arkme: screenshot ask DSH')
   ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation window lifetime')
   ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
   ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: attachment preview account lifetime')

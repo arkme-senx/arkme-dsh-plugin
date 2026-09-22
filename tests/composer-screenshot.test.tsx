@@ -114,14 +114,14 @@ it('does not time out a native static editor after the legacy capture deadline',
   await act(async()=>complete(captured));expect(onFile).toHaveBeenCalledOnce()
  } finally {vi.useRealTimers()}
 })
-it('uses the same guarded capture flow for shortcut and updates the tooltip', async () => {
- let trigger!:()=>void, changed!:(value:any)=>void
+it('keeps shortcut hints in sync without converting shortcut triggers into attachments', async () => {
+ let trigger:()=>void=()=>{}, changed!:(value:any)=>void
  vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(value:any)=>void)=>{changed=fn;return ()=>{}}})
  await mount();await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true})));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('⌘ + ⇧ + A')
  await act(async()=>changed({accelerator:'Control+Alt+B',available:true}));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('Ctrl + Alt + B')
- await act(async()=>{trigger();trigger()});expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
- await act(async()=>resolveCapture({status:'cancelled'}))
- await mount({active:false});await act(async()=>trigger());expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+ await act(async()=>{trigger();trigger()});expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(0)
+ expect(onFile).not.toHaveBeenCalled();expect(onBegin).not.toHaveBeenCalled()
+ await mount({active:false});await act(async()=>trigger());expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(0)
 })
 it('renders shortcut tooltip on hover and dismisses it when leaving', async () => {
  vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:()=>()=>{},onChanged:()=>()=>{}})
@@ -137,8 +137,8 @@ it('shows the tooltip for keyboard focus and dismisses it with Escape', async()=
  await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));expect(document.querySelector('[role=tooltip]')).toBeNull()
 })
 
-it('disables click and shortcut capture during shortcut recording, then restores them',async()=>{
- let trigger!:()=>void,changed!:(v:any)=>void
+it('disables button capture during shortcut recording, then restores it',async()=>{
+ let trigger:()=>void=()=>{},changed!:(v:any)=>void
  vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true,recording:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(v:any)=>void)=>{changed=fn;return ()=>{}}})
  await mount();expect(button().disabled).toBe(true);await act(async()=>{button().click();trigger()});expect(onBegin).not.toHaveBeenCalled()
  await act(async()=>changed({accelerator:'Command+Shift+A',available:true,recording:false}));expect(button().disabled).toBe(false)

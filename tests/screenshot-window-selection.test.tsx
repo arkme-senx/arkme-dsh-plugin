@@ -57,3 +57,58 @@ it('can move the snapped selection using a final pointerup position',async()=>{
  await pointer('pointerdown',150,150);await pointer('pointerup',200,170);
  expect(selected()?.style.left).toBe('150px');expect(selected()?.style.top).toBe('120px');expect(select).toHaveBeenCalledOnce();
 });
+
+const bar=()=>host.querySelector<HTMLElement>('[role="toolbar"]')!;
+const grip=()=>host.querySelector<HTMLButtonElement>('[aria-label="拖动截图工具栏"]')!;
+async function gripPointer(type:string,x:number,y:number,id=9){await act(async()=>{
+ const e=new MouseEvent(type,{bubbles:true,button:0,clientX:x,clientY:y});Object.defineProperty(e,'pointerId',{value:id});
+ grip().dispatchEvent(e);
+});}
+async function selectWindow(){await mount();await pointer('pointerdown',150,150);await pointer('pointerup',150,150);}
+it('drags the whole toolbar with its handle without moving or exporting the selection',async()=>{
+ await selectWindow();expect(grip()).not.toBeNull();
+ const before=selected()!.style.cssText;
+ const left=parseFloat(bar().style.left),top=parseFloat(bar().style.top);
+ await gripPointer('pointerdown',120,280);await gripPointer('pointermove',180,320);await gripPointer('pointerup',200,330);
+ expect(parseFloat(bar().style.left)).toBe(left+80);expect(parseFloat(bar().style.top)).toBe(top+50);
+ expect(selected()!.style.cssText).toBe(before);expect(exportImage).not.toHaveBeenCalled();
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="矩形"]')!.click());
+ expect(host.querySelector('[aria-label="矩形"]')!.getAttribute('aria-pressed')).toBe('true');
+ expect(parseFloat(bar().style.left)).toBe(left+80);expect(parseFloat(bar().style.top)).toBe(top+50);
+});
+it('keeps the toolbar on screen and releases dragging after cancellation',async()=>{
+ await selectWindow();expect(grip()).not.toBeNull();
+ await gripPointer('pointerdown',120,280);await gripPointer('pointermove',-2000,-2000);
+ expect(bar().style.left).toBe('8px');expect(bar().style.top).toBe('8px');
+ await gripPointer('pointercancel',-2000,-2000);await gripPointer('pointermove',200,200);
+ expect(bar().style.left).toBe('8px');expect(bar().style.top).toBe('8px');
+ await gripPointer('pointerdown',12,12);await gripPointer('pointerup',3000,3000);
+ expect(parseFloat(bar().style.left)).toBeLessThan(window.innerWidth-8);
+ expect(parseFloat(bar().style.top)).toBeLessThan(window.innerHeight-8);
+});
+it('ignores other pointers and resets toolbar placement when reselecting',async()=>{
+ await selectWindow();expect(grip()).not.toBeNull();
+ const left=bar().style.left,top=bar().style.top;
+ await gripPointer('pointerdown',120,280);await gripPointer('pointermove',180,320,10);
+ expect(bar().style.left).toBe(left);expect(bar().style.top).toBe(top);
+ await gripPointer('pointerup',200,330);
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="重选"]')!.click());
+ await pointer('pointerdown',150,150);await pointer('pointerup',150,150);
+ expect(bar().style.left).toBe(left);expect(bar().style.top).toBe(top);
+});
+it('exports the edited selection to Ask DSH without invoking completion or save',async()=>{
+ const ask=vi.fn(async()=>{}),complete=vi.fn(),save=vi.fn();
+ await act(async()=>root.render(<ArkmeScreenshotEditor frame={frame} desktop windows={windows} onClose={()=>{}} onComplete={complete} onSave={save} onAskDsh={ask}/>));
+ await pointer('pointerdown',150,150);await pointer('pointerup',150,150);
+ const button=host.querySelector<HTMLButtonElement>('[aria-label="问dsh"]');expect(button).not.toBeNull();
+ await act(async()=>button!.click());
+ expect(ask).toHaveBeenCalledWith(expect.any(Blob));expect(complete).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
+ expect(exportImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement),windows[0]);
+});
+it('retains the selection and reports Ask DSH errors for retry',async()=>{
+ const ask=vi.fn(async()=>{throw new Error('DSH 尚未就绪')});
+ await act(async()=>root.render(<ArkmeScreenshotEditor frame={frame} desktop windows={windows} onClose={()=>{}} onComplete={()=>{}} onAskDsh={ask}/>));
+ await pointer('pointerdown',150,150);await pointer('pointerup',150,150);
+ const button=host.querySelector<HTMLButtonElement>('[aria-label="问dsh"]');expect(button).not.toBeNull();await act(async()=>button!.click());
+ expect(host.querySelector('[role="alert"]')?.textContent).toBe('DSH 尚未就绪');expect(selected()).not.toBeNull();expect(button!.disabled).toBe(false);
+});

@@ -3,20 +3,24 @@ import type { ScreenshotFrame } from './browser-screenshot.js'
 import { clamp, windowAtPoint, historyStep, imagePoint, moveSelection, rectBetween, resizeSelection, type Annotation, type Point, type Rect, type Tool } from './screenshot-editor-model.js'
 import { exportScreenshot, paintScreenshot } from './screenshot-editor-render.js'
 import { ScreenshotToolIcon, type ScreenshotIcon } from './screenshot-editor-icons.js'
+import { AskDshIcon } from './AskDshIcon.js'
 const names:Record<ScreenshotIcon,string>={rectangle:'矩形',ellipse:'圆形',arrow:'箭头',pen:'画笔',mosaic:'马赛克',text:'文本',undo:'撤销',redo:'重做',reselect:'重选',save:'保存',close:'取消',complete:'完成'}
 const tools:Tool[]=['rectangle','ellipse','arrow','pen','mosaic','text']
 const panel:CSSProperties={background:'#fff',color:'#24262b',border:'1px solid #dfe1e6',borderRadius:10,boxShadow:'0 8px 28px #0003'}
 interface Props {
- frame:ScreenshotFrame; desktop?:boolean; windows?:readonly Rect[]; onClose():void; onComplete(blob:Blob):void|Promise<void>;
- onSave?(blob:Blob):Promise<boolean>; onReady?():void; onSelect?():Promise<boolean>;
+ frame:ScreenshotFrame; completionDestination?:'attachment'|'clipboard'; desktop?:boolean; windows?:readonly Rect[]; onClose():void; onComplete(blob:Blob):void|Promise<void>;
+ onAskDsh?:((blob:Blob)=>Promise<void>)|undefined; onSave?(blob:Blob):Promise<boolean>; onReady?():void; onSelect?():Promise<boolean>;
 }
-export function ArkmeScreenshotEditor({frame,desktop=false,windows=[],onClose,onComplete,onSave,onReady,onSelect}:Props) {
+export function ArkmeScreenshotEditor({frame,completionDestination='attachment',desktop=false,windows=[],onClose,onComplete,onSave,onAskDsh,onReady,onSelect}:Props) {
  const canvas=useRef<HTMLCanvasElement>(null),area=useRef<HTMLDivElement>(null),stage=useRef<HTMLDivElement>(null),root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null)
  const image=useRef<HTMLImageElement>(); const alive=useRef(true); const submitting=useRef(false)
  const [loaded,setLoaded]=useState(false),[error,setError]=useState(''),[status,setStatus]=useState(''),[busy,setBusy]=useState(false)
  const [view,setView]=useState({width:1,height:1,left:0,top:0}),[barSize,setBarSize]=useState({width:560,height:88})
  const [selection,setSelection]=useState<Rect>(),[tool,setTool]=useState<Tool>(),[draft,setDraft]=useState<Annotation>()
  const [hovered,setHovered]=useState<Rect>()
+ const [barPosition,setBarPosition]=useState<Point>(),[barDragging,setBarDragging]=useState(false)
+ const [viewport,setViewport]=useState({width:window.innerWidth,height:window.innerHeight})
+ const barGesture=useRef<{id:number;start:Point;position:Point}>()
  const [history,dispatch]=useReducer(historyStep,{done:[],undone:[]})
  const [color,setColor]=useState('#ef4444'),[line,setLine]=useState(4),[font,setFont]=useState(28),[mosaic,setMosaic]=useState(14)
  const [text,setText]=useState<{point:Point;value:string}>(),[drawing,setDrawing]=useState(false)
@@ -35,18 +39,26 @@ export function ArkmeScreenshotEditor({frame,desktop=false,windows=[],onClose,on
    setView({width,height,left:b.left+(b.width-width)/2,top:b.top+(b.height-height)/2})}
   resize();const observer=new ResizeObserver(resize);observer.observe(element);return()=>observer.disconnect()
  },[frame.width,frame.height,desktop])
- useLayoutEffect(()=>{const el=toolbar.current;if(!el)return;const observer=new ResizeObserver(()=>setBarSize({width:el.offsetWidth,height:el.offsetHeight}));observer.observe(el);return()=>observer.disconnect()},[selection])
+ useLayoutEffect(()=>{const el=toolbar.current;if(!el)return
+  const measure=()=>{if(el.offsetWidth&&el.offsetHeight)setBarSize({width:el.offsetWidth,height:el.offsetHeight})}
+  measure();const observer=new ResizeObserver(measure);observer.observe(el);return()=>observer.disconnect()
+ },[selection,drawing])
+ useEffect(()=>{const resize=()=>setViewport({width:window.innerWidth,height:window.innerHeight})
+  window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize)
+ },[])
+ useEffect(()=>{setBarPosition(undefined);barGesture.current=undefined;setBarDragging(false)},[frame])
  useEffect(()=>{if(!loaded||!image.current||!canvas.current)return
   try{paintScreenshot(canvas.current,image.current,[...history.done,...(draft?[draft]:[])],selection)}catch(e){setError(String(e))}
  },[loaded,history,draft,selection])
  useEffect(()=>{if(!loaded)return;const id=requestAnimationFrame(()=>latest.current.onReady?.());return()=>cancelAnimationFrame(id)},[loaded])
  const commitText=()=> {if(text?.value.trim())dispatch({type:'add',mark:{tool:'text',points:[text.point],color,size:font,text:text.value}});setText(undefined)}
- const reset=()=> {setHovered(undefined);setText(undefined);dispatch({type:'reset'});setDraft(undefined);setSelection(undefined);setTool(undefined);setStatus('')}
- const finish=async(save:boolean)=> {
-  if(!selection||!loaded||submitting.current||text||gesture.current)return
+ const reset=()=> {setBarPosition(undefined);barGesture.current=undefined;setBarDragging(false);setHovered(undefined);setText(undefined);dispatch({type:'reset'});setDraft(undefined);setSelection(undefined);setTool(undefined);setStatus('')}
+ const finish=async(save:boolean|'ask-dsh')=> {
+  if(!selection||!loaded||submitting.current||text||gesture.current||barGesture.current)return
   submitting.current=true;setBusy(true);setError('');setStatus('')
   try{const blob=await exportScreenshot(canvas.current!,selection);if(!alive.current)return
-   if(save){const saved=onSave?await onSave(blob):download(blob);if(alive.current&&saved)setStatus('已保存')}
+   if(save==='ask-dsh'){await onAskDsh?.(blob)}
+   else if(save){const saved=onSave?await onSave(blob):download(blob);if(alive.current&&saved)setStatus('已保存')}
    else await onComplete(blob)
   }catch(e){if(alive.current)setError(e instanceof Error?e.message:'截图导出失败，请重试')}
   finally{submitting.current=false;if(alive.current)setBusy(false)}
@@ -105,11 +117,28 @@ export function ArkmeScreenshotEditor({frame,desktop=false,windows=[],onClose,on
  const cancelGesture=()=> {const g=gesture.current;gesture.current=undefined;setDrawing(false);setDraft(undefined);setHovered(undefined);if(g&&!g.mark)setSelection(g.rect)}
  const sx=view.width/frame.width,sy=view.height/frame.height
  const selected=selection&&selection.width>=2&&selection.height>=2
- const barLeft=clamp(view.left+(selection?.x??0)*sx,8,window.innerWidth-barSize.width-8)
+ const boundBar=(p:Point)=>({x:clamp(p.x,8,Math.max(8,viewport.width-barSize.width-8)),y:clamp(p.y,8,Math.max(8,viewport.height-barSize.height-8))})
  const bottom=view.top+((selection?.y??0)+(selection?.height??0))*sy+12
- const barTop=bottom+barSize.height<window.innerHeight-8?bottom:clamp(view.top+(selection?.y??0)*sy-barSize.height-12,8,window.innerHeight-barSize.height-8)
- const button=(name:ScreenshotIcon,action:()=>void,disabled=false,shortcut='')=><button key={name} type="button" aria-label={names[name]} title={names[name]+(shortcut?`（${shortcut}）`:'')} aria-pressed={tools.includes(name as Tool)?tool===name:undefined}
-  disabled={disabled||(busy&&name!=='close')} onClick={action} className="arkme-shot-tool" data-selected={tool===name} data-primary={name==='complete'}><ScreenshotToolIcon name={name}/><span role="tooltip">{names[name]}{shortcut?` · ${shortcut}`:''}</span></button>
+ const position=boundBar(barPosition??{x:view.left+(selection?.x??0)*sx,y:bottom+barSize.height<viewport.height-8?bottom:view.top+(selection?.y??0)*sy-barSize.height-12})
+ const barLeft=position.x,barTop=position.y
+ const dragBar=(e:PointerEvent<HTMLButtonElement>)=>{
+  const g=barGesture.current;if(!g||g.id!==e.pointerId)return
+  e.preventDefault();e.stopPropagation()
+  setBarPosition(boundBar({x:g.position.x+e.clientX-g.start.x,y:g.position.y+e.clientY-g.start.y}))
+ }
+ const releaseBar=(e:PointerEvent<HTMLButtonElement>,complete=false)=>{
+  if(barGesture.current?.id!==e.pointerId)return
+  if(complete)dragBar(e)
+  barGesture.current=undefined;setBarDragging(false)
+  if(e.currentTarget.hasPointerCapture?.(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId)
+ }
+ const button=(name:ScreenshotIcon,action:()=>void,disabled=false,shortcut='')=>{
+  const clipboardCompletion=name==='complete'&&completionDestination==='clipboard'
+  const label=clipboardCompletion?'保存到剪贴板':names[name]
+  const hint=shortcut
+  return <button key={name} type="button" aria-label={names[name]} title={label+(hint?(clipboardCompletion?` · ${hint}`:`（${hint}）`):'')} aria-pressed={tools.includes(name as Tool)?tool===name:undefined}
+  disabled={disabled||(busy&&name!=='close')} onClick={action} className="arkme-shot-tool" data-selected={tool===name} data-primary={name==='complete'}><ScreenshotToolIcon name={name}/><span role="tooltip">{label}{hint?` · ${hint}`:''}</span></button>
+ }
  return <div ref={root} data-arkme-screenshot-editor="true" role="dialog" aria-modal="true" aria-label="截图编辑" tabIndex={-1}
   style={{position:'fixed',inset:0,zIndex:2147483100,background:'#181a20',color:'#fff',fontFamily:'system-ui,sans-serif',outline:'none',userSelect:'none'}}>
   <style>{`.arkme-shot-tool{position:relative;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:6px;color:#414550;background:transparent;cursor:pointer;flex-shrink:0}.arkme-shot-tool:hover,.arkme-shot-tool:focus-visible{background:#edf1f8;outline:2px solid #90b8ff;outline-offset:0}.arkme-shot-tool[data-selected=true]{background:#e8f0ff;color:#2764d8}.arkme-shot-tool[data-primary=true]{background:#3478f6;color:white}[data-tooltips-below=true] .arkme-shot-tool [role=tooltip]{bottom:auto;top:calc(100% + 8px)}.arkme-shot-tool:disabled{cursor:default}.arkme-shot-tool:disabled>svg{opacity:.3}.arkme-shot-tool [role=tooltip]{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);white-space:nowrap;padding:5px 8px;border-radius:5px;background:#20232b;color:#fff;font-size:12px;pointer-events:none;z-index:5}.arkme-shot-tool:hover [role=tooltip],.arkme-shot-tool:focus-visible [role=tooltip]{display:block}`}</style>
@@ -130,11 +159,19 @@ export function ArkmeScreenshotEditor({frame,desktop=false,windows=[],onClose,on
   {!selected&&!drawing&&<div style={{position:'absolute',top:16,left:'50%',transform:'translateX(-50%)',background:'#222d',padding:'8px 12px',borderRadius:8,fontSize:13,display:'flex',alignItems:'center',gap:12}}>{loaded?(windows.length?'单击选择窗口 · 拖动自由框选 · Esc 取消':'拖动框选截图区域 · Esc 取消'):'正在加载截图…'}{button('close',onClose)}</div>}
   {selected&&!drawing&&<div ref={toolbar} data-tooltips-below={barTop<40} role="toolbar" aria-label="截图编辑工具" style={{...panel,position:'fixed',left:barLeft,top:barTop,maxWidth:'calc(100vw - 16px)',padding:6,boxSizing:'border-box'}}>
    <div style={{display:'flex',gap:2,flexWrap:'wrap',alignItems:'center'}}>
+    <button type="button" className="arkme-shot-tool" aria-label="拖动截图工具栏" title="拖动工具栏" disabled={busy}
+     style={{width:24,cursor:busy?'default':barDragging?'grabbing':'grab',touchAction:'none'}}
+     onPointerDown={e=>{if(e.button!==0||busy||barGesture.current)return;e.preventDefault();e.stopPropagation()
+      barGesture.current={id:e.pointerId,start:{x:e.clientX,y:e.clientY},position:{x:barLeft,y:barTop}};setBarDragging(true);e.currentTarget.setPointerCapture(e.pointerId)}}
+     onPointerMove={dragBar} onPointerUp={e=>releaseBar(e,true)} onPointerCancel={e=>releaseBar(e)} onLostPointerCapture={e=>releaseBar(e)}>
+     <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor" aria-hidden="true">{[5,10,15].flatMap(y=>[3,9].map(x=><circle key={`${x}-${y}`} cx={x} cy={y} r="1.4"/>))}</svg>
+     <span role="tooltip">拖动工具栏</span>
+    </button>
     {tools.map(t=>button(t,()=>{setTool(tool===t?undefined:t)},false))}
     <span style={{height:20,borderLeft:'1px solid #e1e4e9',margin:'0 4px'}}/>
     {button('undo',()=>dispatch({type:'undo'}),!history.done.length,'⌘/Ctrl+Z')}
     {button('redo',()=>dispatch({type:'redo'}),!history.undone.length,'⌘/Ctrl+Shift+Z')}
-    {button('reselect',reset)}{button('save',()=>{void finish(true)},false,'⌘/Ctrl+S')}{button('close',onClose,false,'Esc')}{button('complete',()=>{void finish(false)},false,'Enter')}
+    {button('reselect',reset)}{button('save',()=>{void finish(true)},false,'⌘/Ctrl+S')}{onAskDsh&&<button type="button" aria-label="问dsh" title="问dsh" disabled={busy} className="arkme-shot-tool" onClick={()=>{void finish('ask-dsh')}}><AskDshIcon size={20}/><span role="tooltip">问dsh</span></button>}{button('close',onClose,false,'Esc')}{button('complete',()=>{void finish(false)},false,'Enter')}
    </div>
    {tool&&<div style={{display:'flex',gap:10,alignItems:'center',padding:'6px 4px 2px',borderTop:'1px solid #eceef2',marginTop:5,fontSize:12,flexWrap:'wrap'}}>
     {tool!=='mosaic'&&<><label title="颜色" style={{display:'flex',alignItems:'center',gap:4}}>颜色 <input aria-label="标注颜色" type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:26,height:24,border:0,padding:0}}/></label>
