@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TeamConversation } from '../src/team-app-contract.js'
+import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { hasUnreadTeamMessages } from '../src/client/team-message-unread.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
@@ -52,6 +52,63 @@ describe('Team send UI recovery', () => {
     expect(sends[1]?.[1].clientUid).toBe(first[0]?.[1].clientUid)
     await act(async () => { release({ message: { state: 'published' } }); await tick() })
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
+  })
+  it('unlocks a definitive invalid request but retains a cancellable accepted operation', async () => {
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      throw Object.assign(new Error('请求内容无效'), { body: { code: 'team-invalid_request' } })
+    })
+    await mount(); await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.send') return { reason: 'invalid_request', message: { ref: 'accepted', state: 'preparing' } }
+      return {}
+    })
+    await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.message.ref).toBe('accepted')
+    const cancel = renderer!.root.findAllByType('button').find(v => v.children.join('') === '取消本次发送，保留草稿')!
+    await act(async () => { cancel.props.onClick(); await tick() })
+    expect(mocks.call.mock.calls.find(v => v[0] === 'team.app.withdraw')?.[1]).toEqual({ messageRef: 'accepted' })
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({ text: '问题', assets: [] })
+  })
+  it.each(['cancelled', 'withdrawn'])('unlocks a %s send without losing draft or sending a new request', async state => {
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      : { message: { state } })
+    await mount(); await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({ text: '问题', assets: [] })
+    expect(renderer!.root.findByProps({ 'aria-label': '团队消息内容' }).props.disabled).toBe(false)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿已保留')
+    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')).toHaveLength(1)
+  })
+  it('keeps an edit draft and requires reading the new version before explicit overwrite', async () => {
+    let message: TeamMessage = { ref: 'message', key: 'message', seq: 1, revision: 1, side: 'team', sender: { nickname: '成员' }, own: true, state: 'published', createdAt: 1, canEdit: true, canWithdraw: true, content: { text_content: '原内容', template_kind: 1 }, version: 1, contentStatus: 'available', media: [] }
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation: { ...conversation, side: 'team' }, messages: [message], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.edit' && message.version === 1) {
+        message = { ...message, version: 2, content: { text_content: '另一位成员的新内容', template_kind: 1 } }
+        throw Object.assign(new Error('内容已更新'), { body: { code: 'team-version_conflict' } })
+      }
+      return {}
+    })
+    const button = (label: string) => renderer!.root.findAllByType('button').find(v => v.children.join('') === label)!
+    const click = async (label: string) => { await act(async () => { button(label).props.onClick(); await tick() }) }
+    await mount()
+    expect(button('屏蔽此用户')).toBeUndefined()
+    await click('编辑')
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '修改消息内容' }).props.onChange({ target: { value: '我的修改' } }) })
+    await click('确认修改')
+    expect(button('确认修改').props.disabled).toBe(true)
+    expect(renderer!.root.findByProps({ 'aria-label': '修改消息内容' }).props.value).toBe('我的修改')
+    await click('读取最新版本')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('另一位成员的新内容')
+    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.edit')).toHaveLength(1)
+    await click('确认覆盖最新版本')
+    const edits = mocks.call.mock.calls.filter(v => v[0] === 'team.app.edit')
+    expect(edits.map(v => v[1].version)).toEqual([1, 2])
+    expect(edits[1]![1].content.text_content).toBe('我的修改')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '修改消息内容' })).toHaveLength(0)
   })
   it('does not send when durable local storage is unavailable', async () => {
     await mount()
