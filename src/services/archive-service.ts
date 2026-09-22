@@ -30,7 +30,11 @@ export class ArchiveService {
         const title = raw.privacy_locked ? '隐私主题' : raw.title
         const state = await this.state(session, raw, title)
         if (!state.ownerAvailable || !state.effectiveArchived) throw invalid()
-        items.push({ ...state, privacyLocked: raw.privacy_locked, source: {
+        const inherited = raw.inherited_from_summary === undefined ? undefined : objectValue(raw.inherited_from_summary)
+        if ((state.inheritedFrom !== undefined) !== (inherited !== undefined)) throw invalid()
+        if (inherited !== undefined && (typeof inherited.title !== 'string' || typeof inherited.privacy_locked !== 'boolean')) throw invalid()
+        items.push({ ...state, privacyLocked: raw.privacy_locked,
+          ...(inherited === undefined ? {} : { inheritedFromSummary: { title: inherited.privacy_locked ? '隐私主题' : inherited.title as string, privacyLocked: inherited.privacy_locked as boolean } }), source: {
           kind: 'topic', topicKind: 1, sourceRef: state.sourceRef, displayName: title,
           activeAtMillis: state.displayArchiveAt, unreadCount: 0,
           topicHierarchyKey: await this.sources.topicHierarchyKey(session.userId, raw.entity_uid as string),

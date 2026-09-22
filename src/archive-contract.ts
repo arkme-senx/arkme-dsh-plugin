@@ -15,6 +15,8 @@ export interface ArkmeArchiveState {
 export interface ArkmeArchiveEntry extends ArkmeArchiveState {
   source: ArkmeSourceItem & { kind: 'topic'; topicHierarchyKey: string }
   privacyLocked: boolean
+  /** Authorized display summary from the same owner snapshot as the list. */
+  inheritedFromSummary?: { title: string; privacyLocked: boolean }
 }
 
 export interface ArkmeArchivePage {

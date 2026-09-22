@@ -15,8 +15,10 @@ const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 let host: HTMLDivElement
 let root: Root
-const inherited = { entityType: 'topic', sourceRef: 'child', ownerAvailable: true, selfArchived: false, effectiveArchived: true, revision: 0, inheritedFrom: {sourceRef: 'parent', topicHierarchyKey: 'parent-key'}, displayArchiveAt: 10, privacyLocked: false,
+const inherited = { entityType: 'topic', sourceRef: 'child', ownerAvailable: true, selfArchived: false, effectiveArchived: true, revision: 0, inheritedFrom: {sourceRef: 'parent', topicHierarchyKey: 'parent-key'}, displayArchiveAt: 10, privacyLocked: false, inheritedFromSummary: {title: '父主题', privacyLocked: false},
   source: { sourceRef: 'child', kind: 'topic', topicHierarchyKey: 'child-key', displayName: '长主题🌲'.repeat(30), unreadCount: 0, activeAtMillis: 10 } }
+const restorable = {...inherited, selfArchived: true, revision: 3}
+const restorePage = {items: [restorable], hasMore: false}
 const page = { items: [inherited, { ...inherited, sourceRef: 'private', privacyLocked: true, source: { ...inherited.source, sourceRef: 'private', topicHierarchyKey: 'private-key', displayName: '隐私主题' } }], hasMore: false }
 const click = async (text: string) => {
   const node = [...document.body.querySelectorAll('button')].find(button => button.textContent === text || button.getAttribute('aria-label') === text)
@@ -67,77 +69,35 @@ it('immediately removes each clicked subtree and accepts the next archive while 
 it('shows inherited state without a misleading restore, masks private topics and opens by UID reference', async () => {
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
   expect(host.querySelector('[data-arkme-archive-management]')?.getAttribute('aria-label')).toBe('已归档主题')
-  expect(host.textContent).toContain('随父主题归档')
+  expect(host.textContent).toContain('随「父主题」一起归档')
   expect(host.textContent).not.toContain('取消归档')
   expect([...document.body.querySelectorAll('button')].filter(button => button.getAttribute('aria-label')?.startsWith('打开主题：'))[1]!.disabled).toBe(true)
   await click(`打开主题：${inherited.source.displayName}`)
   expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe('child')
   expect(host.querySelector('[role=dialog]')).toBeNull()
-  mock.call.mockImplementation(async (operation: string) => operation === 'archives.set' ? { ...inherited, selfArchived: true, revision: 1, stateChanged: true, effectiveChangedCount: 0 } : page)
-  await click('单独归档')
-  expect(mock.call).toHaveBeenCalledWith('archives.set', { sourceRef: 'child', selfArchived: true, expectedRevision: 0 }, expect.any(AbortSignal))
+  expect(host.textContent).not.toContain('单独归档')
+  expect(host.textContent).not.toContain('查看来源')
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.list'])
 })
 
-it('shows the archive source inline and removes only that explicit marker on click', async () => {
+it('displays a private source inline without leaking its title or fetching the ancestor page', async () => {
+  mock.call.mockResolvedValueOnce({items: [{...inherited, inheritedFromSummary: {title: '不得泄露的父主题', privacyLocked: true}}], hasMore: true, nextCursor: 'next'})
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  const row = host.querySelector('li')!
-  mock.call.mockResolvedValueOnce({items: [{...inherited, selfArchived: true, sourceRef: 'parent', revision: 7, source: {...inherited.source, displayName: '父主题', topicHierarchyKey: 'parent-key'}}], hasMore: false})
-  await click('查看来源')
-  expect(host.querySelector('[role=dialog]')).toBeNull()
-  expect(host.querySelector('[aria-label=归档来源]')?.textContent).toContain('父主题')
-  expect(host.querySelector('[aria-label=归档来源]')?.closest('li')).toBe(row)
-  const toggle = row.querySelector<HTMLButtonElement>('[aria-expanded=true]')!
-  expect(toggle.getAttribute('aria-controls')).toBe(host.querySelector('[aria-label=归档来源]')!.id)
-  expect(mock.call.mock.calls.filter(call => call[0] === 'archives.set')).toHaveLength(0)
-  await click('取消来源归档')
-  expect(mock.call).toHaveBeenCalledWith('archives.set', { sourceRef: 'parent', selfArchived: false, expectedRevision: 7 }, expect.any(AbortSignal))
+  expect(host.textContent).toContain('随「隐私主题」一起归档')
+  expect(host.textContent).not.toContain('不得泄露')
+  expect(host.textContent).not.toContain('单独归档')
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.list'])
 })
 
-it('reuses a listed source, moves the expansion to the clicked row and supports collapse without writes', async () => {
-  const parent = {...inherited, selfArchived: true, inheritedFrom: undefined, sourceRef: 'parent', revision: 7,
-    source: {...inherited.source, sourceRef: 'parent', displayName: '父主题', topicHierarchyKey: 'parent-key'}}
-  mock.call.mockResolvedValue({items: [...page.items, parent], hasMore: false})
+it('restores only a previously independent child marker using its captured revision', async () => {
+  mock.call.mockResolvedValue(restorePage)
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  const rows = host.querySelectorAll('li')
-  await click('查看来源')
-  expect(mock.call).toHaveBeenCalledTimes(1)
-  expect(rows[0]!.querySelector('[aria-label=归档来源]')?.textContent).toContain('父主题')
-  const secondToggle = [...rows[1]!.querySelectorAll('button')].find(button => button.textContent === '查看来源')!
-  await act(async () => { secondToggle.click() })
-  expect(rows[0]!.querySelector('[aria-label=归档来源]')).toBeNull()
-  expect(rows[1]!.querySelector('[aria-label=归档来源]')).not.toBeNull()
-  await click('收起来源')
-  expect(host.querySelector('[aria-label=归档来源]')).toBeNull()
-  expect(mock.call).toHaveBeenCalledTimes(1)
-})
-
-it('keeps source loading local and cancels a collapsed lookup without accepting its late result', async () => {
-  await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  let reply: (value: unknown) => void = () => {}
-  mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
-  await click('查看来源')
-  const signal = mock.call.mock.calls.at(-1)![2] as AbortSignal
-  expect(host.querySelector('[role=status]')?.closest('li')).toBe(host.querySelector('li'))
-  await click('收起来源')
-  expect(signal.aborted).toBe(true)
-  await act(async () => { reply({items: [{...inherited, source: {...inherited.source, displayName: '迟到来源', topicHierarchyKey: 'parent-key'}}], hasMore: false}) })
-  expect(host.querySelector('[aria-label=归档来源]')).toBeNull()
-  expect(host.textContent).not.toContain('迟到来源')
-})
-
-it('retries a source lookup inside its row and never exposes a private source title', async () => {
-  await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  mock.call.mockRejectedValueOnce(new Error('private backend details'))
-  await click('查看来源')
-  expect(host.querySelector('[role=alert]')?.closest('li')).toBe(host.querySelector('li'))
-  expect(host.textContent).not.toContain('private backend details')
-  mock.call.mockResolvedValueOnce({items: [{...inherited, privacyLocked: true, selfArchived: true, sourceRef: 'parent',
-    source: {...inherited.source, displayName: '不得泄露的父主题名', topicHierarchyKey: 'parent-key'}}], hasMore: false})
-  await click('重试')
-  const region = host.querySelector('[aria-label=归档来源]')!
-  expect(region.textContent).toContain('隐私主题')
-  expect(region.textContent).not.toContain('不得泄露')
-  expect(region.querySelector<HTMLButtonElement>('.arkme-archive-source-name')!.disabled).toBe(true)
+  expect(host.textContent).toContain('也随「父主题」一起归档')
+  mock.call.mockImplementation(async operation => operation === 'archives.set' ? {...inherited, revision: 4} : page)
+  await click('取消归档')
+  expect(mock.call).toHaveBeenCalledWith('archives.set', {sourceRef: 'child', selfArchived: false, expectedRevision: 3}, expect.any(AbortSignal))
+  expect(host.textContent).toContain('随「父主题」一起归档')
+  expect(host.textContent).not.toContain('取消归档')
 })
 
 it('discards a delayed response after account change and refreshes on foreground recovery', async () => {
@@ -156,11 +116,12 @@ it('discards a delayed response after account change and refreshes on foreground
 })
 
 it('keeps a failed write reviewable and never silently retries with a newer revision', async () => {
+  mock.call.mockResolvedValueOnce(restorePage)
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
   mock.call.mockRejectedValue(new Error('ARCHIVE_REVISION_CONFLICT'))
-  await click('单独归档')
+  await click('取消归档')
   expect(mock.call.mock.calls.filter(call => call[0] === 'archives.set')).toHaveLength(1)
-  expect(host.textContent).toContain('归档未完成，请稍后重试')
+  expect(host.textContent).toContain('取消归档未完成，请稍后重试')
   expect(host.textContent).not.toContain('ARCHIVE_REVISION_CONFLICT')
   expect(host.querySelector('[role=dialog]')).toBeNull()
 })
@@ -168,9 +129,9 @@ it('keeps a failed write reviewable and never silently retries with a newer revi
 it('keeps a direct write alive when a record notification beats its reply', async () => {
   let reply: (value: unknown) => void = () => {}
   mock.call.mockImplementation(async (operation: string) => operation === 'archives.set'
-    ? new Promise(resolve => { reply = resolve }) : page)
+    ? new Promise(resolve => { reply = resolve }) : restorePage)
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  await click('单独归档')
+  await click('取消归档')
   const signal = mock.call.mock.calls.find(call => call[0] === 'archives.set')![2] as AbortSignal
   await act(async () => { arkmeUi.recordChanged() })
   expect(signal.aborted).toBe(false)
@@ -189,29 +150,16 @@ it('deduplicates paginated entries by stable topic identity when a title changes
   expect(host.textContent).toContain('重命名后')
 })
 
-it('keeps pagination and source lookup independent and reuses an ancestor arriving in the next page', async () => {
+it('keeps source labels visible while the next page is pending', async () => {
   mock.call.mockResolvedValueOnce({items: [inherited], hasMore: true, nextCursor: 'next'})
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  let pageReply: (value: unknown) => void = () => {}
-  let sourceReply: (value: unknown) => void = () => {}
-  mock.call.mockImplementationOnce(() => new Promise(resolve => { pageReply = resolve }))
+  let reply: (value: unknown) => void = () => {}
+  mock.call.mockImplementationOnce(() => new Promise(resolve => { reply = resolve }))
   await click('加载更多')
-  const pageSignal = mock.call.mock.calls.at(-1)![2] as AbortSignal
-  const origin = [...document.body.querySelectorAll('button')].find(node => node.textContent === '查看来源')!
-  expect(origin.disabled).toBe(false)
-  mock.call.mockImplementationOnce(() => new Promise(resolve => { sourceReply = resolve }))
-  await click('查看来源')
-  const sourceSignal = mock.call.mock.calls.at(-1)![2] as AbortSignal
-  expect(pageSignal.aborted).toBe(false)
-  expect(origin.disabled).toBe(false)
-  expect(host.querySelectorAll('[role=status]')).toHaveLength(2)
-  await act(async () => { pageReply({items: [{...inherited, selfArchived: true, sourceRef: 'parent', inheritedFrom: undefined,
-    source: {...inherited.source, displayName: '分页中的父主题', topicHierarchyKey: 'parent-key'}}], hasMore: false}) })
-  expect(sourceSignal.aborted).toBe(true)
-  await act(async () => { sourceReply({items: [], hasMore: false}) })
+  expect(host.textContent).toContain('随「父主题」一起归档')
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.list', 'archives.list'])
+  await act(async () => { reply({items: [], hasMore: false}) })
   expect(host.querySelector('[role=status]')).toBeNull()
-  expect(host.querySelector('[aria-label=归档来源]')?.textContent).toContain('分页中的父主题')
-  expect(host.querySelector('[role=dialog]')).toBeNull()
 })
 
 it('keeps a direct menu write and captured revision after its archived directory row disappears', async () => {
@@ -349,19 +297,19 @@ it.each(['account', 'environment'])('rejects a late precondition reply after cha
 })
 
 it('prevents repeated clicks from duplicating a pending write', async () => {
-  mock.call.mockImplementation(async (operation: string) => operation === 'archives.set' ? new Promise(() => {}) : page)
+  mock.call.mockImplementation(async (operation: string) => operation === 'archives.set' ? new Promise(() => {}) : restorePage)
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  await click('单独归档')
-  await click('单独归档')
+  await click('取消归档')
+  await click('取消归档')
   expect(mock.call.mock.calls.filter(call => call[0] === 'archives.set')).toHaveLength(1)
 })
 
 it('aborts writes and clears previous items when the same user switches environment', async () => {
   let reply: (value: unknown) => void = () => {}
   mock.call.mockImplementation(async (operation: string) => operation === 'archives.set'
-    ? new Promise(resolve => { reply = resolve }) : page)
+    ? new Promise(resolve => { reply = resolve }) : restorePage)
   await act(async () => { root.render(<ArkmeArchiveManagementPanel />) })
-  await click('单独归档')
+  await click('取消归档')
   const signal = mock.call.mock.calls.find(call => call[0] === 'archives.set')![2] as AbortSignal
   mock.call.mockImplementation(() => new Promise(() => {}))
   await act(async () => { arkmeAuthStore.setAuth({status: 'authenticated', environment: 'production', userId: 42}) })

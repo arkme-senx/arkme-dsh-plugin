@@ -5,7 +5,7 @@ import type { ProfileService } from '../../src/services/profile-service.js'
 import type { ServiceRuntime } from '../../src/services/service.js'
 
 const normal = { entity_type: 1, entity_uid: 'child', owner_available: true, self_status: 1, effective_status: 1, revision: 0, display_archive_at: 0 }
-const inherited = { ...normal, effective_status: 2, display_archive_at: 100, inherited_from: { entity_type: 1, entity_uid: 'parent' } }
+const inherited = { ...normal, effective_status: 2, display_archive_at: 100, inherited_from: { entity_type: 1, entity_uid: 'parent' }, inherited_from_summary: { title: '父主题', privacy_locked: false } }
 
 async function fixture() {
   let session = { userId: 42, accessToken: 'fixture-access', refreshToken: 'fixture-refresh' }
@@ -34,10 +34,27 @@ describe('Archive Host owner', () => {
     expect(JSON.stringify(page)).not.toContain('secret title')
     expect(JSON.stringify(page)).not.toContain('entity_uid')
     const item = page.items[0]!
+    expect(item.inheritedFromSummary).toEqual({ title: '父主题', privacyLocked: false })
     expect(await f.sources.openSourceRef(item.inheritedFrom!.sourceRef, 42)).toMatchObject({ ownerRef: 'parent' })
     await expect(f.sources.openSourceRef(item.sourceRef, 99)).rejects.toThrow()
     f.post.mockResolvedValue({ items: [inherited] })
     expect(await f.service.states([f.ref])).toMatchObject([{ sourceRef: f.ref, selfArchived: false, effectiveArchived: true, revision: 0 }])
+  })
+
+  it('masks source titles independently of the child and uses only the list response', async () => {
+    const f = await fixture()
+    f.post.mockResolvedValue({ items: [{ ...inherited, title: '公开子主题', privacy_locked: false,
+      inherited_from_summary: { title: 'private source title', privacy_locked: true } }], has_more: false })
+    const page = await f.service.list()
+    expect(page.items[0]!.inheritedFromSummary).toEqual({title: '隐私主题', privacyLocked: true})
+    expect(JSON.stringify(page)).not.toContain('private source title')
+    expect(f.post).toHaveBeenCalledOnce()
+  })
+
+  it.each([undefined, null, {}, {title: 'source'}, {title: 4, privacy_locked: false}])('rejects an absent or malformed inherited summary %o', async summary => {
+    const f = await fixture()
+    f.post.mockResolvedValue({items: [{...inherited, title: 'child', privacy_locked: false, inherited_from_summary: summary}], has_more: false})
+    await expect(f.service.list()).rejects.toThrow('归档数据无效')
   })
 
   it('forwards CAS once and keeps effective archive when an ancestor still applies', async () => {

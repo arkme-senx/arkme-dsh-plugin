@@ -1,4 +1,4 @@
-import { createArkmeSdk, type ArkmeArchiveState, type ArkmeArchiveSetInput } from '@senguoyun/dsh-arkme/sdk'
+import { createArkmeSdk, type ArkmeArchiveState, type ArkmeArchiveSetInput, type ArkmeArchiveEntry } from '@senguoyun/dsh-arkme/sdk'
 
 // This fixture is copied into the freshly installed profile. It uses only the
 // published SDK export and carries cancellation through its own lifecycle.
@@ -8,17 +8,21 @@ const state: ArkmeArchiveState = { entityType: 'topic', sourceRef: 'opaque-topic
   selfArchived: false, effectiveArchived: true, revision: 2, displayArchiveAt: 100,
   inheritedFrom: { sourceRef: 'opaque-parent', topicHierarchyKey: 'opaque-parent-key' } }
 let supported = true
+const entry: ArkmeArchiveEntry = {...state, privacyLocked: false,
+  source: {sourceRef: state.sourceRef, kind: 'topic', topicHierarchyKey: 'child-key', displayName: 'Child', activeAtMillis: 100, unreadCount: 0},
+  inheritedFromSummary: {title: 'Parent', privacyLocked: false}}
 const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
   init?.signal?.throwIfAborted()
   const { operation } = JSON.parse(String(init?.body)) as { operation: string }
   calls.push(operation)
   const value = operation === 'provider.capabilities' ? { contractVersion: 1, features: supported ? { entityArchive: true } : {} }
     : operation === 'archives.state' ? [state]
-      : operation === 'archives.list' ? { items: [], hasMore: false }
+      : operation === 'archives.list' ? { items: [entry], hasMore: false }
         : { ...state, stateChanged: true, effectiveChangedCount: 0 }
   return new Response(JSON.stringify({ ok: true, value }), { headers: { 'Content-Type': 'application/json' } })
 } })
-await sdk.listArchives(undefined, lifecycle.signal)
+const page = await sdk.listArchives(undefined, lifecycle.signal)
+if (page.items[0]?.inheritedFromSummary?.title !== 'Parent') throw new Error('missing typed source summary')
 const [current] = await sdk.getArchiveStates(['opaque-topic'], lifecycle.signal)
 if (current === undefined) throw new Error('missing typed archive state')
 const command: ArkmeArchiveSetInput = { sourceRef: current.sourceRef, selfArchived: false, expectedRevision: current.revision }

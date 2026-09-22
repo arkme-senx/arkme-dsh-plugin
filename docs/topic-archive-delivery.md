@@ -145,7 +145,7 @@ review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4
 
 上线需同步采用 Record 和客户端分支的新通知合同，不能只替换插件包却仍期待旧服务端的通用 record 通知具备目录专用语义。此次是一次性完整收口，没有双发通知或过渡配置。
 
-## 2026-09-22 归档来源就地展开
+## 2026-09-22 归档来源就地展开（已被下方直接展示方案替代）
 
 原来源区域渲染在整个列表之后，长列表中与点击条目脱离。本轮将来源详情放回对应条目下方，支持展开/收起，并明确标注“取消来源归档”。已在列表中的来源直接复用当前 owner 返回的条目；未加载的来源仍通过原分页接口定位，加载、重试及请求取消由当前展开区域负责，不改变归档事实或恢复语义。
 
@@ -164,3 +164,20 @@ review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4
 - 官方 DSH `dsh-v0.1.5-rc.2`（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）中，正式包 Chrome → Host → 隔离 Record/Mongo 链路通过。实际检查展开区域位于当前行内、无横向溢出、按钮可操作、键盘收起，以及取消来源后父/子有效归档状态正确恢复。此前连续归档、DOM 保留、独立父子归档和 SDK/会话 Tool 断言继续通过。最终日志 `archive-source-style-e2e-final.log`，已核验截图 `archive-source-style-verified.png`；首次窗口缩放的过渡帧截图未用作验收证据。
 
 继续原任务分支 `codex/c20260917-topic-archive-plan`，dev 基线仍为 `a5b2c5b075d0686f817ae8e21eb8a1fec9edae72`；本轮已核对最新 master `140d5ec27627de1b96229c8917b209f8fc7bc9c4`。未改插件版本、根 README、锁文件、DSH tracked 源码或用户常驻 3081/Profile。运行态验收为 macOS Chrome，本轮没有新增 Windows/Linux 实机结论。
+
+## 2026-09-22 来源直接展示与操作简化
+
+根据最新反馈，两端已归档列表直接在标题下显示“随「具体主题名」一起归档”。删除查看/收起来源和单独归档入口，也删除用于寻找来源的额外分页查询。只有自身归档标记存在时保留取消归档；已独立归档且同时继承的条目显示“也随…”，取消只改自身标记，既有父子恢复规则保持不变。
+
+| 能力面 | 实现与验收 |
+| --- | --- |
+| Host owner | ArchiveService 验证 Record 新增的列表展示摘要 inherited_from_summary，遮蔽私密来源；UI/Tools/SDK 共用该 owner，无新增路由或写入语义 |
+| UI | 当前页直接显示来源名，不要求来源也在当前页；移除展开区及其状态/请求，保留普通目录的乐观归档和恢复错误处理 |
+| Tools | 真实官方 DSH 会话执行 arkme_archives_list，返回相同的 inheritedFromSummary；原有明确授权的标记写入继续保留 |
+| SDK | ArkmeArchiveEntry 增加可选 inheritedFromSummary；仓外 Consumer 编译/执行验证类型、读取、能力探测和取消生命周期；真实 Host SDK 读取来源摘要 |
+
+本次 Record 摘要在同一 owner 快照中对分页条目和来源 UID 去重并一次批量查询；没有新增存储字段、集合或索引。联调需要更新配套 Record 分支，客户端不通过旧接口额外扫描分页作兼容。
+
+验证：聚焦 47 项、全量 8,712 项通过（13 项原条件跳过），typecheck/build 通过。不可变包 SHA-256 `c8ec7b13ba91b24d8c6ff08e612f8a96dbd0764f6ceb3b718ce7507b6dde2f14`；打包清单及 lib 产物检查无临时凭据或本机路径。官方 CLI 安装到全新含空格路径 Profile 后，官方 DSH `dsh-v0.1.5-rc.2` / `fb2c4b9` 中 Chrome → 打包插件 → Record/Mongo 场景通过。除本次来源展示，还保留了连续归档、hover、目录/内容 DOM 不卸载、消息内容不重刷、失败恢复、独立父子归档、SDK/真实会话 Tool 验收。已核验 `archive-simple-plugin.png`。
+
+日志：`archive-simple-plugin-full-results.json`、`archive-simple-plugin-typecheck.log`、`archive-simple-plugin-build.log`、`archive-simple-plugin-install.log`、`archive-simple-plugin-consumer.log`、`archive-simple-plugin-e2e.log`。本轮仍使用上述任务分支/基线，没有更新用户常驻服务、真实 Profile、DSH 源码、根 README、版本或锁文件。macOS Chrome 运行通过，不据此推断其他操作系统完成实机验收。

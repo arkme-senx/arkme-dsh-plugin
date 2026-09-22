@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
-import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch'
 import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
 import type { ArkmeArchiveEntry, ArkmeArchivePage, ArkmeArchiveSetResult, ArkmeArchiveState } from '../archive-contract.js'
@@ -133,49 +132,8 @@ export function ArkmeArchiveStatus({ source }: { source: ArkmeSourceItem }) {
   const { state } = useArchiveState(source.sourceRef)
   if (state?.effectiveArchived !== true) return null
   return <span role="status" style={{ color: arkmeTheme.secondary, fontSize: 12 }}>
-    {state.selfArchived ? '已归档' : '随父主题归档'}
+    已归档
   </span>
-}
-
-function ArchiveSourceDetails({ id, source, cached, mutation, open, onUnavailable }: {
-  id: string
-  source: NonNullable<ArkmeArchiveState['inheritedFrom']>
-  cached: ArkmeArchiveEntry | undefined
-  mutation: ReturnType<typeof useArchiveMutation>
-  open(entry: ArkmeArchiveEntry): void
-  onUnavailable(): void
-}) {
-  const [resolved, setResolved] = useState<ArkmeArchiveEntry>()
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    if (cached !== undefined) return
-    const controller = new AbortController()
-    setResolved(undefined)
-    setError('')
-    void (async () => {
-      let cursor: string | undefined
-      do {
-        const page = await callArkme<ArkmeArchivePage>('archives.list', cursor === undefined ? {} : { cursor }, controller.signal)
-        if (controller.signal.aborted) return
-        const ancestor = page.items.find(item => item.source.topicHierarchyKey === source.topicHierarchyKey)
-        if (ancestor !== undefined) { setResolved(ancestor); return }
-        cursor = page.nextCursor
-      } while (cursor !== undefined)
-      onUnavailable()
-    })().catch(() => { if (!controller.signal.aborted) setError('归档来源加载失败') })
-    return () => { controller.abort() }
-  }, [source.topicHierarchyKey, cached, attempt, onUnavailable])
-  const entry = cached ?? resolved
-  return <div id={id} className="arkme-archive-source" role="region" aria-label="归档来源">
-    <span className="arkme-archive-source-label">归档来源</span>
-    {entry !== undefined ? <>
-      <button type="button" className="arkme-archive-source-name" disabled={entry.privacyLocked} onClick={() => { open(entry) }}>{entry.privacyLocked ? '隐私主题' : entry.source.displayName}</button>
-      {entry.selfArchived && <button type="button" className="arkme-archive-action" disabled={mutation.isBusy(entry.sourceRef)} onClick={() => { void mutation.set(entry) }}>取消来源归档</button>}
-    </> : error !== '' ? <div className="arkme-archive-source-feedback" role="alert">
-      {error}<button type="button" className="arkme-archive-action" onClick={() => { setAttempt(value => value + 1) }}>重试</button>
-    </div> : <div className="arkme-archive-loading" role="status" aria-label="正在加载归档来源"><CircleNotch size={14} aria-hidden /></div>}
-  </div>
 }
 
 export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: (() => void) | undefined } = {}) {
@@ -185,8 +143,6 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
   const [cursor, setCursor] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [expandedSourceRef, setExpandedSourceRef] = useState<string>()
-  const sourceDetailsId = useId()
   const request = useRef<AbortController>()
   const load = useCallback(async (next?: string) => {
     request.current?.abort()
@@ -202,9 +158,8 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
     } catch { if (!controller.signal.aborted) setError('加载失败，请重试') }
     finally { if (!controller.signal.aborted) setBusy(false) }
   }, [])
-  useEffect(() => { setItems([]); setCursor(undefined); setExpandedSourceRef(undefined); setError('') }, [scope])
+  useEffect(() => { setItems([]); setCursor(undefined); setError('') }, [scope])
   useEffect(() => {
-    setExpandedSourceRef(undefined)
     if (userId !== undefined) void load()
     else setBusy(false)
     return () => { request.current?.abort() }
@@ -220,21 +175,12 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
             {items.map(item => <li key={item.source.topicHierarchyKey} className="arkme-archive-row">
               <button type="button" className="arkme-archive-topic" disabled={item.privacyLocked} aria-label={`打开主题：${item.privacyLocked ? '隐私主题' : item.source.displayName}`} onClick={() => { open(item) }}>
                 {item.privacyLocked ? <LockSimple size={18} aria-hidden /> : <Archive size={18} aria-hidden />}
-                <span title={item.privacyLocked ? '隐私主题' : item.source.displayName}>{item.privacyLocked ? '隐私主题' : item.source.displayName}</span>
+                <span className="arkme-archive-title-group">
+                  <span className="arkme-archive-title" title={item.privacyLocked ? '隐私主题' : item.source.displayName}>{item.privacyLocked ? '隐私主题' : item.source.displayName}</span>
+                  {item.inheritedFromSummary !== undefined && <span className="arkme-archive-inherited">{item.selfArchived ? '也随' : '随'}「{item.inheritedFromSummary.privacyLocked ? '隐私主题' : item.inheritedFromSummary.title}」一起归档</span>}
+                </span>
               </button>
-              {item.inheritedFrom !== undefined && <span className="arkme-archive-inherited">随父主题归档</span>}
-              <div className="arkme-archive-actions">
-                {item.inheritedFrom !== undefined && <button type="button" className="arkme-archive-action arkme-archive-source-toggle"
-                  aria-expanded={expandedSourceRef === item.sourceRef} aria-controls={expandedSourceRef === item.sourceRef ? sourceDetailsId : undefined}
-                  onClick={() => { setExpandedSourceRef(current => current === item.sourceRef ? undefined : item.sourceRef) }}>
-                  {expandedSourceRef === item.sourceRef ? '收起来源' : '查看来源'}<CaretDown size={12} aria-hidden />
-                </button>}
-                <button type="button" className="arkme-archive-action" disabled={mutation.isBusy(item.sourceRef)} onClick={() => { void mutation.set(item) }}>{item.selfArchived ? '取消归档' : '单独归档'}</button>
-              </div>
-              {item.inheritedFrom !== undefined && expandedSourceRef === item.sourceRef && <ArchiveSourceDetails
-                key={item.inheritedFrom.topicHierarchyKey} id={sourceDetailsId} source={item.inheritedFrom}
-                cached={items.find(candidate => candidate.source.topicHierarchyKey === item.inheritedFrom!.topicHierarchyKey)}
-                mutation={mutation} open={open} onUnavailable={refresh} />}
+              {item.selfArchived && <button type="button" className="arkme-archive-action" disabled={mutation.isBusy(item.sourceRef)} onClick={() => { void mutation.set(item) }}>取消归档</button>}
             </li>)}
           </ul>
           {busy && <div className="arkme-archive-loading" role="status" aria-label="加载中"><CircleNotch size={18} aria-hidden /></div>}
