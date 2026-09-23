@@ -71,3 +71,23 @@ it('does not steal a newly selected conversation while create is still pending',
   await expect(pending).rejects.toThrow('切换')
   expect(f.current()).toBe('user-selected'); expect(f.files.size).toBe(0)
 })
+
+it('waits for workspace confirmation before opening or attaching, and retries without recreating', async () => {
+  const f = fixture()
+  let confirmed = false
+  const ids: Array<string | undefined> = []
+  const bridge = createHarnessDraftBridge(f.sessions, () => true, async sessionId => {
+    ids.push(sessionId)
+    if (sessionId && !confirmed) throw new Error('默认工作区尚未同步')
+    return 'default-work'
+  })
+  await expect(bridge.prepare(request())).rejects.toThrow('默认工作区尚未同步')
+  expect(f.current()).toBe('old')
+  expect(f.files.size).toBe(0)
+  expect(f.created()).toBe(1)
+  confirmed = true
+  const result = await bridge.prepare(request())
+  expect(f.created()).toBe(1)
+  expect(ids).toEqual([undefined, result.sessionId, result.sessionId])
+  expect(f.inputs.get(result.sessionId)?.attachmentIds).toEqual(['1'])
+})

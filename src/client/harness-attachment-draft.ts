@@ -54,9 +54,9 @@ function waitForDraftOperation<T>(pending: Promise<T>, signal: AbortSignal): Pro
 }
 
 /** Each operation owns a fresh identity, including retries after uncertain create responses. */
-export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccount: () => boolean, defaultWorkspace?: () => Promise<string>): HarnessDraftBridge {
+export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccount: () => boolean, defaultWorkspace?: (sessionId?: string) => Promise<string>): HarnessDraftBridge {
   const lifetime = new AbortController()
-  const attempts = new Map<string, { id: string; created: boolean; complete: boolean; busy: boolean; revision?: number; creation?: Promise<string> | undefined }>()
+  const attempts = new Map<string, { id: string; created: boolean; complete: boolean; busy: boolean; workspaceId?: string; revision?: number; creation?: Promise<string> | undefined }>()
   return {
     dispose() { lifetime.abort(); attempts.clear() },
     async prepare(request) {
@@ -88,6 +88,7 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
             const workspaceId = await defaultWorkspace()
             check()
             if (!workspaceId) throw new Error('默认工作区尚未就绪，请重试')
+            attempt.workspaceId = workspaceId
             return sessions.create({ sessionId: attempt.id, workspaceId })
           })().then(id => {
             attempt.id = id; attempt.created = true; return id
@@ -95,6 +96,12 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
           await waitForDraftOperation(attempt.creation, signal)
           check()
         }
+        // Session creation and Workspace UI projections travel on separate streams.
+        // Confirm membership before exposing a draft with a disabled composer.
+        if (!defaultWorkspace) throw unsupported()
+        const confirmedWorkspace = await waitForDraftOperation(defaultWorkspace(attempt.id), signal)
+        check()
+        if (confirmedWorkspace !== attempt.workspaceId) throw new Error('目标对话工作区已变更，请重新选择快记后操作')
         const scope = sessions.scope(attempt.id)
         conversation = scope?.get('conversation') as DraftConversation | undefined
         if (!scope || !conversation?.createDrafts || !conversation.fileUploads || !conversation.input?.for) throw unsupported()

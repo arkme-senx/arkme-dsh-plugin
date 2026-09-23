@@ -124,11 +124,21 @@ export function apply(ctx: ClientContext): void {
     const accountScope = surface.getAttribute('data-arkme-account-scope')
     const drafts = createHarnessDraftBridge(sessions as unknown as DraftSessions, () => surface.isConnected
       && surface.getAttribute('data-arkme-account-id') === accountId
-      && surface.getAttribute('data-arkme-account-scope') === accountScope, async () => {
+      && surface.getAttribute('data-arkme-account-scope') === accountScope, async sessionId => {
         const encoded = document.querySelector<HTMLMetaElement>('meta[name="arkme-default-workspace"]')?.content
-        const workspaces = (ctx as unknown as { get(key: string): unknown }).get('workspaces') as { create(request: { path: string }): Promise<{ workspaceId: string }> } | undefined
+        const workspaces = (ctx as unknown as { get(key: string): unknown }).get('workspaces') as { create(request: { path: string }): Promise<{ workspaceId: string; sessionIds: readonly string[] }>; list?: { getSnapshot(): { items: Array<{ workspaceId: string; sessionIds: readonly string[] }> } } } | undefined
         if (!encoded || !workspaces?.create) throw new Error('当前 DSH 无法选择默认工作区，请升级客户端后重试')
+        // The local projection is normally already current. Refresh only when its
+        // asynchronous follow has not delivered the newly created membership.
+        if (sessionId) {
+          const known = workspaces.list?.getSnapshot().items.find(item => item.sessionIds.includes(sessionId))
+          if (known) return known.workspaceId
+        }
         const workspace = await workspaces.create({ path: decodeURIComponent(encoded) })
+        if (sessionId && (!workspace.sessionIds.includes(sessionId)
+          || !workspaces.list?.getSnapshot().items.some(item => item.workspaceId === workspace.workspaceId && item.sessionIds.includes(sessionId)))) {
+          throw new Error('DSH 默认工作区尚未同步，请重试')
+        }
         return workspace.workspaceId
       })
     ;(window as HarnessDraftWindow)[HARNESS_ATTACHMENT_DRAFT_KEY] = drafts
