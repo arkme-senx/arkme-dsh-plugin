@@ -68,7 +68,8 @@ const readAccountRevision = () => arkmeUi.getSnapshot().authRevision
 
 /** Restore display before paint; anonymous surfaces keep their existing behavior. */
 export function useSocialAccessPresentation(): { visible: boolean; ready: boolean } {
-  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const auth = authState.auth
   const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
   const accountRevision = useSyncExternalStore(arkmeUi.subscribe, readAccountRevision, readAccountRevision)
   const snapshot = useSyncExternalStore(socialAccessStore.subscribe, socialAccessStore.getSnapshot, socialAccessStore.getSnapshot)
@@ -85,7 +86,7 @@ export function useSocialAccessPresentation(): { visible: boolean; ready: boolea
   }, [accountKey])
   return {
     visible: auth?.status === 'logged-out' || auth?.status === 'authenticated' && snapshot.accountKey === accountKey && snapshot.allowed === true,
-    ready: auth?.status !== 'authenticated' || snapshot.accountKey === accountKey && snapshot.resolved,
+    ready: authState.checked && (auth?.status !== 'authenticated' || snapshot.accountKey === accountKey && snapshot.resolved),
   }
 }
 

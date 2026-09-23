@@ -19,7 +19,12 @@ export class SocialAccessService {
     if (this.flight?.generation === generation && this.flight.revision === revision && (!refresh || this.flight.refresh)) return await this.flight.promise
     const promise = (async (): Promise<ArkmeSocialAccessSnapshot> => {
       try {
-        const result = await this.runtime.authenticatedAuthPost<{ allowed?: unknown }>('/api/v1/social-access/status', { refresh }, session, AbortSignal.timeout(2_000))
+        // This optional qualification read must not cool unrelated account
+        // traffic when its owner is unavailable. Keep the shared admission limits.
+        const result = await this.runtime.authenticatedAuthReadPost<{ allowed?: unknown }>(
+          '/api/v1/social-access/status', { refresh }, session, AbortSignal.timeout(2_000),
+          { publishServiceCooldown: false },
+        )
         if (typeof result.allowed !== 'boolean') throw new Error('invalid social access response')
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== session.userId) {
           throw new ArkmePluginError('account-changed', '账号已切换，请重新操作', false, 409)
