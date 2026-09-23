@@ -1,3 +1,5 @@
+import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
 import type { TeamMembers } from '../../../team-app-contract.js'
@@ -45,13 +47,16 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
 
-  const load = useCallback(async (pageCursor?: string) => {
+  const load = useCallback(async (pageCursor?: string, preserveView = false) => {
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
     const generation = ++generationRef.current
     setState(current => {
-      if (pageCursor === undefined) return { status: 'loading' }
+      if (pageCursor === undefined) {
+        if (preserveView && current.status === 'ready' && current.page?.team.teamRef === teamRef) return current
+        return { status: 'loading' }
+      }
       const { message: _message, ...withoutMessage } = current
       return { ...withoutMessage, loadingMore: true }
     })
@@ -130,7 +135,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
     <header className="arkme-team-detail-header">
       <div className="arkme-team-detail-header-main">
-        <span className="arkme-team-detail-glyph" aria-hidden>{tr("团")}</span>
+        <span className="arkme-team-detail-glyph" aria-hidden><UsersThree size={32} weight="duotone" /></span>
         <div className="arkme-team-detail-summary">
           <h1>{page.team.name}</h1>
           <div className="arkme-team-detail-meta">
@@ -145,16 +150,8 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
           <span>{tr("位成员")}</span>
         </span>
       </div>
-      <div className="arkme-team-detail-actions"><button type="button" className="arkme-team-action" onClick={() => { openTeamMessages({ kind: 'team', teamRef }) }}>{tr("查看团队对话")}</button></div>
+      <div className="arkme-team-detail-actions"><button type="button" className="arkme-team-action arkme-team-primary-action" onClick={() => { openTeamMessages({ kind: 'team', teamRef }) }}><ChatCircle size={18} />{tr("查看团队对话")}</button></div>
     </header>
-    <TeamChannelSettings key={`${accountKey}:${teamRef}`} teamRef={teamRef} accountKey={accountKey} onChanged={() => { void load() }} />
-    {page.team.currentUserRole !== 'owner' && <div className="arkme-team-directory-actions">
-      {confirmLeave ? <div className="team-confirm" role="alert">
-        <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>
-        <button disabled={!!removing} onClick={() => { void leaveTeam() }}>{tr('确认退出')}</button>
-        <button disabled={!!removing} onClick={() => { setConfirmLeave(false) }}>{tr('取消')}</button>
-      </div> : <button disabled={!!removing} onClick={() => { setConfirmLeave(true) }}>{tr('退出团队')}</button>}
-    </div>}
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <h2>{tr("团队成员")}</h2>
@@ -189,5 +186,13 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
         </div>
       </div>
     </section>
+    <TeamChannelSettings key={`${accountKey}:${teamRef}`} teamRef={teamRef} accountKey={accountKey} onChanged={() => { void load(undefined, true) }} />
+    {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
+      {confirmLeave ? <div className="team-confirm" role="alert">
+        <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>
+        <button disabled={!!removing} onClick={() => { void leaveTeam() }}>{tr('确认退出')}</button>
+        <button disabled={!!removing} onClick={() => { setConfirmLeave(false) }}>{tr('取消')}</button>
+      </div> : <button disabled={!!removing} onClick={() => { setConfirmLeave(true) }}>{tr('退出团队')}</button>}
+    </div>}
   </section>
 }

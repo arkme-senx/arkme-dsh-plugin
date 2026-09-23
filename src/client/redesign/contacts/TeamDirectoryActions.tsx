@@ -1,3 +1,6 @@
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
+import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeTeam } from '../../../types.js'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
@@ -5,6 +8,7 @@ import { callArkme } from '../../api.js'
 import { useArkmeLocale } from '../../locale.js'
 import { teamText as tr } from '../../team-messaging-i18n.js'
 import { openTeamMessages, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { ArkmeActionMenu } from '../../ArkmeDshMenu.js'
 import { DirectoryActionDialog } from './ContactDirectoryAddDialog.js'
 
 /** Team membership lives next to the existing Team directory, independent of messages. */
@@ -13,10 +17,18 @@ export function TeamDirectoryActions({ accountKey, onChanged, onSelect }: {
 }) {
   useArkmeLocale()
   const [mode, setMode] = useState<'create' | 'join' | 'link'>()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const choose = (next: 'create' | 'join' | 'link') => { setMenuOpen(false); setMode(next) }
   return <div className="arkme-team-directory-actions">
-    <button type="button" onClick={() => { setMode('create') }}>{tr('创建团队')}</button>
-    <button type="button" onClick={() => { setMode('join') }}>{tr('加入团队')}</button>
-    <button type="button" onClick={() => { setMode('link') }}>{tr('通过链接发消息')}</button>
+    <ArkmeActionMenu autoFocus open={menuOpen} label={tr('团队操作')} align="end" onClose={() => { setMenuOpen(false) }}
+      anchor={<button type="button" className="arkme-team-directory-add" aria-label={tr('团队操作')}
+        aria-haspopup="menu" aria-expanded={menuOpen} title={tr('团队操作')}
+        onClick={() => { setMenuOpen(value => !value) }}><Plus size={18} /></button>}
+      actions={[
+        { id: 'create', label: tr('创建团队'), icon: <Plus size={18} />, onSelect: () => choose('create') },
+        { id: 'join', label: tr('加入团队'), icon: <UsersThree size={18} />, onSelect: () => choose('join') },
+        { id: 'link', label: tr('通过链接发消息'), icon: <LinkSimple size={18} />, onSelect: () => choose('link') },
+      ]} />
     {mode && <TeamMembershipForm key={`${accountKey}:${mode}`} mode={mode} accountKey={accountKey} onClose={() => { setMode(undefined) }} onChanged={onChanged} onSelect={onSelect} />}
   </div>
 }

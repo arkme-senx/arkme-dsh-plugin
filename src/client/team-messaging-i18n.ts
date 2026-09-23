@@ -231,7 +231,19 @@ const english: Record<string,string> = {
   "同意 {name} 加入后，对方可查看全部团队对话历史并代表团队回复。确认同意？": "Approving {name} grants access to all conversation history and replies on behalf of the team. Approve?",
   "允许 {name} 查看和回复团队的全部对话？": "Allow {name} to read and reply to all team conversations?",
   " · 待回复": " · Needs reply",
-  " · 等待团队回复": " · Waiting for the team"
+  " · 等待团队回复": " · Waiting for the team",
+  "团队操作": "Team actions",
+  "对外消息": "Messages from others",
+  "刷新消息设置": "Refresh message settings",
+  "他人可通过链接向团队发消息，成员共同查看和回复。": "People can message your team using a link. Members can read and reply together.",
+  "尚未开启": "Not enabled",
+  "分享链接即可开始对话，无需加入团队。": "Share the link to start a conversation. No team membership needed.",
+  "复制消息链接": "Copy message link",
+  "查看消息链接": "View message link",
+  "{v0} 条待处理": "{v0} pending",
+  "批准后，该成员可查看和回复团队历史对话。": "Approved members can read and reply to team conversation history.",
+  "消息链接设置": "Message link settings",
+  "重置后旧链接失效，已存在的会话继续保留。": "Resetting invalidates the old link. Existing conversations are kept."
 }
 
 // Only application-owned Team copy enters this function, never user messages.
