@@ -23,8 +23,9 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key' } as StateStore, fetchImpl as typeof fetch)
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
-  const service = new TeamAppService(runtime)
-  return { service, runtime, requests, fetchImpl, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
+  const service = new TeamAppService(runtime, avatars)
+  return { service, runtime, requests, fetchImpl, avatars, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
@@ -112,6 +113,22 @@ describe('Team App owner adapter', () => {
     expect(JSON.stringify(members)).not.toContain('user_id')
     await f.service.execute('team.app.member.remove', { userRef: members.items[0]!.userRef })
     expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })
+  })
+  it('preserves optional profile avatars and unavailable identity without changing member authority', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
+      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 },
+        { user_id: 12, display_name: '用户', identity_state: 'unavailable', role: 3 }], total_count: 2,
+    } : { teams: [{ ...channel, role: 1 }] })
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', { avatarRef: 'profile-avatar' }]]))
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(members.items[0]).toMatchObject({ avatarRef: 'profile-avatar', identityState: 'ready' })
+    expect(members.items[1]).toMatchObject({ identityState: 'unavailable' })
+    expect(f.avatars.publicAvatarPresentationsByArkmeIds).toHaveBeenCalledWith(['member_lin'], expect.any(AbortSignal))
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockRejectedValue(new Error('avatar unavailable'))
+    const degraded = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(degraded.items).toHaveLength(2)
+    expect(degraded.items[0]?.avatarRef).toBeUndefined()
   })
   it('rechecks membership on every byte request and never forwards provider credentials or URLs', async () => {
     let denied = false
