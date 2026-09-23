@@ -15,6 +15,7 @@ const { ArkmeProductNavigation } = await import('../../src/client/ArkmeProductNa
 const { SocialAccessPresentationBoundary } = await import('../../src/client/SocialAccessPresentationBoundary.js')
 const { arkmeAuthStore } = await import('../../src/client/auth-store.js')
 const { socialAccessStore } = await import('../../src/client/social-access-store.js')
+const { arkmeUi } = await import('../../src/client/ui-controller.js')
 const resolve = (next: boolean) => {
   allowed = next; finish?.(next); finish = undefined; void socialAccessStore.refresh()
 }
@@ -24,6 +25,11 @@ createRoot(document.getElementById('root')!).render(<>
   <header style={{ padding: 12 }}>
     <button onClick={() => { resolve(true) }}>返回已绑定</button>
     <button onClick={() => { resolve(false) }}>返回未绑定</button>
+    <button onClick={() => {
+      allowed = true
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+      arkmeUi.authChanged(true)
+    }}>同账号绑定成功</button>
     <button onClick={() => { allowed = null; void socialAccessStore.refresh() }}>模拟刷新失败</button>
     <button onClick={() => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }) }}>切换账号</button>
     <a href={location.pathname}>重新启动页面</a>
