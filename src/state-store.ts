@@ -19,7 +19,15 @@ import { securePrivateDirectory, securePrivateFile } from './private-filesystem.
 import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditMentions, parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
 import type { ArkmeRecordReeditSubmission } from './record-reedit-contract.js'
 
+export interface ArkmeCancellationCompletion {
+  userId: number
+  sessionHash: string
+  result: import('./types.js').ArkmeCancellationSnapshot
+}
+
 interface PersistedState {
+  cancellationCompletion?: ArkmeCancellationCompletion
+
   version: 2
   uniqueCode: string
   pendingByUser: Record<string, ArkmePendingWrite[]>
@@ -269,6 +277,17 @@ function legacyRecordReeditRevision(drafts: unknown, submissions: unknown): numb
   return revision
 }
 
+function validCancellationCompletion(value: unknown): value is ArkmeCancellationCompletion {
+  if (value === null || typeof value !== 'object') return false
+  const candidate = value as ArkmeCancellationCompletion
+  const result = candidate.result
+  return Number.isSafeInteger(candidate.userId) && candidate.userId > 0
+    && typeof candidate.sessionHash === 'string' && /^[a-f0-9]{64}$/.test(candidate.sessionHash)
+    && result != null && ['immediate', 'waiting'].includes(result.mode)
+    && ['done', 'waiting'].includes(result.status) && Number.isSafeInteger(result.cancel_at)
+    && typeof result.has_phone === 'boolean'
+}
+
 function parseState(raw: string): PersistedState {
   const parsed = JSON.parse(raw) as unknown
   if (parsed === null || typeof parsed !== 'object') return emptyState()
@@ -310,6 +329,7 @@ function parseState(raw: string): PersistedState {
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
       : randomUUID(),
+    ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -401,6 +421,18 @@ export class ArkmeStateStore {
 
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
+  }
+
+  async readCancellationCompletion(): Promise<ArkmeCancellationCompletion | undefined> {
+    return await this.read(state => state.cancellationCompletion === undefined ? undefined : structuredClone(state.cancellationCompletion))
+  }
+
+  async writeCancellationCompletion(completion: ArkmeCancellationCompletion | undefined): Promise<void> {
+    if (completion !== undefined && !validCancellationCompletion(completion)) throw new Error('注销完成记录无效')
+    await this.update(state => {
+      if (completion === undefined) delete state.cancellationCompletion
+      else state.cancellationCompletion = structuredClone(completion)
+    })
   }
 
   async uniqueCode(): Promise<string> {

@@ -1941,6 +1941,14 @@ export class ArkmeService {
     return await this.auth.testLogin(userId)
   }
 
+  async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {
+    return await this.auth.sendEmailBindCode(expectedUserId, email)
+  }
+
+  async bindEmail(expectedUserId: number, email: string, code: string): Promise<{ bound: true }> {
+    return await this.auth.bindEmail(expectedUserId, email, code)
+  }
+
   async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
     return await this.auth.sendPhoneCode(phone, captcha)
   }
@@ -1960,6 +1968,10 @@ export class ArkmeService {
   async verifyPhoneCode(phone: string, code: string): Promise<ArkmeAuthSnapshot> {
     return await this.auth.verifyPhoneCode(phone, code)
   }
+
+  async previewCancellation(expectedUserId: number) { return await this.auth.previewCancellation(expectedUserId) }
+  async submitCancellation(expectedUserId: number, expectedMode: string) { return await this.auth.submitCancellation(expectedUserId, expectedMode) }
+  async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.auth.logout()

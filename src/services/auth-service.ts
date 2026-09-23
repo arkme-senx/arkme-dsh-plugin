@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import type { ArkmeAuthSnapshot, ArkmeCaptchaResult, ArkmeUserProfileSnapshot } from '../types.js'
+import type { ArkmeAuthSnapshot, ArkmeCancellationSnapshot, ArkmeCaptchaResult, ArkmeUserProfileSnapshot } from '../types.js'
 import { ProfileService } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, stringValue } from './service.js'
 
@@ -24,8 +25,8 @@ interface JiwoLoginAttempt {
 type LoginAttempt = WechatLoginAttempt | JiwoLoginAttempt
 
 interface QrResponse { url?: unknown; scene_str?: unknown; poll_token?: unknown; expire_seconds?: unknown }
-interface ScanResponse { access_token?: unknown; refresh_token?: unknown; user_id?: unknown }
-interface TestLoginResponse { access_token?: unknown; refresh_token?: unknown }
+interface ScanResponse { rest_days_cancel?: unknown; access_token?: unknown; refresh_token?: unknown; user_id?: unknown }
+interface TestLoginResponse { rest_days_cancel?: unknown; access_token?: unknown; refresh_token?: unknown }
 interface BindPhoneResponse { result?: unknown }
 // Unlink result 2 means success; bind result 2 means the number is already bound.
 interface PhoneUnbindResponse { result?: unknown }
@@ -65,6 +66,10 @@ export function jiwoScanLoginAvailable(config: ServiceRuntime['config']): boolea
 }
 
 export class AuthService {
+  private cancellationNotice: 'done' | 'waiting' | undefined
+  private pendingCancellationLogin: { session: ArkmeSessionCredentials; days: number } | undefined
+  private pendingCancellationCleanup: { session: ArkmeSessionCredentials; result: ArkmeCancellationSnapshot } | undefined
+  private cancellationTask: Promise<ArkmeCancellationSnapshot> | undefined
   private pendingPhoneUnbindSession: ArkmeSessionCredentials | undefined
 
   private readonly attempts = new Map<string, LoginAttempt>()
@@ -85,6 +90,7 @@ export class AuthService {
   }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    this.pendingCancellationLogin = undefined
     this.pendingPhoneUnbindSession = undefined
     const activeSession = await this.runtime.sessionStore.read()
     const pendingSession = await this.runtime.readPendingBindingSession()
@@ -106,7 +112,17 @@ export class AuthService {
   }
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
+    if (this.pendingCancellationLogin !== undefined) return this.cancellationLoginSnapshot()
     const activeSession = await this.runtime.sessionStore.read()
+    const completion = await this.runtime.stateStore.readCancellationCompletion?.()
+    if (completion !== undefined) {
+      if (activeSession === undefined) this.cancellationNotice = completion.result.status === 'done' ? 'done' : 'waiting'
+      else if (completion.userId === activeSession.userId && completion.sessionHash === this.cancellationSessionHash(activeSession)) {
+        this.pendingCancellationCleanup = { session: activeSession, result: completion.result }
+        await this.submitCancellation(activeSession.userId, completion.result.mode)
+        return { status: 'logged-out', environment: this.runtime.config.environment, cancellationNotice: completion.result.status === 'done' ? 'done' : 'waiting' }
+      }
+    }
     if (activeSession !== undefined) {
       const cachedProfile = await this.runtime.stateStore.cachedProfile(activeSession.userId)
       const snapshot = cachedProfile.profile === null
@@ -125,7 +141,7 @@ export class AuthService {
     }
     const pendingSession = await this.runtime.readPendingBindingSession()
     return pendingSession === undefined
-      ? { status: 'logged-out', environment: this.runtime.config.environment }
+      ? { status: 'logged-out', environment: this.runtime.config.environment, ...(this.cancellationNotice === undefined ? {} : { cancellationNotice: this.cancellationNotice }) }
       : {
           status: 'binding-required',
           environment: this.runtime.config.environment,
@@ -134,6 +150,7 @@ export class AuthService {
   }
 
   async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
+    this.pendingCancellationLogin = undefined
     this.jiwoAttemptGeneration += 1
     await this.cancelAllJiwoLoginAttempts()
     const data = await this.runtime.post<QrResponse>(
@@ -217,7 +234,7 @@ export class AuthService {
     }
     const session = { accessToken, refreshToken, userId }
     this.attempts.delete(attemptId)
-    return await this.acceptLoginSession(session)
+    return await this.acceptLoginSession(session, numberValue(data.rest_days_cancel))
   }
 
   async beginJiwoLogin(): Promise<ArkmeAuthSnapshot> {
@@ -229,6 +246,7 @@ export class AuthService {
         403,
       )
     }
+    this.pendingCancellationLogin = undefined
     const attemptGeneration = ++this.jiwoAttemptGeneration
     await this.cancelAllJiwoLoginAttempts()
     const data = await this.runtime.post<JiwoStartResponse>(
@@ -331,7 +349,7 @@ export class AuthService {
       )
     }
     this.attempts.delete(attemptId)
-    return await this.acceptLoginSession({ accessToken, refreshToken, userId })
+    return await this.acceptLoginSession({ accessToken, refreshToken, userId }, numberValue(data.rest_days_cancel))
   }
 
   async cancelJiwoLogin(attemptId: string): Promise<{ canceled: true }> {
@@ -386,6 +404,7 @@ export class AuthService {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new ArkmePluginError('test-user-id-invalid', '请输入有效的测试账号 user_id', false)
     }
+    this.pendingCancellationLogin = undefined
     const data = await this.runtime.post<TestLoginResponse>(
       this.runtime.config.authBaseUrl,
       '/api/public/v1/auth/the-best-api-for-testing',
@@ -405,7 +424,40 @@ export class AuthService {
     }
     const session = { accessToken, refreshToken, userId }
     this.attempts.clear()
-    return await this.acceptLoginSession(session)
+    return await this.acceptLoginSession(session, numberValue(data.rest_days_cancel))
+  }
+
+  private async emailBindingRequest(expectedUserId: number, email: string, code?: string): Promise<void> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('email-session-changed', '账号已切换，请重新打开账号设置', false)
+    const normalizedEmail = email.trim()
+    if (normalizedEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      throw new ArkmePluginError('email-invalid', '请输入有效的邮箱地址', false)
+    }
+    if (code !== undefined && !/^[0-9]{4}$/.test(code.trim())) throw new ArkmePluginError('email-code-invalid', '请输入4位邮箱验证码', false)
+    const data = await this.runtime.post<{ result?: unknown }>(this.runtime.config.authBaseUrl,
+      code === undefined ? '/api/v1/auth/email-bind-send-code' : '/api/v1/auth/email-bind',
+      { email: normalizedEmail, ...(code === undefined ? {} : { code: code.trim() }) }, session.accessToken, [200])
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('email-session-changed', '账号已切换，请重新打开账号设置', false)
+    }
+    if (data.result !== 1) {
+      const message = data.result === 2 ? '该邮箱已绑定其他账号' : data.result === 3 ? '当前账号已绑定邮箱，请刷新账号信息'
+        : code !== undefined && data.result === 4 ? '邮箱或验证码错误' : '邮箱绑定响应异常，请重试'
+      throw new ArkmePluginError('email-bind-rejected', message, false)
+    }
+    if (code !== undefined) this.profile.invalidate(session.userId)
+  }
+
+  async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {
+    await this.emailBindingRequest(expectedUserId, email)
+    return { sent: true }
+  }
+
+  async bindEmail(expectedUserId: number, email: string, code: string): Promise<{ bound: true }> {
+    await this.emailBindingRequest(expectedUserId, email, code)
+    return { bound: true }
   }
 
   async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
@@ -442,6 +494,7 @@ export class AuthService {
     if (!/^[0-9]{6}$/.test(normalizedCode)) {
       throw new ArkmePluginError('phone-code-invalid', '请输入有效的短信验证码', false)
     }
+    this.pendingCancellationLogin = undefined
     const session = await this.runtime.sessionStore.read() ?? await this.runtime.readPendingBindingSession()
     if (session !== undefined) {
       const data = await this.runtime.post<BindPhoneResponse>(
@@ -494,7 +547,7 @@ export class AuthService {
     }
     const sessionAfterPhoneLogin = { accessToken, refreshToken, userId }
     this.attempts.clear()
-    return await this.acceptLoginSession(sessionAfterPhoneLogin)
+    return await this.acceptLoginSession(sessionAfterPhoneLogin, numberValue(data.rest_days_cancel))
   }
 
   async checkPhoneUnbindEligibility(expectedUserId: number): Promise<{ allowed: boolean }> {
@@ -615,20 +668,137 @@ export class AuthService {
     return (snapshot.profile?.contact.phoneMasked?.trim() ?? '') !== ''
   }
 
-  private async acceptLoginSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
+  private async acceptLoginSession(session: ArkmeSessionCredentials, restDaysCancel = 0, assertCurrent?: () => void): Promise<ArkmeAuthSnapshot> {
+    // A fresh login supersedes any confirmation owned by another window or
+    // account. Only the explicit pending-login resolver may retain its identity.
+    if (assertCurrent === undefined) this.pendingCancellationLogin = undefined
+    if (restDaysCancel > 0) {
+      this.pendingCancellationLogin = { session, days: restDaysCancel }
+      return this.cancellationLoginSnapshot()
+    }
+    await this.runtime.stateStore.writeCancellationCompletion?.(undefined)
+    this.cancellationNotice = undefined
     this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
     this.profile.invalidate(session.userId)
     const snapshot = await this.authSnapshotForSession(session, { forceProfile: true })
+    assertCurrent?.()
     if (snapshot.status === 'authenticated') {
       await this.runtime.clearPendingBindingSession()
+      assertCurrent?.()
       await this.runtime.writeSession(session)
+      assertCurrent?.()
       this.lifecycle.reconnectChatRealtime()
       return snapshot
     }
     await this.runtime.writePendingBindingSession(session)
+    assertCurrent?.()
     await this.runtime.deleteSession()
+    assertCurrent?.()
     this.lifecycle.reconnectChatRealtime()
     return snapshot
+  }
+
+  private cancellationLoginSnapshot(): ArkmeAuthSnapshot {
+    return { status: 'cancellation-pending', environment: this.runtime.config.environment,
+      restDaysCancel: this.pendingCancellationLogin!.days }
+  }
+
+  async resolveCancellationLogin(continueLogin: boolean): Promise<ArkmeAuthSnapshot> {
+    const pending = this.pendingCancellationLogin
+    if (pending === undefined) throw new ArkmePluginError('cancellation-login-expired', '登录确认已失效，请重新登录', false)
+    if (!continueLogin) {
+      this.pendingCancellationLogin = undefined
+      return { status: 'logged-out', environment: this.runtime.config.environment }
+    }
+    await this.runtime.post(this.runtime.config.authBaseUrl, '/api/v1/auth/abort-cancel', {}, pending.session.accessToken, [200])
+    if (this.pendingCancellationLogin !== pending) throw new ArkmePluginError('cancellation-login-expired', '登录确认已失效，请重新登录', false)
+    const snapshot = await this.acceptLoginSession(pending.session, 0, () => {
+      if (this.pendingCancellationLogin !== pending) throw new ArkmePluginError('cancellation-login-expired', '登录确认已失效，请重新登录', false)
+    })
+    if (this.pendingCancellationLogin === pending) this.pendingCancellationLogin = undefined
+    return snapshot
+  }
+
+  private async cancellationSession(expectedUserId: number): Promise<ArkmeSessionCredentials> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('cancellation-session-changed', '账号已切换，请重新打开账号设置', false)
+    return session
+  }
+
+  private cancellationResult(data: ArkmeCancellationSnapshot): ArkmeCancellationSnapshot {
+    if (!data || !['immediate', 'waiting'].includes(data.mode) || !['eligible', 'waiting', 'done'].includes(data.status)
+      || !Number.isSafeInteger(data.cancel_at) || data.cancel_at < 0 || typeof data.has_phone !== 'boolean') {
+      throw new ArkmePluginError('cancellation-contract-invalid', '注销状态未确认，请稍后重试', true, 502)
+    }
+    return data
+  }
+
+  async previewCancellation(expectedUserId: number): Promise<ArkmeCancellationSnapshot> {
+    const session = await this.cancellationSession(expectedUserId)
+    const data = await this.runtime.post<ArkmeCancellationSnapshot>(this.runtime.config.authBaseUrl,
+      '/api/v1/auth/cancellation/preview', {}, session.accessToken, [200])
+    const current = await this.cancellationSession(expectedUserId)
+    if (current.refreshToken !== session.refreshToken) throw new ArkmePluginError('cancellation-session-changed', '登录状态已变化，请重试', false)
+    return this.cancellationResult(data)
+  }
+
+  async submitCancellation(expectedUserId: number, expectedMode: string): Promise<ArkmeCancellationSnapshot> {
+    if (expectedMode !== 'immediate' && expectedMode !== 'waiting') throw new ArkmePluginError('cancellation-mode-invalid', '请重新确认注销方式', false)
+    if (this.cancellationTask !== undefined) throw new ArkmePluginError('cancellation-busy', '正在处理注销，请稍候', true)
+    const task = this.performCancellation(expectedUserId, expectedMode)
+    this.cancellationTask = task
+    try { return await task } finally { if (this.cancellationTask === task) this.cancellationTask = undefined }
+  }
+
+  private async performCancellation(expectedUserId: number, expectedMode: string): Promise<ArkmeCancellationSnapshot> {
+    let cleanup = this.pendingCancellationCleanup
+    if (cleanup === undefined) {
+      const completion = await this.runtime.stateStore.readCancellationCompletion?.()
+      const active = await this.runtime.sessionStore.read()
+      if (completion?.userId === expectedUserId && active === undefined) return completion.result
+      if (completion?.userId === expectedUserId && active !== undefined
+        && completion.sessionHash === this.cancellationSessionHash(active)) {
+        cleanup = { session: active, result: completion.result }
+        this.pendingCancellationCleanup = cleanup
+      }
+    }
+    if (cleanup === undefined || cleanup.session.userId !== expectedUserId) {
+      const session = await this.cancellationSession(expectedUserId)
+      const result = this.cancellationResult(await this.runtime.post<ArkmeCancellationSnapshot>(this.runtime.config.authBaseUrl,
+        '/api/v1/auth/cancellation/submit', { expected_mode: expectedMode }, session.accessToken, [200], undefined, false,
+        this.runtime.authenticatedRequestOptions(session, 'auth', 'write', { trackWriteOutcome: true })))
+      if (result.changed === true && result.status === 'eligible') return result
+      if (result.status !== 'done' && result.status !== 'waiting') throw new ArkmePluginError('cancellation-contract-invalid', '注销状态未确认，请稍后重试', true)
+      cleanup = { session, result }
+      this.pendingCancellationCleanup = cleanup
+    }
+    // Atomic credential comparison prevents a late response from signing out another account.
+    const current = await this.runtime.sessionStore.read()
+    if (current !== undefined && (current.userId !== cleanup.session.userId || current.refreshToken !== cleanup.session.refreshToken)) {
+      await this.runtime.stateStore.writeCancellationCompletion?.(undefined)
+      this.pendingCancellationCleanup = undefined
+      throw new ArkmePluginError('cancellation-session-changed', '账号已切换，原账号注销已处理', false)
+    }
+    await this.runtime.stateStore.writeCancellationCompletion?.({ userId: cleanup.session.userId,
+      sessionHash: this.cancellationSessionHash(cleanup.session), result: cleanup.result })
+    this.runtime.invalidateScope(this.runtime.requestScope(cleanup.session.userId))
+    this.runtime.clearRefreshForUser(cleanup.session.userId)
+    const deleted = await this.runtime.deleteSessionIfCurrent(cleanup.session)
+    if (!deleted && await this.runtime.sessionStore.read() !== undefined) {
+      await this.runtime.stateStore.writeCancellationCompletion?.(undefined)
+      this.pendingCancellationCleanup = undefined
+      throw new ArkmePluginError('cancellation-session-changed', '账号已切换，原账号注销已处理', false)
+    }
+    this.profile.invalidate(cleanup.session.userId)
+    this.lifecycle.clearAccountState([cleanup.session.userId])
+    this.lifecycle.reconnectChatRealtime()
+    this.cancellationNotice = cleanup.result.status === 'done' ? 'done' : 'waiting'
+    this.pendingCancellationCleanup = undefined
+    return cleanup.result
+  }
+
+  private cancellationSessionHash(session: ArkmeSessionCredentials): string {
+    return createHash('sha256').update(session.refreshToken).digest('hex')
   }
 
   private normalizedPhone(phone: string): string {
