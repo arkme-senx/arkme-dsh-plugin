@@ -9,6 +9,7 @@ import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { conversationAccountKey, conversationWindowBridge, type ConversationWindowTarget } from './conversation-window.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { isSocialSource, useSocialAccessPresentation } from './social-access-store.js'
 function ConversationContent({target}: {target: ConversationWindowTarget}) {
  const auth = useSyncExternalStore(arkmeAuthStore.subscribe,arkmeAuthStore.getSnapshot,arkmeAuthStore.getSnapshot).auth
  useArkmeRealtimeClientEvents(auth,0,false,{ownsMessagePreparing:true,ownsNotifications:false})
@@ -20,6 +21,8 @@ export function ArkmeConversationWindow() {
  const bridge = conversationWindowBridge()
  const [target,setTarget] = useState<ConversationWindowTarget>()
  const [error,setError] = useState('')
+ const social = useSocialAccessPresentation()
+ const inaccessible = target !== undefined && isSocialSource(target.source) && social.ready && !social.visible
  useEffect(() => {
   let alive = true
   void (async () => {
@@ -37,13 +40,24 @@ export function ArkmeConversationWindow() {
  },[bridge])
  // Internal links must not silently turn this window into another conversation.
  useEffect(() => {
-  if (!target) return
+  if (!target || inaccessible) return
   return arkmeUi.subscribe(() => {
    const ui = arkmeUi.getSnapshot()
    if (ui.mode !== 'source' || !ui.selectedSource || arkmeSourceIdentityKey(ui.selectedSource) !== target.sourceKey) arkmeUi.selectSource(target.source)
   })
- },[target])
+ },[target,inaccessible])
+ useEffect(() => {
+  if (!inaccessible || !bridge) return
+  let current = true
+  void (async () => {
+   // Do not reactivate the denied target in the main window. Its existing
+   // focus refresh owns the navigation there; this window only owns its exit.
+   if (await bridge.focusMain() && current) await bridge.close()
+  })().catch(() => { /* Keep the unavailable message if native exit fails. */ })
+  return () => { current = false }
+ },[bridge,inaccessible])
+ const message = inaccessible ? tr('当前会话暂不可用，请返回主窗口') : error
  return <SocialAccessPresentationBoundary><section data-arkme-owned="conversation-window" style={{position:'fixed',inset:0,display:'flex',flexDirection:'column',background:arkmeTheme.base,color:arkmeTheme.text}}>
-  <div style={{position:'relative',flex:1,minHeight:0}}>{target ? <ConversationContent target={target}/> : <div role={error ? 'alert' : 'status'} style={{padding:24}}>{error || tr('正在加载会话…')}</div>}</div>
+  <div style={{position:'relative',flex:1,minHeight:0}}>{target && !inaccessible ? <ConversationContent target={target}/> : <div role={message ? 'alert' : 'status'} style={{padding:24}}>{message || tr('正在加载会话…')}</div>}</div>
  </section></SocialAccessPresentationBoundary>
 }

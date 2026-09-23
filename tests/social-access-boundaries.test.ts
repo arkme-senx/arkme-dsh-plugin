@@ -13,6 +13,7 @@ import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../src/types.js'
 import { CommonGroupService } from '../src/services/common-group-service.js'
+import { SocialAccessStore } from '../src/client/social-access-store.js'
 import { ArkmeLocalDatabase } from '../src/local-database.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -41,6 +42,36 @@ function fixture(initial: boolean | null, state?: StateStore) {
 }
 
 describe('social business boundaries with the real account adapter', () => {
+  it('refreshes after a same-account write through UI store, SDK and Host without joining the older owner read', async () => {
+    const f = fixture(false)
+    const service = {
+      socialAccessStatus: () => f.runtime.socialAccess.status(true),
+      providerCapabilities: () => ({ contractVersion: ARKME_PROVIDER_CONTRACT_VERSION, features: { socialAccess: true } }),
+    }
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body))
+      return Response.json({ ok: true, value: await dispatchArkmeHostOperation(service as never, request.operation, request.params ?? {}) })
+    } })
+    const store = new SocialAccessStore(() => sdk.socialAccess())
+    try {
+      store.activate('test:42', 1); await store.refresh()
+      expect(store.getSnapshot().allowed).toBe(false)
+      let release!: (response: Response) => void
+      let started!: () => void
+      const startedRequest = new Promise<void>(resolve => { started = resolve })
+      f.fetcher.mockImplementationOnce(() => { started(); return new Promise(resolve => { release = resolve }) })
+      const stale = store.refresh(); await startedRequest
+      // The existing successful binding flow already invalidates this scope.
+      f.runtime.invalidateScope(f.runtime.requestScope(42)); f.setAllowed(true)
+      store.activate('test:42', 2)
+      await store.refresh()
+      expect(store.getSnapshot().allowed).toBe(true)
+      expect(f.fetcher).toHaveBeenCalledTimes(3)
+      release(Response.json({ code: 200, data: { allowed: false } })); await stale
+      expect(store.getSnapshot().allowed).toBe(true)
+    } finally { f.source.dispose(); f.runtime.dispose() }
+  })
+
   it.each([false, null])('checks eligibility before returning persisted common groups through Host, SDK and Tool: %s', async allowed => {
     const path = await mkdtemp(join(tmpdir(), 'social common groups '))
     const db = new ArkmeLocalDatabase(path, new ArkmeStateStore(path))

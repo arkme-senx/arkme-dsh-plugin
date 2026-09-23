@@ -4,7 +4,7 @@ import { ArkmePluginError, type ServiceRuntime } from './service.js'
 /** Account owner decides; this service only deduplicates concurrent reads, never caches grants. */
 export class SocialAccessService {
   private generation = 0
-  private flight: { generation: number; refresh: boolean; promise: Promise<ArkmeSocialAccessSnapshot> } | undefined
+  private flight: { generation: number; revision: number; refresh: boolean; promise: Promise<ArkmeSocialAccessSnapshot> } | undefined
   private readonly unsubscribe: () => void
   constructor(private readonly runtime: ServiceRuntime) {
     this.unsubscribe = runtime.subscribeAccountScope(() => { this.generation++; this.flight = undefined })
@@ -13,7 +13,10 @@ export class SocialAccessService {
   async status(refresh = false): Promise<ArkmeSocialAccessSnapshot> {
     const session = await this.runtime.requireSession()
     const generation = this.generation
-    if (this.flight?.generation === generation && (!refresh || this.flight.refresh)) return await this.flight.promise
+    // Existing account/profile writes invalidate this scope even when the user
+    // stays logged in. A post-write read must not join a pre-write request.
+    const revision = this.runtime.readRevision(this.runtime.requestScope(session.userId))
+    if (this.flight?.generation === generation && this.flight.revision === revision && (!refresh || this.flight.refresh)) return await this.flight.promise
     const promise = (async (): Promise<ArkmeSocialAccessSnapshot> => {
       try {
         const result = await this.runtime.authenticatedAuthPost<{ allowed?: unknown }>('/api/v1/social-access/status', { refresh }, session, AbortSignal.timeout(2_000))
@@ -27,7 +30,7 @@ export class SocialAccessService {
         return { userId: session.userId, allowed: null, reason: 'SOCIAL_ACCESS_UNAVAILABLE' }
       }
     })()
-    this.flight = { generation, refresh, promise }
+    this.flight = { generation, revision, refresh, promise }
     try { return await promise } finally { if (this.flight?.promise === promise) this.flight = undefined }
   }
   async require(): Promise<void> {

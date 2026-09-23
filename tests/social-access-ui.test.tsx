@@ -2,6 +2,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { createRoot, type Root } from 'react-dom/client'
@@ -48,6 +49,26 @@ describe('real social presentation lifecycle', () => {
       <input defaultValue="保留草稿" />
     </main></SocialAccessPresentationBoundary>)
   }
+  it('restores all social navigation immediately after same-account binding without replacing personal content', async () => {
+    api.allowed = false
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+    await domAct(async () => { mountSurface() })
+    const input = document.querySelector('input')!
+    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).toBeNull()
+    const before = api.calls.mock.calls.filter(([op]) => op === 'social.access').length
+    api.allowed = true
+    await domAct(async () => {
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+      arkmeUi.authChanged(true)
+    })
+    expect(api.calls.mock.calls.filter(([op]) => op === 'social.access').length).toBe(before + 1)
+    for (const tab of ['contacts', 'world', 'calls']) {
+      expect(document.querySelector(`[data-arkme-home-tour-target="${tab}"]`)).not.toBeNull()
+    }
+    expect(document.querySelector('input')).toBe(input)
+    expect(input.value).toBe('保留草稿')
+    expect(document.querySelector('main')!.style.opacity).toBe('')
+  })
   it('reveals the complete first frame together and retains the same editor on background refresh', async () => {
     let finish!: (value: unknown) => void
     api.pending = new Promise(resolve => { finish = resolve })

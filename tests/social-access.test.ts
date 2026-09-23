@@ -7,6 +7,7 @@ function fixture(allowed: unknown = false) {
   let listener = () => {}
   const post = vi.fn(async () => ({ allowed }))
   const runtime = {
+    requestScope: (id: number) => `user:${id}`, readRevision: () => 0,
     subscribeAccountScope(fn: () => void) { listener = fn; return () => {} },
     requireSession: vi.fn(async () => ({ userId: 7 })), authenticatedAuthPost: post,
   }

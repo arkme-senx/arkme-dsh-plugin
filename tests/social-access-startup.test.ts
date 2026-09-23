@@ -21,6 +21,26 @@ describe('social presentation startup', () => {
     await next.refresh()
     expect(listener).not.toHaveBeenCalled()
   })
+  it('account updates supersede an older read and retain the confirmed display until the fresh result', async () => {
+    const disk = storage(); const snapshots = new SocialAccessSnapshotStorage(() => disk)
+    snapshots.write('test:7', true)
+    const reads: Array<(value: { userId: number; allowed: boolean }) => void> = []
+    const load = vi.fn(() => new Promise<{ userId: number; allowed: boolean }>(resolve => { reads.push(resolve) }))
+    const store = new SocialAccessStore(load, snapshots)
+    store.activate('test:7', 1)
+    const stale = store.refresh()
+    const presentation = store.getSnapshot()
+    store.activate('test:7', 2)
+    expect(store.getSnapshot()).toBe(presentation)
+    const fresh = store.refresh()
+    store.activate('test:7', 2)
+    expect(store.refresh()).toBe(fresh)
+    expect(load).toHaveBeenCalledTimes(2)
+    reads[1]!({ userId: 7, allowed: true }); await fresh
+    reads[0]!({ userId: 7, allowed: false }); await stale
+    expect(store.getSnapshot()).toBe(presentation)
+    expect(snapshots.read('test:7')).toBe(true)
+  })
   it('isolates accounts/environments, removes on logout and ignores a late owner result', async () => {
     const disk = storage(); const snapshots = new SocialAccessSnapshotStorage(() => disk)
     snapshots.write('test:7', true)
