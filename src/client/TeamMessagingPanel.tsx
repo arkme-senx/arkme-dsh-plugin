@@ -69,6 +69,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
       if (intent.kind === 'team') {
         const value = await callArkme<TeamChannel>('team.app.channel', { teamRef: intent.teamRef }, controller.signal)
         if (!controller.signal.aborted) setChannel(value)
+        await refreshTeamDirectory(accountKey)
         return
       }
       const publicRef = intent.kind === 'official'
@@ -95,13 +96,14 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
       : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
+        {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
         {!direct && <p className="team-empty">{tr('团队成员共同查看和回复，每位外部用户的对话彼此独立。')}</p>}
         {items.map(c => <button key={`${c.side}:${c.key}`} className="team-conversation-row" onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }}>
           <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { nickname: c.channel.name, ...(c.channel.imageRef ? { imageRef: c.channel.imageRef } : {}) }} />
           <span><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><small>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.text}</small></span>
           {c.unread > 0 && <b>{c.unread}</b>}
         </button>)}
-        {items.length === 0 && <p className="team-empty">{tr('还没有团队对话')}</p>}
+        {items.length === 0 && !directory.error && <p className="team-empty" role={directory.loading ? 'status' : undefined}>{tr(directory.loading ? '正在打开对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
       </div>}
   </section>
