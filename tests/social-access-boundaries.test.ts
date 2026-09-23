@@ -42,6 +42,22 @@ function fixture(initial: boolean | null, state?: StateStore) {
 }
 
 describe('social business boundaries with the real account adapter', () => {
+  it('does not cool unrelated account requests or delay recovery after a qualification HTTP failure', async () => {
+    const f = fixture(true)
+    try {
+      f.fetcher.mockResolvedValueOnce(new Response('', { status: 503 }))
+      expect(await f.runtime.socialAccess.status()).toMatchObject({ allowed: null })
+      f.fetcher.mockResolvedValueOnce(Response.json({ code: 200, data: { nick_name: 'Personal profile' } }))
+      await expect(f.runtime.authenticatedAuthPost('/api/v1/auth/get-user-info', {}, undefined,
+        AbortSignal.timeout(250))).resolves.toEqual({ nick_name: 'Personal profile' })
+      f.setAllowed(false)
+      expect(await f.runtime.socialAccess.status(true)).toMatchObject({ allowed: false })
+      expect(f.fetcher).toHaveBeenCalledTimes(3)
+      expect(f.sessions.write).not.toHaveBeenCalled()
+      expect(f.sessions.delete).not.toHaveBeenCalled()
+    } finally { f.source.dispose(); f.runtime.dispose() }
+  })
+
   it('refreshes after a same-account write through UI store, SDK and Host without joining the older owner read', async () => {
     const f = fixture(false)
     const service = {

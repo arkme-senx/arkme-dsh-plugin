@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
-import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { ArkmeAuthStore, arkmeAuthStore } from '../src/client/auth-store.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { createRoot, type Root } from 'react-dom/client'
 import { act as domAct } from 'react-dom/test-utils'
@@ -36,6 +36,7 @@ afterEach(() => {
   renderer = undefined
   socialAccessStore.activate(undefined)
   api.calls.mockClear(); api.pending = undefined
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 const labels = () => renderer!.root.findAllByType('button').map(button => button.props['data-arkme-home-tour-target']).filter(Boolean)
@@ -49,6 +50,37 @@ describe('real social presentation lifecycle', () => {
       <input defaultValue="保留草稿" />
     </main></SocialAccessPresentationBoundary>)
   }
+  it('waits for the existing account check and first qualification before showing any navigation', async () => {
+    const auth = new ArkmeAuthStore()
+    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockImplementation(auth.getSnapshot)
+    vi.spyOn(arkmeAuthStore, 'subscribe').mockImplementation(auth.subscribe)
+    let finish!: (value: unknown) => void
+    api.pending = new Promise(resolve => { finish = resolve })
+    await domAct(async () => { mountSurface() })
+    const surface = document.querySelector('main')!
+    const input = document.querySelector('input')!
+    expect(surface.style.opacity).toBe('0')
+    expect(api.calls.mock.calls.some(([operation]) => operation === 'social.access')).toBe(false)
+    await domAct(async () => { auth.setAuth({ status: 'authenticated', environment: 'test', userId: 42 }) })
+    expect(surface.style.opacity).toBe('0')
+    await domAct(async () => { finish({ userId: 42, allowed: true }); await api.pending })
+    expect(surface.style.opacity).toBe('')
+    for (const tab of ['contacts', 'world', 'calls']) expect(document.querySelector(`[data-arkme-home-tour-target="${tab}"]`)).not.toBeNull()
+    expect(document.querySelector('input')).toBe(input)
+  })
+
+  it('releases personal presentation when the existing account check fails', async () => {
+    const auth = new ArkmeAuthStore()
+    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockImplementation(auth.getSnapshot)
+    vi.spyOn(arkmeAuthStore, 'subscribe').mockImplementation(auth.subscribe)
+    await domAct(async () => { mountSurface() })
+    expect(document.querySelector('main')!.style.opacity).toBe('0')
+    await domAct(async () => { auth.setError('account service unavailable') })
+    expect(document.querySelector('main')!.style.opacity).toBe('')
+    expect(document.querySelector('[data-arkme-home-tour-target="recordings"]')).not.toBeNull()
+    expect(api.calls.mock.calls.some(([operation]) => operation === 'social.access')).toBe(false)
+  })
+
   it('restores all social navigation immediately after same-account binding without replacing personal content', async () => {
     api.allowed = false
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })

@@ -377,7 +377,7 @@ export function ArkmePersistentSidebar({
     onKeyDown={resizeSidebarFromKeyboard}
   />
 
-  if (loginMode) return webLockedMode ? <aside
+  if (loginMode) return webLockedMode ? <SocialAccessPresentationBoundary><aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-login-mode="true"
@@ -396,7 +396,7 @@ export function ArkmePersistentSidebar({
       <ArkmeNavigation wide compactDirectory={compactDirectory} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
     {sidebarResizeHandle}
-  </aside> : <aside
+  </aside></SocialAccessPresentationBoundary> : <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-login-mode="true"
     data-arkme-directory-visible="false"

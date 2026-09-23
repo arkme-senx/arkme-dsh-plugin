@@ -9,7 +9,7 @@ function fixture(allowed: unknown = false) {
   const runtime = {
     requestScope: (id: number) => `user:${id}`, readRevision: () => 0,
     subscribeAccountScope(fn: () => void) { listener = fn; return () => {} },
-    requireSession: vi.fn(async () => ({ userId: 7 })), authenticatedAuthPost: post,
+    requireSession: vi.fn(async () => ({ userId: 7 })), authenticatedAuthReadPost: post,
   }
   return { service: new SocialAccessService(runtime as unknown as ServiceRuntime), runtime, post, change: () => listener() }
 }
@@ -51,7 +51,7 @@ describe('account-owned social access', () => {
   const refreshed = service.status(true); await Promise.resolve()
   const normal = service.status(); await Promise.resolve()
   expect(post).toHaveBeenCalledTimes(2)
-  expect(post).toHaveBeenNthCalledWith(2, '/api/v1/social-access/status', { refresh: true }, { userId: 7 }, expect.any(AbortSignal))
+  expect(post).toHaveBeenNthCalledWith(2, '/api/v1/social-access/status', { refresh: true }, { userId: 7 }, expect.any(AbortSignal), { publishServiceCooldown: false })
   fresh({ allowed: true }); expect((await refreshed).allowed).toBe(true); expect((await normal).allowed).toBe(true)
   stale({ allowed: false }); expect((await cached).allowed).toBe(false)
   await service.status(); expect(post).toHaveBeenCalledTimes(3)
