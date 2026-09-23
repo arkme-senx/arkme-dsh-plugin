@@ -4873,7 +4873,15 @@ describe('ArkmeService', () => {
     })
     await expect(service.searchScene({ scene: 'image_video', limit: 10 })).resolves.toMatchObject({ itemCount: 2, itemSize: 2048 })
     await expect(service.searchRecordings({ query: '北京', limit: 9 })).resolves.toMatchObject({
-      items: [{ sessionId: 'session-1', snippet: '北京复盘' }],
+      items: [{
+        sessionId: 'session-1', recordUid: 'recording-record-1', snippet: '北京复盘',
+        match: {
+          sessionId: 'session-1', childId: 'child-1', itemIndex: 0,
+          transcriptSource: 'system', transcriptVersion: 'version-1',
+          startAtMillis: 200, endAtMillis: 400, text: '北京复盘',
+        },
+        highlightRanges: [{ start: 0, length: 2 }],
+      }],
     })
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
       { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
