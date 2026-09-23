@@ -2,7 +2,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
-import { hasUnreadTeamMessages } from '../src/client/team-message-unread.js'
+import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -110,6 +110,55 @@ describe('Team send UI recovery', () => {
     expect(edits[1]![1].content.text_content).toBe('我的修改')
     expect(renderer!.root.findAllByProps({ 'aria-label': '修改消息内容' })).toHaveLength(0)
   })
+  it('regression: definite paused rejection keeps the draft editable', async () => {
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      throw Object.assign(new Error('团队已暂停接收新消息'), { body: { code: 'team-channel_paused' } })
+    })
+    await mount(); await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
+    expect(renderer!.root.findByProps({ 'aria-label': '团队消息内容' }).props.disabled).toBe(false)
+    expect(renderer!.root.findAllByType('button').filter(v => v.children.join('').includes('取消本次发送'))).toHaveLength(0)
+  })
+  it('regression: real-time refresh reauthorizes and retains the loaded history window', async () => {
+    const message = (key: string, seq: number) => ({ ref:key,key,seq,revision:1,side:'external',sender:{nickname:'用户'},own:true,state:'published',createdAt:1,canEdit:false,canWithdraw:false,content:{text_content:key},version:1,contentStatus:'available',media:[] })
+    mocks.call.mockImplementation(async (op: string, p: {beforeSeq?: number}) => {
+      if(op === 'team.app.timeline') return {conversation,messages:p.beforeSeq ? [message('older',10)] : [message('latest',60)],hasMore: !p.beforeSeq,beforeSeq: p.beforeSeq ? 0:60}
+      return {}
+    })
+    await mount()
+    await act(async () => { renderer!.root.findAllByType('button').find(v => v.children.join('') === '加载更早消息')!.props.onClick(); await tick() })
+    expect(renderer!.root.findAllByType('article')).toHaveLength(2)
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    expect(renderer!.root.findAllByType('article')).toHaveLength(2)
+  })
+  it('refreshes open receipts without dropping pages and never reopens a dismissed receipt', async () => {
+    const message: TeamMessage = {ref:'message',key:'message',seq:1,revision:1,side:'team',sender:{nickname:'成员'},own:true,state:'published',createdAt:1,canEdit:false,canWithdraw:false,version:1,contentStatus:'available',media:[]}
+    let read=false, deferred: ((value: unknown)=>void) | undefined, hold=false
+    mocks.call.mockImplementation(async (op: string,p:{cursor?:string}) => {
+      if(op==='team.app.timeline') return {conversation:{...conversation,side:'team'},messages:[message],hasMore:false,beforeSeq:0}
+      if(op==='team.app.receipts') {
+        if(hold) return new Promise(resolve=>{deferred=resolve})
+        return {teamRead:read,visitorRead:read,members:[{nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
+      }
+      return {}
+    })
+    const click=async(label:string)=>{await act(async()=>{renderer!.root.findAllByType('button').find(v=>v.children.join('')===label)!.props.onClick();await tick()})}
+    await mount();await click('查看阅读状态');await click('更多成员')
+    read=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
+    expect(JSON.stringify(renderer!.toJSON())).toContain('two')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('用户已查看')
+    hold=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
+    await click('关闭阅读状态');await act(async()=>{deferred?.({members:[],hasMore:false,teamRead:true});await tick()})
+    expect(renderer!.root.findAllByProps({className:'team-receipts'})).toHaveLength(0)
+  })
+  it('notifies the inbox owner immediately when detail authorization is revoked', async () => {
+    const revoked=vi.fn()
+    mocks.call.mockRejectedValue(Object.assign(new Error('no access'),{body:{code:'team-not_accessible'}}))
+    await act(async()=>{renderer=create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={()=>{}} onAccessLost={revoked}/>);await tick()})
+    expect(revoked).toHaveBeenCalledTimes(1)
+    expect(renderer!.root.findAllByType('article')).toHaveLength(0)
+  })
   it('does not send when durable local storage is unavailable', async () => {
     await mount()
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
@@ -117,14 +166,4 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send')).toBe(false)
     expect(JSON.stringify(renderer!.toJSON())).toContain('无法保存发送请求')
   })
-})
-
-it('finds unread conversations beyond the first page and cancels stale account scans', async () => {
-  const read = vi.fn(async (_side: string, cursor?: string) => cursor ? { items: [{ ...conversation, unread: 1 }], hasMore: false } : { items: [conversation], hasMore: true, nextCursor: 'next' })
-  const controller = new AbortController()
-  expect(await hasUnreadTeamMessages(read, controller.signal)).toBe(true)
-  expect(read).toHaveBeenCalledTimes(2)
-  controller.abort()
-  await expect(hasUnreadTeamMessages(read, controller.signal)).rejects.toThrow()
-  expect(read).toHaveBeenCalledTimes(2)
 })

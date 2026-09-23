@@ -5,7 +5,7 @@ export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'join'
   | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'send' | 'send.status' | 'send.confirm' | 'edit' | 'withdraw' | 'read' | 'receipts' | 'block'
-  | 'applications' | 'application.decide' | 'media' | 'image'
+  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'media' | 'image'
 }`
 export type TeamSide = 'team' | 'external'
 export interface TeamIdentity { nickname: string; imageRef?: string }
@@ -17,6 +17,7 @@ export interface TeamConversation {
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
   blocked: boolean; revision: number; updatedAt: number
+  preview?: { text: string; status: string; hasMedia: boolean }
 }
 export interface TeamContent { text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
 export interface TeamMedia { ref: string; name: string; mimeType: string; size: number; kind: number }
@@ -32,3 +33,5 @@ export interface TeamSendResult { message?: TeamMessage; reason?: string }
 export interface TeamReceipts { hasMore?: boolean; nextCursor?: string; teamRead: boolean; visitorRead: boolean; members: Array<TeamIdentity & { read: boolean; readAt: number }> }
 export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
+
+export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }

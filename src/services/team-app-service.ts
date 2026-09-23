@@ -13,6 +13,7 @@ const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  conversation_blocked: '此咨询已被屏蔽，双方暂时不能发送或编辑消息',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '其他成员已回复，请阅读新回复后确认是否仍要发送', version_conflict: '内容已被更新，请重新读取后编辑',
   idempotency_conflict: '同一发送请求的内容不一致，请核对发送结果', invalid_request: '请求内容无效',
@@ -65,7 +66,7 @@ export class TeamAppService {
     return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
-      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at) }
+      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true } } : {}) }
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
@@ -123,6 +124,10 @@ export class TeamAppService {
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
     }
     switch (operation) {
+      case 'team.app.attention': {
+        const data = await post('conversations/attention', {}, true)
+        return { external: data.external === true, team: data.team === true, applications: data.applications === true }
+      }
       case 'team.app.teams': case 'team.app.directory': {
         const data = await post('list-mine', {}, true)
         const teams = await Promise.all(list(data.teams).map(v => this.team(v, actor)))
@@ -154,6 +159,10 @@ export class TeamAppService {
       }
       case 'team.app.leave': return await post('members/leave', { team_id: await teamID() })
       case 'team.app.create': return await this.team((await post('create', { name: str(p.name), jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })).team, actor)
+      case 'team.app.join.status': {
+        const data = await post('join-requests/status', { jotmo_id: str(p.jotmoId) }, true)
+        return { state: str(data.state) }
+      }
       case 'team.app.join': {
         try { return { state: 'joined', team: await this.team((await post('join-by-jotmo-id', { jotmo_id: str(p.jotmoId) })).team, actor) } }
         catch (error) {
