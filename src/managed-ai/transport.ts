@@ -85,6 +85,7 @@ export interface ManagedAiTransportOptions {
   fetchImpl: typeof fetch
   resolveBearer: () => Promise<string>
   resolveAnonymousUserId: () => AnonymousUserId
+  prepareOperation?: (request: GenerateOptions, bearer: string) => string | undefined
 }
 
 interface CachedInputAsset {
@@ -297,6 +298,8 @@ function errorCode(status: number, body: unknown): string {
   const providerCode = typeof providerError?.code === 'string' ? providerError.code.toLowerCase() : ''
   if (status === 401 || status === 403) return 'AUTH'
   if (status === 402 || providerCode.includes('balance') || providerCode.includes('quota')) return 'QUOTA'
+  if (status === 409 && ['operation_closed', 'operation_limit', 'operation_conflict'].includes(providerCode)) return 'OPERATION_ENDED'
+  if (providerCode === 'unsupported_model') return 'UNKNOWN_MODEL'
   if (status === 409 && providerCode === 'request_in_progress') return 'REQUEST_IN_PROGRESS'
   if (status === 408 || status === 504) return 'TIMEOUT'
   if (status === 429) return 'RATE_LIMIT'
@@ -821,6 +824,7 @@ export class ManagedAiTransport {
       const imageAttachments = requestImageAttachments(request)
       assertImageRequestWithinCapability(imageAttachments, capability)
       const bearer = await this.options.resolveBearer()
+      const operationUid = this.options.prepareOperation?.(request, bearer)
       const imageCapability = capability.image
       for (let dispatchAttempt = 0; ; dispatchAttempt++) {
         let resolvedImageBytes = 0
@@ -851,6 +855,7 @@ export class ManagedAiTransport {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${bearer}`,
+            ...(operationUid === undefined ? {} : { 'X-Arkme-Turn-ID': operationUid }),
             Accept: 'text/event-stream',
             'Content-Type': 'application/json',
             ...attributionHeaders(),

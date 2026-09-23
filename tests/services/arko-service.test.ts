@@ -24,6 +24,17 @@ function messageActions(runtime: ServiceRuntime): MessageActionService {
 }
 
 describe('ArkoService', () => {
+  it('keeps a retired personal selection explicit with authoritative point prices', async () => {
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    runtime.authenticatedIntelligentPost = async () => ({
+      default_route_key: 'managed-ai/flash-custom', effective_route_key: 'managed-ai/retired-pro', selection_source: 'unavailable',
+      items: [{ route_key: 'managed-ai/flash-custom', display_name: 'Flash', provider: 'managed-ai', description: '日常使用', cost_description: '报价来自当前发布目录', recommended: true, selected: false }],
+    })
+    const service = new ArkoService(runtime, new ProfileService(runtime))
+    await expect(service.arkoModelCatalog()).resolves.toMatchObject({ selectionSource: 'unavailable', effectiveRouteKey: 'managed-ai/retired-pro', options: [{ selected: false, costDescription: '报价来自当前发布目录' }] })
+  })
+
   it('rejects an invalid model route before owner access', async () => {
     const sessions: ArkmeSessionStore = { async read() { return undefined }, async write() {}, async delete() {} }
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore)

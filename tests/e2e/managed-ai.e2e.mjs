@@ -38,10 +38,10 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         if (req.url.startsWith('/api/v1/managed-ai/')) {
           const controller = new AbortController()
           res.on('close', () => controller.abort())
-          const upstream = await fetch(`${origin}${req.url}`, { method: req.method, headers: { authorization: req.headers.authorization ?? '', 'content-type': 'application/json' }, body, signal: controller.signal })
+          const upstream = await fetch(`${origin}${req.url}`, { method: req.method, headers: { authorization: req.headers.authorization ?? '', 'content-type': 'application/json', ...(req.headers['x-arkme-turn-id'] ? { 'x-arkme-turn-id': req.headers['x-arkme-turn-id'] } : {}) }, body, signal: controller.signal })
           res.statusCode = upstream.status
           res.setHeader('content-type', upstream.headers.get('content-type') ?? 'application/json')
-          if (req.url.endsWith('/chat/completions')) results.push({ scenario, request_uid: upstream.headers.get('x-request-id'), status: upstream.status })
+          if (req.url.endsWith('/chat/completions')) results.push({ scenario, operation_uid: req.headers['x-arkme-turn-id'], request_uid: upstream.headers.get('x-request-id'), status: upstream.status })
           for await (const chunk of upstream.body) res.write(chunk)
           res.end()
           return
@@ -125,6 +125,8 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         const wrongModel = label.endsWith('wrong-model')
         expect(results.at(-1).status).toBe(wrongModel ? 502 : 200)
         expect(results.at(-1).request_uid).toMatch(/^[0-9a-f-]{36}$/)
+        expect(results.at(-1).operation_uid).toMatch(/^[0-9a-f]{64}$/)
+        expect(new Set(results.map(item => item.operation_uid)).size).toBe(results.length)
         if (!wrongModel && label !== 'missing-usage') await expect.poll(() => answer.count()).toBe(previousAnswers + 1)
         if (wrongModel) {
           failures++

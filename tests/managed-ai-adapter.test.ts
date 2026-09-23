@@ -231,7 +231,7 @@ describe('Arkme managed model adapter', () => {
       mode: 'normal',
       maxRetries: 0,
     })
-    expect(catalogFetch).toHaveBeenCalledTimes(1)
+    expect(catalogFetch).toHaveBeenCalledTimes(2)
     expect(catalogFetch).toHaveBeenCalledWith(
       'https://intelligent.test/api/v1/managed-ai/models/query',
       expect.objectContaining({
@@ -2455,7 +2455,25 @@ describe('Arkme managed model adapter', () => {
     })
   })
 
-  it('rejects a model absent from the latest managed catalog after one owner refresh', async () => {
+  it('restores a removed model after restart only from server-authorized operation metadata without re-listing it', async () => {
+    const lookups: unknown[] = []
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('account-bound-access') },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as { resolve_model?: string }
+        lookups.push(body)
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer account-bound-access')
+        return managedCatalogResponse(body.resolve_model === 'deepseek-v4-flash' ? [MANAGED_CATALOG_ITEMS[0]] : [MANAGED_CATALOG_ITEMS[1]])
+      },
+    })
+    const restored = await adapter.resolveModel(ARKME_MANAGED_PROVIDER, 'deepseek-v4-flash')
+    expect(restored.name).toBe('DeepSeek V4 Flash')
+    expect((await adapter.listModels(ARKME_MANAGED_PROVIDER)).map(item => item.id)).toEqual(['qwen3.8-max'])
+    expect(lookups).toEqual([{}, { resolve_model: 'deepseek-v4-flash' }])
+  })
+
+  it('rejects a model absent from the latest managed catalog after catalog and retained-operation lookups', async () => {
     let credentialReads = 0
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
@@ -2483,7 +2501,7 @@ describe('Arkme managed model adapter', () => {
     await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
       code: 'UNKNOWN_MODEL',
     })
-    expect(credentialReads).toBe(1)
+    expect(credentialReads).toBe(3)
   })
 
   it('cancels unknown-model discovery before reading credentials when the caller is already aborted', async () => {

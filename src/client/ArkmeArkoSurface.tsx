@@ -393,6 +393,7 @@ function latestContinuation(messages: ArkoMessage[], sessionId: number | undefin
 }
 
 function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
+  if (catalog?.selectionSource === 'unavailable') return '原模型已下线，请重新选择'
   return catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.displayName ?? '模型目录暂不可用'
 }
 
@@ -831,7 +832,7 @@ export function ArkmeArkoSurface() {
   }, [activeRun, detailScope, profileUserId, sending])
 
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
-  const sendDisabled = loading || interactionLocked || clearing || selectingModel
+  const sendDisabled = loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
     || session === undefined || profileUserId === undefined
   const inputDisabled = loading || interactionLocked || session === undefined || profileUserId === undefined
 
@@ -950,7 +951,7 @@ export function ArkmeArkoSurface() {
 
   const displayName = arkoPresentationName(profile)
   const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
-  const canChooseModel = (catalog?.options.length ?? 0) > 1
+  const canChooseModel = (catalog?.options.length ?? 0) > 0
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   useEffect(() => {
     if (!pendingComposerFocusRef.current || loading || interactionLocked

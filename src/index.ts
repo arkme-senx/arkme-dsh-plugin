@@ -1,4 +1,5 @@
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
+import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
 import { DshNativeTransport } from './dsh-remote/native-transport.js'
 import { DshAccountSessions } from './dsh-remote/account-sessions.js'
@@ -434,10 +435,12 @@ export function apply(ctx: Context, config: Config): void {
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
   ctx.inject(['llm'], modelCtx => {
+    const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,
       resolveAttachmentReader: () => modelCtx.get('attachments'),
+      prepareOperation: (request, bearer) => funding.prepare(request, bearer),
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)

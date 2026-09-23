@@ -3334,6 +3334,7 @@ export interface ArkmeArkoModelOption {
   displayName: string
   provider: string
   description: string
+  costDescription?: string
   recommended: boolean
   selected: boolean
 }
@@ -3341,7 +3342,7 @@ export interface ArkmeArkoModelOption {
 export interface ArkmeArkoModelCatalog {
   defaultRouteKey: string
   effectiveRouteKey: string
-  selectionSource: 'default' | 'personal'
+  selectionSource: 'default' | 'personal' | 'unavailable'
   options: ArkmeArkoModelOption[]
 }
 

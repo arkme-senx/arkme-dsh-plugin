@@ -71,7 +71,7 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
     <div ref={menu} className="arkme-model-menu" style={position} role="menu" tabIndex={-1} aria-label={tr('模型选择')} aria-busy={busy} onKeyDown={keyboard}>
       {catalog.options.map(option => {
         const selected = option.routeKey === catalog.effectiveRouteKey
-        return <button key={option.routeKey} type="button" className="arkme-model-option" role="menuitemradio"
+        return <div key={option.routeKey}><button type="button" className="arkme-model-option" role="menuitemradio"
           aria-checked={selected} disabled={busy} onClick={() => {
             if (selected) { close(true); return }
             void onSelect(option.routeKey).then(success => { if (success && mounted.current) close(true) })
@@ -79,6 +79,8 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
           <span>{option.displayName}{option.description && <small>{option.description}</small>}</span>
           {selected && <CheckIcon size={18} style={{ flex: 'none' }} aria-hidden />}
         </button>
+        {option.costDescription && <details className="arkme-model-price"><summary>{tr('按用量扣积分 · 计费说明')}</summary><small>{option.costDescription}</small></details>}
+        </div>
       })}
       {busy && <div className="arkme-model-status" role="status">{tr('正在切换模型')}</div>}
       {error && <div className="arkme-model-error" role="alert">{error}</div>}

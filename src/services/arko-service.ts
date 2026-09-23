@@ -101,6 +101,7 @@ function arkoModelOptionFromData(value: unknown): ArkmeArkoModelOption {
     displayName,
     provider,
     description,
+    costDescription: stringValue(data.cost_description),
     recommended: booleanValue(data.recommended),
     selected: booleanValue(data.selected),
   }
@@ -113,10 +114,12 @@ function arkoModelCatalogFromData(data: Record<string, unknown>): ArkmeArkoModel
   const options = listValue(data.items).map(arkoModelOptionFromData)
   const routeKeys = new Set(options.map(option => option.routeKey))
   const selected = options.filter(option => option.selected)
-  if ((selectionSource !== 'default' && selectionSource !== 'personal')
-    || options.length === 0 || options.length > 16 || routeKeys.size !== options.length
-    || !routeKeys.has(defaultRouteKey) || !routeKeys.has(effectiveRouteKey)
-    || selected.length !== 1 || selected[0]?.routeKey !== effectiveRouteKey) {
+  if ((selectionSource !== 'default' && selectionSource !== 'personal' && selectionSource !== 'unavailable')
+    || options.length === 0 || options.length > 256 || routeKeys.size !== options.length
+    || !routeKeys.has(defaultRouteKey)
+    || (selectionSource === 'unavailable'
+      ? routeKeys.has(effectiveRouteKey) || selected.length !== 0
+      : !routeKeys.has(effectiveRouteKey) || selected.length !== 1 || selected[0]?.routeKey !== effectiveRouteKey)) {
     throw new ArkmePluginError('arko-model-contract-invalid', 'Arko 模型目录响应无效', true, 502)
   }
   return { defaultRouteKey, effectiveRouteKey, selectionSource, options }
@@ -362,9 +365,9 @@ export class ArkoService {
     if (!hasContinuationRun && modelRouteKey === '') {
       try {
         const catalog = await this.arkoModelCatalog(options.signal)
-        if (catalog.options.length > 1) modelRouteKey = catalog.effectiveRouteKey
+        modelRouteKey = catalog.effectiveRouteKey
       } catch {
-        // Model selection is an enhancement. Omitting the route preserves the server default.
+        // Model selection is an enhancement. The server still resolves the saved selection from its published catalog.
       }
     }
     if (modelRouteKey !== '' && (modelRouteKey.length > 128 || !ARKO_MODEL_ROUTE_PATTERN.test(modelRouteKey))) {

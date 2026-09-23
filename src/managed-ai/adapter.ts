@@ -47,6 +47,7 @@ export interface ManagedAiLlmAdapterOptions {
   /** Resolves DSH's current durable attachment owner only when an image request needs it. */
   resolveAttachmentReader?: () => ManagedImageAttachmentReader | undefined
   resolveAnonymousUserId?: () => AnonymousUserId
+  prepareOperation?: (request: GenerateOptions, bearer: string) => string | undefined
   /** Test/runtime seam shared by catalog, direct OSS upload, and managed model transport. */
   fetchImpl?: typeof fetch
 }
@@ -98,6 +99,9 @@ function managedAiFailureFacts(error: unknown): ManagedAiFailureFacts {
 }
 
 function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string; message: string } {
+  if (facts.code === 'OPERATION_ENDED') {
+    return { code: facts.code, message: '本轮任务已结束，请发送新消息继续' }
+  }
   if (facts.code === 'REQUEST_IN_PROGRESS') {
     return { code: facts.code, message: '已有 AI 请求正在完成，请等待结果后重试' }
   }
@@ -662,7 +666,7 @@ class ManagedModelCatalog {
     return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_MAX_STALE_MS
   }
 
-  private async fetchCatalog(signal?: AbortSignal): Promise<void> {
+  private async fetchCatalog(signal?: AbortSignal, resolveModel?: string): Promise<void> {
     const controller = new AbortController()
     let timedOut = false
     const abortFromCaller = (): void => { controller.abort(signal?.reason) }
@@ -685,7 +689,7 @@ class ManagedModelCatalog {
           Authorization: `Bearer ${bearer}`,
           'Content-Type': 'application/json',
         },
-        body: '{}',
+        body: JSON.stringify(resolveModel === undefined ? {} : { resolve_model: resolveModel }),
         signal: controller.signal,
       })
       if (!response.ok) {
@@ -703,12 +707,21 @@ class ManagedModelCatalog {
         throw new LlmError('Arkme 模型目录返回异常', 'MALFORMED_RESPONSE', { cause: error })
       }
       const snapshot = parseManagedCatalog(payload)
-      this.connectionSnapshot = managedConnection(this.baseUrl, snapshot.models)
-      this.modelIds = new Set(snapshot.models.map(model => model.id))
-      this.capabilitySnapshot = snapshot.capabilities
-      this.reasoningSnapshot = snapshot.reasoning
-      this.hasRemoteSnapshot = true
-      this.refreshedAt = Date.now()
+      if (resolveModel !== undefined) {
+        if (snapshot.models.length !== 1 || snapshot.models[0]?.id !== resolveModel) throw new LlmError('原回合模型信息无效', 'UNKNOWN_MODEL')
+        // Metadata lets DSH restore an accepted turn, including after restart.
+        // It does not re-list the model; the server owns exact turn admission.
+        this.connectionSnapshot = managedConnection(this.baseUrl, [...this.connectionSnapshot.models.filter(item => item.id !== resolveModel), ...snapshot.models])
+        for (const [key, value] of snapshot.capabilities) this.capabilitySnapshot.set(key, value)
+        for (const [key, value] of snapshot.reasoning) this.reasoningSnapshot.set(key, value)
+      } else {
+        this.connectionSnapshot = managedConnection(this.baseUrl, snapshot.models)
+        this.modelIds = new Set(snapshot.models.map(model => model.id))
+        this.capabilitySnapshot = snapshot.capabilities
+        this.reasoningSnapshot = snapshot.reasoning
+        this.hasRemoteSnapshot = true
+        this.refreshedAt = Date.now()
+      }
     } catch (error) {
       if (signal?.aborted === true) {
         throw localizeManagedAiError(new LlmError('Arkme 模型目录请求已取消', 'ABORTED', { cause: error }))
@@ -745,16 +758,25 @@ class ManagedModelCatalog {
 
   async ensureModel(model: string, signal?: AbortSignal): Promise<void> {
     const known = this.modelIds.has(model)
-    if (this.isFresh()) return
-    try {
-      await this.refresh(signal)
-    } catch (error) {
-      if (signal?.aborted === true || !this.canUseLastGood() || !known) throw error
+    if (!this.isFresh()) {
+      try { await this.refresh(signal) } catch (error) {
+        if (signal?.aborted === true || !this.canUseLastGood() || !known) throw error
+      }
+    }
+    if (!this.modelIds.has(model)) {
+      try { await this.fetchCatalog(signal, model) } catch (error) {
+        if (signal?.aborted === true) throw error
+        const facts = managedAiFailureFacts(error)
+        if ((facts.status ?? 0) >= 500 || ['TRANSPORT', 'TIMEOUT', 'AUTH'].includes(facts.code)) throw error
+        throw new LlmError('原回合模型已不可用，请重新选择模型', 'UNKNOWN_MODEL', { cause: error })
+      }
     }
   }
 
+  isListed(model: string): boolean { return this.modelIds.has(model) }
+
   assertModel(model: string): void {
-    if (!this.modelIds.has(model)) {
+    if (!this.capabilitySnapshot.has(model)) {
       throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
     }
   }
@@ -781,7 +803,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     assertManagedProvider(provider)
     await this.catalog.refreshForListing()
     const models = await this.delegate.listModels(provider)
-    return models.map(model => ({
+    return models.filter(model => this.catalog.isListed(model.id)).map(model => ({
       ...model,
       inputModalities: this.catalog.capability(model.id).inputModalities,
     }))
@@ -844,6 +866,7 @@ export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): 
     fetchImpl,
     resolveBearer: async () => await resolveBearer(options.credentialOwner),
     resolveAnonymousUserId,
+    ...(options.prepareOperation === undefined ? {} : { prepareOperation: options.prepareOperation }),
   })
   return new ManagedAiLlmAdapter(delegate, catalog, transport)
 }
