@@ -48,3 +48,17 @@ pnpm exec vitest run --config "$ARKME_PLUGIN_CHECKOUT/vitest.team-channel-e2e.co
 最终验证使用任务源码打包的不可变 tgz，经官方 CLI 安装；完整插件套件、类型检查、构建与真实 DSH E2E 结果记录在同任务 meta 的 pre-merge-review.md。IM 独立本地验收从同次 E2E 产生的真实 RabbitMQ 通知进入生产 HandleMessage/Hub/Gin HTTP SSE，未把它描述为已部署整套 IM 服务或系统级离线推送。
 
 再次审查补充：同一来访者成为成员后，会话视图与草稿标识包含侧别；切换收件箱/咨询立即清空旧侧选择并废弃旧查询。真实浏览器先复现切换竞态，再经重新打包及官方安装通过：两侧草稿互不覆盖。还验证第二个来访者隔离、空会话不进入收件箱、旧链接重置失效、既有会话保留及暂停拒绝新发送。最新证据见同任务 meta 的 final-merge-review.md。
+
+## 2026-09-23 页面布局与交互收口
+
+团队仍是通用独立功能。官方团队和用户自己创建/加入的团队使用同一页面和权限逻辑；联系作者仅定位 `arkme_cn`，没有客服业务分支。Contacts 的团队标题旁使用已有 `ArkmeActionMenu` 加号菜单，继续打开原创建、加入或消息链接表单。
+
+团队详情按资料 → 成员 → 对外消息设置自然排列并统一滚动，消除原两行 grid 把第三个子区域挤到页面底部的问题。所有区域使用相同内容宽度与边距。成员可复制消息链接；所有者才能控制开关、审批和重置。第一次开启及危险操作的既有确认语义保留。设置刷新期间保留当前团队成员页面，失败/账号切换仍按原授权链路清理。
+
+新增纯 UI 验证 `tests/e2e/team-layout.e2e.mjs`：官方 DSH + 独立 Profile 中安装的不可变 tgz + 合成身份和 Team DTO。它验证实际页面布局、窄窗对齐、菜单 Escape/三种原表单、复制、开关和成员权限；不能替代上文真实 Team/Record E2E。变量沿用 `ARKME_DSH_CHECKOUT`、`ARKME_PACKED_PROFILE`、`ARKME_E2E_TLS_KEY`、`NODE_EXTRA_CA_CERTS`，另可用 `ARKME_E2E_CAPTURE_DIR` 保存截图。从 DSH checkout 执行：
+
+```sh
+pnpm exec vitest run --config "$ARKME_PLUGIN_CHECKOUT/vitest.team-layout-e2e.config.mts"
+```
+
+能力矩阵：UI 为本次覆盖面；Tools / SDK / Host owner 为 N/A（没有新增业务查询、命令、路由或持久化能力，继续调用既有 Team App owner）。不改变 README、版本、产品配置或 DSH 源码。Flutter 与插件联合验收及原截图问题映射见同任务 meta 的 `team-layout-fix-20260923.md`。
