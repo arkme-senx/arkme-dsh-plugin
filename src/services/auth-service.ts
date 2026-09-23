@@ -27,6 +27,8 @@ interface QrResponse { url?: unknown; scene_str?: unknown; poll_token?: unknown;
 interface ScanResponse { access_token?: unknown; refresh_token?: unknown; user_id?: unknown }
 interface TestLoginResponse { access_token?: unknown; refresh_token?: unknown }
 interface BindPhoneResponse { result?: unknown }
+// Unlink result 2 means success; bind result 2 means the number is already bound.
+interface PhoneUnbindResponse { result?: unknown }
 interface PhoneLoginResponse extends ScanResponse { ok?: unknown }
 interface JiwoStartResponse { ticket?: unknown; poll_secret?: unknown; expires_at?: unknown }
 interface JiwoPollResponse extends ScanResponse { status?: unknown }
@@ -63,6 +65,8 @@ export function jiwoScanLoginAvailable(config: ServiceRuntime['config']): boolea
 }
 
 export class AuthService {
+  private pendingPhoneUnbindSession: ArkmeSessionCredentials | undefined
+
   private readonly attempts = new Map<string, LoginAttempt>()
   private jiwoAttemptGeneration = 0
 
@@ -81,6 +85,7 @@ export class AuthService {
   }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    this.pendingPhoneUnbindSession = undefined
     const activeSession = await this.runtime.sessionStore.read()
     const pendingSession = await this.runtime.readPendingBindingSession()
     const userIds = [...new Set([activeSession?.userId, pendingSession?.userId]
@@ -490,6 +495,106 @@ export class AuthService {
     const sessionAfterPhoneLogin = { accessToken, refreshToken, userId }
     this.attempts.clear()
     return await this.acceptLoginSession(sessionAfterPhoneLogin)
+  }
+
+  async checkPhoneUnbindEligibility(expectedUserId: number): Promise<{ allowed: boolean }> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) {
+      throw new ArkmePluginError('phone-unbind-session-changed', '账号已切换，请重新打开账号设置', false)
+    }
+    const data = await this.runtime.authenticatedAuthGet<{ user_id?: unknown; can_unbind_phone?: unknown }>(
+      '/api/v1/auth/get-user-info?include_phone_unbind_eligibility=true', session, undefined,
+      { lane: 'auth', bypassCache: true },
+    )
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken
+      || data.user_id !== session.userId || typeof data.can_unbind_phone !== 'boolean') {
+      throw new ArkmePluginError('phone-unbind-eligibility-unknown', '账号状态未确认，请重新打开账号设置', true)
+    }
+    return { allowed: data.can_unbind_phone }
+  }
+
+  async sendPhoneUnbindCode(captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.post<PhoneUnbindResponse>(
+      this.runtime.config.authBaseUrl, '/api/v1/auth/phone-unbind-send-code',
+      { ...this.normalizedCaptcha(captcha) }, session.accessToken, [200],
+    )
+    this.checkPhoneUnbindResult(numberValue(data.result), true)
+    return { sent: true }
+  }
+
+  async unbindPhone(code: string): Promise<ArkmeAuthSnapshot> {
+    let session: ArkmeSessionCredentials
+    try {
+      session = await this.runtime.requireSession()
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || error.code !== 'login-required') throw error
+      // Credential handoff can finish before desktop scope commit reports back.
+      // Resume the persisted auth flow; never issue a second unlink from it.
+      const pending = await this.runtime.readPendingBindingSession()
+      if (pending === undefined || await this.runtime.sessionStore.read() !== undefined) throw error
+      return { status: 'binding-required', environment: this.runtime.config.environment, userId: pending.userId }
+    }
+    if (!/^[0-9]{6}$/.test(code.trim())) {
+      throw new ArkmePluginError('phone-code-invalid', '请输入有效的短信验证码', false)
+    }
+    if (this.pendingPhoneUnbindSession?.userId === session.userId
+      && this.pendingPhoneUnbindSession.refreshToken === session.refreshToken) return await this.reconcilePhoneUnbind(session)
+    try {
+      const data = await this.runtime.post<PhoneUnbindResponse>(
+        this.runtime.config.authBaseUrl, '/api/v1/auth/phone-unbind',
+        { code: code.trim() }, session.accessToken, [200], undefined, false,
+        this.runtime.authenticatedRequestOptions(session, 'auth', 'write', { trackWriteOutcome: true }),
+      )
+      // Result 1 confirms absence, not a second write; reconcile the owner fact.
+      if (numberValue(data.result) !== 1) this.checkPhoneUnbindResult(numberValue(data.result), false)
+      this.pendingPhoneUnbindSession = session
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !(error.writeOutcomeUnknown === true || ['arkme-network-error', 'arkme-timeout', 'arkme-response-invalid'].includes(error.code))) throw error
+      this.pendingPhoneUnbindSession = session
+    }
+    return await this.reconcilePhoneUnbind(session)
+  }
+
+  private async reconcilePhoneUnbind(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
+    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
+    this.profile.invalidate(session.userId)
+    let phone: string
+    try {
+      // Absence of a display mask is not proof that the owner removed a binding.
+      const data = await this.runtime.authenticatedAuthGet<{ user_id?: unknown; phone?: unknown }>(
+        '/api/v1/auth/get-user-info', session, undefined, { lane: 'auth', bypassCache: true },
+      )
+      const current = await this.runtime.requireSession()
+      if (data.user_id !== session.userId || typeof data.phone !== 'string'
+        || current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new Error('binding fact unavailable')
+      phone = data.phone
+    } catch (error) {
+      throw new ArkmePluginError('phone-unbind-outcome-unknown', '解绑状态尚未确认，请重试以刷新状态', true, 502, { cause: error })
+    }
+    if (phone.trim() !== '') {
+      this.pendingPhoneUnbindSession = undefined
+      throw new ArkmePluginError('phone-unbind-not-completed', '手机号仍处于绑定状态，请重新获取验证码', false)
+    }
+    // Use the account owner's atomic credential comparison: a late unlink
+    // response must never delete a newly selected account's session.
+    if (!await this.runtime.moveSessionToPendingBinding(session)) {
+      this.pendingPhoneUnbindSession = undefined
+      throw new ArkmePluginError('phone-unbind-session-changed', '账号已切换，请重新打开账号设置', false)
+    }
+    this.lifecycle.reconnectChatRealtime()
+    this.pendingPhoneUnbindSession = undefined
+    return { status: 'binding-required', environment: this.runtime.config.environment, userId: session.userId }
+  }
+
+  private checkPhoneUnbindResult(result: number, sending: boolean): void {
+    if (result === 2) return
+    const message = result === 1 ? '当前没有绑定手机号'
+      : result === 3 ? '当前仅绑定了手机号，请先绑定其他登录方式'
+      : result === 4 ? sending ? '当前号码暂不支持短信验证' : '验证码错误或已过期，请重新获取'
+      : '手机号解绑失败，请稍后重试'
+    throw new ArkmePluginError('phone-unbind-rejected', message, false)
   }
 
   private async authSnapshotForSession(

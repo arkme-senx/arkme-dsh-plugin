@@ -70,7 +70,7 @@ const expectedPublicMethods = [
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
-  'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
+  'sendPhoneCode', 'verifyPhoneCode', 'checkPhoneUnbindEligibility', 'sendPhoneUnbindCode', 'unbindPhone', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',

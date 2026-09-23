@@ -302,6 +302,11 @@ export class ServiceRuntime {
   }
   async writeSession(session: ArkmeSessionCredentials): Promise<void> { await this.accountSessions.write(session) }
   async deleteSession(): Promise<void> { await this.accountSessions.delete() }
+  async moveSessionToPendingBinding(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.accountSessions.deleteIfCurrent(expected, async current => {
+      await this.writePendingBindingSession(current)
+    })
+  }
 
   requestStats(): Record<string, ArkmeRequestStats> {
     return this.requestCoordinator.snapshotStats()
@@ -432,8 +437,8 @@ export class ServiceRuntime {
   }
 
   async writePendingBindingSession(session: ArkmeSessionCredentials): Promise<void> {
-    this.pendingBindingSession = session
     await this.pendingSessionStore?.write(session)
+    this.pendingBindingSession = session
   }
 
   async clearPendingBindingSession(): Promise<void> {
