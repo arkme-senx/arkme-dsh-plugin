@@ -1,3 +1,4 @@
+import type { TeamMessageIntent } from './team-messaging-events.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
@@ -45,11 +46,12 @@ export interface ArkmeUiState {
   recordRevision: number
   topicDirectoryRevision: number
   mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'harness' | 'codex'
+    | 'harness' | 'codex' | 'team'
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
+  teamIntent?: TeamMessageIntent
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
@@ -95,6 +97,7 @@ export interface ArkmeContactWorldTarget extends ArkmeWorldTarget {
 export type ArkmeWorldViewTarget = ArkmeWorldTarget | ArkmeContactWorldTarget
 
 type ArkmeConversationDestination =
+  | { kind: 'team'; intent: TeamMessageIntent }
   | { kind: 'harness' }
   | { kind: 'codex' }
   | { kind: 'notifications' }
@@ -159,7 +162,7 @@ export class ArkmeUiController {
       if (startsClientConversation) this.lastConversationDestination = { kind: 'harness' }
       this.publish({
         ...state,
-        mode: startsClientConversation ? 'harness' : resetSelection && state.mode === 'bot' ? 'source' : state.mode,
+        mode: startsClientConversation || (resetSelection && state.mode === 'team') ? 'harness' : resetSelection && state.mode === 'bot' ? 'source' : state.mode,
         authRevision: this.state.authRevision + 1,
         conversationUnreadJumpRevision: 0,
       })
@@ -342,6 +345,13 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'extensions', extensionDetailId: normalized })
   }
 
+  showTeamConversation(intent: TeamMessageIntent): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'team', intent }
+    const { selectedSource: _source, selectedBot: _bot, calendarOpen: _calendar, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'team', teamIntent: intent })
+  }
+
   showConversations(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
@@ -349,6 +359,7 @@ export class ArkmeUiController {
     this.publish({
       ...rest,
       mode: destination === undefined || destination.kind === 'send_to_self' ? 'source' : destination.kind,
+      ...(destination?.kind === 'team' ? { teamIntent: destination.intent } : {}),
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
@@ -500,6 +511,7 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
+    if (next.mode !== 'team') { const { teamIntent: _intent, ...rest } = next; next = rest }
     if (next.mode !== 'world') {
       const { worldInitialScope: _scope, worldNavigationRevision: _revision, ...rest } = next
       next = rest
@@ -507,6 +519,7 @@ export class ArkmeUiController {
     const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
       && next.codexTarget === this.state.codexTarget
+      && next.teamIntent === this.state.teamIntent
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision

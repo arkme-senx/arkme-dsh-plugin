@@ -1,4 +1,4 @@
-import { TeamMessagingMount } from './TeamMessagingPanel.js'
+import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -233,7 +233,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || harnessMode || ui.mode === 'codex')
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || ui.mode === 'team' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
   const sidebarResizeRef = useRef<{
@@ -347,6 +347,10 @@ export function ArkmePersistentSidebar({
     :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
     :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
       transition: none !important;
+    }
+    @media (max-width: 760px) {
+      :root:has([data-arkme-owned="team-conversation-layer"]) { --arkme-persistent-sidebar-width: 184px !important; }
+      :root:has([data-arkme-owned="team-conversation-layer"]) [data-side="sidebar"] { left: 184px !important; }
     }
     [data-arkme-owned="persistent-sidebar-resize-handle"]::after {
       content: "";
@@ -522,7 +526,8 @@ export function ArkmePersistentWorkspace({
   const webLockedHarness = !startupAuthGateEnabled() && authState.auth?.status !== 'authenticated'
   const harnessVisible = ui.mode === 'harness' || webLockedHarness
   const codexVisible = ui.mode === 'codex' && ui.calendarOpen !== true && !webLockedHarness
-  const conversationHidden = harnessVisible || contactsMode || ui.mode === 'codex' && ui.calendarOpen !== true
+  const teamVisible = ui.mode === 'team' && contactsAccountKey !== undefined && ui.teamIntent !== undefined
+  const conversationHidden = harnessVisible || contactsMode || teamVisible || ui.mode === 'codex' && ui.calendarOpen !== true
   const conversationActive = !conversationHidden && ui.calendarOpen !== true
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
@@ -571,6 +576,9 @@ export function ArkmePersistentWorkspace({
           active={conversationActive}
         />
       </div>}
+    {teamVisible && <div data-arkme-owned="team-conversation-layer" style={{ ...styles.conversationLayer, zIndex: 1 }}>
+      <TeamMessagingPanel key={contactsAccountKey} accountKey={contactsAccountKey!} intent={ui.teamIntent!} />
+    </div>}
     {contactsMode && <div className="arkme-directory-detail-pane" data-arkme-contacts-workspace style={styles.contactsLayer}>
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>{tr("返回联系人目录")}</button>}
       <DirectoryDetailPane

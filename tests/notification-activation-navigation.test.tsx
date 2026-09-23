@@ -138,7 +138,7 @@ describe('system notification navigation activation', () => {
     const unsubscribe = subscribeTeamMessageOpen(intent => opened.push(intent))
     await act(async () => { renderer = create(<ArkmeNavigation />); await Promise.resolve() })
     await flushEffects()
-    const teamButton = renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '联系团队')
+    const teamButton = renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '联系作者')
     expect(teamButton).toBeDefined()
     act(() => { teamButton?.props.onClick() })
     expect(opened).toEqual([{ kind: 'official' }])

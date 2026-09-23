@@ -29,6 +29,10 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('distinguishes missing official setup from revoked conversation access', async () => {
+    const f = fixture(() => new Response(JSON.stringify({ code: 1001, data: { reason: 'official_unavailable' } })))
+    await expect(f.service.execute('team.app.official', {})).rejects.toMatchObject({ code: 'team-official_unavailable', message: '暂时无法联系作者，请稍后重试' })
+  })
   it('uses the App credential and lossless Team IDs without Chat, Subject or OpenAPI', async () => {
     const f = fixture(path => path.endsWith('/official-feedback-target') ? channel : path.endsWith('/message-channel/get') ? channel : {})
     const target = await f.service.execute('team.app.official', {}) as TeamChannel

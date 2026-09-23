@@ -13,7 +13,8 @@ const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
-  conversation_blocked: '此咨询已被屏蔽，双方暂时不能发送或编辑消息',
+  conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
+  official_unavailable: '暂时无法联系作者，请稍后重试',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '其他成员已回复，请阅读新回复后确认是否仍要发送', version_conflict: '内容已被更新，请重新读取后编辑',
   idempotency_conflict: '同一发送请求的内容不一致，请核对发送结果', invalid_request: '请求内容无效',
