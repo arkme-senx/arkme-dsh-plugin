@@ -1,3 +1,4 @@
+import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -71,6 +72,35 @@ describe('TeamDetailPane', () => {
     renderer = undefined
   })
 
+  it('keeps a failed leave on the existing Team detail and permits retry', async () => {
+    const teamPage = page(teamRefA, '团队 A')
+    let attempts = 0
+    arkmeContactsTab.activateAccount('account-a')
+    arkmeContactsTab.select({ kind: 'team', teamRef: teamRefA })
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'team.app.members') return teamPage
+      if (operation === 'team.app.leave' && ++attempts === 1) throw new Error('退出失败')
+      return { canManage: false, publicRef: '', enabled: false }
+    })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { button(renderer!, '退出团队').props.onClick(); await tick() })
+    expect(attempts).toBe(0)
+    await act(async () => { button(renderer!, '确认退出').props.onClick(); await tick() })
+    expect(arkmeContactsTab.getSnapshot().selection.kind).toBe('team')
+    expect(text(renderer!.root)).toContain('退出失败')
+    await act(async () => { button(renderer!, '确认退出').props.onClick(); await tick() })
+    expect(attempts).toBe(2)
+    expect(arkmeContactsTab.getSnapshot().selection.kind).toBe('none')
+  })
+
+  it('does not offer the owner a leave action', async () => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = 'owner'
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(text(renderer!.root)).not.toContain('退出团队')
+  })
+
   it('renders real member avatars and identity degradation without mixing their semantics', async () => {
     const teamPage = page(teamRefA, '团队 A', {
       items: [
@@ -116,9 +146,10 @@ describe('TeamDetailPane', () => {
 
   it('uses the opaque next cursor and merges a later member page without duplicating rows', async () => {
     const second = deferred<ArkmeTeamMemberPage>()
-    mocks.callArkme
-      .mockResolvedValueOnce(page(teamRefA, '团队 A', { hasMore: true, nextPageCursor: 'cursor_v1_next', totalCount: 2 }))
-      .mockImplementationOnce(async () => await second.promise)
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'team.app.channel') return { teamRef: teamRefA, name: '团队 A', canManage: false }
+      return params.pageCursor ? await second.promise : page(teamRefA, '团队 A', { hasMore: true, nextPageCursor: 'cursor_v1_next', totalCount: 2 })
+    })
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
     await act(async () => { button(renderer!, '加载更多成员').props.onClick(); await tick() })

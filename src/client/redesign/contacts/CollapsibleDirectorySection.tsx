@@ -8,6 +8,7 @@ export interface CollapsibleDirectorySectionProps {
   emptyLabel: string
   countLabel?: string
   active?: boolean
+  actions?: ReactNode
   children: ReactNode
   onToggle(): void
   onRetry(): void
@@ -21,6 +22,7 @@ export function CollapsibleDirectorySection({
   countLabel,
   active = true,
   children,
+  actions,
   onToggle,
   onRetry,
   onLoadMore,
@@ -82,6 +84,7 @@ export function CollapsibleDirectorySection({
       <span className="arkme-contact-directory-count">{countLabel ?? (section.status === 'idle' || (section.status === 'loading' && !hasItems) || (section.coverage === 'partial' && section.section === 'contacts') || (section.status === 'error' && !hasItems) ? '…' : `${section.total}${section.coverage === 'partial' ? '+' : ''}`)}</span>
     </button>
     <div id={contentId} className="arkme-contact-directory-section-body" hidden={!section.expanded}>
+      {section.expanded && actions}
       {section.expanded && hasItems && children}
       {section.expanded && section.status === 'loading' && <div role="status" className="arkme-contact-directory-status">
         {hasItems && section.loadingMode === 'replace' ? tr("正在更新…") : tr("正在加载…")}

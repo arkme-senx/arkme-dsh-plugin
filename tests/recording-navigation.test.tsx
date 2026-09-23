@@ -145,7 +145,7 @@ describe('home tour directory integration', () => {
   it('marks the real optional author clickable row', () => {
     const markup = renderToStaticMarkup(<navigation.ArkmeOfficialAuthorRow onClick={vi.fn()} />)
     expect(markup).toContain('data-arkme-home-tour-target="official-author"')
-    expect(markup).toContain('>联系团队<')
+    expect(markup).toContain('>联系作者<')
   })
 
   it('derives root readiness from the current authenticated directory owner', () => {

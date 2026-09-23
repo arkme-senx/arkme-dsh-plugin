@@ -1,4 +1,5 @@
-import { TeamMessagingEntry } from './TeamMessagingPanel.js'
+import { TeamAvatar } from './TeamMessagingPanel.js'
+import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
@@ -627,12 +628,12 @@ export function ArkmeOfficialAuthorRow({
           label={tr("{v0}的头像", { v0: profile.displayName })}
           {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
         />}
-    title={tr("联系团队")}
+    title={tr("联系作者")}
     titleBadge={<ArkmeTopicTagBadge label={tr("官方")} />}
-    preview={busy ? '正在打开团队通道…' : '向即我团队反馈问题'}
+    preview={busy ? tr('正在打开对话…') : tr('即我开发团队 · 问题反馈')}
     selected={false}
     disabled={busy}
-    ariaLabel={tr("联系团队")}
+    ariaLabel={tr("联系作者")}
     homeTourTarget="official-author"
     onClick={onClick}
   />
@@ -1013,6 +1014,7 @@ export function ArkmeNavigation({
   const currentAccountKey = authenticated && auth.userId !== undefined
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
@@ -2071,10 +2073,9 @@ export function ArkmeNavigation({
           }}
         />}
         {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
-        {authenticated && <ArkmeOfficialAuthorRow
+        {authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow
           onClick={() => { void openOfficialAuthor() }}
         />}
-        {authenticated && currentAccountKey && <TeamMessagingEntry accountKey={currentAccountKey} />}
         {showArkoInSearch && <ArkmeArkoRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
@@ -2098,7 +2099,25 @@ export function ArkmeNavigation({
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{removalFeedback.rows.map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items).map(row => {
+          if (row.kind === 'team') {
+            const c = row.conversation
+            const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side
+            return <button key={`team:${c.side}:${c.key}`} data-team-side={c.side} type="button" role="treeitem" aria-selected={selected}
+              style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}
+              onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }}>
+              <span style={styles.sourceAvatarWrap}>
+                <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { nickname: c.channel.name, ...(c.channel.imageRef ? { imageRef: c.channel.imageRef } : {}) }} />
+                {c.unread > 0 && <span style={styles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
+              </span>
+              <span data-arkme-conversation-content style={styles.chatContent}>
+                <span style={styles.chatTop}><span style={styles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
+                  <ArkmeTopicTagBadge label={tr('团队')} selected={selected} /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
+                <span style={styles.chatBottom}><span style={styles.preview}>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''}</span></span>
+              </span>
+            </button>
+          }
+
           if (row.kind === 'bot') {
             const { bot } = row
             const removalPhase = removalFeedback.phases.get(`bot:${conversationBotVisibilityKey(bot)}`)
@@ -2212,6 +2231,7 @@ export function ArkmeNavigation({
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </button>
         })}</ArkmeDirectoryWindow>
+        {teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
         {privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
           {tr(privateInteractionDirectory.error)}

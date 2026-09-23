@@ -1,14 +1,19 @@
-import { openTeamMessages } from '../../team-messaging-events.js'
-import { tr, useArkmeLocale } from '../../locale.js'
+import { arkmeContactsTab } from './contacts-tab-store.js'
+import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
+import type { TeamMembers } from '../../../team-app-contract.js'
+import { TeamChannelSettings } from '../../TeamMessagingPanel.js'
+import { openTeamMessages, invalidateTeamMessages } from '../../team-messaging-events.js'
+import { useArkmeLocale } from '../../locale.js'
+import { teamText as tr } from '../../team-messaging-i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { ArkmeTeamMember, ArkmeTeamMemberPage, ArkmeTeamRole } from '../../../types.js'
+import type { ArkmeTeamMember, ArkmeTeamRole } from '../../../types.js'
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 
 interface TeamDetailState {
   status: 'loading' | 'ready' | 'error'
-  page?: ArkmeTeamMemberPage
+  page?: TeamMembers
   message?: string
   loadingMore?: boolean
 }
@@ -34,6 +39,9 @@ function memberIdentity(member: ArkmeTeamMember): string {
 export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; teamRef: string }) {
   useArkmeLocale()
   const [state, setState] = useState<TeamDetailState>({ status: 'loading' })
+  const [removing, setRemoving] = useState('')
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  const [confirmRemoval, setConfirmRemoval] = useState<{ userRef: string; name: string }>()
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
 
@@ -48,7 +56,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
       return { ...withoutMessage, loadingMore: true }
     })
     try {
-      const page = await callArkme<ArkmeTeamMemberPage>('team.app.members', {
+      const page = await callArkme<TeamMembers>('team.app.members', {
         teamRef,
         limit: 50,
         ...(pageCursor === undefined ? {} : { pageCursor }),
@@ -70,12 +78,43 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
   }, [accountKey, teamRef])
 
   useEffect(() => {
+    setConfirmRemoval(undefined); setConfirmLeave(false); setRemoving('')
     void load()
     return () => {
       generationRef.current += 1
       controllerRef.current?.abort()
     }
   }, [load])
+
+  const removeMember = async () => {
+    if (!confirmRemoval || removing) return
+    const member = confirmRemoval, controller = controllerRef.current
+    setRemoving(member.userRef)
+    try {
+      await callArkme('team.app.member.remove', { userRef: member.userRef }, controller?.signal)
+      if (controller?.signal.aborted) return
+      setConfirmRemoval(undefined); setRemoving(''); await load()
+    } catch (error) {
+      if (!controller?.signal.aborted) setState(current => ({ ...current, message: loadErrorMessage(error) }))
+    } finally { if (!controller?.signal.aborted) setRemoving('') }
+  }
+
+  const leaveTeam = async () => {
+    if (removing) return
+    const controller = controllerRef.current
+    setRemoving('leave')
+    try {
+      await callArkme('team.app.leave', { teamRef }, controller?.signal)
+      if (controller?.signal.aborted) return
+      const conversation = readTeamDirectory(accountKey).items.find(c => c.side === 'team' && c.channel.teamRef === teamRef)
+      if (conversation) discardTeamDirectory(accountKey, conversation)
+      arkmeContactsTab.invalidateDirectoryCache()
+      arkmeContactsTab.clear()
+      invalidateTeamMessages(accountKey)
+    } catch (error) {
+      if (!controller?.signal.aborted) setState(current => ({ ...current, message: loadErrorMessage(error) }))
+    } finally { if (!controller?.signal.aborted) setRemoving('') }
+  }
 
   if (state.status === 'loading') {
     return <div className="arkme-team-detail-status" role="status">{tr("正在加载团队成员…")}</div>
@@ -106,12 +145,22 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
           <span>{tr("位成员")}</span>
         </span>
       </div>
+      <div className="arkme-team-detail-actions"><button type="button" className="arkme-team-action" onClick={() => { openTeamMessages({ kind: 'team', teamRef }) }}>{tr("查看团队对话")}</button></div>
     </header>
-    <button type="button" onClick={() => { openTeamMessages({ kind: 'team', teamRef }) }}>团队消息通道与成员管理</button>
+    <TeamChannelSettings key={`${accountKey}:${teamRef}`} teamRef={teamRef} accountKey={accountKey} onChanged={() => { void load() }} />
+    {page.team.currentUserRole !== 'owner' && <div className="arkme-team-directory-actions">
+      {confirmLeave ? <div className="team-confirm" role="alert">
+        <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>
+        <button disabled={!!removing} onClick={() => { void leaveTeam() }}>{tr('确认退出')}</button>
+        <button disabled={!!removing} onClick={() => { setConfirmLeave(false) }}>{tr('取消')}</button>
+      </div> : <button disabled={!!removing} onClick={() => { setConfirmLeave(true) }}>{tr('退出团队')}</button>}
+    </div>}
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <h2>{tr("团队成员")}</h2>
         <div className="arkme-team-member-list" role="list">
+          {confirmRemoval && <div className="team-confirm" role="alert"><p>{tr('确认移除 {v0}？', { v0: confirmRemoval.name })}</p>
+            <button disabled={!!removing} onClick={() => { void removeMember() }}>{tr('确认')}</button><button disabled={!!removing} onClick={() => { setConfirmRemoval(undefined) }}>{tr('取消')}</button></div>}
           {page.items.map(member => <div className="arkme-team-member-row" role="listitem" key={member.userRef}>
             <span className="arkme-team-member-avatar">
               <ArkmeUserAvatar
@@ -125,9 +174,10 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
               <strong>{member.displayName}</strong>
               <small>{memberIdentity(member)}</small>
             </span>
-            <span className="arkme-team-member-role" data-team-member-role={member.role}>
+            <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
             </span>
+            {member.canRemove && <button type="button" className="arkme-team-action" disabled={!!removing} onClick={() => { setConfirmRemoval({ userRef: member.userRef, name: member.displayName }) }}>{tr('移除')}</button>}</span>
           </div>)}
           {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
           {page.hasMore && page.nextPageCursor !== undefined && <button
@@ -135,7 +185,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
             className="arkme-team-member-more"
             disabled={state.loadingMore === true}
             onClick={() => { void load(page.nextPageCursor) }}
-          >{state.loadingMore === true ? tr("加载中…") : '加载更多成员'}</button>}
+          >{state.loadingMore === true ? tr("加载中…") : tr('加载更多成员')}</button>}
         </div>
       </div>
     </section>
