@@ -1,3 +1,4 @@
+import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -179,12 +180,6 @@ export function RecordRow({ item, onClick, onTagClick }: {
     <RecordMeta item={item} />
   </button>
 }
-function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
-  return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
-    <p style={{ ...styles.text, marginTop: 0, color: colors.text }}>{item.snippet || tr("暂无转写内容")}</p>
-    <span style={styles.meta}>{dateTimeLabel(item.startAtMillis || item.dateStamp)}</span>
-  </button>
-}
 function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
   item: ArkmeSearchRecordItem
   asset?: ArkmeFileAssetDisplayItem
@@ -297,6 +292,9 @@ export function ArkmeSearchSurface({
   const requestId = useRef(0)
   const quickRef = useRef<QuickKey>()
   const searchAbort = useRef<AbortController>()
+  const recordingPageAbort = useRef<AbortController>()
+  const recordingResultQuery = useRef('')
+  const [recordingPageLoading, setRecordingPageLoading] = useState(false)
   const sourceSearchAbort = useRef<AbortController>()
   const sourceSearchRevision = useRef(0)
   const quickRequestAbort = useRef<AbortController>()
@@ -327,6 +325,7 @@ export function ArkmeSearchSurface({
     if (keyword === '') { resetResults(); return }
     setRequestedQuery(keyword)
     const id = ++requestId.current
+    recordingPageAbort.current?.abort(); recordingPageAbort.current=undefined; setRecordingPageLoading(false)
     searchAbort.current?.abort()
     sourceSearchAbort.current?.abort()
     sourceSearchAbort.current = undefined
@@ -366,7 +365,7 @@ export function ArkmeSearchSurface({
     const recordingRequest = includeCompanionDomains
       ? callArkme<ArkmeRecordingSearchResult>(
           'search.recordings', { query: keyword, limit: 50 }, controller.signal,
-        ).then(nextRecordings => { if (active()) setRecordings(nextRecordings) })
+        ).then(nextRecordings => { if (active()) {recordingResultQuery.current=keyword;setRecordings(nextRecordings)} })
           .catch(caught => { if (active()) setRecordingError(errorMessage(caught)) })
           .finally(() => { finish('recordings') })
       : Promise.resolve()
@@ -382,6 +381,33 @@ export function ArkmeSearchSurface({
     void callArkme('search.history.create', { query: keyword }).catch(() => undefined)
     setHistory(current => [keyword, ...current.filter(value => value !== keyword)].slice(0, 10))
   }, [resetResults, searchDshMessages])
+
+  const loadRecordingPage = useCallback(async () => {
+    if (recordingPageAbort.current || query.trim() !== requestedQuery || searchLoading.recordings) return
+    const cursor = recordingResultQuery.current === requestedQuery && recordings?.hasMore ? recordings.nextCursor : undefined
+    if (recordings !== undefined && !cursor && recordingError === '') return
+    const controller = new AbortController()
+    recordingPageAbort.current = controller
+    const revision = requestId.current
+    setRecordingPageLoading(true); setRecordingError('')
+    try {
+      const page = await callArkme<ArkmeRecordingSearchResult>('search.recordings', {query:requestedQuery,limit:50,...(cursor ? {cursor} : {})}, controller.signal)
+      if (controller.signal.aborted || requestId.current !== revision) return
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) throw new Error('录音搜索分页未前进，请重试')
+      recordingResultQuery.current=requestedQuery
+      setRecordings(current => {
+        if (!cursor) return page
+        const merged = new Map((current?.items ?? []).map(item => [`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`,item]))
+        for (const item of page.items) merged.set(`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`,item)
+        return {...page,items:[...merged.values()]}
+      })
+    } catch (caught) { if (!controller.signal.aborted && requestId.current === revision) setRecordingError(errorMessage(caught)) }
+    finally { if (recordingPageAbort.current === controller) {recordingPageAbort.current=undefined;setRecordingPageLoading(false)} }
+  }, [query,requestedQuery,recordings,recordingError,searchLoading.recordings])
+  useEffect(() => {
+    recordingPageAbort.current?.abort(); recordingPageAbort.current=undefined; setRecordingPageLoading(false)
+    return () => {recordingPageAbort.current?.abort();recordingPageAbort.current=undefined}
+  }, [query,quick])
 
   const chooseSource = useCallback(async (sourceUid: string, sourceKind: number) => {
     const keyword = query.trim()
@@ -677,9 +703,10 @@ export function ArkmeSearchSurface({
         </div>
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label={tr("录音转写搜索结果")}>
         <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
-        {recordingError !== '' && <div style={styles.error}>{tr("录音·转写暂不可用：")}{recordingError}</div>}
-        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
-          : !searchLoading.recordings && <Status loading={false} empty />}
+        {recordingError !== '' && <div style={styles.error} role="alert">{tr("录音·转写暂不可用：")}{recordingError}<button type="button" aria-label="重试录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{tr("重试")}</button></div>}
+        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item} />)}</div>
+          : !searchLoading.recordings && recordingError === '' && !recordings?.hasMore && <Status loading={false} empty />}
+        {recordings?.hasMore && recordingError === '' && <button type="button" aria-label="加载更多录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{recordingPageLoading ? tr("正在加载…") : tr("加载更多")}</button>}
       </div>}
       </div>
       <div style={styles.searchProgress} role="status" aria-live="polite">

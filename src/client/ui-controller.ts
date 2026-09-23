@@ -1,3 +1,4 @@
+import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
@@ -51,7 +52,7 @@ export interface ArkmeUiState {
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string }
-  recordingTarget?: { dateStamp: number; startAtMillis: number }
+  recordingTarget?: ArkmeRecordingTarget
   searchTarget?: { revision: number; query: string }
   extensionShareRef?: string
   extensionShareAction?: ArkmeExtensionShareAction
@@ -259,10 +260,10 @@ export class ArkmeUiController {
     this.showWorld()
   }
 
-  showRecordingTarget(dateStamp: number, startAtMillis: number): void {
+  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(segment === undefined ? {} : { segment }) } })
   }
 
   showSearch(): void {
@@ -480,6 +481,7 @@ export class ArkmeUiController {
       && next.conversationTarget?.recordOwnerUserId === this.state.conversationTarget?.recordOwnerUserId
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
+      && JSON.stringify(next.recordingTarget?.segment) === JSON.stringify(this.state.recordingTarget?.segment)
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
       && next.extensionShareRef === this.state.extensionShareRef

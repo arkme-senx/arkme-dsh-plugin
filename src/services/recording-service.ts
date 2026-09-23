@@ -1,3 +1,4 @@
+import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
@@ -1493,6 +1494,10 @@ export class RecordingService {
     return {
       itemId: item.itemId,
       itemRef: this.sealRecordingRefWithKey('arkme-recording-item-v1', payload, refKey),
+      ...(item.transcriptSource !== 'system' ? {} : {
+        searchIdentityHash: recordingSearchIdentityHash({sessionId:item.sessionId,childId:item.childId,itemIndex:item.asrItemIndex,transcriptSource:item.transcriptSource}),
+        searchVersion: recordingSearchVersion({ ...item, text: item.rawTranscriptText ?? item.text }),
+      }),
       transcriptSource: item.transcriptSource,
       sessionKey: createHmac('sha256', refKey).update(`recording-session:${String(viewerUserId)}:${item.sessionId}`).digest('base64url'),
       startAtMillis: item.startAtMillis,

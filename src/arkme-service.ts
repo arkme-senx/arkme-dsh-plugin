@@ -415,7 +415,7 @@ export class ArkmeService {
       source, text, text, humans, bots, session, undefined, textFormat,
     ))
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
-    this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
+    this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.messageActions = new MessageActionService(
