@@ -222,6 +222,11 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async readCancellationCompletion() { return await this.operationalState.readCancellationCompletion() }
+  async writeCancellationCompletion(completion: import('./state-store.js').ArkmeCancellationCompletion | undefined) {
+    await this.operationalState.writeCancellationCompletion(completion)
+  }
+
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
   }

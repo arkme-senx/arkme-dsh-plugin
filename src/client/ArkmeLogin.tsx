@@ -9,6 +9,9 @@ import {
 export type ArkmeLoginMode = 'jiwo' | 'wechat' | 'phone' | 'test'
 
 export interface ArkmeLoginProps {
+  cancellationDays?: number
+  cancellationNotice?: 'done' | 'waiting'
+  onResolveCancellation?: (continueLogin: boolean) => void
   t?: ArkmeLoginTranslate
   mode: ArkmeLoginMode
   phoneBindingRequired?: boolean
@@ -622,6 +625,52 @@ const loginStyles = `
     .dsh-arkme-login-definition h1 { font-size: 40px; }
     .dsh-arkme-login-card { max-height: calc(100vh - 48px); overflow-y: auto; padding: 8px 4px; }
   }
+  .dsh-arkme-login-page.dsh-arkme-cancellation-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    overflow-y: auto;
+  }
+  .dsh-arkme-cancellation-page::after { display: none; }
+  .dsh-arkme-cancellation-page .dsh-arkme-login-card {
+    width: 440px;
+    max-width: 100%;
+    max-height: none;
+    margin: auto;
+    padding: 32px;
+    border: 1px solid var(--arkme-login-border);
+    border-radius: 24px;
+    background: var(--arkme-login-surface);
+  }
+  .dsh-arkme-cancellation-page .dsh-arkme-login-title {
+    margin: 0;
+    text-align: center;
+    font-size: 24px;
+    line-height: 32px;
+  }
+  .dsh-arkme-cancellation-description {
+    margin: 20px 0 0;
+    color: var(--arkme-login-secondary);
+    font-size: 14px;
+    line-height: 24px;
+  }
+  .dsh-arkme-cancellation-page .dsh-arkme-login-actions button {
+    height: 46px;
+    margin: 0;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .dsh-arkme-cancellation-page button:focus-visible {
+    outline: 2px solid var(--arkme-login-accent);
+    outline-offset: 3px;
+  }
+  @media (max-width: 420px) {
+    .dsh-arkme-cancellation-page .dsh-arkme-login-card { padding: 24px 20px; }
+    .dsh-arkme-cancellation-page .dsh-arkme-login-actions { grid-template-columns: 1fr; }
+  }
+
 `
 
 export function ArkmeLogin(props: ArkmeLoginProps) {
@@ -643,6 +692,19 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     props.onTestUserIdChange(event.target.value.replace(/\D/g, '').slice(0, 16))
   }
 
+  if (props.cancellationDays !== undefined) return <div className="dsh-arkme-login-page dsh-arkme-cancellation-page">
+    <style>{loginStyles}</style>
+    <section className="dsh-arkme-login-card" role="dialog" aria-modal="true" aria-label={t('cancellation.title')}>
+      <h3 className="dsh-arkme-login-title">{t('cancellation.title')}</h3>
+      <p className="dsh-arkme-cancellation-description">{t('cancellation.days', { days: props.cancellationDays })}</p>
+      {props.error && <p className="dsh-arkme-login-error" role="alert">{props.error}</p>}
+      <div className="dsh-arkme-login-actions">
+        <button type="button" className="dsh-arkme-login-cancel" disabled={props.busy} onClick={() => { props.onResolveCancellation?.(false) }}>{t('cancellation.cancel')}</button>
+        <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={() => { props.onResolveCancellation?.(true) }}>{t('cancellation.continue')}</button>
+      </div>
+    </section>
+  </div>
+
   return <div className="dsh-arkme-login-page">
     <style>{loginStyles}</style>
     <span className="dsh-arkme-login-glow-top" aria-hidden />
@@ -660,6 +722,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     </section>
     <section className="dsh-arkme-login-card" aria-labelledby="dsh-arkme-login-title">
       <div className="dsh-arkme-login-content">
+        {props.cancellationNotice !== undefined ? <p className="dsh-arkme-login-notice" role="status">{t(props.cancellationNotice === 'done' ? 'cancellation.done' : 'cancellation.waiting')}</p> : null}
         <div className="dsh-arkme-login-brand">
           <p>{props.phoneBindingRequired === true ? t('account.setup') : t('welcome')}</p>
           <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">
