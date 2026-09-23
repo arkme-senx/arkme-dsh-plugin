@@ -1,4 +1,4 @@
-import { pointsUnits, type ArkmeAiPointsAccount, type ArkmeAiPointsPage, type ArkmeAiPointsQuery } from '../ai-points.js'
+import { groupPointsConsumption, pointsUnits, type ArkmeAiPointsAccount, type ArkmeAiPointsPage, type ArkmeAiPointsQuery } from '../ai-points.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 
 function invalid(): never { throw new ArkmePluginError('ai-points-contract-invalid', '积分数据暂时无法确认，请重试', true, 502) }
@@ -30,9 +30,9 @@ export function parseAiPointsAccount(raw: Record<string, unknown>, accountScope:
 
 export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: string, month: string): ArkmeAiPointsPage {
   unit(raw)
-  if (raw.month !== month || !Array.isArray(raw.items) || raw.items.length > 20) return invalid()
+  if (raw.month !== month || !Array.isArray(raw.items)) return invalid()
   const nextBeforeId = raw.next_before_id === '' ? '' : integerString(raw.next_before_id)
-  return { accountScope, unit: 'ai_points', month, chargedPoints: points(raw.charged_points), nextBeforeId,
+  const result: ArkmeAiPointsPage = { accountScope, unit: 'ai_points', month, chargedPoints: points(raw.charged_points), nextBeforeId,
     items: raw.items.map(value => {
       const row = objectValue(value), tokens = objectValue(row.tokens)
       const chargedPoints = points(row.charged_points), grantedPoints = points(row.granted_points), purchasedPoints = points(row.purchased_points)
@@ -48,11 +48,13 @@ export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: st
       if (new Set(services.map(service => service.code)).size !== services.length
         || pointsUnits(modelPoints) + services.reduce((sum, service) => sum + pointsUnits(service.chargedPoints), 0n) !== pointsUnits(chargedPoints)) return invalid()
       if (typeof row.business_code !== 'string') return invalid()
-      return { requestUid: text(row.request_uid), businessCode: row.business_code, model: text(row.model), chargedPoints, modelPoints, services, grantedPoints, purchasedPoints,
+      return { operationUid: typeof row.operation_uid === 'string' ? row.operation_uid : '', requestUid: text(row.request_uid), businessCode: row.business_code, model: text(row.model), chargedPoints, modelPoints, services, grantedPoints, purchasedPoints,
         createdAt: timestamp(row.created_at), completedAt: timestamp(row.completed_at),
         tokens: { cacheHitInput: integerString(tokens.cache_hit_input), cacheMissInput: integerString(tokens.cache_miss_input), output: integerString(tokens.output) } }
     }),
   }
+  if (new Set(result.items.map(item => item.requestUid)).size !== result.items.length || groupPointsConsumption(result.items).length > 20) return invalid()
+  return result
 }
 
 /** One owner for UI, SDK and Tools. It never reads raw usage telemetry. */

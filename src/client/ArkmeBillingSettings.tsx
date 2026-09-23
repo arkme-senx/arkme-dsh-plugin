@@ -130,7 +130,7 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
       <header className="arkme-billing-dialog-header">
         <div>
           <h2>{tr("积分充值")}</h2>
-          <p>{tr("充值后可在 DSH 会话中通过 Arkme 调用 AI 模型")}</p>
+          <p>{tr("APP 与 Arkme 3.0 共用积分，充值到账后即可使用")}</p>
         </div>
         <button type="button" aria-label={tr("关闭充值弹窗")} onClick={props.onClose}>×</button>
       </header>

@@ -57,7 +57,7 @@ Agent · 内容由 AI 生成，仅供参考|Agent · AI-generated content; verif
 当前运行的任务预先占用的余额，任务完成后将返还剩余余额。|Credit reserved for running tasks. Unused credit is released when tasks finish.
 充值|Add credit
 余额充值|Add credit
-充值后可在 DSH 会话中通过 Arkme 调用 AI 模型|Use prepaid credit to access AI models through Arkme in DSH.
+APP 与 Arkme 3.0 共用积分，充值到账后即可使用|AI points are shared between the app and Arkme 3.0, and available once credited.
 当前余额|Current balance
 刷新|Refresh
 充值套餐|Credit packages

@@ -273,8 +273,8 @@ AI 积分|AI points
 收起消费明细|Hide spending details
 查看消费明细|View spending details
 消费月份|Spending month
-本月消费|Spent this month
-本月暂无积分消费|No point spending this month
+该月消费|Spent in selected month
+该月暂无积分消费|No point spending in selected month
 暂时无法读取消费明细。|Spending details could not be loaded.
 精确消费|Exact charge
 输入 Token|Input tokens
@@ -298,4 +298,6 @@ AI 积分|AI points
 刷新积分|Refresh points
 AI 积分 {v0}|AI points {v0}
 AI 积分充值流程|AI point purchase
+次调用|calls
+按用量扣积分 · 计费说明|Usage-based points · Pricing details
 `.trim().split('\n').map(line => { const p = line.indexOf('|'); return [line.slice(0, p), line.slice(p + 1)] }))

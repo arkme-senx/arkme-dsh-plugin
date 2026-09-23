@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatAiPoints, type ArkmeAiPointsPage, type ArkmeAiPointsConsumption } from '../ai-points.js'
+import { groupPointsConsumption, formatAiPoints, type ArkmeAiPointsPage, type ArkmeAiPointsConsumption } from '../ai-points.js'
 import { callArkme } from './api.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 
@@ -43,10 +43,20 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
     {(!current || current.status === 'loading') && <p role="status">{tr('读取中…')}</p>}
     {current?.status === 'error' && <p role="alert">{tr('暂时无法读取消费明细。')} <button type="button" onClick={() => setRetry(value => value + 1)}>{tr('重试')}</button></p>}
     {current?.status === 'ready' && <>
-      <p>{tr('本月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</p>
-      {current.items.length === 0 && <p>{tr('本月暂无积分消费')}</p>}
-      {current.items.map(item => <details className="arkme-usage-metric" key={item.requestUid}>
-        <summary><strong>{item.businessCode === 'agent' ? 'Agent' : item.model}</strong> · {formatAiPoints(item.chargedPoints)} {tr('积分')}<br /><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(item.createdAt)}</small></summary>
+      <p>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</p>
+      {current.items.length === 0 && <p>{tr('该月暂无积分消费')}</p>}
+      {groupPointsConsumption(current.items).map(group => <details className="arkme-usage-metric" key={group.key}>
+        <summary><strong>{group.calls[0]!.businessCode === 'agent' ? 'Agent' : group.calls[0]!.model}{group.calls.length > 1 && ` · ${group.calls.length} ${tr('次调用')}`}</strong> · {formatAiPoints(group.chargedPoints)} {tr('积分')}<br /><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></summary>
+        {group.calls.map(item => <PointsCallDetails key={item.requestUid} item={item} />)}
+      </details>)}
+      {current.more === 'error' && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
+      {current.next && <button type="button" disabled={current.more === 'loading'} onClick={() => void read(current.next)}>{tr(current.more === 'loading' ? '读取中…' : current.more === 'error' ? '重试' : '加载更多')}</button>}
+    </>}
+  </div>
+}
+
+function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {
+ return <div>
         <p>{item.model}</p>
         {item.services.length > 0 && <>
           <p>{tr('模型调用')} {item.modelPoints} {tr('积分')}</p>
@@ -56,9 +66,5 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
         <small>{tr('精确消费')} {item.chargedPoints} {tr('积分')}</small>
         <p>{tr('输入 Token')} {tokenCount((BigInt(item.tokens.cacheHitInput) + BigInt(item.tokens.cacheMissInput)).toString())} · {tr('输出 Token')} {tokenCount(item.tokens.output)}</p>
         <small>{tr('缓存命中')} {tokenCount(item.tokens.cacheHitInput)} · {tr('缓存未命中')} {tokenCount(item.tokens.cacheMissInput)}</small>
-      </details>)}
-      {current.more === 'error' && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
-      {current.next && <button type="button" disabled={current.more === 'loading'} onClick={() => void read(current.next)}>{tr(current.more === 'loading' ? '读取中…' : current.more === 'error' ? '重试' : '加载更多')}</button>}
-    </>}
-  </div>
+ </div>
 }

@@ -95,3 +95,15 @@ it('does not load unavailable sessions, honors locked state, and cancels quota w
   await act(async () => root.unmount()); root = createRoot(host)
   expect(signal.aborted).toBe(true); expect(listeners.size).toBe(0)
 })
+
+it('opens pricing details without selecting or sending a model request',async()=>{
+ const group=state.groups.find(group=>group.id==='arkme-managed')!
+ group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分，已含服务费'
+ await render(); await click('DeepSeek-V4-Flash')
+ const summary=host.querySelector('details summary')!
+ expect(summary.textContent).toBe('按用量扣积分 · 计费说明')
+ await act(async()=>{summary.dispatchEvent(new MouseEvent('click',{bubbles:true}))})
+ expect(directory.select).not.toHaveBeenCalled()
+ expect(host.querySelector('details')?.textContent).toContain('0.2075')
+ expect(host.querySelector('[role="menu"]')).not.toBeNull()
+})

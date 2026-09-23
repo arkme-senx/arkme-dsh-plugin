@@ -89,7 +89,7 @@ describe('Arkme billing settings migration', () => {
 
     expect(markup).toContain('role="dialog"')
     expect(markup).toContain('aria-label="积分充值"')
-    expect(markup).toContain('充值后可在 DSH 会话中通过 Arkme 调用 AI 模型')
+    expect(markup).toContain('APP 与 Arkme 3.0 共用积分，充值到账后即可使用')
     expect(markup).not.toContain('选择充值套餐和支付方式')
     expect(markup).toContain('<span>可用积分</span>')
     expect(markup).toMatch(/display:grid/)

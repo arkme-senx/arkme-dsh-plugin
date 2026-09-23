@@ -108,10 +108,12 @@ export function ArkmeModelSelect({ directory, locked, available }: {
             </div>
             {provider.models.map(item => {
               const selected = state.current?.provider === provider.id && state.current.model === item.id
-              return <button type="button" role="menuitemradio" key={item.id} className="arkme-model-option"
+              return <div key={item.id}><button type="button" role="menuitemradio" className="arkme-model-option"
                 aria-checked={selected} disabled={busy} onClick={() => selected ? close(true) : choose({ provider: provider.id, model: item.id })}>
-                <span>{item.name}{item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
+                <span>{item.name}{provider.id !== 'arkme-managed' && item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
               </button>
+              {provider.id === 'arkme-managed' && item.description && <details className="arkme-model-price"><summary>{tr('按用量扣积分 · 计费说明')}</summary><small>{item.description}</small></details>}
+              </div>
             })}
           </section>)}
           {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">{tr("暂无可用模型")}</div>}

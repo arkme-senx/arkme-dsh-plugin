@@ -64,3 +64,10 @@ describe('AI points accounting boundary', () => {
     expect(f.read).not.toHaveBeenCalled()
   })
 })
+
+it('accepts whole operations exceeding 20 calls but never more than 20 groups',()=>{
+  const data=page(); data.items=Array.from({length:21},(_,i)=>({...data.items[0]!,request_uid:`r${i}`,operation_uid:'one-task'}))
+  const parsed=parseAiPointsPage(data,'prod:1','2026-09')
+  expect(parsed.items).toHaveLength(21); expect(parsed.items[0]?.operationUid).toBe('one-task')
+  expect(()=>parseAiPointsPage({...data,items:data.items.map(row=>({...row,operation_uid:''}))},'prod:1','2026-09')).toThrow()
+})

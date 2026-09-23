@@ -11,6 +11,7 @@ export interface ArkmeAiPointsAccount {
 }
 export interface ArkmeAiPointsConsumption {
   requestUid: string
+  operationUid?: string
   businessCode: string
   model: string
   chargedPoints: string
@@ -57,4 +58,14 @@ export function nanoCnyToPoints(value: string): string {
   const whole = units / 10_000_000n
   const fraction = (units % 10_000_000n).toString().padStart(7, '0').replace(/0+$/, '')
   return fraction ? `${whole}.${fraction}` : whole.toString()
+}
+
+/** The server pages whole operations. Call-level charges remain the only facts. */
+export function groupPointsConsumption(items: ArkmeAiPointsConsumption[]) {
+  const groups = new Map<string, ArkmeAiPointsConsumption[]>()
+  for (const item of items) {
+    const key = item.businessCode === 'agent' && item.operationUid ? `agent:${item.operationUid}` : `request:${item.requestUid}`
+    const calls = groups.get(key) ?? []; calls.push(item); groups.set(key, calls)
+  }
+  return [...groups].map(([key, calls]) => ({ key, calls, chargedPoints: nanoCnyToPoints(calls.reduce((sum, call) => sum + pointsUnits(call.chargedPoints), 0n).toString()) }))
 }

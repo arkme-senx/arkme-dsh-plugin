@@ -1,3 +1,4 @@
+import { pointsUnits } from '../ai-points.js'
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import type { Context } from '@deepseek-ai/cordis'
 import { LlmAdapter, LlmError, ProviderRequestId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -540,6 +541,13 @@ function parseReasoning(value: unknown): LlmModelReasoningInfo {
   }
 }
 
+function modelPointPriceDescription(value: unknown): string {
+  const price = asRecord(value)
+  if (!price) return '计费信息暂时无法读取，实际按用量扣积分'
+  const read = (key: string) => { const v = price[key]; if (typeof v !== 'string') throw new LlmError('模型积分报价无效', 'MALFORMED_RESPONSE'); try { pointsUnits(v) } catch { throw new LlmError('模型积分报价无效', 'MALFORMED_RESPONSE') }; return v }
+  return `每 1,000 Token：输入 ${read('cache_miss_input_per_thousand')} 积分，缓存输入 ${read('cache_hit_input_per_thousand')} 积分，输出 ${read('output_per_thousand')} 积分。已含服务费，实际按用量扣分。`
+}
+
 function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
   const envelope = asRecord(payload)
   if (envelope?.code !== 200) {
@@ -579,6 +587,7 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
     return {
       id,
       name: requiredCatalogText(item, 'display_name', '显示名称'),
+      description: modelPointPriceDescription(item.point_pricing),
       contextWindow,
       maxTokens: defaultMaxTokens,
     }

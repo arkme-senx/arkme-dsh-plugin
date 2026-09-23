@@ -52,3 +52,12 @@ it('cancels a pending account read and ignores its late result', async () => {
   await act(async () => release({ accountScope: 'prod:1', month: '2026-09', chargedPoints: '1', items: [row], nextBeforeId: '' }))
   expect(host.textContent).toContain('暂无积分消费'); expect(host.textContent).not.toContain('DeepSeek Pro')
 })
+
+it('shows one task total and retains exact calls inside the expandable row',async()=>{
+ mocks.call.mockImplementation(async (_op,params)=>({accountScope:'prod:1',unit:'ai_points',month:params.month,chargedPoints:'0.0000002',nextBeforeId:'',items:[{...row,operationUid:'run'},{...row,requestUid:'two',operationUid:'run'}]}))
+ await render()
+ expect(host.querySelectorAll('details')).toHaveLength(1)
+ expect(host.querySelector('summary')?.textContent).toContain('2 次调用')
+ expect(host.querySelector('summary')?.textContent).not.toContain('Token')
+ expect(host.querySelectorAll('details small').length).toBeGreaterThan(2)
+})
