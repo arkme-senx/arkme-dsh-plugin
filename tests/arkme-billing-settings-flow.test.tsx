@@ -54,6 +54,7 @@ describe('Arkme billing payment feedback flow', () => {
   })
 
   it('retains paid feedback until completion even when the balance refresh fails', async () => {
+    const onCreditsChanged = vi.fn()
     let quotaCalls = 0
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'billing.quota') {
@@ -70,7 +71,7 @@ describe('Arkme billing payment feedback flow', () => {
     })
 
     await act(async () => {
-      renderer = create(<ArkmeBillingSettings />)
+      renderer = create(<ArkmeBillingSettings onCreditsChanged={onCreditsChanged} />)
       await flush()
     })
     await act(async () => {
@@ -86,6 +87,7 @@ describe('Arkme billing payment feedback flow', () => {
     expect(nodeText(renderer!.root)).toContain('1,000 积分 已到账')
     expect(nodeText(renderer!.root)).toContain('积分暂未刷新：余额网络中断')
     expect(nodeText(renderer!.root)).toContain('完成')
+    expect(onCreditsChanged).toHaveBeenCalledTimes(1)
 
     await act(async () => { button(renderer!, '完成').props.onClick(); await flush() })
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)

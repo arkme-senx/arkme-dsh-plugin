@@ -27,6 +27,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
   it('preserves content, surfaces failures, and recovers on the same conversation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme managed ai '))
     const results = []
+    const terminalEvents = []
     let scenario = ''
     let scaffold, browser, page
     const proxy = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
@@ -61,6 +62,9 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       const overlay = join(root, 'overlay.json')
       await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-model-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
       scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false })
+      scaffold.ctx.on('session/event', (session, event) => {
+        if (event.type === 'turn/end') terminalEvents.push({ sessionId: session.id, reason: event.data.reason })
+      })
       expect(await scaffold.ctx.get('arkmeData').testLogin(42)).toMatchObject({ status: 'authenticated', userId: 42 })
       const models = await scaffold.ctx.get('llm').listModels('arkme-managed')
       const live = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
@@ -129,12 +133,17 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         }
         if (label === 'missing-usage') {
           failures++
+          expect(terminalEvents.at(-1)).toMatchObject({ sessionId: lastSessionId, reason: { kind: 'error', error: { code: 'STREAM_CLOSED' } } })
           await frame.getByText('STREAM_CLOSED', { exact: true }).waitFor()
           await frame.getByText('Arkme AI 返回异常，请重新发送消息', { exact: true }).waitFor()
         }
         await expect.poll(() => frame.getByText('This turn failed', { exact: true }).count())
           .toBe(failures)
       }
+      // Persisted failure feedback must survive reconnect, not just live SSE.
+      await page.reload({ waitUntil: 'load' })
+      await expect.poll(() => frame.getByText('This turn failed', { exact: true }).count()).toBe(failures)
+      if (!live) await frame.getByText('STREAM_CLOSED', { exact: true }).waitFor()
       // Public SDK consumer resolves the installed tgz export, never plugin source.
       const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), init) })
       const state = await sdk.state()

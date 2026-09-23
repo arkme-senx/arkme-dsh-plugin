@@ -465,11 +465,11 @@ export function ArkmeBillingSettings({ active = true, renderTrigger, modal = fal
       setNowMillis(Date.now())
       activateBillingPaymentAction(nextOrder.paymentAction, openPaymentUrl)
       setOrder(nextOrder)
-      if (nextOrder.status === 'paid') void loadQuota()
+      if (nextOrder.status === 'paid') { void loadQuota(); onCreditsChanged?.() }
       else startPolling(nextOrder)
     } catch (error) { setPurchaseError(errorMessage(error)) }
     finally { setCreatingMethod(undefined) }
-  }, [loadQuota, openPaymentUrl, productsState, startPolling])
+  }, [loadQuota, onCreditsChanged, openPaymentUrl, productsState, startPolling])
 
   const selectProduct = (productId: string) => {
     if (productId === selectedProductIdRef.current) return
