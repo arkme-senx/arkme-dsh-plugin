@@ -379,13 +379,13 @@ export class ArkmeService {
   ) {
     this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
-    this.teamApp = new TeamAppService(this.runtime)
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
     this.arrangement = new ArrangementService(this.runtime)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
+    this.teamApp = new TeamAppService(this.runtime, this.profile)
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
       forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
     }, {

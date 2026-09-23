@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { recordOwnerId, stringifyOwnerJson } from '../record-owner-id.js'
+import type { TeamMemberAvatarPort } from './team-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
@@ -25,7 +26,7 @@ const reasons: Record<string, string> = {
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
-  constructor(private readonly runtime: ServiceRuntime) {
+  constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -145,11 +146,21 @@ export class TeamAppService {
         const [data, mine] = await Promise.all([post('members/list', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { page_cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
         const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        const members = list(data.items)
+        // Reuse the profile presentation owner; optional avatars must not hide membership.
+        const avatarSignal = AbortSignal.any([AbortSignal.timeout(1_500), ...(signal ? [signal] : [])])
+        const presentations = await this.avatars.publicAvatarPresentationsByArkmeIds(
+          members.flatMap(v => v.jotmo_id ? [str(v.jotmo_id)] : []), avatarSignal,
+        ).catch(error => {
+          if (signal?.aborted) throw error
+          return new Map()
+        })
         return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true,
           ...(data.next_page_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_page_cursor }, actor) } : {}),
-          items: await Promise.all(list(data.items).map(async v => ({
+          items: await Promise.all(members.map(async v => ({
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
-            ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id) } : {}), identityState: v.identity_state === 'ready' ? 'ready' as const : 'incomplete' as const,
+            ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
+            identityState: v.identity_state === 'ready' ? 'ready' as const : v.identity_state === 'unavailable' ? 'unavailable' as const : 'incomplete' as const,
             role: role(v.role), joinedAtMillis: num(v.joined_at), canRemove: v.can_remove === true,
           }))),
         } satisfies TeamMembers

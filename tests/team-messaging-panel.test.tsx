@@ -7,7 +7,9 @@ import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: vi.fn() }) }))
-import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
+import { TeamMessagingPanel, TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
+
+import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 
 const conversation: TeamConversation = { ref: 'conv', key: 'key', channel: { teamRef: 'team', name: '团队', jotmoId: 'arkme_cn', publicRef: 'a'.repeat(32), link: '', enabled: true, revision: 1, canManage: false }, side: 'external', lastSeq: 0, latestTeamReplySeq: 0, myReadSeq: 0, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: 1 }
 const storageKey = 'arkme.team.draft:account:key'
@@ -28,6 +30,31 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }); await tick() }) }
+
+  it('shows directory failure and retries without claiming there are no conversations', async () => {
+    let failed = true
+    mocks.call.mockImplementation(async (op: string, payload: { side?: string }) => {
+      if (op === 'team.app.conversations') {
+        if (failed) throw new Error('团队对话暂时无法刷新')
+        return { items: payload.side === 'external' ? [conversation] : [], hasMore: false }
+      }
+      throw new Error(op)
+    })
+    const stop = startTeamDirectory('account')
+    try {
+      await act(async () => { renderer = create(<TeamMessagingPanel accountKey="account" intent={{ kind: 'inbox' }} />); await tick() })
+      await act(async () => { await refreshTeamDirectory('account'); await tick() })
+      expect(JSON.stringify(renderer!.toJSON())).toContain('团队对话暂时无法刷新')
+      expect(JSON.stringify(renderer!.toJSON())).not.toContain('还没有团队对话')
+      failed = false
+      await act(async () => { renderer!.root.findAllByType('button').find(v => v.children.join('') === '重试')!.props.onClick(); await tick() })
+      expect(renderer!.root.findAllByProps({ className: 'team-conversation-row' })).toHaveLength(1)
+      failed = true
+      await act(async () => { await refreshTeamDirectory('account'); await tick() })
+      expect(renderer!.root.findAllByProps({ className: 'team-conversation-row' })).toHaveLength(1)
+      expect(JSON.stringify(renderer!.toJSON())).toContain('团队对话暂时无法刷新')
+    } finally { await act(async () => { stop() }) }
+  })
 
   it.each(['arkme_cn', 'project_team'])('keeps author history copy specific to the official team: %s', async jotmoId => {
     const target = { ...conversation, channel: { ...conversation.channel, jotmoId } }
