@@ -536,6 +536,17 @@ export function useArkmeAuthFlow(
     }
   }
 
+  const resolveCancellationLogin = async (continueLogin: boolean) => {
+    if (busy) return
+    setBusy(true); setError('')
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.cancellation.login.resolve', { continueLogin })
+      setQr(''); qrRequestStartedRef.current = false
+      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
+    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) }
+    finally { setBusy(false) }
+  }
+
   const cancelBinding = async () => {
     setBusy(true)
     setError('')
@@ -594,6 +605,9 @@ export function useArkmeAuthFlow(
     error,
     loginProps: {
       t,
+      ...(auth?.status === 'cancellation-pending' ? { cancellationDays: auth.restDaysCancel ?? 15 } : {}),
+      ...(auth?.cancellationNotice === undefined ? {} : { cancellationNotice: auth.cancellationNotice }),
+      onResolveCancellation: continueLogin => { void resolveCancellationLogin(continueLogin) },
       mode: loginMode,
       phoneBindingRequired,
       agreed,

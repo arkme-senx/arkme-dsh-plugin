@@ -31,6 +31,15 @@ function deferred<T>(): {
 describe('ArkmeAuthStore', () => {
   beforeEach(() => { vi.mocked(callArkme).mockReset() })
 
+  it('keeps cancellation feedback through login view remount and automatic QR login', async () => {
+    const store = new ArkmeAuthStore()
+    store.setAuth({ status: 'logged-out', environment: 'prod', cancellationNotice: 'done' })
+    store.setAuth({ status: 'pending', environment: 'prod', attemptId: 'qr' })
+    expect(store.getSnapshot().auth?.cancellationNotice).toBe('done')
+    store.setAuth({ status: 'authenticated', environment: 'prod', userId: 7 })
+    expect(store.getSnapshot().auth?.cancellationNotice).toBeUndefined()
+  })
+
   it('does not let a stale auth refresh replace a newer pending QR login', async () => {
     const statusResponse = deferred<ArkmeAuthSnapshot>()
     vi.mocked(callArkme).mockImplementation(async method => {

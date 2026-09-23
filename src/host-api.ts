@@ -1060,6 +1060,8 @@ export async function dispatchArkmeHostOperation(
     case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
+    case 'auth.email.send': return await service.sendEmailBindCode(numberParam(params, 'expectedUserId', 0), stringParam(params, 'email'))
+    case 'auth.email.bind': return await service.bindEmail(numberParam(params, 'expectedUserId', 0), stringParam(params, 'email'), stringParam(params, 'code'))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
       captchaParam(params),
@@ -1071,6 +1073,9 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'phone'),
       stringParam(params, 'code'),
     )
+    case 'auth.cancellation.preview': return await service.previewCancellation(numberParam(params, 'expectedUserId', 0))
+    case 'auth.cancellation.submit': return await service.submitCancellation(numberParam(params, 'expectedUserId', 0), stringParam(params, 'expectedMode'))
+    case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)

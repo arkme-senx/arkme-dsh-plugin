@@ -1,3 +1,5 @@
+import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
@@ -217,22 +219,30 @@ interface AccountInfoRowProps {
   title: string
   value: string
   action?: string
+  valueAccessory?: ReactNode
   disabled?: boolean
   onClick?: (() => void) | undefined
 }
 
-function AccountInfoRow({ icon, title, value, action, disabled = false, onClick }: AccountInfoRowProps) {
-  const content = <>
+function AccountInfoRow({ icon, title, value, action, valueAccessory, disabled = false, onClick }: AccountInfoRowProps) {
+  const copy = <>
     <span className="arkme-account-info-icon" aria-hidden>{icon}</span>
     <span className="arkme-account-info-copy">
       <strong>{title}</strong>
-      <small>{value}</small>
+      {valueAccessory === undefined ? <small>{value}</small> : <span className="arkme-account-info-value"><small>{value}</small>{valueAccessory}</span>}
     </span>
+  </>
+  const trailing = <>
     <span className="arkme-account-info-action">{action}</span>
     {onClick === undefined ? <span className="arkme-redesign-trailing-slot" aria-hidden /> : <CaretRight size={15} aria-hidden />}
   </>
-  if (onClick === undefined) return <div className="arkme-account-info-row">{content}</div>
-  return <button data-arkme-feedback="neutral" type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+  const className = `arkme-account-info-row${action === undefined ? ' is-status-only' : ''}`
+  if (valueAccessory !== undefined) return <div className={className}>
+    {copy}
+    <button data-arkme-feedback="neutral" type="button" className="arkme-account-info-edit" disabled={disabled || onClick === undefined} onClick={onClick}>{trailing}</button>
+  </div>
+  if (onClick === undefined) return <div className={className}>{copy}{trailing}</div>
+  return <button data-arkme-feedback="neutral" type="button" className={className} disabled={disabled} onClick={onClick}>{copy}{trailing}</button>
 }
 
 export function WechatBindingSettingsRow({ bound, nickname, onBind, busy = false }: {
@@ -445,6 +455,76 @@ function ArkmeIdDialog({
       <div className="arkme-account-dialog-actions">
         <button data-arkme-feedback="neutral" type="button" onClick={onClose}>{tr("取消")}</button>
         <button data-arkme-feedback="primary" type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{tr("确认创建")}</button>
+      </div>
+    </form>
+  </SettingsDialog>
+}
+
+export function EmailBindDialog({ profile, onClose, onUpdated }: {
+  profile: ArkmeUserProfile
+  onClose: () => void
+  onUpdated: (snapshot: ArkmeUserProfileSnapshot) => void
+}) {
+  useArkmeLocale()
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [bound, setBound] = useState(false)
+  const [status, setStatus] = useState('')
+  const [failed, setFailed] = useState(false)
+  const [countdown, setCountdown] = useState(0)
+  const busyRef = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = window.setTimeout(() => { setCountdown(value => value - 1) }, 1000)
+    return () => { window.clearTimeout(timer) }
+  }, [countdown])
+  const valid = email.trim().length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const run = async (sending: boolean) => {
+    if (busyRef.current || sending && (countdown > 0 || bound) || !bound && (!valid || !sending && !/^[0-9]{4}$/.test(code))) return
+    busyRef.current = true
+    setBusy(true); setStatus(''); setFailed(false)
+    try {
+      if (sending) {
+        await callArkme('auth.email.send', { expectedUserId: profile.userId, email: email.trim() })
+        if (!mounted.current) return
+        setCountdown(60); setStatus('验证码已发送，请查收邮箱')
+      } else {
+        if (!bound) {
+          await callArkme('auth.email.bind', { expectedUserId: profile.userId, email: email.trim(), code })
+          if (!mounted.current) return
+          setBound(true)
+        }
+        const snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+        if (!mounted.current) return
+        if (snapshot.profile?.userId !== profile.userId) throw new Error('账号已切换，请重新打开账号设置')
+        onUpdated(snapshot); onClose()
+      }
+    } catch (error) {
+      if (mounted.current) { setFailed(true); setStatus(error instanceof Error ? error.message : String(error)) }
+    } finally {
+      busyRef.current = false
+      if (mounted.current) setBusy(false)
+    }
+  }
+  return <SettingsDialog title={tr('绑定邮箱')} onClose={() => { if (!busyRef.current) onClose() }}>
+    <form className="arkme-account-form" onSubmit={event => { event.preventDefault(); void run(false) }}>
+      <label><span>{tr('邮箱')}</span><input autoFocus type="email" autoComplete="email" value={email} disabled={busy || bound}
+        placeholder={tr('请输入邮箱地址')} onChange={event => { setEmail(event.target.value); setCode(''); setStatus('') }} /></label>
+      <label><span>{tr('验证码')}</span><span className="arkme-account-code-row">
+        <input inputMode="numeric" autoComplete="one-time-code" maxLength={4} value={code} disabled={busy || bound}
+          placeholder={tr('请输入4位邮箱验证码')} onChange={event => { setCode(event.target.value.replace(/\D/g, '').slice(0, 4)) }} />
+        <button data-arkme-feedback="neutral" type="button" disabled={busy || bound || !valid || countdown > 0} onClick={() => { void run(true) }}>{countdown > 0 ? `${countdown}s` : tr('发送验证码')}</button>
+      </span></label>
+      {bound && <p className="arkme-account-rule">{tr('邮箱已绑定，正在刷新账号信息；刷新失败时可重试。')}</p>}
+      {status && <p className={`arkme-account-dialog-status${failed ? ' is-error' : ''}`} role={failed ? 'alert' : 'status'}>{tr(status)}</p>}
+      <div className="arkme-account-dialog-actions">
+        <button data-arkme-feedback="neutral" type="button" disabled={busy} onClick={onClose}>{tr('取消')}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={busy || !bound && (!valid || !/^[0-9]{4}$/.test(code))}>
+          {busy && <CircleNotch className="arkme-icon-spin" size={16} aria-hidden />}{tr(bound ? '刷新账号信息' : '绑 定')}
+        </button>
       </div>
     </form>
   </SettingsDialog>
@@ -699,10 +779,12 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const [clientConfig, setClientConfig] = useState<ArkmeClientConfig>()
   const [logoutBusy, setLogoutBusy] = useState(false)
+  const [cancellationBusy, setCancellationBusy] = useState(false)
   const [notificationBusy, setNotificationBusy] = useState(false)
   const [error, setError] = useState('')
   const [accountFeedback, setAccountFeedback] = useState('')
-  const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | null>(null)
+  const [emailBoundToast, setEmailBoundToast] = useState(false)
+  const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | 'email' | null>(null)
   const notificationPermission = useSyncExternalStore(
     arkmeDesktopNotifications.subscribePermission,
     arkmeDesktopNotifications.getPermissionSnapshot,
@@ -998,17 +1080,15 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
       </SettingsGroup>}
 
       {authenticated && <SettingsGroup title={tr("账号信息")}>
-        <div className="arkme-account-id-with-qr">
         <AccountInfoRow
           icon={<IdentificationCard size={18} />}
           title={tr("即我号")}
+          valueAccessory={<button type="button" className="arkme-account-profile-qr" aria-label={tr('查看我的二维码')} disabled={!profile || !currentArkmeId} onClick={() => { setActiveAccountDialog('qr') }}><WorldShareQrIcon /></button>}
           value={currentArkmeId === '' ? tr('暂未获取到即我号') : currentArkmeId}
           action={tr(profile?.canUpdateArkmeId === false ? '不可修改' : '修改')}
           disabled={profile === undefined || profile.canUpdateArkmeId === false}
           onClick={profile !== undefined && profile.canUpdateArkmeId !== false ? () => { setActiveAccountDialog('arkme-id'); setAccountFeedback('') } : undefined}
         />
-        <button type="button" className="arkme-account-profile-qr" aria-label={tr('查看我的二维码')} disabled={!profile || !currentArkmeId} onClick={() => { setActiveAccountDialog('qr') }}><WorldShareQrIcon /></button>
-        </div>
         <AccountInfoRow
           icon={<Phone size={18} />}
           title={tr("手机号")}
@@ -1024,11 +1104,20 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         {profile?.bindings?.apple && <AccountInfoRow icon={<AppleLogo size={18} />} title="Apple ID" value={profile.bindingNames?.apple || tr('已绑定')} />}
         {profile?.bindings?.google && <AccountInfoRow icon={<GoogleLogo size={18} />} title="Google" value={profile.bindingNames?.google || tr('已绑定')} />}
         {profile?.bindings?.huawei && <AccountInfoRow icon={<DeviceMobile size={18} />} title={tr("华为 ID")} value={tr('已绑定')} />}
-        {profile?.contact.emailMasked && <AccountInfoRow icon={<EnvelopeSimple size={18} />} title={tr("邮箱")} value={profile.contact.emailMasked} />}
+        <AccountInfoRow icon={<EnvelopeSimple size={18} />} title={tr('邮箱')} value={profile?.contact.emailMasked || ''}
+          {...(!profile?.contact.emailMasked ? { action: tr('绑定'), disabled: profile === undefined,
+            onClick: () => { setActiveAccountDialog('email'); setAccountFeedback('') } } : {})} />
         {accountFeedback !== '' ? <p className="arkme-account-feedback" role="status"><WarningCircle size={14} aria-hidden />{accountFeedback}</p> : null}
       </SettingsGroup>}
       {authenticated && <div className="arkme-account-logout">
-        <button data-arkme-feedback="danger" type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? tr("正在退出…") : tr("退出登录")}</button>
+        <button className="arkme-account-logout-confirm" data-arkme-feedback="danger" type="button" disabled={logoutBusy || cancellationBusy} onClick={() => { void logout() }}>{logoutBusy ? tr("正在退出…") : tr("退出登录")}</button>
+        {authenticatedUserId !== undefined ? <ArkmeAccountCancellation key={authenticatedAccountKey} userId={authenticatedUserId} disabled={logoutBusy}
+          onBusyChange={setCancellationBusy} onComplete={result => {
+            arkmeAuthStore.setAuth({ status: 'logged-out', environment: authState.auth!.environment,
+              cancellationNotice: result.status === 'done' ? 'done' : 'waiting' })
+            clearLastNavigationCache()
+            arkmeUi.authChanged(false)
+          }} /> : null}
       </div>}
       </>}
 
@@ -1079,12 +1168,15 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
 
       {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>
+    {emailBoundToast && <Toast text={tr('邮箱绑定成功')} anchor={surfaceRef.current} icon={<IconCheckOutline16 />} onDone={() => { setEmailBoundToast(false) }} />}
     {activeAccountDialog === 'qr' && profile !== undefined
       ? <ProfileQrDialog profile={profile} shareWebsite={clientConfig?.shareWebsite} onClose={() => { setActiveAccountDialog(null) }} />
       : null}
     {activeAccountDialog === 'arkme-id' && profile !== undefined
       ? <ArkmeIdDialog profile={profile} onClose={() => { setActiveAccountDialog(null) }} onUpdated={applyProfileSnapshot} />
       : null}
+    {activeAccountDialog === 'email' && profile !== undefined
+      ? <EmailBindDialog key={profile.userId} profile={profile} onClose={() => { setActiveAccountDialog(null) }} onUpdated={snapshot => { applyProfileSnapshot(snapshot); setAccountFeedback(''); setEmailBoundToast(true) }} /> : null}
     {activeAccountDialog === 'phone' && profile !== undefined
       ? <PhoneBindDialog
           config={clientConfig}

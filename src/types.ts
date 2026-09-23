@@ -6,7 +6,7 @@ export type ArkmeEnvironment = 'test' | 'prod'
 export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
 export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
-export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
+export type ArkmeAuthStatus = 'logged-out' | 'cancellation-pending' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
 export interface ArkmeAuthSnapshot {
   status: ArkmeAuthStatus
@@ -15,6 +15,16 @@ export interface ArkmeAuthSnapshot {
   attemptId?: string
   qrContent?: string
   expiresAtMillis?: number
+  restDaysCancel?: number
+  cancellationNotice?: 'done' | 'waiting'
+}
+
+export interface ArkmeCancellationSnapshot {
+  mode: 'immediate' | 'waiting'
+  status: 'eligible' | 'waiting' | 'done'
+  cancel_at: number
+  has_phone: boolean
+  changed?: boolean
 }
 
 export interface ArkmeCaptchaResult {
@@ -3623,11 +3633,16 @@ export type ArkmePluginOperation =
   | 'auth.app.poll'
   | 'auth.app.cancel'
   | 'auth.test.login'
+  | 'auth.email.send'
+  | 'auth.email.bind'
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.phone.unbind.check'
   | 'auth.phone.unbind.send'
   | 'auth.phone.unbind'
+  | 'auth.cancellation.preview'
+  | 'auth.cancellation.submit'
+  | 'auth.cancellation.login.resolve'
   | 'auth.logout'
   | 'user-ban.status'
   | 'chat.direct-message-admission'
