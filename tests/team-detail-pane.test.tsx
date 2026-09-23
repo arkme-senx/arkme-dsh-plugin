@@ -9,6 +9,8 @@ import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 
+import { TeamChannelSettings } from '../src/client/TeamMessagingPanel.js'
+
 import { TeamDetailPane } from '../src/client/redesign/contacts/TeamDetailPane.js'
 
 const teamRefA = `team_v1_${'a'.repeat(32)}`
@@ -91,6 +93,21 @@ describe('TeamDetailPane', () => {
     await act(async () => { button(renderer!, '确认退出').props.onClick(); await tick() })
     expect(attempts).toBe(2)
     expect(arkmeContactsTab.getSnapshot().selection.kind).toBe('none')
+  })
+
+  it('retains the current member view while refreshing after a message-setting change', async () => {
+    const later = deferred<ArkmeTeamMemberPage>()
+    let refresh = false
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members'
+      ? refresh ? await later.promise : page(teamRefA, '团队 A') : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    const detail = renderer!.root.findByProps({ 'data-team-ref': teamRefA })
+    refresh = true
+    await act(async () => { renderer!.root.findByType(TeamChannelSettings).props.onChanged(); await tick() })
+    expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBe(detail)
+    expect(text(renderer!.root)).not.toContain('正在加载团队成员')
+    await act(async () => { later.resolve(page(teamRefA, '团队 A', { totalCount: 2 })); await tick() })
+    expect(renderer!.root.findByProps({ 'aria-label': '2 位成员' })).toBeDefined()
   })
 
   it('does not offer the owner a leave action', async () => {
