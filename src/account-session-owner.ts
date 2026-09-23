@@ -86,11 +86,11 @@ export class ArkmeAccountSessionOwner {
     await this.clearSession()
   }
 
-  async deleteIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
-    return await this.clearSession(expected)
+  async deleteIfCurrent(expected: ArkmeSessionCredentials, beforeDelete?: (current: ArkmeSessionCredentials) => Promise<void>): Promise<boolean> {
+    return await this.clearSession(expected, beforeDelete)
   }
 
-  private async clearSession(expected?: ArkmeSessionCredentials): Promise<boolean> {
+  private async clearSession(expected?: ArkmeSessionCredentials, beforeDelete?: (current: ArkmeSessionCredentials) => Promise<void>): Promise<boolean> {
     await this.start()
     let deleted = false
     await this.serial(async () => {
@@ -98,6 +98,9 @@ export class ArkmeAccountSessionOwner {
       if (current === undefined || expected !== undefined
         && (current.userId !== expected.userId || current.refreshToken !== expected.refreshToken)) return
       await this.transition({ kind: 'guest' }, async () => {
+        // Persist any required handoff while the same credential mutation
+        // queue is held; failure must leave the active credentials intact.
+        await beforeDelete?.(current)
         await this.store.delete()
       })
       deleted = true

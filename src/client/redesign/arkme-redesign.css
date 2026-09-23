@@ -733,6 +733,20 @@ button.arkme-account-info-row { cursor: pointer; }
   color: #fff;
 }
 .arkme-account-dialog-actions button:disabled { opacity: .55; cursor: default; }
+.arkme-account-dialog-actions button.arkme-phone-mode-action,
+body[data-ds-dark-theme] .arkme-account-dialog-actions button.arkme-phone-mode-action {
+  min-width: 0;
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #858992);
+  font-size: 12px;
+}
+.arkme-account-dialog-actions button.arkme-phone-mode-action:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary, #343944);
+  text-decoration: underline;
+}
 .arkme-account-dialog-status { margin: 0; color: #13a85b; font-size: 12px; line-height: 18px; }
 .arkme-account-dialog-status.is-error { color: #b54841; }
 .arkme-redesign-version-row { grid-template-columns: minmax(0, 1fr) minmax(150px, auto) auto 18px; }

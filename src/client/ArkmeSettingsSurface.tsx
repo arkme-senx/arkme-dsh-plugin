@@ -450,7 +450,7 @@ function ArkmeIdDialog({
   </SettingsDialog>
 }
 
-function PhoneBindDialog({
+export function PhoneBindDialog({
   config,
   profile,
   onClose,
@@ -461,15 +461,19 @@ function PhoneBindDialog({
   onClose: () => void
   onUpdated: (snapshot: ArkmeUserProfileSnapshot, auth: ArkmeAuthSnapshot) => void
 }) {
+  const [unbind, setUnbind] = useState(false)
+  const busyRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   useArkmeLocale()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
-  const phoneValid = /^1[3-9][0-9]{9}$/.test(phone.replace(/[\s-]/g, ''))
+  const phoneValid = unbind || /^1[3-9][0-9]{9}$/.test(phone.replace(/[\s-]/g, ''))
   const codeValid = /^[0-9]{6}$/.test(code.trim())
-  const actionLabel = profile.contact.phoneMasked === undefined ? '绑定手机号' : '更换手机号'
+  const actionLabel = tr(unbind ? '解绑手机号' : profile.contact.phoneMasked === undefined ? '绑定手机号' : '更换手机号')
 
   useEffect(() => {
     if (countdown <= 0) return
@@ -477,53 +481,95 @@ function PhoneBindDialog({
     return () => { window.clearTimeout(timer) }
   }, [countdown])
 
+  const changePhoneMode = async () => {
+    if (busyRef.current) return
+    if (unbind) {
+      setUnbind(false)
+      setCode(''); setStatus(''); setCountdown(0)
+      return
+    }
+    busyRef.current = true
+    setPhoneBusy(true)
+    setStatus('')
+    try {
+      const result = await callArkme<{ allowed: boolean }>('auth.phone.unbind.check', { expectedUserId: profile.userId })
+      if (!mountedRef.current) return
+      if (result.allowed !== true) {
+        setStatus(result.allowed === false ? tr('当前仅绑定了手机号，请先绑定其他登录方式') : tr('账号状态未确认，请重新打开账号设置'))
+        return
+      }
+      setUnbind(true)
+      setCode(''); setCountdown(0)
+    } catch (caught) {
+      if (mountedRef.current) setStatus(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
+    }
+  }
+
   const sendCode = async () => {
+    if (busyRef.current || countdown > 0) return
     if (!phoneValid) {
       setStatus('请输入正确的手机号')
       return
     }
+    busyRef.current = true
     setPhoneBusy(true)
     setStatus('')
     try {
       const captcha = await verifyPhoneCaptcha(config?.captchaId ?? '', phone)
-      await callArkme('auth.phone.send', { phone, captcha })
+      await callArkme(unbind ? 'auth.phone.unbind.send' : 'auth.phone.send', unbind ? { captcha } : { phone, captcha })
+      if (!mountedRef.current) return
       setCountdown(60)
       setStatus('已发送验证码')
     } catch (caught) {
+      if (!mountedRef.current) return
       setStatus(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setPhoneBusy(false)
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
     }
   }
 
   const verify = async (event: FormEvent) => {
     event.preventDefault()
+    if (busyRef.current) return
     if (!phoneValid || !codeValid) {
       setStatus('请输入正确的手机号和验证码')
       return
     }
+    busyRef.current = true
     setPhoneBusy(true)
     setStatus('')
     try {
-      const auth = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code })
+      const auth = await callArkme<ArkmeAuthSnapshot>(unbind ? 'auth.phone.unbind' : 'auth.phone.verify', unbind ? { code } : { phone, code })
+      if (!mountedRef.current) return
       arkmeAuthStore.setAuth(auth)
+      if (unbind && auth.status === 'binding-required') {
+        onClose()
+        return
+      }
       const snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+      if (!mountedRef.current) return
       onUpdated(snapshot, auth)
       onClose()
     } catch (caught) {
+      if (!mountedRef.current) return
       setStatus(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setPhoneBusy(false)
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
     }
   }
 
-  return <SettingsDialog title={actionLabel} onClose={onClose}>
+  return <SettingsDialog title={actionLabel} onClose={() => { if (!busyRef.current) onClose() }}>
     <form className="arkme-account-form" onSubmit={event => { void verify(event) }}>
       {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p> : null}
-      <label>
+      {!unbind && <label>
         <span>{tr("手机号")}</span>
         <input value={phone} autoFocus inputMode="tel" placeholder={tr("请输入手机号")} onChange={event => { setPhone(event.target.value) }} />
-      </label>
+      </label>}
       <label>
         <span>{tr("验证码")}</span>
         <span className="arkme-account-code-row">
@@ -535,8 +581,9 @@ function PhoneBindDialog({
       </label>
       {status !== '' ? <p className={`arkme-account-dialog-status${status.includes('失败') || status.includes('错误') || status.includes('请输入') || status.includes('已绑定') ? ' is-error' : ''}`} role="status">{status}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>{tr("取消")}</button>
-        <button data-arkme-feedback="primary" type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? tr("绑 定") : tr("更 换")}</button>
+        {profile.contact.phoneMasked !== undefined && <button data-arkme-feedback="neutral" className="arkme-phone-mode-action" type="button" disabled={phoneBusy} onClick={() => { void changePhoneMode() }}>{tr(unbind ? '返回更换手机号' : '解绑手机号')}</button>}
+        <button data-arkme-feedback="neutral" type="button" disabled={phoneBusy} onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{tr(unbind ? '确认解绑' : profile.contact.phoneMasked === undefined ? '绑 定' : '更 换')}</button>
       </div>
     </form>
   </SettingsDialog>
@@ -966,7 +1013,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
           icon={<Phone size={18} />}
           title={tr("手机号")}
           value={phoneMasked ?? tr('未绑定')}
-          action={tr(phoneMasked === undefined ? '绑定' : '换绑')}
+          action={tr(phoneMasked === undefined ? '绑定' : '解/换绑')}
           disabled={profile === undefined}
           onClick={profile !== undefined ? () => { setActiveAccountDialog('phone'); setAccountFeedback('') } : undefined}
         />
