@@ -21,7 +21,13 @@ describe('precise recording search navigation',()=>{
     await act(async()=>{renderer=create(<ArkmeRecordingSurface onOpenRecordingImport={()=>{}} recordingRefreshRevision={0}/>);await new Promise(resolve=>setTimeout(resolve,10))})
     await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))})
     if(stale)expect(JSON.stringify(renderer!.toJSON())).toContain('该转写条目已更新或不可用')
-    else expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.selected).toBe(true)
+    else {
+      const row = renderer!.root.findByType(ArkmeRecordingTranscriptRow)
+      expect(row.props.selected).toBe(true)
+      expect(row.props.searchHighlighted).toBe(true)
+      await act(async()=>{arkmeUi.showRecordings()})
+      expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.searchHighlighted).toBe(false)
+    }
     expect(mocks.call.mock.calls.some(([operation])=>operation==='recordings.playback.open')).toBe(false)
   })
 })

@@ -344,9 +344,10 @@ export function recordingTranscriptDurationLabel(startAtMillis: number, endAtMil
   return tr("{v0}小时{v1}分", { v0: Math.floor(durationSeconds / 3_600), v1: Math.floor((durationSeconds % 3_600) / 60) })
 }
 
-export function ArkmeRecordingTranscriptRow({ item, selected, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
+export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
   item: ArkmeRecordingWorkbenchItem
   selected: boolean
+  searchHighlighted?: boolean
   readOnly?: boolean
   onEditSpeaker?(event: MouseEvent<HTMLButtonElement>): void
   onSelect?(): void
@@ -356,10 +357,12 @@ export function ArkmeRecordingTranscriptRow({ item, selected, onEditSpeaker, onS
 }) {
   return <li
     data-recording-transcript-item={item.itemId}
+    data-recording-search-highlight={searchHighlighted || undefined}
     style={{
       ...styles.transcript,
       ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr)', contentVisibility:'visible' as const } : {}),
       ...(selected ? { background: colors.input } : {}),
+      ...(searchHighlighted ? { background: `color-mix(in srgb, ${colors.base} 88%, ${colors.text} 12%)` } : {}),
       ...(selectionControl ? { paddingLeft: 27 } : {}),
     }}
     onDoubleClick={!readOnly && onToggleSelection === undefined ? onSelect : undefined}
@@ -790,7 +793,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     return () => { cancelled = true }
   }, [preciseTarget,preciseTargetDay,transcriptItems])
   const preciseResolved = preciseResolution?.target === preciseTarget && preciseResolution?.items === transcriptItems
-  const preciseItem = preciseResolved ? preciseResolution?.item : undefined
+  const preciseItem = preciseTargetDay && preciseResolved ? preciseResolution?.item : undefined
   const preciseUnavailable = preciseTarget !== undefined && preciseTargetDay && preciseResolved && !dayLoading && day !== undefined && day.dateStamp === selectedDate.getTime() && day.transcript.state !== 'processing' && preciseItem === undefined
   useEffect(() => {
     if (preciseItem === undefined || activeTab !== 'transcript') return
@@ -931,6 +934,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         key={item.itemId}
         item={item}
         selected={preciseItem?.itemId === item.itemId || selected}
+        searchHighlighted={preciseItem?.itemId === item.itemId}
         selectionControl={selectionMode && <input type="checkbox" aria-label={`选择录音片段 ${recordingTranscriptTimeLabel(item.startAtMillis)}`} checked={selectedForwardItems.some(selected => selected.itemId === item.itemId)} onClick={event => { event.stopPropagation() }} onChange={() => { toggleTranscriptSelection(item) }} />}
         {...(selectionMode ? { onToggleSelection: () => { toggleTranscriptSelection(item) } } : {})}
         text={<RecordingTranscriptText text={item.text} matches={matchesByItem.get(item.itemId) ?? []} activeIndex={activeMatchIndex} />}
