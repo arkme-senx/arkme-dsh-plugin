@@ -1,3 +1,4 @@
+import { resolveRecordingSearchTarget } from './recordings/recording-search-target.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -777,6 +778,25 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const selectedSummary = day?.summary.items.find(version => version.id === summaryVersionId && version.selectable)
   const selectedTimeline = day?.timeline.items.find(version => version.id === timelineVersionId && version.selectable)
   const transcriptItems = useMemo(() => day?.transcript.state === 'ready' ? day.transcript.items : [], [day?.transcript])
+  const preciseTarget = ui.recordingTarget?.segment
+  const preciseTargetDay = ui.recordingTarget !== undefined && dateKey(new Date(ui.recordingTarget.dateStamp)) === dateKey(selectedDate)
+  const [preciseResolution, setPreciseResolution] = useState<{ target: typeof preciseTarget; items: typeof transcriptItems; item?: ArkmeRecordingWorkbenchItem }>()
+  useEffect(() => {
+    let cancelled = false
+    if (!preciseTarget || !preciseTargetDay) { setPreciseResolution(undefined); return }
+    void resolveRecordingSearchTarget(transcriptItems, preciseTarget).then(item => {
+      if (!cancelled) setPreciseResolution({target:preciseTarget,items:transcriptItems,...(item ? {item} : {})})
+    }).catch(() => { if (!cancelled) setPreciseResolution({target:preciseTarget,items:transcriptItems}) })
+    return () => { cancelled = true }
+  }, [preciseTarget,preciseTargetDay,transcriptItems])
+  const preciseResolved = preciseResolution?.target === preciseTarget && preciseResolution?.items === transcriptItems
+  const preciseItem = preciseResolved ? preciseResolution?.item : undefined
+  const preciseUnavailable = preciseTarget !== undefined && preciseTargetDay && preciseResolved && !dayLoading && day !== undefined && day.dateStamp === selectedDate.getTime() && day.transcript.state !== 'processing' && preciseItem === undefined
+  useEffect(() => {
+    if (preciseItem === undefined || activeTab !== 'transcript') return
+    const row = [...(transcriptRootRef.current?.querySelectorAll<HTMLElement>('[data-recording-transcript-item]') ?? [])].find(element => element.dataset.recordingTranscriptItem === preciseItem.itemId)
+    row?.scrollIntoView({block:'center'})
+  }, [preciseItem, activeTab])
   const transcriptMatches = useMemo(() => findRecordingTranscriptMatches(transcriptItems, transcriptSearch), [transcriptItems, transcriptSearch])
   const matchesByItem = useMemo(() => {
     const grouped = new Map<string, Array<(typeof transcriptMatches)[number] & { index: number }>>()
@@ -893,6 +913,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const renderTranscript = () => {
     const section = day?.transcript
     if (dayLoading) return <ArkmeRecordingTranscriptLoading />
+    if (preciseUnavailable) return <p role="alert">{tr('该转写条目已更新或不可用，请重新搜索')}</p>
     if (section?.state === 'processing') return <ArkmeRecordingTranscriptLoading />
     if (section === undefined || section.state !== 'ready') return <SectionState section={section} loading={false} />
     return <>{section.processingCount > 0 && <ArkmeRecordingTranscriptLoading />}<ul style={styles.transcriptList}>{section.items.map(item => {
@@ -909,7 +930,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       return <ArkmeRecordingTranscriptRow
         key={item.itemId}
         item={item}
-        selected={selected}
+        selected={preciseItem?.itemId === item.itemId || selected}
         selectionControl={selectionMode && <input type="checkbox" aria-label={`选择录音片段 ${recordingTranscriptTimeLabel(item.startAtMillis)}`} checked={selectedForwardItems.some(selected => selected.itemId === item.itemId)} onClick={event => { event.stopPropagation() }} onChange={() => { toggleTranscriptSelection(item) }} />}
         {...(selectionMode ? { onToggleSelection: () => { toggleTranscriptSelection(item) } } : {})}
         text={<RecordingTranscriptText text={item.text} matches={matchesByItem.get(item.itemId) ?? []} activeIndex={activeMatchIndex} />}
