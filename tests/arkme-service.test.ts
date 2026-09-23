@@ -4833,7 +4833,7 @@ describe('ArkmeService', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push({ url, body })
       if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
-        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, score: 0.8, match: { session_id: 'session-1', child_id: 'child-1', item_index: 0, transcript_source: 'system', transcript_version: 'v1', start_at: 200, end_at: 300, text: '北京复盘' } }],
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, score: 0.8, match: { session_id: 'session-1', child_id: 'child-1', item_index: 0, transcript_source: 'system', transcript_version: 'version-1', start_at: 200, end_at: 400, text: '北京复盘' }, highlight_ranges: [{ start_index: 0, length: 2 }] }],
         has_more: false, query_guard: { state: 'complete' },
       } })
       return json({ code: 0, data: {

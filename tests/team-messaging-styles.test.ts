@@ -14,7 +14,8 @@ it('installs and removes Team layout through the existing plugin style lifecycle
   const panel = document.createElement('div')
   panel.className = 'team-message-panel'
   backdrop.append(panel); document.body.append(backdrop)
-  expect(getComputedStyle(backdrop).position).toBe('fixed')
+  expect(getComputedStyle(backdrop).position).not.toBe('fixed')
+  expect(getComputedStyle(panel).width).toBe('100%')
   expect(getComputedStyle(panel).display).toBe('flex')
   dispose()
   expect(document.querySelector('style[data-plugin-css]')).toBeNull()

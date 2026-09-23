@@ -6,7 +6,7 @@ const persistentShellSource = readUiSource(new URL('../src/client/ArkmePersisten
 
 describe('Arkme persistent sidebar', () => {
   it('keeps the conversation directory visible while a Bot chat is focused', () => {
-    expect(persistentShellSource).toContain("ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode")
+    expect(persistentShellSource).toContain("ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'team' || harnessMode")
   })
 
   it('keeps a constrained Arkme workspace visible on Web after logout', () => {

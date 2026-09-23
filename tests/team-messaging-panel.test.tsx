@@ -29,6 +29,13 @@ describe('Team send UI recovery', () => {
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }); await tick() }) }
 
+  it.each(['arkme_cn', 'project_team'])('keeps author history copy specific to the official team: %s', async jotmoId => {
+    const target = { ...conversation, channel: { ...conversation.channel, jotmoId } }
+    mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
+    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
+    expect(JSON.stringify(renderer!.toJSON()).includes('与作者的历史私聊')).toBe(jotmoId === 'arkme_cn')
+  })
+
   it('persists the stable request before network I/O, refuses double admission, and reuses it after remount', async () => {
     let release!: (value: unknown) => void
     mocks.call.mockImplementation(async (op: string, payload: { clientUid?: string }) => {

@@ -114,12 +114,12 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('authenticated && <ArkmeNotificationPermissionBanner />')
   })
 
-  it('retains historical author chats while always offering the independent official Team channel', () => {
+  it('retains historical author chats while replacing the contact shortcut with the real official Team conversation', () => {
     const author = { sourceRef: 'author-chat', kind: 'private_chat' as const, peerUserId: 11, displayName: '作者', activeAtMillis: 1, unreadCount: 0 }
     const peer = { sourceRef: 'peer-chat', kind: 'private_chat' as const, peerUserId: 12, displayName: '朋友', activeAtMillis: 2, unreadCount: 0 }
     expect(arkmeOfficialAuthorSource([peer, author], 11)).toBe(author)
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
-    expect(workspaceSource).toContain("authenticated && <ArkmeOfficialAuthorRow")
+    expect(workspaceSource).toContain("authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow")
     expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
     expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
@@ -162,7 +162,7 @@ describe('Arkme conversation directory load state', () => {
   it('commits owner visibility immediately but retains shared inline removal feedback', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
-    expect(workspaceSource).toContain('removalFeedback.rows.map(row =>')
+    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items).map(row =>')
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
     expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")

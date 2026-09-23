@@ -1,3 +1,5 @@
+import { subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { TeamDirectoryActions } from './TeamDirectoryActions.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
@@ -86,6 +88,7 @@ export function ContactDirectoryContent({
   countLabels = {},
   searchStatus,
   searching = false,
+  teamActions,
   onToggle,
   onRetry,
   onLoadMore,
@@ -99,6 +102,7 @@ export function ContactDirectoryContent({
   countLabels?: Partial<Record<ArkmeDirectorySectionKind, string>>
   searchStatus?: string | undefined
   searching?: boolean
+  teamActions?: ReactNode
   onToggle(section: ArkmeDirectorySectionKind): void
   onRetry(section: ArkmeDirectorySectionKind): void
   onLoadMore(section: ArkmeDirectorySectionKind): void
@@ -113,6 +117,7 @@ export function ContactDirectoryContent({
       return <CollapsibleDirectorySection
         key={sectionKind}
         active={active}
+        {...(sectionKind === 'teams' && teamActions ? { actions: teamActions } : {})}
         section={section}
         label={labels.label}
         emptyLabel={searching ? '未找到匹配的项目' : labels.empty}
@@ -318,6 +323,10 @@ export function ContactDirectorySurface({
     })
   }, [active, accountKey, commit])
 
+  useEffect(() => subscribeTeamMessageChanges(account => {
+    if (account === accountKey && active) load('teams', 'replace', true)
+  }), [accountKey, active, load])
+
   useEffect(() => {
     if (refreshCachedOnMountRef.current) return
     for (const kind of CONTACT_DIRECTORY_SECTION_ORDER) {
@@ -461,6 +470,7 @@ export function ContactDirectorySurface({
       onToggle={handleToggle}
       onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
+      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { load('teams', 'replace', true) }} onSelect={handleSelect} />}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}
       onOpenBot={onOpenBot}
