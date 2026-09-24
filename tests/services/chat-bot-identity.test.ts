@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import type { BotDisplayProfilesReader } from '../../src/chat-sender-display.js'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeStaleRequestError } from '../../src/request-coordinator.js'
@@ -36,7 +34,7 @@ function fixture() {
   }, { uniqueCode: async () => 'signing-key' } as StateStore, fetchImpl)
   const profile = new ProfileService(runtime)
   const chat = new ChatService(runtime,
-    { openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
+    { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
     profile, new MediaService(runtime, profile, {} as never, { recordUid: () => 'record' }),
     {} as never, { senderDisplayProfiles: async () => new Map() } as never, {} as never, { timelineAiPolish: () => undefined } as never, {} as never)
   return { runtime, chat, fetchImpl, snapshotStarted, snapshotSignal: () => snapshotSignal,
@@ -148,7 +146,7 @@ function displayFixture(options: {
   const profile = { publicProfilesByUserIds: vi.fn(async () => new Map()), sealProfileImageRef: vi.fn() }
   const bot = new BotService(runtime, {} as never)
   const chat = new ChatService(runtime,
-    { openAccessibleSourceRef: async () => ({ kind: options.kind ?? 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: options.kind ?? 'group_chat' }) } as never,
+    { openSourceRef: async () => ({ kind: options.kind ?? 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: options.kind ?? 'group_chat' }) } as never,
     profile as never, new MediaService(runtime, {} as never, {} as never, { recordUid: () => uid }), {} as never, bot,
     { currentUserAgentSourceFallback: () => undefined } as never, { timelineAiPolish: () => undefined } as never, {} as never,
     undefined, undefined, undefined, options.reader)

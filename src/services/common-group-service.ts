@@ -35,7 +35,7 @@ export class CommonGroupService {
 
   private async context(sourceRef: string, signal?: AbortSignal) {
     signal?.throwIfAborted()
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat') throw new ArkmePluginError('common-groups-source-invalid', '仅支持真人私聊', false, 400)
     const store = this.runtime.stateStore.commonGroups

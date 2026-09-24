@@ -1,4 +1,4 @@
-/** Display history only. Host operations always consult the account owner. */
+/** Display history only; it does not authorize or block Host operations. */
 export interface SocialAccessSnapshots {
   read(accountKey: string): boolean | null
   write(accountKey: string, allowed: boolean): void

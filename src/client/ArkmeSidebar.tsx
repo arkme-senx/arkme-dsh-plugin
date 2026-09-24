@@ -1,7 +1,7 @@
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { AskDshIcon } from './AskDshIcon.js'
-import { isSocialSource, useSocialAccessPresentation } from './social-access-store.js'
+import { isSocialSource, useSocialAccess } from './social-access-store.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
@@ -2207,7 +2207,7 @@ export function ArkmeSurface({
   active = true,
 }: ArkmeSurfaceProps = {}) {
   useArkmeLocale()
-  const { visible: socialAllowed, ready: socialReady } = useSocialAccessPresentation()
+  const socialAllowed = useSocialAccess(active)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
@@ -2301,12 +2301,7 @@ export function ArkmeSurface({
       : undefined
   const candidateSource = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
   const source = !socialAllowed && isSocialSource(candidateSource) ? aggregateSource : candidateSource
-  useEffect(() => {
-    if (socialReady && !socialAllowed && (isSocialSource(ui.selectedSource) || ui.mode === 'world' || ui.mode === 'calls' || ui.mode === 'contact-add' || ui.productMode === 'contacts')) {
-      if (aggregateSource !== undefined) arkmeUi.selectSource(aggregateSource)
-      else arkmeUi.showHarness()
-    }
-  }, [socialAllowed, socialReady, ui.mode, ui.productMode, ui.selectedSource, aggregateSource])
+
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined

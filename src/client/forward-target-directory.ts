@@ -58,7 +58,7 @@ export const forwardTargetDirectory: ForwardTargetDirectoryPort = {
 const EMPTY: ForwardTargetDirectorySnapshot = { chats: [], self: undefined, loading: false, error: '' }
 
 export function useForwardTargetDirectory(account: string | undefined, enabled: boolean) {
-  const socialAllowed = useSocialAccess()
+  const socialAllowed = useSocialAccess(enabled)
   const [state, setState] = useState<{ account: string; snapshot: ForwardTargetDirectorySnapshot }>()
   useEffect(() => {
     if (!enabled || account === undefined) { setState(undefined); return }

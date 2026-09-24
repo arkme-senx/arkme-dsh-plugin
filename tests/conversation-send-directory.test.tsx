@@ -1302,7 +1302,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -4286,7 +4286,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -4371,7 +4371,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -4408,7 +4408,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -4451,7 +4451,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -4647,7 +4647,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1, revision: 1,
       }
@@ -5143,7 +5143,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5195,7 +5195,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5572,7 +5572,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5696,7 +5696,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5771,7 +5771,7 @@ describe('conversation send directory projection', () => {
             ? arkmeAuthStore.getSnapshot().auth!.userId
             : 0,
           displayName: '当前账号', nickname: '当前账号', avatarRef: '', arkmeId: 'current', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5849,7 +5849,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1,
         revision: 1,
@@ -5897,7 +5897,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         },
         cachedAtMillis: 1, revision: 1,
       }
@@ -8314,7 +8314,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         }, cachedAtMillis: 1, revision: 1,
       }
       if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
@@ -8382,7 +8382,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
-          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
         }, cachedAtMillis: 1, revision: 1,
       }
       if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
@@ -8436,10 +8436,3 @@ describe('conversation send directory projection', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('相关快记引用已过期，请刷新后重试')
   })
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

@@ -62,7 +62,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   maxTextLength(): number { return this.runtime.config.maxTextLength }
 
   async openTarget(targetSourceRef: string, userId: number): Promise<MessageActionTarget> {
-    const target = await this.source.openAccessibleSourceRef(targetSourceRef, userId)
+    const target = await this.source.openSourceRef(targetSourceRef, userId)
     if (!['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(target.kind)) {
       throw new ArkmePluginError('message-actions-source-invalid', '当前目标暂不支持转发', false, 409)
     }

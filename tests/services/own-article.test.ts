@@ -9,7 +9,7 @@ import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 function fixture() {
   const runtime = { config: { maxTextLength: 20000 }, requireSession: vi.fn(async () => ({ userId: 42 })),
     stateStore: { uniqueCode: async () => 'signing-key' }, authenticatedChatPost: vi.fn(async () => ({ record_uid: 'forwarded', seq: 10, status: 1 })) }
-  const source = { selfTarget: vi.fn(async () => ({ sourceRef: 'self' })), openAccessibleSourceRef: vi.fn(async (ref: string) => ({ userId: 42, kind: ref === 'self' ? 'send_to_self' : 'group_chat', ownerRef: ref === 'self' ? '42' : 'group' })) }
+  const source = { selfTarget: vi.fn(async () => ({ sourceRef: 'self' })), openSourceRef: vi.fn(async (ref: string) => ({ userId: 42, kind: ref === 'self' ? 'send_to_self' : 'group_chat', ownerRef: ref === 'self' ? '42' : 'group' })) }
   const detail = { sourceRef: 'self', itemUid: 'mine', title: '我的文章', textContent: '完整正文'.repeat(500), textFormat: 'markdown' as const, sendAtMillis: 123, updateAtMillis: 123, recordDurationMillis: 0, editDurationMillis: 0, thinkingDurationMillis: 0, version: 1, editable: true,
     contentBlocks: [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'asset-ref' }] }
   const record = { longArticleDetail: vi.fn(async () => detail) }

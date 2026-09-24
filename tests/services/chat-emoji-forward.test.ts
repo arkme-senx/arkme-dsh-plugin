@@ -26,7 +26,7 @@ describe('Record forwarding emoji boundaries', () => {
       authenticatedPost,
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'default_category', ownerRef: 'default', userId: 42 })),
+      openSourceRef: vi.fn(async () => ({ kind: 'default_category', ownerRef: 'default', userId: 42 })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'default', kind: 'default_category' })),
     }
     const record = { list: vi.fn(async () => ({ items: [item], hasMore: false })), recordTimelineItem: (value: unknown) => value }

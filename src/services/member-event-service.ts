@@ -17,7 +17,7 @@ export class MemberEventService {
 
   private async context(sourceRef: string) {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('member-events-source-invalid', '仅支持群聊成员动态', false)
     return { session, group: source.ownerRef }
   }

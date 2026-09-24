@@ -37,10 +37,3 @@ it('places the retained page outside the mode switch, scoped to the authenticate
   expect(source).toContain("active={active && socialAllowed && ui.mode === 'calls'}")
   expect(source).toContain("ui.mode === 'calls' ? null")
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

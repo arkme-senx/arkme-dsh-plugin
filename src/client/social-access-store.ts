@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
-import type { ArkmeSocialAccessSnapshot, ArkmeSourceItem } from '../types.js'
+import type { ArkmeUserProfileSnapshot, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { SocialAccessSnapshotStorage, type SocialAccessSnapshots } from './social-access-snapshot-storage.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { arkmeUi } from './ui-controller.js'
+
+export interface SocialAccessSnapshot { userId: number; allowed: boolean | null }
 
 export function isSocialSource(source: Pick<ArkmeSourceItem, 'kind'> | undefined): boolean {
   return source?.kind === 'private_chat' || source?.kind === 'group_chat'
@@ -15,7 +17,7 @@ export class SocialAccessStore {
   private generation = 0
   private accountRevision = 0
   private flight: Promise<void> | undefined
-  constructor(private readonly load: () => Promise<ArkmeSocialAccessSnapshot>, private readonly snapshots?: SocialAccessSnapshots) {}
+  constructor(private readonly load: () => Promise<SocialAccessSnapshot>, private readonly snapshots?: SocialAccessSnapshots) {}
   getSnapshot = () => this.state
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   activate(accountKey: string | undefined, accountRevision = 0): void {
@@ -45,7 +47,7 @@ export class SocialAccessStore {
       }
     }).catch(() => {
       // Transport failure does not revoke this account's confirmed presentation.
-      // Host and service owners still authorize operations; activation clears it.
+      // This is optional UI presentation; activation isolates account state.
     }).finally(() => {
       if (generation === this.generation && !this.state.resolved) {
         this.publish({ ...this.state, resolved: true })
@@ -57,17 +59,23 @@ export class SocialAccessStore {
   }
   private publish(next: typeof this.state): void { this.state = next; for (const listener of this.listeners) listener() }
 }
+// Reuse the profile owner and its cache. There is no social permission endpoint.
+export async function loadSocialAccess(signal: AbortSignal): Promise<SocialAccessSnapshot> {
+  let snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, signal)
+  if (snapshot.profile === null) {
+    snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
+  }
+  if (snapshot.profile === null) throw new Error('Account profile unavailable')
+  return { userId: snapshot.profile.userId, allowed: (snapshot.profile.contact.phoneMasked?.trim() ?? '') !== '' }
+}
 export const socialAccessStore = new SocialAccessStore(
-  () => withArkmeReadDeadline(
-    signal => callArkme<ArkmeSocialAccessSnapshot>('social.access', {}, signal),
-    AbortSignal.timeout(3000),
-  ),
+  () => withArkmeReadDeadline(loadSocialAccess, AbortSignal.timeout(3000)),
   new SocialAccessSnapshotStorage(),
 )
 const readAccountRevision = () => arkmeUi.getSnapshot().authRevision
 
 /** Restore display before paint; anonymous surfaces keep their existing behavior. */
-export function useSocialAccessPresentation(): { visible: boolean; ready: boolean } {
+export function useSocialAccessPresentation(enabled = true): { visible: boolean; ready: boolean } {
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
   const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
@@ -75,19 +83,19 @@ export function useSocialAccessPresentation(): { visible: boolean; ready: boolea
   const snapshot = useSyncExternalStore(socialAccessStore.subscribe, socialAccessStore.getSnapshot, socialAccessStore.getSnapshot)
   useLayoutEffect(() => {
     socialAccessStore.activate(accountKey, accountRevision)
-    void socialAccessStore.refresh()
-  }, [accountKey, accountRevision])
+    if (enabled) void socialAccessStore.refresh()
+  }, [accountKey, accountRevision, enabled])
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === 'visible') void socialAccessStore.refresh() }
-    if (typeof document === 'undefined') return
+    if (!enabled || typeof document === 'undefined') return
     document.addEventListener('visibilitychange', refresh)
     window.addEventListener('focus', refresh)
     return () => { document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh) }
-  }, [accountKey])
+  }, [accountKey, enabled])
   return {
-    visible: auth?.status === 'logged-out' || auth?.status === 'authenticated' && snapshot.accountKey === accountKey && snapshot.allowed === true,
+    visible: auth?.status !== 'authenticated' || snapshot.accountKey !== accountKey || snapshot.allowed !== false,
     ready: authState.checked && (auth?.status !== 'authenticated' || snapshot.accountKey === accountKey && snapshot.resolved),
   }
 }
 
-export function useSocialAccess(): boolean { return useSocialAccessPresentation().visible }
+export function useSocialAccess(enabled = true): boolean { return useSocialAccessPresentation(enabled).visible }

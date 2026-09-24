@@ -214,10 +214,3 @@ describe('production Contacts handoff isolation', () => {
     expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.group.open-chat')).toHaveLength(1)
   })
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

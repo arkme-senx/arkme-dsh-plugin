@@ -4,8 +4,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeQuickAddButton } from '../src/client/ArkmeQuickAdd.js'
 
-const access = vi.hoisted(() => ({ allowed: true }))
-
 let root: Root
 let host: HTMLDivElement
 
@@ -14,7 +12,6 @@ const trigger = () => host.querySelector<HTMLButtonElement>('button[aria-haspopu
 const menu = () => document.querySelector('[role="menu"]')
 
 beforeEach(() => {
-  access.allowed = true
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div')
   document.body.append(host)
@@ -234,20 +231,4 @@ it('closes the quick-add menu even when the outside target stops pointerdown pro
   await flush()
   expect(menu()).toBeNull()
   blocker.remove()
-})
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => access.allowed,
-}))
-
-
-it('omits human actions and their accessibility labels while keeping personal Bot creation', async () => {
-  access.allowed = false
-  await render()
-  await hover('pointerover')
-  expect(menu()?.textContent).toContain('添加 Bot')
-  expect(menu()?.textContent).not.toMatch(/添加联系人|创建群聊|发起通话/)
-  expect(trigger().getAttribute('aria-label')).toBe('添加 Bot')
 })

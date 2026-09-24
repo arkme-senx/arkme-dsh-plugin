@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,7 +86,7 @@ describe('RecordService', () => {
           displayName: sourceRef === 'source-ref-old' ? '旧主题名' : '新主题名',
         }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const runtime = {
       config: { richMediaSendEnabled: true },
       stateStore,
@@ -103,7 +101,7 @@ describe('RecordService', () => {
           topic_core: { topic_uid: 'topic-1' },
         }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as MediaService, source)
 
     await expect(service.getLongArticleDraft('source-ref-old', 'record-1')).resolves.toMatchObject({
@@ -150,7 +148,7 @@ describe('RecordService', () => {
         }
         throw new Error(`unexpected path: ${path}`)
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {
       async hydrateRecordMediaPage() { return { displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() } },
       richContentBlocks() { return [] },
@@ -158,7 +156,7 @@ describe('RecordService', () => {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'group_chat' as const, ownerRef: 'group-1', displayName: '研发群' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     const prepared = await service.prepareRecordReedit({
       sourceRef: 'source-ref-1', itemUid: 'record-1', newTitle: '新标题', newText: '新正文',
@@ -212,12 +210,12 @@ describe('RecordService', () => {
         }
         throw new Error(`unexpected path: ${path}`)
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as MediaService, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: 'self', displayName: '我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const target = { sourceRef: 'source-ref', itemUid: 'record-1' }
     const newText = '    **代码块**\n'
     const expectedText = textFormat === 'markdown' ? newText : newText.trim()
@@ -248,12 +246,12 @@ describe('RecordService', () => {
           content_payload: { payload_kind: 1, schema_version: 1, text_state: 1 },
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'default_category' as const, ownerRef: 'uncategorized', displayName: '未分类' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.recordReeditEditor('source-ref', 'record-plain')).resolves.toMatchObject({
       preservesAttachments: false,
@@ -280,12 +278,12 @@ describe('RecordService', () => {
           },
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'default_category' as const, ownerRef: 'uncategorized', displayName: '未分类' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-legacy', newText: '更新正文',
@@ -312,12 +310,12 @@ describe('RecordService', () => {
           },
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'default_category' as const, ownerRef: 'uncategorized', displayName: '未分类' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-mention', newText: '@小明 修改后正文',
@@ -350,12 +348,12 @@ describe('RecordService', () => {
           status: 1, version: detailReads === 1 ? 7 : 8, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '我的草稿' })
 
@@ -385,12 +383,12 @@ describe('RecordService', () => {
           title: '', text_content: textContent, status: 1, version, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const editor = await service.recordReeditEditor('source-ref', 'record-1')
     version = 8
     textContent = '其他端正文'
@@ -420,12 +418,12 @@ describe('RecordService', () => {
           title: '', text_content: '原正文', status: 1, version: 7, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '候选 A' })
     await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '候选 B' })
@@ -454,12 +452,12 @@ describe('RecordService', () => {
           version: detailReads < 3 ? 7 : 8, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文' })
 
@@ -493,12 +491,12 @@ describe('RecordService', () => {
           version: reconciled ? current.version : 7, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文' })
 
     await expect(service.commitRecordReedit(prepared)).rejects.toMatchObject({ code })
@@ -528,11 +526,11 @@ describe('RecordService', () => {
           status: 1, version: 7, content_access_state: 1, send_at: 123_000, ...core,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as never, {} as never, {
+    } as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'group_chat' as const, ownerRef: 'group-1', displayName: '研发群' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文',
@@ -588,11 +586,11 @@ describe('RecordService', () => {
           ...(topicUid === undefined ? {} : { topic_core: { topic_uid: topicUid } }),
         }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as never, {} as never, {
+    } as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: sourceKind, ownerRef, displayName: '来源' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文',
@@ -621,11 +619,11 @@ describe('RecordService', () => {
           ...(topicUid === undefined ? {} : { topic_core: { topic_uid: topicUid } }),
         }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as never, {} as never, {
+    } as never, {} as never, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: sourceKind, ownerRef, displayName: '来源' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文',
@@ -646,12 +644,12 @@ describe('RecordService', () => {
           title: '', text_content: '原正文', status: 1, version: 7, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const service = new RecordService(runtime as never, {} as never, source)
     const first = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '草稿一' })
     const second = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-2', newText: '草稿二' })
@@ -675,12 +673,12 @@ describe('RecordService', () => {
         record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42, origin_kind: 1, template_kind: 1,
         title: '', text_content: textContent, status: 1, version, content_access_state: 1, send_at: 123_000,
       } } },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const firstService = new RecordService(runtime as never, {} as never, source)
     const first = await firstService.prepareRecordReedit({ sourceRef: 'source-ref-old', itemUid: 'record-1', newText: '未提交草稿' })
     version = 8
@@ -712,12 +710,12 @@ describe('RecordService', () => {
           title: '', text_content: '原正文', status: 1, version: 7, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const service = new RecordService(runtime as never, {} as never, {
       async openSourceRef(_sourceRef: string, expectedUserId: number) {
         return { version: 1 as const, userId: expectedUserId, kind: 'send_to_self' as const, ownerRef: String(expectedUserId), displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '草稿' })
     userId = 43
 
@@ -739,12 +737,12 @@ describe('RecordService', () => {
           title: '', text_content: '原正文', status: 1, version: 7, content_access_state: 1, send_at: 123_000,
         } }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const source = {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: '42', displayName: '即我' }
       },
-     get openAccessibleSourceRef() { return this.openSourceRef }}
+    }
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '新正文' })
 
@@ -765,7 +763,7 @@ describe('RecordService', () => {
     }
     const service = new RecordService({} as ServiceRuntime, media as never, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     expect(service.recordTimelineItemFromRaw({
       record_uid: 'record-child',
@@ -825,7 +823,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
     const captureContext = {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
@@ -885,7 +883,7 @@ describe('RecordService', () => {
     const service = new RecordService(
       new ServiceRuntime(config, sessions, stateStore, fetchImpl),
       {} as MediaService,
-      { async openSourceRef() { throw new Error('unexpected') } , get openAccessibleSourceRef() { return this.openSourceRef }},
+      { async openSourceRef() { throw new Error('unexpected') } },
     )
     const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
 
@@ -905,7 +903,7 @@ describe('RecordService', () => {
       config: { maxTextLength: 20_000 },
       requireSession: async () => ({ userId: 43, accessToken: 'access', refreshToken: 'refresh' }),
       stateStore: { putPending },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as never, {} as never, {} as never)
+    } as never, {} as never, {} as never)
 
     await expect(service.createTextForConversation(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
@@ -932,7 +930,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.summary()).resolves.toEqual({ recordCount: 3, wordsCount: 120, totalSec: 45 })
     expect(cached).toEqual({ recordCount: 3, wordsCount: 120, totalSec: 45 })
@@ -956,7 +954,7 @@ describe('RecordService', () => {
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
     const service = new RecordService(runtime, {} as MediaService, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.listTags(100)).resolves.toEqual({ items: [{
       normalizedTag: 'project', tagText: 'Project', recordCount: 7,
@@ -978,7 +976,7 @@ describe('RecordService', () => {
     }) as typeof fetch
     const service = new RecordService(new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl), {} as MediaService, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     await expect(service.listTags({ query: '项目', limit: 20, cursor: 'previous-page' })).resolves.toEqual({ items: [], hasMore: true, nextCursor: 'next-page' })
     expect(requestBody).toEqual({ query: '项目', limit: 20, cursor: 'previous-page' })
   })
@@ -1000,7 +998,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.createFileAssetsForConversation(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
@@ -1049,7 +1047,7 @@ describe('RecordService', () => {
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
     const service = new RecordService(runtime, {} as MediaService, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
     const childRecordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
 
     await expect(service.createExtensionForConversation(
@@ -1097,7 +1095,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.createDSHAgentInputText(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
@@ -1161,7 +1159,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.list(30)).resolves.toMatchObject({
       items: [{ recordUid: 'normal-1', textContent: '普通发给自己' }],
@@ -1231,7 +1229,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.list(1)).resolves.toMatchObject({
       items: [{ recordUid: 'normal-2', textContent: '补拉出来的普通内容' }],
@@ -1254,7 +1252,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     expect(service.isDSHAgentInput({
       record_core: { record_uid: 'dsh-input-1', creation_source: '3' },
@@ -1277,7 +1275,7 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-     get openAccessibleSourceRef() { return this.openSourceRef }})
+    })
 
     await expect(service.createFileAssetsForConversation(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', '', [],

@@ -155,14 +155,7 @@ export class ConversationDirectoryService {
 
   async read(force = false, signal?: AbortSignal): Promise<ArkmeSourceList> {
     signal?.throwIfAborted()
-    await this.activate()
-    signal?.throwIfAborted()
-    const generation = this.generation
-    const pending = this.readSnapshot(force).then(async page => {
-      const access = await this.runtime.socialAccess.status()
-      if (generation !== this.generation) throw new DOMException('Account changed', 'AbortError')
-      return access.allowed === true ? page : { ...page, items: [], total: 0, hasMore: false }
-    })
+    const pending = this.readSnapshot(force)
     if (signal === undefined) return await pending
     return await new Promise<ArkmeSourceList>((resolve, reject) => {
       const abort = () => { reject(signal.reason) }
@@ -193,11 +186,7 @@ export class ConversationDirectoryService {
     await this.activate()
     this.resumeChanges()
     if (this.scan === undefined) this.startScan()
-    const generation = this.generation
-    const page = structuredClone(await this.rawBaseline!)
-    const access = await this.runtime.socialAccess.status()
-    if (generation !== this.generation) throw new DOMException('Account changed', 'AbortError')
-    return access.allowed === true ? page : { ...page, items: [], total: 0, hasMore: false }
+    return structuredClone(await this.rawBaseline!)
   }
 
   /** Join the directory owner; never combine its rows with a separately refreshed global count. */
@@ -207,9 +196,7 @@ export class ConversationDirectoryService {
     const generation = this.generation
     const session = await this.runtime.accountScopedSession()
     if (generation !== this.generation || this.userId !== undefined && session?.userId !== this.userId) throw new DOMException('Account changed', 'AbortError')
-    const access = session === undefined ? undefined : await this.runtime.socialAccess.status()
-    if (generation !== this.generation) throw new DOMException('Account changed', 'AbortError')
-    const sources = access?.allowed === true ? [...this.sources.values()] : []
+    const sources = [...this.sources.values()]
     const visibility = [...this.visibility.values()]
     const visible = projectArkmeConversationAttention(sources, this.bots, visibility)
     const rows = [...visible.sources, ...visible.bots]

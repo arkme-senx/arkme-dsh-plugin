@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { recordToolResults, sessionEvents } from './helpers/tool-session.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

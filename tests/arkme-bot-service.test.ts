@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'

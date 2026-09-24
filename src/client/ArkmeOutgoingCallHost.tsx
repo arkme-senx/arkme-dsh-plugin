@@ -6,7 +6,6 @@ import { callArkme } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { useSocialAccess } from './social-access-store.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
   if (fullscreen) return { width: '100vw', height: '100vh', borderRadius: 0 }
@@ -42,15 +41,12 @@ export function ArkmeOutgoingCallHost() {
   const runtime = runtimeRef.current
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const userId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
-  const socialAllowed = useSocialAccess()
-  const enabled = userId !== undefined && socialAllowed
   const scope = userId === undefined ? undefined : `${authState.auth?.environment}:${userId}`
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
   const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
-    if (!enabled) return
     runtime.configureReceiver(userId, scope)
     runtime.mount()
     const onMessage = (event: MessageEvent) => { runtime.handleWindowMessage(event) }
@@ -65,9 +61,9 @@ export function ArkmeOutgoingCallHost() {
       window.removeEventListener('keydown', onKeyDown)
       runtime.dispose()
     }
-  }, [runtime, userId, scope, enabled])
+  }, [runtime, userId, scope])
 
-  if (!enabled || (!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
+  if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
   const retainedFrame = !snapshot.visible && snapshot.retainFrame
   const shellStyle: CSSProperties = retainedFrame ? {

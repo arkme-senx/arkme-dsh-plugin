@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { RuntimeBotDisplayProfilesReader } from '../../src/services/chat-sender-display-reader.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createHash, createHmac } from 'node:crypto'
@@ -91,7 +89,7 @@ describe('ChatService', () => {
     const openSourceRef = vi.fn(async () => ({ kind, ownerRef: 'owner-session' }))
     const runtime = { config, stateStore: { uniqueCode: async () => 'fixture-key' }, requireSession: async () => session, authenticatedChatPost }
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: openSourceRef, sourceItem: async () => ({ kind }) } as never,
+      { openSourceRef, sourceItem: async () => ({ kind }) } as never,
       {} as never, {} as never, {} as never, {} as never, {} as never,
       { queryGroupAiPolishConfig: async () => { throw new Error('optional decoration unavailable') },
         queryGroupAiPolishNotices: async () => { throw new Error('optional decoration unavailable') } } as never, {} as never)
@@ -116,7 +114,7 @@ describe('ChatService', () => {
     }] } : { items: [item] })
     const runtime = { config, stateStore: { uniqueCode: async () => 'key' }, requireSession: async () => session, authenticatedChatPost: read }
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
       { publicProfilesByUserIds: async () => new Map() } as never,
       new MediaService(runtime as never, {} as never, {} as never, { recordUid: () => 'record' }),
       {} as never, {} as never, {} as never, { timelineAiPolish: () => undefined } as never, {} as never)
@@ -162,7 +160,7 @@ describe('ChatService', () => {
     const displayReader = new RuntimeBotDisplayProfilesReader(runtime as never, bot)
     vi.spyOn(displayReader, 'groupSenderDisplayProfiles').mockResolvedValue(new Map([['groupbot', { displayName: '群内助手' }]]))
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
+      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
       profile as never, media, {} as never, bot as never,
       { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never, undefined, undefined, undefined, displayReader)
@@ -204,7 +202,7 @@ describe('ChatService', () => {
       }) }
     const profile = { publicProfilesByUserIds: vi.fn(async () => new Map()), sealProfileImageRef: vi.fn() }
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
+      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
       profile as never, new MediaService(runtime as never, {} as never, {} as never, { recordUid: () => 'bot-message' }),
       {} as never, {} as never, {} as never, { timelineAiPolish: () => undefined } as never, {} as never)
     const read = () => chat.readSource('source', { cursor: { beforeSequence: 1 }, signal: controller.signal })
@@ -230,7 +228,7 @@ describe('ChatService', () => {
         remark: memberRemark, display_name_snapshot: '群内昵称', display_name: '用户昵称' }] }),
     }
     const source = {
-      openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'group' }),
+      openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'group' }),
       sourceItem: async () => ({ kind: 'group_chat' }),
       privateChatViewerLabelsByUserIds: async () => new Map([[7, { displayName: privateRemark || '私聊旧快照', remark: privateRemark }]]),
     }
@@ -253,7 +251,7 @@ describe('ChatService', () => {
     const media = new MediaService(runtime as never, {} as never, {} as never, { recordUid() { return 'r' } })
     const profile = { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() }
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: async () => ({ kind, ownerRef: 'chat' }), sourceItem: async () => ({ kind }) } as never,
+      { openSourceRef: async () => ({ kind, ownerRef: 'chat' }), sourceItem: async () => ({ kind }) } as never,
       profile as never, media, {} as never, {} as never,
       { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never)
@@ -270,7 +268,7 @@ describe('ChatService', () => {
       requireSession: async () => session, authenticatedChatPost: async () => ({ items: [raw] }) }
     const media = new MediaService(runtime as never, {} as never, {} as never, { recordUid() { return 'r' } })
     const chat = new ChatService(runtime as never,
-      { openAccessibleSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
       { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() } as never,
       media, {} as never, {} as never, { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never)
@@ -294,7 +292,7 @@ describe('ChatService', () => {
       stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
       authenticatedPost: vi.fn(async () => ({ record_uid: 'forwarded', status: 1 })),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async (ref: string) => ({
+    const source = { openSourceRef: vi.fn(async (ref: string) => ({
       version: 1, userId: 42, kind: ref === 'source' ? 'private_chat' : targetKind,
       ownerRef: ref === 'source' ? 'chat-1' : 'target', displayName: '测试',
     })) }
@@ -321,8 +319,7 @@ describe('ChatService', () => {
         occurred_at: 100, member_user_id: 88, display_name_snapshot: '李四',
       })),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
-    Object.assign(source, { openSourceRef: source.openAccessibleSourceRef })
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
     const profile = { publicProfileSummariesByUserIds: vi.fn(async () => new Map()) }
     const chat = new ChatService(runtime as never, source as never, profile as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     await expect(chat.memberEvents.openPrivateChat('group-ref', 'leave-1')).rejects.toMatchObject({ code: 'member-events-unavailable' })
@@ -369,7 +366,7 @@ describe('ChatService', () => {
       })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事',
       })),
       sourceItem: vi.fn(async () => sourceItem),
@@ -415,7 +412,7 @@ describe('ChatService', () => {
         requests.push({ body, signal })
         return await new Promise<Response>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
       }) as typeof fetch)
-    const source = { openAccessibleSourceRef: async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'session', displayName: '会话' }) }
+    const source = { openSourceRef: async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'session', displayName: '会话' }) }
     const chat = new ChatService(runtime, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     const a = new AbortController(), b = new AbortController(), c = new AbortController()
     const previewA = chat.readSourceAround('source', 'record', 77, { beforeLimit: 1, afterLimit: 1, signal: a.signal })
@@ -465,7 +462,7 @@ describe('ChatService', () => {
       }),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => sourceItem),
       chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
@@ -507,7 +504,7 @@ describe('ChatService', () => {
       }),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0 })),
       chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
@@ -547,7 +544,7 @@ describe('ChatService', () => {
       activeAtMillis: 0, unreadCount: 0,
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'send_to_self', ownerRef: 'all', displayName: '发给自己',
       })),
       sourceItem: vi.fn(async () => sourceItem),
@@ -598,7 +595,7 @@ describe('ChatService', () => {
       authenticatedChatPost: vi.fn(async () => ({ items: [{ user_id: 7 }, { user_id: 42 }] })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '何' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '何' })),
     }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, {} as never,
@@ -608,7 +605,7 @@ describe('ChatService', () => {
 
     await expect(chat.resolvePrivateChatPeer('source-ref', signal))
       .resolves.toEqual({ userId: 42, displayName: '何' })
-    expect(source.openAccessibleSourceRef).toHaveBeenCalledWith('source-ref', 7)
+    expect(source.openSourceRef).toHaveBeenCalledWith('source-ref', 7)
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
       '/api/v1/chats/members/list', { chat_session_uid: 'chat-1', active_only: true }, session, signal,
     )
@@ -619,17 +616,17 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => ({ userId: 7, accessToken: 'access', refreshToken: 'refresh' })),
       authenticatedChatPost: vi.fn(async () => ({ items: [{ user_id: 42 }, { user_id: 43 }] })),
     }
-    const source = { openAccessibleSourceRef: vi.fn() }
+    const source = { openSourceRef: vi.fn() }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, {} as never,
       {} as never, {} as never, {} as never, {} as never,
     )
 
-    source.openAccessibleSourceRef.mockResolvedValueOnce({ kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊' })
+    source.openSourceRef.mockResolvedValueOnce({ kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊' })
     await expect(chat.resolvePrivateChatPeer('group-ref')).rejects.toMatchObject({ code: 'user-ban-private-chat-required' })
     expect(runtime.authenticatedChatPost).not.toHaveBeenCalled()
 
-    source.openAccessibleSourceRef.mockResolvedValueOnce({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '异常私聊' })
+    source.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '异常私聊' })
     await expect(chat.resolvePrivateChatPeer('ambiguous-ref')).rejects.toMatchObject({ code: 'user-ban-peer-invalid' })
   })
 
@@ -642,7 +639,7 @@ describe('ChatService', () => {
       sourcePayloads.set(`wrong-${kind}`, { version: 1, userId: 42, kind, ownerRef: `wrong-owner-${kind}`, displayName: kind })
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async (sourceRef: string) => sourcePayloads.get(sourceRef)),
+      openSourceRef: vi.fn(async (sourceRef: string) => sourcePayloads.get(sourceRef)),
       invalidateSourceListCache: vi.fn(),
     }
     const runtime = {
@@ -749,7 +746,7 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
@@ -775,7 +772,7 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
@@ -806,7 +803,7 @@ describe('ChatService', () => {
       authenticatedChatPost,
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊',
       })),
     }
@@ -937,7 +934,7 @@ describe('ChatService', () => {
         .mockRejectedValueOnce(attemptedFailure)
         .mockRejectedValueOnce(knownFailure),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
     const chat = new ChatService(
@@ -967,7 +964,7 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(),
+      openSourceRef: vi.fn(),
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
@@ -983,7 +980,7 @@ describe('ChatService', () => {
     }
 
     for (const kind of ['send_to_self', 'default_category'] as const) {
-      source.openAccessibleSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
+      source.openSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
       await expect(chat.sendSourceText(`opaque-${kind}`, '浏览器纯文字', {
         recordUid: `record-${kind}`,
         recordDurationMillis: 2_700,
@@ -1004,7 +1001,7 @@ describe('ChatService', () => {
       config: { maxTextLength: 20_000 },
       requireSession: vi.fn(async () => ({ userId: 43, accessToken: 'access', refreshToken: 'refresh' })),
     }
-    const source = { openAccessibleSourceRef: vi.fn() }
+    const source = { openSourceRef: vi.fn() }
     const record = { createTextForConversation: vi.fn() }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, record as never,
@@ -1013,7 +1010,7 @@ describe('ChatService', () => {
 
     await expect(chat.sendSourceText('source-a', '发送内容', { expectedUserId: 42 }))
       .rejects.toMatchObject({ code: 'file-account-changed' })
-    expect(source.openAccessibleSourceRef).not.toHaveBeenCalled()
+    expect(source.openSourceRef).not.toHaveBeenCalled()
     expect(record.createTextForConversation).not.toHaveBeenCalled()
   })
 
@@ -1023,7 +1020,7 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
       authenticatedPost,
     }
-    const source = { openAccessibleSourceRef: vi.fn() }
+    const source = { openSourceRef: vi.fn() }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, {} as never,
       {} as never, {} as never, {} as never, {} as never,
@@ -1034,7 +1031,7 @@ describe('ChatService', () => {
     }
 
     for (const kind of ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'] as const) {
-      source.openAccessibleSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
+      source.openSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
       await expect(chat.saveMessageLocation(`opaque-${kind}`, `record-${kind}`, location, undefined)).resolves.toBeUndefined()
     }
     expect(authenticatedPost).toHaveBeenCalledTimes(5)
@@ -1078,7 +1075,7 @@ describe('ChatService', () => {
         ? { position_detail: position }
         : { record_core: { record_uid: 'record-snapshot-1', text_content: '快记' }, location }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     const detail = await chat.messageSnapshotDetail('opaque-source', snapshotActionRef())
     expect(detail.locationLabel).toBe(expected)
@@ -1117,7 +1114,7 @@ describe('ChatService', () => {
         record_extra: JSON.stringify({ capture_context: { client_name: 'ts\'s MacBook Pro', electric: 81, charge: 1 }, background_sound_amplitudes: [1, 2, 3] }),
       })),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
     const media = { issueSearchAudioMedia: vi.fn(async () => new Map([
       ['record-snapshot-1\0asset-background-a', { mediaRef: 'arkme-media-v1.background-a', durationSeconds: 1.25 }],
       ['record-snapshot-1\0asset-background-b', { mediaRef: 'arkme-media-v1.background-b' }],
@@ -1165,7 +1162,7 @@ describe('ChatService', () => {
           } }
         : { record_uid: 'record-snapshot-1' }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
     const media = { issueSearchAudioMedia: vi.fn(async () => new Map([
       ['record-snapshot-1\0background-a', { mediaRef: 'arkme-media-v1.background-a' }],
     ])) }
@@ -1212,7 +1209,7 @@ describe('ChatService', () => {
             position_detail: { address: '武汉市洪山区九峰街道', weather: { temp: 30, condition_ch: 'Windy' } },
           }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
@@ -1239,7 +1236,7 @@ describe('ChatService', () => {
       authenticatedChatPost: vi.fn(),
       authenticatedPost: vi.fn(),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
@@ -1260,7 +1257,7 @@ describe('ChatService', () => {
       } })),
       authenticatedPost: vi.fn(async () => ({})),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
@@ -1280,7 +1277,7 @@ describe('ChatService', () => {
           } }
         : { record_uid: 'record-self-1', weather: { temp: 30, condition_ch: 'Windy' } }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
@@ -1309,7 +1306,7 @@ describe('ChatService', () => {
         ? { record_core: { record_uid: 'record-snapshot-1', text_content: '消息', send_at: 1_786_000_000_000, status: 1 } }
         : { record_uid: 'another-record', weather: { temp: 30, condition_ch: 'Windy' } }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
@@ -1328,7 +1325,7 @@ describe('ChatService', () => {
         ? { record_core: { record_uid: 'record-snapshot-1', text_content: '消息', send_at: 1_786_000_000_000, status: 1 } }
         : { record_uid: 'another-record', data: { weather: { temp: 30, condition_ch: 'Windy' } } }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
@@ -1345,7 +1342,7 @@ describe('ChatService', () => {
         : { record_core: { record_uid: 'record-self-timeline', text_content: '发给自己的消息', status: 1 } }),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'opaque-source', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 })),
     }
     const record = {
@@ -1386,7 +1383,7 @@ describe('ChatService', () => {
       } })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })),
       chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
@@ -1603,7 +1600,7 @@ describe('ChatService', () => {
       authenticatedChatPost: vi.fn(async () => ({ children: [] })),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
       })),
       chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
@@ -1715,7 +1712,7 @@ describe('ChatService', () => {
     const chat = new ChatService(
       runtime as never,
       {
-        openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1', displayName: '测试群' })),
+        openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1', displayName: '测试群' })),
         sourceItem: vi.fn(async () => ({ kind: 'group_chat' })),
         chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
       } as never,
@@ -1795,7 +1792,7 @@ describe('ChatService', () => {
       authenticatedWorldPost: worldPost,
       authenticatedChatPost: chatPost,
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
     const contentBlocks = [
@@ -1870,7 +1867,7 @@ describe('ChatService', () => {
       authenticatedChatPost: chatPost,
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
       })),
       invalidateSourceListCache: vi.fn(),
@@ -2010,7 +2007,7 @@ describe('ChatService', () => {
       authenticatedWorldPost: worldPost,
       authenticatedChatPost: chatPost,
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
     const profile = { refreshProfile: vi.fn(async () => ({ profile: {
@@ -2062,7 +2059,7 @@ describe('ChatService', () => {
       authenticatedChatPost: chatPost,
       authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
     })) }
     const profile = { refreshProfile: vi.fn(async () => ({ profile: {
@@ -2104,7 +2101,7 @@ describe('ChatService', () => {
       authenticatedChatPost: chatPost,
       authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
     })) }
     const profile = { refreshProfile: vi.fn(async () => ({ profile: {
@@ -2176,7 +2173,7 @@ describe('ChatService', () => {
       authenticatedChatPost: chatPost,
       authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({
+    const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
     })) }
     const profile = { refreshProfile: vi.fn(async () => ({ profile: {
@@ -2258,7 +2255,7 @@ describe('ChatService', () => {
       authenticatedWorldPost: vi.fn(async () => { throw new Error('record extension must not use the public-record API') }),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'send_to_self', ownerRef: 'all', displayName: '发给自己',
       })),
       invalidateSourceListCache: vi.fn(),
@@ -2329,7 +2326,7 @@ describe('ChatService', () => {
       authenticatedWorldPost: vi.fn(async () => { throw new Error('topic extension must not use the public-record API') }),
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({
+      openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'topic', ownerRef: 'topic-1', displayName: '实习性',
       })),
       invalidateSourceListCache: vi.fn(),
@@ -3206,7 +3203,7 @@ describe('ChatService', () => {
         authenticatedChatPost,
       }
       const source = {
-        openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
+        openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
         cachedChatSource: vi.fn(() => undefined),
         sealSourceRef: vi.fn(async () => 'private-source-ref'),
         chatDirectorySourceKey: vi.fn(async () => 'chat:private-1'),
@@ -3300,7 +3297,7 @@ describe('ChatService', () => {
       authenticatedChatPost,
     }
     const source = {
-      openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
       cachedChatSource: vi.fn(() => existingSource),
       sealSourceRef: vi.fn(async () => 'new-private-source-ref'),
       chatDirectorySourceKey: vi.fn(async () => 'chat:private-existing'),
@@ -3344,7 +3341,7 @@ describe('ChatService', () => {
       requireSession: vi.fn(async () => session),
       authenticatedChatPost,
     }
-    const source = { openAccessibleSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
     const profile = { publicProfileSummariesByUserIds: vi.fn() }
     const chat = new ChatService(
       runtime as never, source as never, profile as never, {} as never, {} as never,
@@ -3542,7 +3539,7 @@ it('preserves long article identity and remaps all forwarded image nodes to snap
 it('confirms article delivery only for the exact chat relation and record owner', async () => {
   let relationUid='other-relation'
   const runtime={requireSession:async()=>({userId:42}),authenticatedChatPost:async()=>({chat_session_uid:'chat',anchor:{relation:{rel_uid:relationUid,record_uid:'article',record_owner_user_id:42,seq:9},record:{status:1}}})}
-  const chat=new ChatService(runtime as never,{openAccessibleSourceRef:async()=>({kind:'private_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'private_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
   const input={title:'article',textContent:'text',recordUid:'article',relationUid:'expected-relation'}
   await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'long-article-outcome-unknown'})
   relationUid='expected-relation'
@@ -3566,7 +3563,7 @@ describe('received Markdown long article detail', () => {
       authenticatedPost: vi.fn(),
     }
     const media = { richContentBlocks: vi.fn(() => [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'controlled' }]) }
-    const source = { openAccessibleSourceRef: async () => ({ kind, ownerRef: 'chat-1' }) }
+    const source = { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }) }
     const chat = new ChatService(runtime as never, source as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     const actionRef = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99, displayKind: 1 })
     return { chat, runtime, raw, actionRef, media }
@@ -3616,7 +3613,7 @@ it('returns the hydrated original attachment snapshot only when requested for As
     hydrateRecordSnapshotMediaPage: async () => [[{ file_asset_uid: 'file-1' }]],
     richContentBlocks: () => [block], recordMediaUnavailable: () => false,
   }
-  const chat = new ChatService(runtime as never, { openAccessibleSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
     { publicProfileSummariesByUserIds: async () => new Map([[42, { displayName: '本人昵称' }]]) } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
   const result = await chat.messageSnapshotDetail('source', snapshotActionRef(), { includeAttachments: true })
   expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
@@ -3637,7 +3634,7 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
   const media = { hydrateRecordSnapshotMediaPage: vi.fn(async () => [[]]), richContentBlocks: () => [], recordMediaUnavailable: () => false }
   const remarks = vi.fn(async () => { throw new Error('must reuse local names') })
   const profiles = vi.fn(async () => { throw new Error('must reuse local names') })
-  const chat = new ChatService(runtime as never, { openAccessibleSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
     { publicProfileSummariesByUserIds: profiles } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
   const ref = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99 })
   await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).resolves.toMatchObject({

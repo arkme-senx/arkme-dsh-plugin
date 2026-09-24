@@ -1053,7 +1053,6 @@ export async function dispatchArkmeHostOperation(
       return await requireUpdateManager(updateManager).acknowledge(snoozeHours)
     }
     case 'auth.status': return await service.authStatus()
-    case 'social.access': return await service.socialAccessStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))

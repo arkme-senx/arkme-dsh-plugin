@@ -5,8 +5,6 @@ import { recordOwnerId } from '../record-owner-id.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
 export interface CalendarMonthQuery {
-  /** Presentation scope only; never sent as authorization to the server. */
-  socialAllowed?: boolean
   scopeKey: string
   sourceRef?: string
   startDate: string
@@ -31,8 +29,7 @@ interface Entry {
   pending?: Promise<void>
 }
 const identity = (query: CalendarMonthQuery) => JSON.stringify([query.scopeKey, query.timezone, query.startDate, query.endDate, 'natural-day:1',
-  ...(query.timezoneOffsetMillis === undefined ? [] : [query.timezoneOffsetMillis]),
-  ...(query.socialAllowed === undefined ? [] : [query.socialAllowed])])
+  ...(query.timezoneOffsetMillis === undefined ? [] : [query.timezoneOffsetMillis])])
 const storage = (): Storage | undefined => { try { return globalThis.localStorage } catch { return undefined } }
 
 /** Bounded per-account month summaries only. No record bodies, tokens or media are persisted. */
@@ -42,7 +39,7 @@ export class CalendarMonthCache {
   private saved = new Map<string, { value: ArkmeCalendarBucketPage; refreshed: number }>()
   constructor(
     private readonly load: (query: CalendarMonthQuery, signal: AbortSignal, background: boolean) => Promise<ArkmeCalendarBucketPage>
-      = (query, signal, background) => { const { scopeKey: _, socialAllowed: _social, ...params } = query; return withArkmeReadDeadline(
+      = (query, signal, background) => { const { scopeKey: _, ...params } = query; return withArkmeReadDeadline(
         requestSignal => callArkme(query.timezoneOffsetMillis === undefined ? 'calendar.buckets' : 'calendar.chat-statistics', { ...params, background }, requestSignal), signal) },
     private readonly getStorage: () => Storage | undefined = storage,
     private readonly now = Date.now,

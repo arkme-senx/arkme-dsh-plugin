@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { GroupAiPolishService } from '../../src/services/group-ai-polish-service.js'
