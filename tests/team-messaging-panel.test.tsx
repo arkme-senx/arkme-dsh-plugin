@@ -3,6 +3,7 @@ import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.j
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
+import { ArkmeReadReceiptPanel, ArkmeReadReceiptMember } from '../src/client/ArkmeReadReceiptPanel.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -192,9 +193,11 @@ describe('Team send UI recovery', () => {
     read=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('two')
     expect(JSON.stringify(renderer!.toJSON())).toContain('用户已查看')
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptMember)).toHaveLength(2)
+    expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
     hold=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
-    await act(async()=>{renderer!.root.findByType(ArkmeConfirmDialog).props.onClose();await tick()});await act(async()=>{deferred?.({members:[],hasMore:false,teamRead:true});await tick()})
-    expect(renderer!.root.findAllByProps({className:'team-receipts'})).toHaveLength(0)
+    await act(async()=>{renderer!.root.findByType(ArkmeReadReceiptPanel).props.onClose();await tick()});await act(async()=>{deferred?.({members:[],hasMore:false,teamRead:true});await tick()})
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
   })
   it('notifies the inbox owner immediately when detail authorization is revoked', async () => {
     const revoked=vi.fn()

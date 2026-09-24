@@ -42,7 +42,7 @@ export class TeamAppService {
   }
   private async identity(raw: unknown, actor: number): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
-    return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor) } : {}) }
+    return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${url}`, actor) } : {}) }
   }
   private async team(raw: unknown, actor: number): Promise<ArkmeTeam> {
     const v = obj(raw)
@@ -57,7 +57,7 @@ export class TeamAppService {
     const link = new URL('/team-message', this.runtime.config.shareWebsite || 'https://www.jotmo.cc')
     link.searchParams.set('channel', publicRef)
     return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
-      ...(identity.imageRef ? { imageRef: identity.imageRef } : {}), publicRef, link: publicRef ? link.toString() : '',
+      ...(identity.imageRef ? { imageRef: identity.imageRef, imageKey: identity.imageKey } : {}), publicRef, link: publicRef ? link.toString() : '',
       enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true }
   }
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
@@ -80,10 +80,15 @@ export class TeamAppService {
         text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
         ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
       } } : {}),
-      media: await Promise.all(list(content.media).map(async f => ({
-        ref: await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type) }, actor),
-        name: str(f.file_name) || '附件', mimeType: str(f.mime_type), size: num(f.size), kind: num(f.file_kind),
-      }))),
+      media: await Promise.all(list(content.media).map(async f => {
+        const ref = await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type) }, actor)
+        return {
+          key: await this.key(`media:${uid}:${num(content.version)}:${str(f.file_asset_uid)}`, actor), ref,
+          // This local route reauthorizes every byte read, not an upstream signed URL.
+          url: `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,
+          name: str(f.file_name) || '附件', mimeType: str(f.mime_type), size: num(f.size), kind: num(f.file_kind),
+        }
+      })),
     }
   }
 
@@ -253,7 +258,6 @@ export class TeamAppService {
         const data = await post('join-requests/decide', { team_id: v.team_id, user_id: v.user_id, revision: v.revision, approve: p.approve === true })
         return { state: str(data.state) }
       }
-      case 'team.app.media': { await this.open('media', p.mediaRef, actor); return { url: `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(str(p.mediaRef))}` } }
       case 'team.app.image': return await this.image(p, session, signal)
       default: throw new ArkmePluginError('operation-unsupported', '不支持该团队操作', false)
     }

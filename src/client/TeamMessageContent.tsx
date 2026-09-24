@@ -1,10 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useRef } from 'react'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import type { TeamMessage } from '../team-app-contract.js'
-import { callArkme } from './api.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeMediaAccessContext } from './media-access.js'
-import { teamText as tr } from './team-messaging-i18n.js'
 
 export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem {
   return {
@@ -22,26 +20,15 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
 export function TeamMessageContent({ message }: { message: TeamMessage }) {
-  const [grant, setGrant] = useState<{key:string;urls:Map<string,string>}>(), [error, setError] = useState(''), [attempt, setAttempt] = useState(0)
-  const refsKey = JSON.stringify(message.media.map(media => media.ref))
-  useEffect(() => {
-    const controller = new AbortController()
-    setGrant(undefined); setError('')
-    void Promise.all((JSON.parse(refsKey) as string[]).map(async ref => {
-      const result = await callArkme<{ url: string }>('team.app.media', { mediaRef: ref }, controller.signal)
-      if (!result.url || typeof result.url !== 'string') throw new Error(tr('附件暂不可用'))
-      return [ref, result.url] as const
-    })).then(values => { if (!controller.signal.aborted) setGrant({key:refsKey,urls:new Map(values)}) })
-      .catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : tr('附件暂不可用')) })
-    return () => controller.abort()
-  }, [refsKey, attempt])
-  const urls = grant?.key === refsKey ? grant.urls : undefined
-  const item = teamMessagePresentation(message)
-  if (message.media.length > 0 && !urls) return <>
-    {item.textContent && <ArkmeMessageContent item={{ ...item, contentBlocks: [] }} mediaSelectionIsExplicit />}
-    {error ? <p role="alert">{error} <button onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></p> : <span role="status">{tr('正在读取…')}</span>}
-  </>
-  return <ArkmeMediaAccessContext.Provider value={{ url: block => urls?.get(block.mediaRef) ?? '' }}>
+  // Keep mounted media and its URL across equivalent authorized snapshots.
+  // Keys include viewer, message, Record version and asset. Changed content or
+  // lost access replaces/unmounts this scope; byte reads still reauthorize.
+  const identity = JSON.stringify([message.key, message.version, message.media.map(media => media.key)])
+  const snapshot = useRef({ identity, media: message.media })
+  if (snapshot.current.identity !== identity) snapshot.current = { identity, media: message.media }
+  const urls = new Map(snapshot.current.media.map(media => [media.ref, media.url]))
+  const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
+  return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '' }}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit />
   </ArkmeMediaAccessContext.Provider>
 }
