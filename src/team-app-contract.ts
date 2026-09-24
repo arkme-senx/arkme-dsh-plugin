@@ -5,12 +5,12 @@ export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'join'
   | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'send' | 'send.status' | 'send.confirm' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
-  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'media' | 'image'
+  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
 }`
 export type TeamSide = 'team' | 'external'
-export interface TeamIdentity { nickname: string; imageRef?: string }
+export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
 export interface TeamChannel {
-  teamRef: string; name: string; jotmoId: string; imageRef?: string; publicRef: string
+  teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
   link: string; enabled: boolean; revision: number; canManage: boolean
 }
 export interface TeamConversation {
@@ -20,7 +20,7 @@ export interface TeamConversation {
   preview?: { text: string; status: string; hasMedia: boolean }
 }
 export interface TeamContent { text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
-export interface TeamMedia { ref: string; name: string; mimeType: string; size: number; kind: number }
+export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
