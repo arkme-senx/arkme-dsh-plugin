@@ -63,10 +63,11 @@ afterEach(async () => {
 })
 
 describe('mobile recording guide', () => {
-  it('opens next to import and preserves the selected calendar date on close', async () => {
+  it('opens from the recording actions and preserves the selected calendar date on close', async () => {
     await click('9月10日')
     const trigger = button('全天候录音')
-    expect(trigger.previousElementSibling?.textContent).toBe('导入历史音频')
+    expect(trigger.previousElementSibling?.textContent).toBe('开始录音')
+    expect(trigger.nextElementSibling?.textContent).toBe('声纹管理')
     trigger.focus()
     await click('全天候录音')
     expect(dialog()?.textContent).toContain('在手机上开启全天候录音')
