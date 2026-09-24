@@ -40,7 +40,7 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
   return <div className="arkme-usage-breakdown" data-usage-detail="points">
     <div className="arkme-points-toolbar">
       <input aria-label={tr('消费月份')} type="month" value={month} max={calendarMonth()} onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value) && event.target.value <= calendarMonth()) setMonth(event.target.value) }} />
-      {current?.status === 'ready' && <span>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</span>}
+      {current?.status === 'ready' && current.items.length > 0 && <span>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</span>}
     </div>
     {(!current || current.status === 'loading') && <p role="status">{tr('读取中…')}</p>}
     {current?.status === 'error' && <p role="alert">{tr('暂时无法读取消费明细。')} <button type="button" onClick={() => setRetry(value => value + 1)}>{tr('重试')}</button></p>}
