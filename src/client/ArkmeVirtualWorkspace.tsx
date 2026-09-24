@@ -1,5 +1,5 @@
 import { reactionNotifications } from './reaction-notifications.js'
-import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js'
+import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -684,10 +684,11 @@ export function arkmeRootChatUnreadPlacement(source: {
 }
 
 export function ArkmeRootChatPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
+  useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
-  if (reactionNotifications.forSource(scope, source.sourceKey).length) return <ArkmeReactionNotificationPreview source={source} disabled={disabled} />
+  if (latestReactionPreview(reactionNotifications.forSource(scope, source.sourceKey), source.unreadCount, arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0))) return <ArkmeReactionNotificationPreview source={source} disabled={disabled} />
 
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>

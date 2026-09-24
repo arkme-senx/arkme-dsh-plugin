@@ -4287,6 +4287,16 @@ export function ArkmeSurface({
     const cachedTimeline = conversationCacheRef.current.getTimeline(conversationKey)
     const hasCachedTimeline = cachedTimeline !== undefined
     if (cachedTimeline?.mode === 'around') {
+      // An explicit unread directory click requests current messages; a reaction locate keeps history.
+      if (sourceIsChat && arkmeUi.getSnapshot().conversationTarget === undefined
+        && arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)) {
+        if (timelineRequestsRef.current.get('initial')?.returnToLatest) return
+        void loadTimeline(undefined, false, 40, 'return-to-latest').catch(caught => {
+          arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
+          if (generation === timelineGenerationRef.current) setError(errorMessage(caught))
+        })
+        return
+      }
       setTimelineLoadingKey(current => current === conversationKey ? '' : current)
       setTimelineSkeletonKey(current => current === conversationKey ? '' : current)
       return
