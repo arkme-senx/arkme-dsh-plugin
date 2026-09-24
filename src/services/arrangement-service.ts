@@ -1,7 +1,11 @@
+import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
 import { createHmac } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
+  ArkmeArrangementReorderInput,
+  ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
+  ArkmeArrangementCreationSource,
   ArkmeArrangementItem,
   ArkmeArrangementListStatus,
   ArkmeArrangementMutationIntent,
@@ -43,6 +47,25 @@ function booleanValue(value: unknown): boolean {
 
 function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
+}
+
+/** Match Flutter creation-source precedence; never substitute the AI description. */
+function arrangementCreationSource(item: Record<string, unknown>): ArkmeArrangementCreationSource {
+  const records = listValue(item.related_records).map(objectValue)
+  const recordCount = listValue(item.record_uids).filter(value => stringValue(value).trim()).length
+  const project = (text: string, at: unknown) => ({ text, ...(numberValue(at) > 0 ? { createdAtMillis: Math.trunc(numberValue(at)) } : {}) })
+  if (records.length || recordCount) {
+    const items = records.filter(record => stringValue(record.text_content).trim()).map(record => project(stringValue(record.text_content), record.create_at))
+    return { kind: 'quick-note', items, unavailableCount: Math.max(recordCount, records.length) - items.length }
+  }
+  const source = objectValue(item.source)
+  const readItems = (value: unknown) => listValue(value).map(objectValue).filter(entry => stringValue(entry.text).trim()).map(entry => project(stringValue(entry.text), entry.create_at ?? entry.createAt))
+  const nestedItems = readItems(source.source_items ?? source.sourceItems)
+  const items = nestedItems.length ? nestedItems : readItems(item.source_items ?? item.sourceItems)
+  if (items.length) return { kind: 'input', items, unavailableCount: 0 }
+  const keys = ['source_text', 'sourceText', 'original_text', 'originalText', 'input_text', 'inputText', 'create_text', 'createText']
+  const text = [...['content', 'text', ...keys].map(key => stringValue(source[key])), ...[...keys, 'raw_text', 'rawText'].map(key => stringValue(item[key]))].find(value => value.trim())
+  return text ? { kind: 'input', items: [{ text }], unavailableCount: 0 } : { kind: 'none', items: [], unavailableCount: 0 }
 }
 
 function arrangementStatusCode(status: ArkmeArrangementListStatus): number {
@@ -95,32 +118,117 @@ export class ArrangementService {
 
   constructor(private readonly runtime: ServiceRuntime) {}
 
+  async arrangementBoardCache(accountScope: string, rawPages?: unknown): Promise<ArkmeArrangementBoardCache> {
+    const session = await this.runtime.requireSession()
+    if (accountScope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('arrangement-cache-account-changed', '账号已切换，请刷新安排', false, 403)
+    let pages
+    if (rawPages !== undefined) {
+      try { pages = parseArrangementBoardCachePages(rawPages) }
+      catch { throw new ArkmePluginError('invalid-params', '安排看板缓存格式无效', false, 400) }
+      for (const page of Object.values(pages)) {
+        for (const item of page.items) this.openArrangementRef(item.arrangementRef, session.userId)
+      }
+    }
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId) return { pages: {} }
+    const result = await this.runtime.stateStore.arrangementBoardCache?.(this.runtime.config.environment, session.userId, pages).catch(() => ({})) ?? {}
+    if ((await this.runtime.requireSession()).userId !== session.userId) return { pages: {} }
+    return { pages: result }
+  }
+
+
   dispose(): void {
     this.arrangementRefs.clear()
     this.arrangementReminderRefs.clear()
     this.arrangementWrites.clear()
   }
 
+  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal): Promise<{ items: ArkmeArrangementItem[] }> {
+    const texts = input.texts.map(text => text.trim())
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(input.requestId) || texts.length < 1 || texts.length > 10 || texts.some(text => !text || [...text].length > 500) || texts.reduce((n,text) => n + [...text].length,0) > 2000) {
+      throw new ArkmePluginError('arrangement-create-invalid', '最多输入10条，每条500字，总计2000字', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    return this.withArrangementWrite(`create:${input.requestId}`, session.userId, async () => {
+      const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/fast-create-async', {
+        uid: input.requestId, scene_type: 'private', topic_uid: '', sent_messages: texts.map(text => ({ type: 'text', text })),
+      }, session, signal)
+      const items = await Promise.all(listValue(data.items).map(raw => this.arrangementItem(raw, session.userId)))
+      if (!items.length) throw new ArkmePluginError('arrangement-create-uncertain', '未能确认创建结果，请重试核对', true, 502)
+      return { items }
+    })
+  }
+
+  async arrangementRecognition(refs: string[], signal?: AbortSignal): Promise<{ items: ArkmeArrangementItem[] }> {
+    if (!refs.length || refs.length > 50) throw new ArkmePluginError('arrangement-read-invalid', '安排查询范围无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const uids = refs.map(ref => this.openArrangementRef(ref, session.userId).arrangementUid)
+    const read = async (ids: string[]) => {
+      const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/list', { status: -1, uids: ids, limit: 50, offset: 0 }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      return listValue(data.list).map(objectValue)
+    }
+    const rows = await read(uids)
+    const seen = new Set(rows.map(row => stringValue(row.uid)))
+    const results = [...new Set(rows.flatMap(row => listValue(row.recognition_result_uids).map(stringValue).filter(Boolean)))].filter(uid => !seen.has(uid))
+    for (let i = 0; i < results.length; i += 50) rows.push(...await read(results.slice(i, i + 50)))
+    return { items: await Promise.all(rows.map(row => this.arrangementItem(row, session.userId))) }
+  }
+
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     const session = await this.runtime.requireSession()
     const status = options.status ?? 'all'
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
     const offset = Math.max(0, Math.trunc(options.offset ?? 0))
-    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
+    let data: Record<string, unknown>
+    try { data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
       '/api/v1/arrangements/list',
-      { status: arrangementStatusCode(status), limit, offset },
+      { status: arrangementStatusCode(status), limit, offset, ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { board_version: options.boardVersion } : {}) } : {}) },
       session,
       options.signal,
       { lane: 'interactive-read' },
     )
+    } catch (error) {
+      if (options.order === 'board' && error instanceof ArkmePluginError && error.upstreamStatus === 409) {
+        throw new ArkmePluginError('arrangement-board-conflict', '安排排序版本已变化，请刷新', false, 409)
+      }
+      if (options.order === 'board' && error instanceof ArkmePluginError && error.upstreamStatus === 422) {
+        const page = await this.listArrangements({ status, limit, offset, ...(options.signal ? { signal: options.signal } : {}) })
+        return { ...page, board: { supported: false, version: '' } }
+      }
+      throw error
+    }
     const rawItems = listValue(data.list)
     const items = await Promise.all(rawItems.map(async raw => await this.arrangementItem(raw, session.userId)))
     const total = Math.max(0, Math.trunc(numberValue(data.total)))
     const nextOffset = offset + rawItems.length
     const hasMore = rawItems.length > 0 && nextOffset < total
-    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+    const board = objectValue(data.board)
+    if (board.supported === true && !stringValue(board.version).trim()) throw new ArkmePluginError('arrangement-contract-invalid', '安排排序版本缺失', true, 502)
+    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}), ...(typeof board.supported === 'boolean' ? { board: { supported: board.supported, version: stringValue(board.version) } } : options.order === 'board' ? { board: { supported: false, version: '' } } : {}) }
+  }
+
+  async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
+    if (!['identified', 'following', 'completed'].includes(input.status) || !input.boardVersion.trim() || !input.requestId.trim() || input.boardVersion.length > 512 || input.requestId.length > 128) {
+      throw new ArkmePluginError('arrangement-order-invalid', '安排排序参数无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const uid = this.openArrangementRef(input.arrangementRef, session.userId).arrangementUid
+    const beforeUid = input.beforeRef ? this.openArrangementRef(input.beforeRef, session.userId).arrangementUid : undefined
+    const afterUid = input.afterRef ? this.openArrangementRef(input.afterRef, session.userId).arrangementUid : undefined
+    if (beforeUid === uid || afterUid === uid || (beforeUid && beforeUid === afterUid)) throw new ArkmePluginError('arrangement-order-invalid', '安排排序位置无效', false, 400)
+    return await this.withArrangementWrite(input.arrangementRef, session.userId, async () => {
+      // Never retry a write here: a lost response may already have committed.
+      const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/reorder', {
+        uid, status: arrangementStatusCode(input.status),
+        ...(beforeUid ? { before_uid: beforeUid } : {}), ...(afterUid ? { after_uid: afterUid } : {}),
+        board_version: input.boardVersion, request_id: input.requestId,
+      }, session, signal)
+      const board = objectValue(data.board)
+      if (board.supported !== true || !stringValue(board.version).trim()) throw new ArkmePluginError('arrangement-contract-invalid', '安排排序保存结果不确定，请刷新', true, 502)
+      return { board: { supported: true, version: stringValue(board.version) } }
+    })
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
@@ -412,6 +520,8 @@ export class ArrangementService {
       arrangementRef: await this.arrangementRef(viewerUserId, arrangementUid),
       title: stringValue(item.title),
       description: stringValue(item.description),
+      creationSource: arrangementCreationSource(item),
+      recognitionState: stringValue(item.recognition_state),
       status: arrangementStatus(item.status),
       reminderEnabled: booleanValue(item.reminder_enabled),
       reminderState: stringValue(item.reminder_state),

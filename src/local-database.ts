@@ -222,6 +222,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async arrangementBoardCache(environment: string, userId: number, pages?: import('./arrangement-board-cache.js').ArkmeArrangementBoardCachePages) {
+    return this.operationalState.arrangementBoardCache(environment, userId, pages)
+  }
+
   async readCancellationCompletion() { return await this.operationalState.readCancellationCompletion() }
   async writeCancellationCompletion(completion: import('./state-store.js').ArkmeCancellationCompletion | undefined) {
     await this.operationalState.writeCancellationCompletion(completion)
