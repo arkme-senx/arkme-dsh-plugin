@@ -159,7 +159,7 @@ it('binds equal-title native rows by order and keeps physical-local origin after
   card.innerHTML = '<div><div>本机</div><div class="native-time">刚刚</div><div><span>空闲</span></div></div>'
   document.body.append(card)
   await act(async () => nativeRows[1]!.dispatchEvent(new Event('pointerover', { bubbles: true })))
-  expect(card.querySelector('[data-arkme-session-origin]')?.textContent).toBe('实例：web电脑：Windows')
+  expect(card.querySelector('[data-arkme-session-origin]')?.textContent).toBe('电脑：Windows')
   await act(async () => nativeRows[0]!.dispatchEvent(new Event('pointerover', { bubbles: true })))
   expect(card.querySelector('[data-arkme-session-origin]')).toBeNull()
 })

@@ -1,8 +1,8 @@
 import type { DshAccountSession } from '../dsh-remote/account-session-types.js'
 
 export function sessionOrigin(row: DshAccountSession): string[] {
-  if (row.local) return []
-  return [`实例：${row.runtimeName}`, ...(row.sameDesktop ? [] : [`电脑：${row.desktopName}`])]
+  if (row.local || row.sameDesktop) return []
+  return [`电脑：${row.desktopName.trim() || '电脑名称暂不可用'}`]
 }
 
 /** Current-version presentation adapter. Native card, title, time, status and copy remain owned by DSH. */

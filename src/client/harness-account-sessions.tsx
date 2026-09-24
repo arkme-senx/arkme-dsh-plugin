@@ -175,13 +175,30 @@ function accountSessionCatalog(surface: Element) {
   return entry
 }
 
-/** All native sources share one account-scoped catalog. */
-export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
-  const account = useSyncExternalStore(listener => {
+/** Header and browser consume the same account-scoped discovery owner. */
+export function useAccountSessionRows(surface: Element): readonly DshAccountSession[] {
+  const account = useSurfaceAccount(surface)
+  const catalog = useMemo(() => accountSessionCatalog(surface), [surface, account])
+  const snapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+  useEffect(() => {
+    catalog.start()
+    void catalog.refresh()
+    return () => catalog.dispose()
+  }, [catalog])
+  return snapshot.rows
+}
+
+function useSurfaceAccount(surface: Element): string {
+  return useSyncExternalStore(listener => {
     const observer = new MutationObserver(listener)
     observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-account-id', 'data-arkme-account-scope'] })
     return () => observer.disconnect()
   }, () => `${surface.getAttribute('data-arkme-account-id')}:${surface.getAttribute('data-arkme-account-scope')}`)
+}
+
+/** All native sources share one account-scoped catalog. */
+export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
+  const account = useSurfaceAccount(surface)
   return <AccountBrowser key={account} Native={Native} surface={surface} {...props} />
 }
 

@@ -2,11 +2,11 @@
 import { expect, it } from 'vitest'
 import { installSessionOriginHover, sessionOrigin } from '../src/client/harness-session-origin.js'
 import type { DshAccountSession } from '../src/dsh-remote/account-session-types.js'
-it('only describes other instances, with a computer name for a different physical desktop', () => {
+it('only describes other computers, keeping same-computer instances invisible', () => {
   const row = { local: false, sameDesktop: true, runtimeName: 'work', desktopName: '同名电脑' } as DshAccountSession
   expect(sessionOrigin({ ...row, local: true })).toEqual([])
-  expect(sessionOrigin(row)).toEqual(['实例：work'])
-  expect(sessionOrigin({ ...row, sameDesktop: false })).toEqual(['实例：work', '电脑：同名电脑'])
+  expect(sessionOrigin(row)).toEqual([])
+  expect(sessionOrigin({ ...row, sameDesktop: false })).toEqual(['电脑：同名电脑'])
 })
 it('adds source lines using the existing card typography without changing native title, status or copy', async () => {
   document.body.innerHTML = '<section data-slot="sidebar.workspaces"><div role="treeitem" aria-selected="false"><span>会话</span></div></section>'
