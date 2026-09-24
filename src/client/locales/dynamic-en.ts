@@ -269,7 +269,7 @@ AI 积分|AI points
 赠送积分到期时间|Grant expires
 任务进行中暂占|Reserved by running tasks:
 积分，结束后返还未用部分|points; unused points return when the task finishes
-优先使用赠送积分，再使用充值积分。1 元 = 100 积分。|Granted points are used first, then purchased points. CNY 1 = 100 points.
+赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
 收起消费明细|Hide spending details
 查看消费明细|View spending details
 消费月份|Spending month

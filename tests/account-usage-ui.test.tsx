@@ -47,7 +47,11 @@ describe('account points and independent usage', () => {
     expect(host.querySelectorAll('.arkme-usage-metric')).toHaveLength(4)
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
     expect(host.textContent).toContain('可用 1,250 积分')
-    expect(host.textContent).toContain('赠送积分 100 · 充值积分 1,150')
+    const balanceLine = host.querySelector('[data-usage-kind="ai-points"] p')!
+    expect(balanceLine.textContent).toContain('可用 1,250 积分')
+    expect(balanceLine.textContent).toContain('赠送 100 · 充值 1,150')
+    expect(host.textContent).not.toContain('优先使用')
+    expect(host.textContent).not.toContain('1 元 = 100 积分')
     expect(host.textContent).toContain('暂占 250 积分')
     expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
     expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')

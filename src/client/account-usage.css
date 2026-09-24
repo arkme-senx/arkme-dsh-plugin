@@ -88,7 +88,8 @@
 .arkme-usage-metric p { margin: 5px 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .arkme-usage-metric small, .arkme-usage-muted { color: var(--dsw-alias-label-secondary, #68707c); font-size: 10px; }
 .arkme-usage-metric small { display: block; margin-top: 5px; }
-.arkme-usage-balance-amount strong { font-size: 20px; font-weight: 600; color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-usage-points-balance { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.arkme-usage-points-sources { color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-usage-track { display: block; height: 4px; overflow: hidden; border-radius: 4px; background: var(--dsw-alias-border-l2, #e1e3e6); margin-top: 6px; }
 .arkme-usage-track > span { height: 100%; display: block; border-radius: inherit; background: var(--dsw-alias-label-tertiary, #9097a1); }
 .arkme-usage-metric[data-usage-level='low'] .arkme-usage-label > span, .arkme-usage-metric[data-usage-level='exhausted'] .arkme-usage-label > span { color: var(--dsw-alias-state-warn-label, #a16207); }
