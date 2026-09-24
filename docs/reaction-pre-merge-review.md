@@ -70,8 +70,9 @@
 正式分支合并请求：
 - [Record #417](https://codeup.aliyun.com/senguo/jotmo/jotmo-record/change/417)：表态、提醒、历史及此次账号隔离修复。
 - [Chat #453](https://codeup.aliyun.com/senguo/jotmo/jotmo-chat/change/453)：复用 chatscope 的内部鉴权查询。
-- [World #40](https://codeup.aliyun.com/senguo/jotmo/jotmo-world/change/40)：公开记录访问权限扩展，无页面表态入口。私聊、群聊、自有记录不调用此接口，不应说成这些场景的强制部署依赖。
 
 Chat 相关测试通过；World 权限/发布状态测试通过。World 按现有配置加载约束编译后从仓库根目录运行，裸包目录执行的配置缺失与实际断言结果分开记录。Record #417 和 Chat #453 已合入 master；2026-09-24 16:14（上海时间）正式服分别更新至 Record 镜像 154、Chat 镜像 196。两者 Ready、零重启；启动日志包含新增表态路由，未发现表态存储初始化失败。此项不替代正式客户端发布后的端到端验收。
 
-上线顺序为 Chat → Record → 桌面插件；公开记录扩展启用前另外部署 World。当前 PR #687 目标是 dev，合入后仍需走 master 正式发布流程和生产 Runtime 激活。以上合并请求均未代替生产发布；回退保留新增集合及用户数据。
+上线顺序为 Chat → Record → 桌面插件。当前 PR #687 目标是 dev，合入后仍需走 master 正式发布流程和生产 Runtime 激活。以上合并请求均未代替生产发布；回退保留新增集合及用户数据。
+
+发布范围：私聊、群聊、发给自己及“我的一天”。范围外的 World 合并请求已关闭，不纳入本次发布。
