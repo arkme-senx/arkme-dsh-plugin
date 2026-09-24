@@ -15,7 +15,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import { useConversationMembers } from './use-conversation-members.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMentionReadProvider } from './mention-read-status.js'
-import { ArkmeReadReceiptIcon } from './ArkmeReadReceiptIcon.js'
+import { ArkmeReadReceiptControl, readReceiptLineStyle } from './ArkmeReadReceiptControl.js'
 import {
   arkmeMessageReadReceipts,
   type ArkmeMessageReadReceiptTarget,
@@ -23,14 +23,6 @@ import {
 
 function summaryLabel(summary: ArkmeMessageReadReceiptSummary): string {
   return tr("已读 {v0} / 未读 {v1}", { v0: summary.readCount, v1: summary.unreadCount })
-}
-
-function ReceiptCircle(props: { checked?: boolean; count?: number }) {
-  const count = props.count === undefined ? undefined : Math.min(999, Math.max(0, props.count))
-  return <span style={styles.indicator} data-arkme-read-receipt-indicator={props.checked === true ? 'all-read' : 'partial-read'}>
-    <ArkmeReadReceiptIcon checked={props.checked === true} style={styles.indicatorIcon} />
-    {count !== undefined && <span style={{ ...styles.indicatorCount, fontSize: count > 99 ? 4.5 : 7 }}>{count}</span>}
-  </span>
 }
 
 function errorText(error: unknown): string {
@@ -157,56 +149,36 @@ export function ArkmeMessageReadReceipt(props: {
   const canOpen = hasTruth && target.conversationKind === 'group_chat'
   const isFailure = entry?.status === 'error' && summary === undefined
   const isProvisional = entry?.status === 'provisional'
-  let indicator: JSX.Element
+  let indicator: 'unread' | 'all-read' | 'partial-read' | 'error' | 'placeholder'
   let label: string
   if (isFailure) {
-    indicator = <span style={styles.failureDot} data-arkme-read-receipt-indicator="error" />
+    indicator = 'error'
     label = '已读状态同步失败，点击重试'
   } else if (isProvisional || (hasTruth && summary.readCount <= 0 && summary.unreadCount > 0)) {
-    indicator = <span style={styles.unreadDot} data-arkme-read-receipt-indicator="unread" />
+    indicator = 'unread'
     label = '未读'
   } else if (hasTruth && summary.unreadCount <= 0 && summary.readCount > 0) {
-    indicator = <ReceiptCircle checked />
+    indicator = 'all-read'
     label = target.conversationKind === 'group_chat' ? summaryLabel(summary) : '已读'
   } else if (hasTruth && summary.readCount > 0) {
-    indicator = <ReceiptCircle count={summary.readCount} />
+    indicator = 'partial-read'
     label = summaryLabel(summary)
   } else {
-    indicator = <span style={styles.placeholder} data-arkme-read-receipt-indicator="placeholder" />
+    indicator = 'placeholder'
     label = '已读状态同步中'
   }
 
-  const content = canOpen || isFailure
-    ? <button
-        ref={buttonRef}
-        type="button"
-        style={{ ...styles.status, ...styles.interactive }}
-        aria-label={canOpen ? tr("{v0}，查看成员已读详情", { v0: label }) : label}
-        onKeyDown={event => {
-          if (detailOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) {
-            event.stopPropagation()
-            setDetailOpen(false)
-          }
-        }}
-        onClick={() => {
-          if (isFailure) {
-            arkmeMessageReadReceipts.retry(target)
-            return
-          }
-          setDetailOpen(current => !current)
-        }}
-      >{indicator}</button>
-    : <span style={styles.status} aria-label={label}>{indicator}</span>
-
-  return <span ref={hostRef} style={styles.root} data-arkme-read-receipt={entry?.status ?? 'unknown'}>
-    {content}
+  return <ArkmeReadReceiptControl hostRef={hostRef} buttonRef={buttonRef} state={indicator} status={entry?.status ?? 'unknown'}
+    {...(indicator === 'partial-read' && summary ? { count: summary.readCount } : {})}
+    label={canOpen ? tr("{v0}，查看成员已读详情", { v0: label }) : label}
+    {...(canOpen || isFailure ? { onClick: () => {
+      if (isFailure) arkmeMessageReadReceipts.retry(target)
+      else setDetailOpen(current => !current)
+    } } : {})}
+    {...(detailOpen ? { onEscape: () => setDetailOpen(false) } : {})}>
     {detailOpen && canOpen && <ArkmeMessageReadReceiptDetailPanel
-      anchor={buttonRef.current}
-      target={target}
-      source={props.source}
-      onClose={() => { setDetailOpen(false) }}
-    />}
-  </span>
+      anchor={buttonRef.current} target={target} source={props.source} onClose={() => setDetailOpen(false)} />}
+  </ArkmeReadReceiptControl>
 }
 
 export function ArkmeMessageReadReceiptLine(props: {
@@ -221,7 +193,7 @@ export function ArkmeMessageReadReceiptLine(props: {
     ref={elementRef}
     data-arkme-message-content-line={props.item.itemUid}
     style={{
-      maxWidth: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-end',
+      ...readReceiptLineStyle,
       // A self-message body may occupy the full available width for long content.
       // Keep its bubble/receipt pair pinned to the right edge in that case.
       justifyContent: props.item.isMe ? 'flex-end' : 'flex-start',

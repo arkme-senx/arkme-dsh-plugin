@@ -76,6 +76,7 @@ export class TeamAppService {
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor), own: v.own === true,
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
+      ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
         text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
         ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
