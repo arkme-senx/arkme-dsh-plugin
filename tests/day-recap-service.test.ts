@@ -59,7 +59,7 @@ describe('one-shot daily recap service', () => {
   it('shows insufficient balance rather than falling back or retrying automatically', async () => {
     const { service, stream } = setup()
     stream.mockImplementation(async function* () { throw new LlmError('quota', 'INSUFFICIENT_BALANCE', { status: 402 }) })
-    await expect(service.generate(input)).rejects.toThrow('AI 积分不足')
+    await expect(service.generate(input)).rejects.toThrow('AI 额度不足')
     expect(stream).toHaveBeenCalledTimes(1)
   })
   it('aborts before dispatch and allows an explicit later request', async () => {

@@ -2197,10 +2197,10 @@ describe('Arkme managed model adapter', () => {
 
       await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
         code: 'INSUFFICIENT_BALANCE',
-        message: 'AI 积分不足，请补充积分后重试',
+        message: 'AI 额度不足，请充值后继续',
         failure: {
           code: 'INSUFFICIENT_BALANCE',
-          message: 'AI 积分不足，请补充积分后重试',
+          message: 'AI 额度不足，请充值后继续',
           status: 402,
           requestId: 'mai_req_balance',
         },
@@ -2215,7 +2215,7 @@ describe('Arkme managed model adapter', () => {
     {
       code: 'QUOTA', status: 402,
       expectedCode: 'INSUFFICIENT_BALANCE',
-      expectedMessage: 'AI 积分不足，请补充积分后重试',
+      expectedMessage: 'AI 额度不足，请充值后继续',
     },
     {
       code: 'AUTH', status: 401,
