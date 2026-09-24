@@ -351,7 +351,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       {timeline?.messages.map((m, index) => <Fragment key={m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(timeline.messages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
         <TeamConversationMessage message={m} avatar={<TeamAvatar identity={m.sender} />} writable={current.channel.enabled && !current.blocked}
-          showReceipts={current.side === 'team' || m.side === 'external'} busy={busy}
+          showReceipts={current.side === 'team'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
           onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />

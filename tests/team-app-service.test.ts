@@ -89,6 +89,30 @@ describe('Team App owner adapter', () => {
     const page = await f.service.execute('team.app.timeline', { conversationRef: other.conversation!.ref }) as TeamTimeline
     expect(page.messages[0]!.media[0]!.key).not.toBe(edited.media[0]!.key)
   })
+  it.each([
+    ['OSSAccessKeyId=one&Expires=1&Signature=first&security-token=one', 'Signature=second&Expires=2&OSSAccessKeyId=two&security-token=two'],
+    ['x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-credential=one&x-oss-date=20260924T010000Z&x-oss-expires=60&x-oss-signature=first', 'x-oss-signature=second&x-oss-expires=120&x-oss-date=20260924T020000Z&x-oss-credential=two&x-oss-signature-version=OSS4-HMAC-SHA256'],
+  ])('keeps avatar identity across signed URL renewal but detects changed image content: %s', async (before, after) => {
+    const base = 'https://jotmo-userfiles.senguo.me/avatar.png'
+    let url = `${base}?${before}&x-oss-process=image%2Fresize%2Cw_80&v=1`
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [{ ...message, sender: { nickname: '小林', avatar_url: url } }] })
+    const opened = await open(f)
+    const read = async () => (await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline).messages[0]!.sender
+    const first = await read()
+    url = `${base}?v=1&x-oss-process=image%2Fresize%2Cw_80&${after}`
+    const renewed = await read()
+    expect(renewed.imageKey).toBe(first.imageKey)
+    expect(renewed.imageRef).not.toBe(first.imageRef)
+    url = `${base}?${after}&x-oss-process=image%2Fresize%2Cw_160&v=1`
+    expect((await read()).imageKey).not.toBe(first.imageKey)
+    url = `${base}?${after}&x-oss-process=image%2Fresize%2Cw_80&v=2`
+    const edited = await read()
+    expect(edited.imageKey).not.toBe(first.imageKey)
+    f.changeAccount()
+    const other = await open(f)
+    const page = await f.service.execute('team.app.timeline', { conversationRef: other.conversation!.ref }) as TeamTimeline
+    expect(page.messages[0]!.sender.imageKey).not.toBe(edited.imageKey)
+  })
   it('keeps draft and view identities separate when a visitor later joins the same team', async () => {
     let side = 'external'
     const f = fixture(() => ({ items: [{ ...conversation, side }], has_more: false }))

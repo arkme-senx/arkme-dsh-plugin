@@ -23,6 +23,21 @@ const reasons: Record<string, string> = {
   dependency_unavailable: '服务暂时不可用，请使用原请求重试', approval_required: '已启用加入审批', already_member: '你已经是团队成员',
 }
 
+// Signing credentials authorize a download; they do not identify its pixels.
+// Preserve content/version/processing parameters so a real avatar change still
+// invalidates the presentation. The original URL remains inside the access ref.
+function imagePresentationIdentity(raw: string): string {
+  try {
+    const url = new URL(raw)
+    const authorization = new Set(['ossaccesskeyid', 'expires', 'signature', 'security-token',
+      'x-oss-signature', 'x-oss-signature-version', 'x-oss-credential', 'x-oss-date',
+      'x-oss-expires', 'x-oss-security-token', 'x-oss-additional-headers'])
+    for (const key of [...url.searchParams.keys()]) if (authorization.has(key.toLowerCase())) url.searchParams.delete(key)
+    url.searchParams.sort()
+    return url.toString()
+  } catch { return raw }
+}
+
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
@@ -42,7 +57,7 @@ export class TeamAppService {
   }
   private async identity(raw: unknown, actor: number): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
-    return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${url}`, actor) } : {}) }
+    return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
   private async team(raw: unknown, actor: number): Promise<ArkmeTeam> {
     const v = obj(raw)

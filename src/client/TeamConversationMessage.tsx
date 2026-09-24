@@ -26,10 +26,10 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
-        {message.own && published && <ArkmeReadReceiptControl buttonRef={receiptButton}
-          state={message.recipientRead === undefined ? 'error' : message.recipientRead ? 'all-read' : 'unread'}
-          label={tr(message.recipientRead === undefined ? '已读状态同步中，查看阅读状态' : message.recipientRead ? '已读，查看阅读状态' : '未读，查看阅读状态')}
-          onClick={() => onReceipts(receiptButton.current)} />}
+        {message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
+          state={message.recipientRead === undefined ? 'error' : 'unread'}
+          label={tr(message.recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
+          {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
         <div ref={bubble} style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther) }} tabIndex={0}
           aria-label={tr('消息操作')}
           onContextMenu={event => { if (!published) return; event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }) }}

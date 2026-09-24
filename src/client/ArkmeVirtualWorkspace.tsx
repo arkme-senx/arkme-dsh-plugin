@@ -1,4 +1,5 @@
 import { TeamAvatar } from './TeamMessagingPanel.js'
+import { teamText } from './team-messaging-i18n.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
@@ -2112,7 +2113,7 @@ export function ArkmeNavigation({
               </span>
               <span data-arkme-conversation-content style={styles.chatContent}>
                 <span style={styles.chatTop}><span style={styles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
-                  <ArkmeTopicTagBadge label={tr('团队')} selected={selected} /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
+                  <ArkmeTopicTagBadge label={teamText(c.side === 'team' ? '代表团队' : '联系团队')} selected={selected} /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
                 <span style={styles.chatBottom}><span style={styles.preview}>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''}</span></span>
               </span>
             </button>

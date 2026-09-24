@@ -56,14 +56,31 @@ describe('Team send UI recovery', () => {
       expect(document.activeElement).toBe(editor)
     } finally { await act(async () => root.unmount()); host.remove() }
   })
-  it.each([false, true, undefined])('shows the shared receipt accessory for own messages: %s', async read => {
+  it.each([false, true, undefined])('external receipt is status only and disappears when read: %s', async read => {
     const own = {key:'m',ref:'m',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:read}
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? {conversation,messages:[own,{...own,key:'other',own:false,side:'team'}],hasMore:false,beforeSeq:0}
       : {teamRead:true,visitorRead:true,members:[]})
     await mount()
-    const indicator = renderer!.root.findByProps({'data-arkme-read-receipt-indicator':read === undefined ? 'error' : read ? 'all-read' : 'unread'})
-    const button = indicator.parent!
+    const indicators = renderer!.root.findAll(v => typeof v.type === 'string' && v.props['data-arkme-read-receipt-indicator'])
+    expect(indicators).toHaveLength(read === true ? 0 : 1)
+    if (read !== true) {
+      expect(indicators[0]!.props['data-arkme-read-receipt-indicator']).toBe(read === undefined ? 'error' : 'unread')
+      expect(indicators[0]!.parent!.type).toBe('span')
+      expect(indicators[0]!.parent!.props.onClick).toBeUndefined()
+    }
+    expect(renderer!.root.findAllByType(TeamConversationMessage).every(v => !v.props.showReceipts)).toBe(true)
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.receipts')).toBe(false)
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+  })
+  it('lets a team member open the shared receipt panel from the unread dot', async () => {
+    const own = {key:'m',ref:'m',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:false}
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? {conversation:{...conversation,side:'team'},messages:[own],hasMore:false,beforeSeq:0}
+      : {teamRead:true,visitorRead:false,members:[]})
+    await mount()
+    const button = renderer!.root.findByProps({'data-arkme-read-receipt-indicator':'unread'}).parent!
+    expect(button.type).toBe('button')
     await act(async () => { button.props.onClick(); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)
     await act(async () => { button.props.onClick(); await tick() })
