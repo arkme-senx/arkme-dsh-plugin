@@ -6,7 +6,10 @@ it('only describes other computers, keeping same-computer instances invisible', 
   const row = { local: false, sameDesktop: true, runtimeName: 'work', desktopName: '同名电脑' } as DshAccountSession
   expect(sessionOrigin({ ...row, local: true })).toEqual([])
   expect(sessionOrigin(row)).toEqual([])
-  expect(sessionOrigin({ ...row, sameDesktop: false })).toEqual(['电脑：同名电脑'])
+  expect(sessionOrigin({ ...row, sameDesktop: false }, '本机电脑')).toEqual(['电脑：同名电脑'])
+  expect(sessionOrigin({ ...row, sameDesktop: false }, '同名电脑')).toEqual([])
+  expect(sessionOrigin({ ...row, sameDesktop: false })).toEqual([])
+  expect(sessionOrigin({ ...row, sameDesktop: false, desktopName: ' MAC.local ' }, 'mac.local')).toEqual([])
 })
 it('adds source lines using the existing card typography without changing native title, status or copy', async () => {
   document.body.innerHTML = '<section data-slot="sidebar.workspaces"><div role="treeitem" aria-selected="false"><span>会话</span></div></section>'

@@ -13,7 +13,7 @@ let stop: (() => void) | undefined
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 afterEach(() => { act(() => root?.unmount()); root = undefined; stop?.(); stop = undefined; document.body.replaceChildren(); vi.clearAllMocks(); vi.useRealTimers() })
 const remote = { runtimeRef: 'remote', sessionRef: 'same', desktopName: 'DESKTOP-MQ3A4TB', local: false, sameDesktop: false, capabilities: [], archived: false } as unknown as DshAccountSession
-const t = ((key: string) => ({ remote: '非本机', unknownComputer: '电脑名称暂不可用' })[key]) as Parameters<typeof SessionComputerLocation>[0]['t']
+const t = ((key: string) => ({ remote: '非本机' })[key]) as Parameters<typeof SessionComputerLocation>[0]['t']
 
 it('uses runtime/session identity, hides same-computer instances, and follows rename/offline without another poller', async () => {
   vi.useFakeTimers()
@@ -21,7 +21,8 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   document.body.append(surface, container)
   surface.dataset.arkmeAccountId = '1'; surface.dataset.arkmeAccountScope = 'test'
   let rows = [remote, { ...remote, runtimeRef: 'other-local', sameDesktop: true }]
-  vi.mocked(callArkme).mockImplementation(async () => ({ contractVersion: 1, items: rows }))
+  let localDesktopName: string | undefined = 'Mac.local'
+  vi.mocked(callArkme).mockImplementation(async () => ({ contractVersion: 1, items: rows, localRuntime: { desktopName: localDesktopName } }))
   stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   root = createRoot(container)
   const render = async (sessionId: string) => { await act(async () => root!.render(createElement(SessionComputerLocation, { surface, sessionId, t }))) }
@@ -35,6 +36,14 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   await render('arkme:missing:same')
   expect(container.textContent).toBe('')
   await render(accountSessionKey(remote))
+  localDesktopName = remote.desktopName
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+  expect(container.textContent).toBe('')
+  expect(rows[0]!.sameDesktop).toBe(false)
+  localDesktopName = undefined
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+  expect(container.textContent).toBe('')
+  localDesktopName = 'Mac.local'
   rows = [{ ...remote, desktopName: '<img src=x onerror=alert(1)>'.repeat(10), presence: 'offline' }]
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
   expect(container.querySelector('img')).toBeNull()
@@ -42,7 +51,7 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   expect(container.textContent).toContain('非本机')
   rows = [{ ...remote, desktopName: ' ' }]
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-  expect(container.textContent).toBe('非本机 · 电脑名称暂不可用')
+  expect(container.textContent).toBe('')
   act(() => root!.unmount()); root = undefined
   stop(); stop = undefined
   expect(vi.getTimerCount()).toBe(0)
@@ -53,7 +62,7 @@ it('withdraws old computer information on account/environment changes and ignore
   const surface = document.createElement('section'), container = document.createElement('div')
   document.body.append(surface, container)
   surface.dataset.arkmeAccountId = '1'; surface.dataset.arkmeAccountScope = 'test'
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [remote] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [remote], localRuntime: { desktopName: 'Mac.local' } })
   root = createRoot(container)
   await act(async () => root!.render(createElement(SessionComputerLocation, { surface, sessionId: accountSessionKey(remote), t })))
   expect(container.textContent).toContain('DESKTOP-MQ3A4TB')

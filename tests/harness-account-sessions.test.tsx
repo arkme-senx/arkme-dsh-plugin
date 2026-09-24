@@ -148,7 +148,7 @@ it('binds equal-title native rows by order and keeps physical-local origin after
   const container = document.createElement('div'); container.dataset.slot = 'sidebar.workspaces'; document.body.append(container)
   const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
   const remoteRow = row({ title: '本机' })
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, localRuntimeRef: 'mac', items: [remoteRow, row({ local: true, runtimeRef: 'mac', title: '本机', sameDesktop: true })] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, localRuntimeRef: 'mac', localRuntime: { desktopName: 'Mac', runtimeName: 'web' }, items: [remoteRow, row({ local: true, runtimeRef: 'mac', title: '本机', sameDesktop: true })] })
   const Native = (p: Record<string, any>) => {
     const state = p.useSessions((s: unknown) => s)
     return createElement('div', { role: 'tree' }, ['same', accountSessionKey(remoteRow)].filter(id => state.byId[id]).map(id => createElement('span', { key: id }, createElement('div', { role: 'treeitem', 'aria-selected': id === state.current, 'data-test-id': id }, createElement('span', null, state.byId[id].displayTitle)))))
