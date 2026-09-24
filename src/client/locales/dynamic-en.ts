@@ -270,7 +270,7 @@ AI 额度|AI allowance
 任务进行中暂占|Reserved by running tasks:
 积分，结束后返还未用部分|points; unused points return when the task finishes
 赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
-Arkme 对话|Arkme chat
+DSH 对话|DSH chat
 AI 调用|AI usage
 （赠送）| (Gift)
 （充值）| (Purchased)
@@ -281,6 +281,7 @@ AI 调用|AI usage
 消费月份|Spending month
 该月消费|Spent in selected month
 该月暂无积分消费|No point spending in selected month
+暂时无法读取|Could not load
 暂时无法读取消费明细。|Spending details could not be loaded.
 输入 Token|Input tokens
 输出 Token|Output tokens

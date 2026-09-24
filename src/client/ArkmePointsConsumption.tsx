@@ -58,7 +58,7 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
 
 function consumptionLabel(businessCode: string): string {
   if (businessCode === 'agent') return 'Agent'
-  if (businessCode === 'arkme') return tr('Arkme 对话')
+  if (businessCode === 'arkme') return tr('DSH 对话')
   return tr('AI 调用')
 }
 

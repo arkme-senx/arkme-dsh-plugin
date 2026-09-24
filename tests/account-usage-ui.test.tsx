@@ -10,7 +10,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
 vi.mock('../src/client/account-usage.css?inline', async () => ({ default: (await import('node:fs')).readFileSync(`${process.cwd()}/src/client/account-usage.css`, 'utf8') }))
 let root: Root, host: HTMLDivElement
-const onViewMembership = vi.fn(), onRefreshMembership = vi.fn()
+const onViewMembership = vi.fn()
 const points = { accountScope: 'prod:11', unit: 'ai_points', availablePoints: '1250', reservedPoints: '250', grantedPoints: '100', purchasedPoints: '1150', observedAt: 1, grants: [{ source: 'membership', availablePoints: '100', expiresAt: 1790784000000 }] }
 const storage = { accountScope: 'prod:11', usedBytes: 1024 ** 3, totalBytes: 10 * 1024 ** 3 }
 const voice = { accountScope: 'prod:11', usedSeconds: 300, remainingSeconds: 6900 }
@@ -18,15 +18,15 @@ const balance = { availableNanoCny: '12500000000', totalNanoCny: '15000000000', 
 const defaultValue = (operation: string) => operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.points.query' ? points : storage
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-  mocks.call.mockReset(); onViewMembership.mockReset(); onRefreshMembership.mockReset()
+  mocks.call.mockReset(); onViewMembership.mockReset()
   mocks.call.mockImplementation(async operation => defaultValue(operation))
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-async function render(scope = 'prod:11') { await act(async () => root.render(<ArkmeAccountUsageDetails accountScope={scope} onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} />)) }
-const refresh = () => host.querySelector<HTMLButtonElement>('[aria-label="刷新用量与额度"]')!
+async function render(scope = 'prod:11') { await act(async () => root.render(<ArkmeAccountUsageDetails accountScope={scope} onViewMembership={onViewMembership} />)) }
+const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
   it('loads settled consumption only after opening details and cancels on close', async () => {
@@ -61,25 +61,26 @@ describe('account points and independent usage', () => {
     expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice'])
     for (const text of ['Token', '实体提取', '阿森有想法', '¥', '永久免费']) expect(host.textContent).not.toContain(text)
   })
-  it('refreshes all visible quotas and membership with one action', async () => {
+  it('loads fresh quotas after leaving and reopening without a refresh button', async () => {
     await render()
     mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '300', purchasedPoints: '200' } : operation === 'account.usage.voice' ? { ...voice, usedSeconds: 600, remainingSeconds: 6600 } : storage)
-    await act(async () => refresh().click())
+    await act(async () => root.render(null))
+    await render()
     expect(host.textContent).toContain('可用 300 积分')
     expect(host.textContent).toContain('已用 10 分 / 剩余 1 小时 50 分')
     expect(mocks.call).toHaveBeenCalledTimes(6)
-    expect(onRefreshMembership).toHaveBeenCalledOnce()
+    expect(host.querySelector('[aria-label="刷新用量与额度"]')).toBeNull()
   })
   it.each(['account.points.query', 'account.usage.storage', 'account.usage.voice'])('isolates and retries %s failure without inventing zeros', async failed => {
     mocks.call.mockImplementation(async operation => { if (operation === failed) throw new Error('offline'); return defaultValue(operation) })
     await render()
-    expect(host.textContent).toContain('暂时无法读取，请刷新重试')
+    expect(host.textContent).toContain('暂时无法读取')
     expect(host.textContent).not.toContain('已用 0')
     if (failed !== 'account.points.query') expect(host.textContent).toContain('可用 1,250 积分')
     if (failed !== 'account.usage.storage') expect(host.textContent).toContain('已用 1 GB')
-    expect(refresh().disabled).toBe(false)
+    expect(retry().disabled).toBe(false)
     mocks.call.mockImplementation(async operation => defaultValue(operation))
-    await act(async () => refresh().click())
+    await act(async () => retry().click())
     expect(host.textContent).not.toContain('无法读取')
   })
   it('retains membership actions for depleted storage and voice without creating an order', async () => {
@@ -98,7 +99,7 @@ describe('account points and independent usage', () => {
     await render('prod:12')
     for (const text of ['1,250', '1 GB', '1 小时 55 分']) expect(host.textContent).not.toContain(text)
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
-    expect(refresh().disabled).toBe(true)
+    expect(host.textContent).toContain('读取中…')
   })
   it('ignores late results after environment changes', async () => {
     const pending: Array<(value: unknown) => void> = []
@@ -120,7 +121,7 @@ describe('account points and independent usage', () => {
   })
   it('opens recharge above details without placing an order and restores focus', async () => {
     mocks.call.mockImplementation(async operation => operation === 'billing.products' ? { items: [] } : defaultValue(operation))
-    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} onClose={() => {}} />))
+    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={() => {}} />))
     const recharge = document.querySelector<HTMLButtonElement>('[data-usage-kind="ai-points"] button')!
     recharge.focus(); await act(async () => recharge.click())
     expect(document.querySelector<HTMLDialogElement>('.arkme-billing-modal-host')?.open).toBe(true)
@@ -172,7 +173,7 @@ describe('compact summary and dialog', () => {
   })
   it('supports dialog cancellation and focus restoration', async () => {
     const close = vi.fn(), ref = createRef<HTMLButtonElement>()
-    await act(async () => root.render(<><button ref={ref}>头像</button><ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} onClose={close} returnFocusRef={ref} /></>))
+    await act(async () => root.render(<><button ref={ref}>头像</button><ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={close} returnFocusRef={ref} /></>))
     const dialog = document.querySelector('dialog')!
     expect(dialog.open).toBe(true); expect(dialog.textContent).toContain('可用 1,250 积分')
     await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭用量与额度详情"]')!.click())

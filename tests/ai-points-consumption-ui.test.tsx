@@ -65,7 +65,7 @@ it('shows one task total and retains individual point charges in the expandable 
 })
 
 it.each([
-  ['arkme', 'Arkme 对话'], ['agent', 'Agent'], ['', 'AI 调用'], ['future-business', 'AI 调用'],
+  ['arkme', 'DSH 对话'], ['agent', 'Agent'], ['', 'AI 调用'], ['future-business', 'AI 调用'],
 ])('shows the business purpose for %s and keeps the model in details', async (businessCode, label) => {
   mocks.call.mockImplementation(async (_op, params) => ({ accountScope: 'prod:1', unit: 'ai_points', month: params.month, chargedPoints: row.chargedPoints, items: [{ ...row, businessCode }], nextBeforeId: '' }))
   await render()
