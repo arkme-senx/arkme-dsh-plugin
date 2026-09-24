@@ -4,7 +4,7 @@ import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'join'
   | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
-  | 'send' | 'send.status' | 'send.confirm' | 'edit' | 'withdraw' | 'read' | 'receipts' | 'block'
+  | 'send' | 'send.status' | 'send.confirm' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'media' | 'image'
 }`
 export type TeamSide = 'team' | 'external'
@@ -23,7 +23,7 @@ export interface TeamContent { text_content: string; title?: string; template_ki
 export interface TeamMedia { ref: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
-  own: boolean; state: string; createdAt: number; canEdit: boolean; canWithdraw: boolean
+  own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
 }
 export interface TeamPage<T> { items: T[]; hasMore: boolean; nextCursor?: string }
@@ -35,3 +35,5 @@ export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & {
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }
+
+export interface TeamHomeVisibility { showInHome: boolean; version: number }

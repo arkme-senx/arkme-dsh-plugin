@@ -601,6 +601,7 @@ describe('RecordService', () => {
     { sourceKind: 'topic' as const, ownerRef: 'topic-1', originKind: 2, topicUid: 'topic-1' },
     { sourceKind: 'private_chat' as const, ownerRef: 'private-1', originKind: 3 },
     { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 1 },
+    { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 5 },
   ])('accepts a record from the exact $sourceKind family', async ({ sourceKind, ownerRef, originKind, topicUid }) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-source-family-valid-'))
     const stateStore = new ArkmeStateStore(root)
@@ -612,6 +613,7 @@ describe('RecordService', () => {
           record_core: {
             record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42,
             origin_kind: originKind,
+            ...(originKind === 5 ? {source_kind:1,origin_container_ref:'team-conversation'} : {}),
             ...(sourceKind === 'private_chat' ? { origin_container_ref: ownerRef } : {}),
             template_kind: 1, title: '', text_content: '原正文', status: 1,
             version: 7, content_access_state: 1, send_at: 123_000,
