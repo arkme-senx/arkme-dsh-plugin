@@ -803,11 +803,6 @@ export class ArkmeSdk {
     return await this.call('self-roles.bind', { expectedUserId, sourceRef, recordUid, roleId }, signal)
   }
 
-  async socialAccess(signal?: AbortSignal): Promise<import('../types.js').ArkmeSocialAccessSnapshot> {
-    if ((await this.capabilities(signal)).features.socialAccess !== true) throw new Error('当前 Provider 不支持社交资格查询')
-    return await this.call<import('../types.js').ArkmeSocialAccessSnapshot>('social.access', undefined, signal)
-  }
-
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {
     return await this.call<ArkmeUserProfileSnapshot>(
       options.refresh === true ? 'user.profile.refresh' : 'user.profile',
@@ -2456,5 +2451,3 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
-
-export type { ArkmeSocialAccessSnapshot } from '../types.js'

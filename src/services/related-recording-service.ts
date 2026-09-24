@@ -170,7 +170,7 @@ export class RelatedRecordingService {
   }
 
   private async requirePrivateSource(sourceRef: string, userId: number): Promise<ArkmeSourceRefPayload> {
-    const source = await this.source.openAccessibleSourceRef(sourceRef, userId)
+    const source = await this.source.openSourceRef(sourceRef, userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('related-recordings-private-source-required', '相关录音仅支持一对一私聊', false)
     }

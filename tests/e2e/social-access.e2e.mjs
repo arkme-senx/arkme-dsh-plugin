@@ -1,5 +1,5 @@
-// Installed artifact + unmodified target Harness + real browser/Host/SDK/Tools.
-// Only account/business HTTP responses and the model replay are fixtures.
+// Installed artifact + unmodified target Harness + real browser.
+// Account/business HTTP and client profile observations are isolated fixtures.
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:https'
 import { once } from 'node:events'
@@ -21,10 +21,9 @@ const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'
 if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) {
   throw new Error('The plugin must be installed from an immutable tgz')
 }
-const { createArkmeSdk } = await importFile(join(profile, 'node_modules/@senguoyun/dsh-arkme/lib/sdk.js'))
 
 describe('packed social access on the target Harness', () => {
-  it('keeps UI, SDK and real-session Tools consistent across grant, outage and revocation', async () => {
+  it('keeps normal startup and drafts stable while only confirmed unbound profile hides UI', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme social acceptance '))
     let scaffold, browser, page
     let allowed = true
@@ -46,10 +45,6 @@ describe('packed social access on the target Harness', () => {
       let data = { items: [], users: [], has_more: false }
       if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: jwt, refresh_token: 'isolated-fixture' }
       if (req.url === '/api/v1/auth/get-user-info') data = { user_id: 10001, nick_name: '社交验收', phone: '13800000000' }
-      if (req.url === '/api/v1/social-access/status') {
-        if (allowed === null) { res.writeHead(503); res.end(); return }
-        data = { allowed }
-      }
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ code: 200, data }))
     })
@@ -75,6 +70,20 @@ describe('packed social access on the target Harness', () => {
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
       const context = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'zh-CN' })
       page = await context.newPage()
+      // Keep baseline authentication intact. Only the UI's existing profile read
+      // receives the binding observations under test; no permission API exists.
+      await page.route('**/arkme-self/api', async route => {
+        const operation = route.request().postDataJSON()?.operation
+        if (operation !== 'user.profile') { await route.continue(); return }
+        if (allowed === null) { await route.fulfill({ status: 503, body: 'profile unavailable' }); return }
+        const response = await route.fetch()
+        const body = await response.json()
+        if (body.value?.profile?.contact) {
+          body.value.profile.contact.phoneMasked = allowed ? '138****0000' : undefined
+        }
+        await route.fulfill({ response, json: body })
+      })
+
       const pageErrors = []
       page.on('pageerror', error => pageErrors.push(error.message))
       await page.addInitScript(() => {
@@ -107,13 +116,6 @@ describe('packed social access on the target Harness', () => {
       const frame = await (await page.waitForSelector('iframe[title="DeepSeek Harness"]')).contentFrame()
       await connectFreshWorkspaceZh(frame, scaffold.workspaceCwd)
       const input = frame.locator('[data-composer-input]').first()
-      await input.fill('Use the bash tool to run exactly: echo WEB_E2E_OK. Then reply with the single word DONE and stop.')
-      const settled = scaffold.whenTurnSettled()
-      await input.press('Enter')
-      const agent = scaffold.ctx.agents.get(await settled)
-      const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), init) })
-      const tool = () => scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_social_access', arguments: {}, agent, signal: new AbortController().signal })
-      expect(scaffold.ctx.tools.get('arkme_social_access', agent)).toBeDefined()
       const navigation = name => page.getByRole('button', { name, exact: true })
       for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
       const frames = await page.evaluate(() => { window.socialStartupFrames.stop = true; return window.socialStartupFrames })
@@ -124,26 +126,20 @@ describe('packed social access on the target Harness', () => {
       await input.evaluate(node => { window.socialComposerBeforeRefresh = node })
       for (const state of [true, null, false, true]) {
         allowed = state
-        expect(await sdk.socialAccess()).toMatchObject({ allowed: state })
-        const result = await tool()
-        expect(result.isError).toBe(false)
-        expect(JSON.parse(String(result.value))).toMatchObject({ allowed: state })
         const refresh = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
-          && response.request().postDataJSON()?.operation === 'social.access')
+          && response.request().postDataJSON()?.operation === 'user.profile')
         await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-        expect((await (await refresh).json()).value).toMatchObject({ allowed: state })
+        const response = await refresh
+        expect(response.status()).toBe(state === null ? 503 : 200)
         for (const name of ['联系人', '通话', '世界']) {
           await navigation(name).waitFor({ state: state === false ? 'hidden' : 'visible' })
         }
         expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
         expect(await input.evaluate(node => node === window.socialComposerBeforeRefresh)).toBe(true)
         expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
-        if (state !== true) {
-          const before = requests.filter(path => path.includes('/call')).length
-          await expect(sdk.callHistory()).rejects.toThrow(state === false ? '绑定手机号' : '暂时不可用')
-          expect(requests.filter(path => path.includes('/call')).length).toBe(before)
-        }
+
       }
+      expect(requests.some(path => path.includes('social-access'))).toBe(false)
       expect(pageErrors).toEqual([])
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
     } catch (error) {

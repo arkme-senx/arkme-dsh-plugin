@@ -48,7 +48,7 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
       if (path === '/api/v1/records/media/batch-list') return await readMedia()
       throw new Error(path)
     },
-   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+  }
   const files = {
     files: vi.fn(async () => [localFile]),
     readLocal: vi.fn(async () => ({ file: localFile })),
@@ -61,7 +61,7 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
   const mediaService = new MediaService(runtime as never, {} as never, {} as never, { recordUid: raw => (raw as any).record_core?.record_uid ?? '' })
   const sourceReader = {
     async openSourceRef() { return { version: 1 as const, userId: 42, kind: 'default_category' as const, ownerRef: 'uncategorized', displayName: '未分类' } },
-   get openAccessibleSourceRef() { return this.openSourceRef }}
+  }
   const restart = (freshState = false) => new RecordService((freshState ? { ...runtime, stateStore: new ArkmeStateStore(root) } : runtime) as never, mediaService, sourceReader, undefined, files, onCommitted)
   const service = restart()
   return { root, stateStore, service, restart, runtime, core, files, writes, update, readMedia, sourceReader, switchAccount: () => { userId = 99 } }

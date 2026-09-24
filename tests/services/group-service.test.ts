@@ -1,14 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SocialAccessService } from '../../src/services/social-access-service.js'
+import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { GroupService } from '../../src/services/group-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
-
-// These domain regressions exercise a qualified account; owner denial is tested separately.
-beforeEach(() => { vi.spyOn(SocialAccessService.prototype, 'status').mockResolvedValue({ userId: 42, allowed: true }) })
-afterEach(() => { vi.restoreAllMocks() })
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',

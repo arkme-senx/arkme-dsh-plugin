@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from '../helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { describe, expect, it, vi } from 'vitest'
 import { OutgoingCallService } from '../../src/services/outgoing-call-service.js'
 import type { ServiceRuntime } from '../../src/services/service.js'
@@ -10,7 +8,7 @@ function setup(data: Record<string, unknown> = {}) {
   const post = vi.fn(async () => ({ call_url: '/share-call?token=invite-token', expires_at: Date.now() + 1_800_000,
     call_media_type: 0, sharer_profile: { user_id: 42, display_name: '分享者' }, ...data }))
   const current = vi.fn(async () => session)
-  const runtime = { config: { webrtcBaseUrl: 'https://webrtc.test' }, requireSocialSession: async () => session, requireSession: async () => session,
+  const runtime = { config: { webrtcBaseUrl: 'https://webrtc.test' }, requireSession: async () => session,
     accountScopedSession: current, authenticatedWebrtcPost: post } as unknown as ServiceRuntime
   const profile = { refreshProfile: async () => ({ profile: { displayName: '我' } }) } as unknown as ProfileService
   return { service: new OutgoingCallService(runtime, {} as never, profile), session, post, current }

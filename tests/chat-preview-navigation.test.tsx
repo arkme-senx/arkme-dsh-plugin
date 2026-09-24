@@ -133,10 +133,3 @@ it('uses a rotated signed ref for the same stable conversation and closes when t
   await act(async () => arkmeChatDirectory.publish([source, other]))
   expect(dialog()).toBeNull()
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

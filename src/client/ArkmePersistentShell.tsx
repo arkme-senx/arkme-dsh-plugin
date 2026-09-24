@@ -1,4 +1,3 @@
-import { SocialAccessPresentationBoundary } from './SocialAccessPresentationBoundary.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -382,7 +381,7 @@ export function ArkmePersistentSidebar({
     onKeyDown={resizeSidebarFromKeyboard}
   />
 
-  if (loginMode) return webLockedMode ? <SocialAccessPresentationBoundary><aside
+  if (loginMode) return webLockedMode ? <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-login-mode="true"
@@ -401,7 +400,7 @@ export function ArkmePersistentSidebar({
       <ArkmeNavigation wide compactDirectory={compactDirectory} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
     {sidebarResizeHandle}
-  </aside></SocialAccessPresentationBoundary> : <aside
+  </aside> : <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-login-mode="true"
     data-arkme-directory-visible="false"
@@ -409,7 +408,7 @@ export function ArkmePersistentSidebar({
     aria-hidden
   />
 
-  return <SocialAccessPresentationBoundary><aside
+  return <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
@@ -499,7 +498,7 @@ export function ArkmePersistentSidebar({
     {directoryVisible && (contactsMode
       ? <div aria-hidden style={{ flex: '0 0 3px', width: 3 }} />
       : sidebarResizeHandle)}
-  </aside></SocialAccessPresentationBoundary>
+  </aside>
 }
 
 export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'>
@@ -529,7 +528,7 @@ export function ArkmePersistentWorkspace({
   useLayoutEffect(() => {
     arkmeContactsTab.activateAccount(contactsAccountKey)
   }, [contactsAccountKey])
-  return <SocialAccessPresentationBoundary><main
+  return <main
     data-arkme-owned="persistent-workspace"
     data-arkme-workspace
     data-arkme-notification-activation-revision={ui.notificationActivationRevision ?? 0}
@@ -600,7 +599,7 @@ export function ArkmePersistentWorkspace({
         />}
       />
     </div>}
-  </main></SocialAccessPresentationBoundary>
+  </main>
 }
 
 export type ArkmePersistentDetailsProps = PropsRuntime<'details'> & { closeDetails(): void }

@@ -2,217 +2,80 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
-import { arkmeUi } from '../src/client/ui-controller.js'
-import { ArkmeAuthStore, arkmeAuthStore } from '../src/client/auth-store.js'
-import { socialAccessStore } from '../src/client/social-access-store.js'
-import { createRoot, type Root } from 'react-dom/client'
-import { act as domAct } from 'react-dom/test-utils'
-import { ArkmeOutgoingCallHost } from '../src/client/ArkmeOutgoingCallHost.js'
-import { SocialAccessPresentationBoundary } from '../src/client/SocialAccessPresentationBoundary.js'
-import { SocialAccessSnapshotStorage } from '../src/client/social-access-snapshot-storage.js'
-import { ArkmeNavigation } from '../src/client/ArkmeVirtualWorkspace.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { socialAccessStore, loadSocialAccess } from '../src/client/social-access-store.js'
 
-const api = vi.hoisted(() => ({ allowed: false as boolean | null, calls: vi.fn(), pending: undefined as undefined | Promise<unknown> }))
+const api = vi.hoisted(() => ({ phone: '138****0000' as string | undefined, calls: vi.fn(), pending: undefined as Promise<unknown> | undefined, fail: false, stale: false }))
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(),
   callArkme: async (operation: string) => {
     api.calls(operation)
-    if (operation === 'social.access') return api.pending ?? { userId: 42, allowed: api.allowed }
-    if (operation === 'user.profile' || operation === 'user.profile.refresh') return { profile: null }
-    if (operation === 'calls.outgoing.intent.claim') return null
-    if (operation === 'arko.profile') return { displayName: 'Arko', version: 1 }
-    if (operation === 'arko.history') return { items: [], hasMore: false }
+    if (operation.startsWith('user.profile')) {
+      if (api.fail) throw new Error('offline')
+      return api.pending ?? { profile: api.stale && operation === 'user.profile' ? null : { userId: 42, displayName: '用户', contact: { phoneMasked: api.phone } }, cachedAtMillis: Date.now() }
+    }
     return {}
   },
 }))
-
 let renderer: ReactTestRenderer | undefined
-let callRoot: Root | undefined
 afterEach(() => {
-  domAct(() => callRoot?.unmount())
-  callRoot = undefined
-  document.body.replaceChildren()
-  act(() => renderer?.unmount())
-  renderer = undefined
+  act(() => renderer?.unmount()); renderer = undefined
   socialAccessStore.activate(undefined)
-  api.calls.mockClear(); api.pending = undefined
-  vi.restoreAllMocks()
-  vi.useRealTimers()
+  localStorage.clear()
+  api.calls.mockClear(); api.pending = undefined; api.fail = false; api.stale = false; api.phone = '138****0000'
 })
 const labels = () => renderer!.root.findAllByType('button').map(button => button.props['data-arkme-home-tour-target']).filter(Boolean)
-
-describe('real social presentation lifecycle', () => {
-  function mountSurface() {
-    const container = document.createElement('div'); document.body.append(container)
-    callRoot = createRoot(container)
-    callRoot.render(<SocialAccessPresentationBoundary><main data-testid="surface" style={{ display: 'flex' }}>
-      <ArkmeProductNavigation compact={false} />
-      <input defaultValue="保留草稿" />
-    </main></SocialAccessPresentationBoundary>)
-  }
-  it('waits for the existing account check and first qualification before showing any navigation', async () => {
-    const auth = new ArkmeAuthStore()
-    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockImplementation(auth.getSnapshot)
-    vi.spyOn(arkmeAuthStore, 'subscribe').mockImplementation(auth.subscribe)
+const expectSocial = (visible: boolean) => {
+  for (const name of ['contacts', 'world', 'calls']) expect(labels().includes(name)).toBe(visible)
+}
+const mount = async () => {
+  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+  await act(async () => { renderer = create(<main><ArkmeProductNavigation compact={false} /><input defaultValue="保留草稿" /></main>) })
+}
+describe('social UI without service restrictions', () => {
+  it('shows complete bound navigation immediately while the profile is pending', async () => {
     let finish!: (value: unknown) => void
     api.pending = new Promise(resolve => { finish = resolve })
-    await domAct(async () => { mountSurface() })
-    const surface = document.querySelector('main')!
-    const input = document.querySelector('input')!
-    expect(surface.style.opacity).toBe('0')
-    expect(api.calls.mock.calls.some(([operation]) => operation === 'social.access')).toBe(false)
-    await domAct(async () => { auth.setAuth({ status: 'authenticated', environment: 'test', userId: 42 }) })
-    expect(surface.style.opacity).toBe('0')
-    await domAct(async () => { finish({ userId: 42, allowed: true }); await api.pending })
-    expect(surface.style.opacity).toBe('')
-    for (const tab of ['contacts', 'world', 'calls']) expect(document.querySelector(`[data-arkme-home-tour-target="${tab}"]`)).not.toBeNull()
-    expect(document.querySelector('input')).toBe(input)
+    await mount()
+    expectSocial(true)
+    const input = renderer!.root.findByType('input')
+    await act(async () => { finish({ profile: { userId: 42, contact: { phoneMasked: '138****0000' } }, cachedAtMillis: Date.now() }); await api.pending })
+    expectSocial(true)
+    expect(renderer!.root.findByType('input')).toBe(input)
+    expect(api.calls.mock.calls.every(([name]) => name !== 'social.access')).toBe(true)
   })
-
-  it('releases personal presentation when the existing account check fails', async () => {
-    const auth = new ArkmeAuthStore()
-    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockImplementation(auth.getSnapshot)
-    vi.spyOn(arkmeAuthStore, 'subscribe').mockImplementation(auth.subscribe)
-    await domAct(async () => { mountSurface() })
-    expect(document.querySelector('main')!.style.opacity).toBe('0')
-    await domAct(async () => { auth.setError('account service unavailable') })
-    expect(document.querySelector('main')!.style.opacity).toBe('')
-    expect(document.querySelector('[data-arkme-home-tour-target="recordings"]')).not.toBeNull()
-    expect(api.calls.mock.calls.some(([operation]) => operation === 'social.access')).toBe(false)
-  })
-
-  it('restores all social navigation immediately after same-account binding without replacing personal content', async () => {
-    api.allowed = false
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { mountSurface() })
-    const input = document.querySelector('input')!
-    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).toBeNull()
-    const before = api.calls.mock.calls.filter(([op]) => op === 'social.access').length
-    api.allowed = true
-    await domAct(async () => {
-      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-      arkmeUi.authChanged(true)
-    })
-    expect(api.calls.mock.calls.filter(([op]) => op === 'social.access').length).toBe(before + 1)
-    for (const tab of ['contacts', 'world', 'calls']) {
-      expect(document.querySelector(`[data-arkme-home-tour-target="${tab}"]`)).not.toBeNull()
-    }
-    expect(document.querySelector('input')).toBe(input)
-    expect(input.value).toBe('保留草稿')
-    expect(document.querySelector('main')!.style.opacity).toBe('')
-  })
-  it('reveals the complete first frame together and retains the same editor on background refresh', async () => {
-    let finish!: (value: unknown) => void
-    api.pending = new Promise(resolve => { finish = resolve })
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { mountSurface() })
-    const surface = document.querySelector('main')!
-    const input = document.querySelector('input')!
-    expect(surface.style.opacity).toBe('0')
-    expect(surface.hasAttribute('inert')).toBe(true)
-    expect(surface.getAttribute('aria-hidden')).toBe('true')
-    await domAct(async () => { finish({ userId: 42, allowed: true }); await api.pending })
-    expect(surface.style.opacity).toBe('')
-    expect(surface.style.display).toBe('flex')
-    expect(surface.hasAttribute('inert')).toBe(false)
-    expect(surface.hasAttribute('aria-hidden')).toBe(false)
-    for (const tab of ['recordings', 'calendar', 'contacts', 'world', 'calls']) {
-      expect(surface.querySelector(`[data-arkme-home-tour-target="${tab}"]`)).not.toBeNull()
-    }
-    api.pending = undefined; api.allowed = null
-    await domAct(async () => { await socialAccessStore.refresh() })
-    expect(document.querySelector('input')).toBe(input)
-    expect(input.value).toBe('保留草稿')
-    expect(surface.style.opacity).toBe('')
-  })
-  it('restores a qualified account before paint without waiting for the network', async () => {
-    new SocialAccessSnapshotStorage().write('test:42', true)
-    api.pending = new Promise(() => {})
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { mountSurface() })
-    expect(document.querySelector('main')!.style.opacity).toBe('')
-    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).not.toBeNull()
-    expect(document.querySelector('input')!.value).toBe('保留草稿')
-  })
-  it('releases personal content after first failure without inventing social permission', async () => {
-    api.allowed = null
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { mountSurface() })
-    expect(document.querySelector('main')!.style.opacity).toBe('')
-    expect(document.querySelector('[data-arkme-home-tour-target="recordings"]')).not.toBeNull()
-    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).toBeNull()
-  })
-  it('bounds a hung first request and allows a later retry', async () => {
-    api.pending = new Promise(() => {})
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { mountSurface() })
-    expect(document.querySelector('main')!.style.opacity).toBe('0')
-    await domAct(async () => { await socialAccessStore.refresh() })
-    expect(document.querySelector('main')!.style.opacity).toBe('')
-    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).toBeNull()
-    api.pending = undefined; api.allowed = true
-    await domAct(async () => { await socialAccessStore.refresh() })
-    expect(document.querySelector('[data-arkme-home-tour-target="contacts"]')).not.toBeNull()
-  })
-  it('loads the official contact after eligibility resolves without reauthenticating', async () => {
-    api.allowed = false
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await act(async () => { renderer = create(<ArkmeNavigation active />) })
-    expect(api.calls).not.toHaveBeenCalledWith('chat.official-author.profile')
-    api.allowed = true
+  it('hides known unbound navigation and restores it after account update without remounting personal UI', async () => {
+    api.phone = undefined
+    await mount(); expectSocial(false)
+    const input = renderer!.root.findByType('input')
+    api.phone = '138****0000'
     await act(async () => { await socialAccessStore.refresh() })
-    expect(api.calls).toHaveBeenCalledWith('chat.official-author.profile')
-    expect(arkmeAuthStore.getSnapshot().auth).toMatchObject({ status: 'authenticated', userId: 42 })
+    expectSocial(true)
+    expect(renderer!.root.findByType('input')).toBe(input)
   })
-  it('starts receiver and intent polling only while qualified, stops on loss without logging out', async () => {
-    vi.useFakeTimers()
-    api.allowed = false
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    await domAct(async () => { const container = document.createElement('div'); document.body.append(container); callRoot = createRoot(container); callRoot.render(<ArkmeOutgoingCallHost />) })
-    await domAct(async () => { await vi.advanceTimersByTimeAsync(1500) })
-    expect(api.calls.mock.calls.filter(([op]) => op.startsWith('calls.'))).toEqual([])
-    api.allowed = true
-    await domAct(async () => { await socialAccessStore.refresh() })
-    expect(api.calls).toHaveBeenCalledWith('calls.outgoing.intent.claim')
-    api.allowed = null
-    await domAct(async () => { await socialAccessStore.refresh() })
-    api.calls.mockClear()
-    await domAct(async () => { await vi.advanceTimersByTimeAsync(3000) })
-    expect(api.calls).toHaveBeenCalledWith('calls.outgoing.intent.claim')
-    api.allowed = false
-    await domAct(async () => { await socialAccessStore.refresh() })
-    api.calls.mockClear()
-    await domAct(async () => { await vi.advanceTimersByTimeAsync(3000) })
-    expect(api.calls.mock.calls.filter(([op]) => op.startsWith('calls.'))).toEqual([])
-    expect(document.querySelector('iframe')).toBe(null)
-    expect(arkmeAuthStore.getSnapshot().auth).toMatchObject({ status: 'authenticated', userId: 42 })
-  })
-  it('hides before resolution and on denial, retains confirmed navigation on refresh failure', async () => {
-    let resolve!: (value: unknown) => void
-    api.pending = new Promise(done => { resolve = done })
-    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-    act(() => { renderer = create(<ArkmeProductNavigation compact={false} />) })
-    expect(labels()).not.toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
-    await act(async () => { resolve({ userId: 42, allowed: false }); await api.pending })
-    expect(labels()).toContain('recordings')
-    expect(labels()).toContain('calendar')
-    expect(labels()).not.toContain('contacts')
-    api.pending = undefined; api.allowed = true
-    await act(async () => { window.dispatchEvent(new Event('focus')); await socialAccessStore.refresh() })
-    expect(labels()).toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
-    api.allowed = null
-    await act(async () => { window.dispatchEvent(new Event('focus')); await socialAccessStore.refresh() })
-    expect(labels()).toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
-    api.allowed = false
+  it.each([true, false])('failed refresh preserves previously confirmed bound=%s', async bound => {
+    api.phone = bound ? '138****0000' : undefined
+    await mount(); expectSocial(bound)
+    api.fail = true
     await act(async () => { await socialAccessStore.refresh() })
-    expect(labels()).not.toContain('world')
-    expect(arkmeAuthStore.getSnapshot().auth).toMatchObject({ status: 'authenticated', userId: 42 })
+    expectSocial(bound)
   })
-
-  it('keeps anonymous surfaces without querying phone eligibility', async () => {
-    arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
-    await act(async () => { renderer = create(<ArkmeProductNavigation compact={false} locked />) })
-    expect(labels()).toEqual(expect.arrayContaining(['contacts', 'world', 'calls']))
-    expect(api.calls.mock.calls.some(([operation]) => operation === 'social.access')).toBe(false)
+  it('first profile failure keeps normal navigation available', async () => {
+    api.fail = true
+    await mount(); expectSocial(true)
+  })
+  it('does not reuse another account restriction', async () => {
+    api.phone = undefined
+    await mount(); expectSocial(false)
+    api.fail = true
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }) })
+    expectSocial(true)
+  })
+  it('uses the existing cache and fetches only when no profile exists', async () => {
+    await loadSocialAccess(new AbortController().signal)
+    expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile'])
+    api.calls.mockClear(); api.stale = true
+    await loadSocialAccess(new AbortController().signal)
+    expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile', 'user.profile.refresh'])
   })
 })

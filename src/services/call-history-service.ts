@@ -303,7 +303,7 @@ export class CallHistoryService {
   ) {}
 
   async listCallHistory(options: ArkmeCallHistoryOptions & { startAtMillis?: number; endAtMillis?: number } = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const limit = this.normalizedLimit(options.limit)
     const cursor = options.cursor?.trim() ?? ''
     const body: Record<string, unknown> = { limit }
@@ -362,13 +362,13 @@ export class CallHistoryService {
   }
 
   async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     return await this.detailByRoomId(payload.roomId, payload, session, signal)
   }
 
   async shareLink(callRef: string, signal?: AbortSignal): Promise<ArkmeCallShareLink> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
       '/api/v1/trtc/call-detail-share/ensure', { room_id: payload.roomId }, session, signal,
@@ -383,7 +383,7 @@ export class CallHistoryService {
   }
 
   async shareViewers(callRef: string, cursor = '', signal?: AbortSignal): Promise<ArkmeCallShareViewers> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
       '/api/v1/trtc/call-detail-share/viewers', { room_id: payload.roomId, cursor, limit: 20 }, session, signal,
@@ -429,7 +429,7 @@ export class CallHistoryService {
   }
 
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
       '/api/v1/trtc/retry-call-summary',
