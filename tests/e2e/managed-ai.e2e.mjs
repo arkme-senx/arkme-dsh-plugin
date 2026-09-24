@@ -173,7 +173,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       await page.locator('button.arkme-redesign-profile').click()
       await page.locator('button.arkme-usage-summary').click()
       const usage = page.locator('[data-arkme-settings-page="usage"]')
-      await expect.poll(() => usage.innerText()).toMatch(/AI 积分|AI points/)
+      await expect.poll(() => usage.innerText()).toMatch(/AI 额度|AI allowance/)
       await usage.locator('[data-usage-kind="ai-points"] button[aria-expanded]').click()
       await usage.locator('details').first().waitFor()
       expect(await usage.locator('details').count()).toBe(live ? 1 : 5)
