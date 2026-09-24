@@ -2,6 +2,10 @@ import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ArkmeCalendarBucketDay, ArkmeRecordingCalendarMonth, ArkmeTimelineItem } from '../types.js'
 import { isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
+import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
+import { ArkmeArrangementCreate, useCreatedArrangements } from './ArkmeArrangementCreate.js'
+import { ArkmeDayArrangements } from './ArkmeDayArrangements.js'
+import { ArkmeArrangementBoard } from './ArkmeArrangementBoard.js'
 import { ArkmeDayTimeline } from './ArkmeDayTimeline.js'
 import { ArkmeCalendarMonthView, ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -35,6 +39,10 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, kind: 'all', mode: 'activities', includeBackground: false }))
   const [revision, setRevision] = useState(0)
   const [monthRevision, setMonthRevision] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  const createdArrangements = useCreatedArrangements()
+  const [dayArrangementsOpen, setDayArrangementsOpen] = useState(false)
+  const [arrangementsOpen, setArrangementsOpen] = useState(false)
   const [legacy, setLegacy] = useState(false)
   const [richDetail, setRichDetail] = useState<ArkmeTimelineItem>()
   const [showOriginal, setShowOriginal] = useState(false)
@@ -88,20 +96,25 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
     onKeyDown={event => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault(); event.stopPropagation()
-      if (richDetail) setRichDetail(undefined); else onClose()
+      if (createOpen) { setCreateOpen(false); return }
+      if (richDetail) setRichDetail(undefined); else if (arrangementsOpen) setArrangementsOpen(false); else onClose()
     }}>
     <aside className="arkme-personal-day-month" aria-label={tr("选择活动日期")}>
+      <div className="arkme-personal-day-month-content">
       <ArkmeCalendarMonthView visibleMonth={visibleMonth} selectedDate={selectedDate} today={today}
         days={calendarDays} loading={month.loading || documentedMonth.loading} error={month.error}
         recordingDates={audioIndex?.key === monthKey ? audioIndex.dates : new Set()}
-        onVisibleMonthChange={setVisibleMonth} onSelectDate={date => { setRichDetail(undefined); setQuery(current => ({ ...current, bucketDate: personalDateKey(date) })) }} />
+        onVisibleMonthChange={setVisibleMonth} onSelectDate={date => { setArrangementsOpen(false); setRichDetail(undefined); setQuery(current => ({ ...current, bucketDate: personalDateKey(date) })) }} />
       <p className="arkme-personal-day-caption">{tr("数字为个人记录数，圆点为录音索引。录音归属与覆盖范围以当天结果为准。")}</p>
       {audioIndex?.key === monthKey && audioIndex.error && <p role="status" className="arkme-personal-day-caption">{tr("录音月历暂不可用，仍可点选日期查看。")}</p>}
       <div className="arkme-personal-day-links"><button type="button" onClick={refreshMonth}>{tr("刷新月历")}</button>
         <button type="button" onClick={() => setLegacy(true)}>{tr("原版日历")}</button></div>
+      </div>
+      <button type="button" className="arkme-arrangement-entry" data-arkme-hover="none" aria-pressed={arrangementsOpen} onClick={() => { setRichDetail(undefined); setArrangementsOpen(true) }}><ListChecks size={18} aria-hidden /><span>{tr('安排')}</span></button>
     </aside>
-    <div className="arkme-personal-day-body" key={query.bucketDate}>
-      <ArkmeDayTimeline key={revision} query={query} reader={reader} generateRecap={generateDayRecap} onClose={onClose} onRefresh={refreshMonth} onDetailChange={() => setRichDetail(undefined)}
+    <div className="arkme-personal-day-body" key={query.bucketDate} hidden={arrangementsOpen}>
+      <ArkmeDayTimeline key={revision} arrangementsActive={dayArrangementsOpen} onArrangementsChange={setDayArrangementsOpen}
+        arrangementsContent={<><ArkmeDayArrangements active={!arrangementsOpen} recentItems={createdArrangements.items} accountScope={accountScope} bucketDate={query.bucketDate} timezone={query.timezone} />{createdArrangements.notice && <p role="status">{createdArrangements.notice}<button type="button" onClick={createdArrangements.retry}>{tr("更新识别结果")}</button></p>}</>} query={query} reader={reader} generateRecap={generateDayRecap} onClose={onClose} onRefresh={refreshMonth} onDetailChange={() => setRichDetail(undefined)}
         onQueryChange={next => { setRichDetail(undefined); setQuery(next) }}
         onOpenSource={ref => {
           const target = reader.resolveTarget(ref)
@@ -118,6 +131,8 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
           <button type="button" className="arkme-day-source" onClick={() => { setShowOriginal(false); setRichDetail(record.content) }}>{tr("查看完整快记")}</button>
         </div> : record.textFormat === 'markdown' ? <div className="arkme-day-rich-record"><ArkmeMarkdownBody text={record.text} highlightMentions={false} /></div> : <p>{record.text}</p>} />
     </div>
+    {arrangementsOpen && <ArkmeArrangementBoard onAddArrangement={() => setCreateOpen(true)} createdItems={createdArrangements.items} accountScope={accountScope} onBack={() => setArrangementsOpen(false)} />}
+    <ArkmeArrangementCreate accountScope={accountScope} open={createOpen} onClose={() => setCreateOpen(false)} onSaved={createdArrangements.merge} />
     {richDetail && <aside className="arkme-personal-day-rich-detail" aria-label={tr("完整快记详情")}>
       {richDetail.callRecord ? <ArkmeCallDetailDrawer item={richDetail} onClose={() => setRichDetail(undefined)} />
         : richDetail.forwardRecords ? <ForwardRecordsDetail item={richDetail}

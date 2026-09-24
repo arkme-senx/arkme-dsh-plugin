@@ -1,3 +1,5 @@
+import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
+import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -415,12 +417,18 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  private readonly boardCache: ArrangementBoardCacheStore
   private readonly path: string
   private state: PersistedState | undefined
   private queue: Promise<void> = Promise.resolve()
 
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
+    this.boardCache = new ArrangementBoardCacheStore(directory)
+  }
+
+  async arrangementBoardCache(environment: string, userId: number, pages?: ArkmeArrangementBoardCachePages): Promise<ArkmeArrangementBoardCachePages> {
+    return this.boardCache.access(environment, userId, pages)
   }
 
   async readCancellationCompletion(): Promise<ArkmeCancellationCompletion | undefined> {

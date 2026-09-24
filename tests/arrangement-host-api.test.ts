@@ -83,3 +83,18 @@ describe('Arrangement Host operations', () => {
     expect(setArrangementReminderEnabled).not.toHaveBeenCalled()
   })
 })
+
+it('dispatches versioned board list and reorder with opaque anchors only', async () => {
+  const service = { listArrangements: vi.fn(async (value: unknown) => value), reorderArrangement: vi.fn(async (value: unknown) => value) } as unknown as ArkmeService
+  await expect(dispatchArkmeHostOperation(service, 'arrangements.list', { status: 'identified', order: 'board', boardVersion: 'v1' })).resolves.toMatchObject({ order: 'board', boardVersion: 'v1' })
+  await expect(dispatchArkmeHostOperation(service, 'arrangements.reorder', { arrangementRef: 'ref', status: 'identified', afterRef: 'after', boardVersion: 'v1', requestId: 'r1', uid: 'secret' })).resolves.toEqual({ arrangementRef: 'ref', status: 'identified', afterRef: 'after', boardVersion: 'v1', requestId: 'r1' })
+  await expect(dispatchArkmeHostOperation(service, 'arrangements.reorder', { arrangementRef: 'ref', status: 'all' })).rejects.toMatchObject({ httpStatus: 400 })
+})
+
+it('keeps creation identity and recognition queries on the opaque host contract', async () => {
+ const service={createArrangement:vi.fn(async()=>({items:[]})),arrangementRecognition:vi.fn(async()=>({items:[]}))}
+ await dispatchArkmeHostOperation(service as never,'arrangements.create',{requestId:'create-1',texts:['开会'],userId:99,topicUid:'not-allowed',uid:'not-allowed'})
+ expect(service.createArrangement).toHaveBeenCalledWith({requestId:'create-1',texts:['开会']})
+ await dispatchArkmeHostOperation(service as never,'arrangements.recognition',{arrangementRefs:['opaque'],uids:['not-allowed']})
+ expect(service.arrangementRecognition).toHaveBeenCalledWith(['opaque'])
+})

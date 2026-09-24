@@ -874,7 +874,16 @@ export type ArkmeArrangementStatus = 'identified' | 'following' | 'completed' | 
 export type ArkmeArrangementListStatus = Exclude<ArkmeArrangementStatus, 'unknown'> | 'all'
 
 /** Browser-safe Arrangement projection. Stable owner UIDs stay inside the Provider. */
+export interface ArkmeArrangementCreationSource {
+  kind: 'quick-note' | 'input' | 'none'
+  items: { text: string; createdAtMillis?: number }[]
+  unavailableCount: number
+}
+
 export interface ArkmeArrangementItem {
+  recognitionState?: string
+
+  creationSource?: ArkmeArrangementCreationSource
   arrangementRef: string
   title: string
   description: string
@@ -887,7 +896,28 @@ export interface ArkmeArrangementItem {
   remindAtMillis?: number
 }
 
+export interface ArkmeArrangementBoardVersion {
+  supported: boolean
+  version: string
+}
+
+export interface ArkmeArrangementReorderInput {
+  arrangementRef: string
+  status: Exclude<ArkmeArrangementStatus, 'unknown'>
+  /** Insert immediately before this project (the next neighbour). */
+  beforeRef?: string
+  /** Insert immediately after this project (the previous neighbour). */
+  afterRef?: string
+  boardVersion: string
+  requestId: string
+}
+
+export interface ArkmeArrangementReorderResult {
+  board: ArkmeArrangementBoardVersion
+}
+
 export interface ArkmeArrangementPage {
+  board?: ArkmeArrangementBoardVersion
   items: ArkmeArrangementItem[]
   total: number
   hasMore: boolean
@@ -3746,9 +3776,13 @@ export type ArkmePluginOperation =
   | 'world.image.read'
   | 'world.publish-text'
   | 'world.publish-file-assets'
+  | 'arrangements.board-cache'
   | 'arrangements.list'
   | 'arrangements.detail'
   | 'arrangements.mutate'
+  | 'arrangements.create'
+  | 'arrangements.recognition'
+  | 'arrangements.reorder'
   | 'arrangements.reminder-enabled'
   | 'arrangements.reminders.summary'
   | 'arrangements.reminders.list'

@@ -149,6 +149,8 @@ import type {
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
+  ArkmeArrangementReorderInput,
+  ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
   ArkmeArrangementMutationIntent,
@@ -2134,13 +2136,25 @@ export class ArkmeService {
   }
 
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
+  async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
+
+  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal) {
+    return this.arrangement.createArrangement(input, signal)
+  }
+  async arrangementRecognition(refs: string[], signal?: AbortSignal) {
+    return this.arrangement.arrangementRecognition(refs, signal)
+  }
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.arrangement.listArrangements(options)
   }
 
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */
+  async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
+    return await this.arrangement.reorderArrangement(input, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     return await this.arrangement.arrangementDetail(arrangementRef, signal)
   }

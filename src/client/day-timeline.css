@@ -119,7 +119,7 @@
 .arkme-day-recording-review li { margin: 8px 0; overflow-wrap: anywhere; }
 .arkme-day-recording-review-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; max-height: 320px; overflow-y: auto; }
 .arkme-personal-day-calendar { position: fixed; inset: 0 0 0 60px; z-index: 60; display: grid; grid-template-columns: 300px minmax(0, 1fr); background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #17191c); outline: none; }
-.arkme-personal-day-month { min-width: 0; padding: 24px 14px; overflow: auto; border-right: 1px solid var(--dsw-alias-border-l2, #ddd); }
+.arkme-personal-day-month { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 24px 14px; overflow: hidden; border-right: 1px solid var(--dsw-alias-border-l2, #ddd); }
 .arkme-personal-day-caption { font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary, #68707c); margin: 20px 8px 8px; }
 .arkme-personal-day-body { min-width: 0; overflow: auto; }
 .arkme-personal-day-links { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 8px; }
@@ -144,3 +144,6 @@
   .arkme-day-timeline button, .arkme-day-background { min-height: 44px; }
   .arkme-day-icon { min-width: 44px; }
 }
+
+.arkme-personal-day-month-content { flex: 1; min-height: 0; overflow-y: auto; }
+.arkme-personal-day-month > .arkme-arrangement-entry { flex: none; }

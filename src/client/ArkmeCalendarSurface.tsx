@@ -106,6 +106,7 @@ const styles: Record<string, CSSProperties> = {
   },
   blank: { height: 45 },
   dayButton: {
+    position: 'relative',
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
@@ -714,7 +715,6 @@ export function ArkmeCalendarCell({
     disabled={disabled}
     style={{
       ...styles.dayButton,
-      ...(hasRecordingIndex ? { position: 'relative' } : {}),
       ...(showCountLabel && count > 0 ? { background: colors.bubble } : {}),
       ...(today ? { borderColor: colors.selected } : {}),
       ...(disabled ? styles.dayDisabled : {}),
