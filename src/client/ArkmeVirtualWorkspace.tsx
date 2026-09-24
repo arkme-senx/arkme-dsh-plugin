@@ -1345,7 +1345,7 @@ export function ArkmeNavigation({
     const legacy = readBotDirectoryPreferences(authenticated ? auth?.userId : undefined)
     setBotDirectoryPreferences({ pinnedKeys: [...new Set([...(cached?.botPinnedKeys ?? []), ...legacy.pinnedKeys])] })
     setBots(sortArkmeBotsByCreatedAt(cached?.bots ?? []))
-  }, [authenticated, auth?.userId, socialAllowed])
+  }, [authenticated, auth?.userId])
   useEffect(() => {
     if (!authenticated || !chatDirectory.baselineReady || chatDirectory.projection !== undefined) return
     const controller = new AbortController()
