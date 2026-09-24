@@ -137,4 +137,5 @@
 .arkme-usage-breakdown[data-usage-detail="points"] details { border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); }
 .arkme-points-call { margin-bottom: 12px; padding-left: 12px; border-left: 2px solid var(--dsw-alias-border-l2, #e1e3e6); overflow-wrap: anywhere; }
 .arkme-points-call small { display: block; margin-top: 4px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-points-funding { color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-usage-breakdown[data-usage-detail="points"] input:focus-visible, .arkme-usage-breakdown[data-usage-detail="points"] summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }

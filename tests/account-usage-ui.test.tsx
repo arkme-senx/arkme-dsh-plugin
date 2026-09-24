@@ -155,7 +155,7 @@ describe('compact summary and dialog', () => {
   it('shows available points and preserves measured storage/voice bars', async () => {
     const open = vi.fn()
     await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
-    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,250 可用', '10 GB', '2 小时', '暂未做限制'])
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,250 积分', '10 GB', '2 小时', '暂未做限制'])
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
     expect(host.textContent).not.toContain('Token')
     expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('10')

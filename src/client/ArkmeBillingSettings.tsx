@@ -66,7 +66,7 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
     && BigInt(reservedNanoCny) > 0n
 
   return <div className={`arkme-redesign-setting-row arkme-redesign-balance-row${showReserved ? '' : ' is-without-reserved'}`}>
-    <button type="button" className="arkme-redesign-balance-main" aria-label={tr("AI 积分 {v0}", { v0: description })} onClick={props.onOpen}>
+    <button type="button" className="arkme-redesign-balance-main" aria-label={tr("AI 额度 {v0}", { v0: description })} onClick={props.onOpen}>
       <small>{description}</small>
     </button>
     {showReserved && <div className="arkme-redesign-reserved-balance">
@@ -333,7 +333,7 @@ function BillingModalHost({ children, onClose }: { children: ReactNode; onClose:
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
-  return <dialog ref={ref} className="arkme-billing-modal-host" aria-label={tr("AI 积分充值流程")}
+  return <dialog ref={ref} className="arkme-billing-modal-host" aria-label={tr("AI 额度充值流程")}
     onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}
   >{children}</dialog>
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { groupPointsConsumption, formatAiPoints, type ArkmeAiPointsPage, type ArkmeAiPointsConsumption } from '../ai-points.js'
+import { groupPointsConsumption, formatAiPoints, pointsUnits, type ArkmeAiPointsPage, type ArkmeAiPointsConsumption } from '../ai-points.js'
 import { callArkme } from './api.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 
@@ -47,7 +47,7 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
     {current?.status === 'ready' && <>
       {current.items.length === 0 && <p>{tr('该月暂无积分消费')}</p>}
       {groupPointsConsumption(current.items).map(group => <details key={group.key}>
-        <summary><span><strong>{group.calls[0]!.businessCode === 'agent' ? 'Agent' : group.calls[0]!.model}</strong><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></span><span className="arkme-points-record-amount">−{formatAiPoints(group.chargedPoints)} {tr('积分')} <span className="arkme-points-chevron" aria-hidden>›</span></span></summary>
+        <summary><span><strong>{consumptionLabel(group.calls[0]!.businessCode)}</strong><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></span><span className="arkme-points-record-amount">−{formatAiPoints(group.chargedPoints)} {tr('积分')} <span className="arkme-points-chevron" aria-hidden>›</span></span></summary>
         {group.calls.map(item => <PointsCallDetails key={item.requestUid} item={item} />)}
       </details>)}
       {current.more === 'error' && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
@@ -56,12 +56,22 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
   </div>
 }
 
+function consumptionLabel(businessCode: string): string {
+  if (businessCode === 'agent') return 'Agent'
+  if (businessCode === 'arkme') return tr('Arkme 对话')
+  return tr('AI 调用')
+}
+
 function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {
+ const granted = pointsUnits(item.grantedPoints) > 0n
+ const purchased = pointsUnits(item.purchasedPoints) > 0n
+ const funding = granted && purchased
+   ? tr('（赠送 {v0} · 充值 {v1}）', { v0: formatAiPoints(item.grantedPoints), v1: formatAiPoints(item.purchasedPoints) })
+   : granted ? tr('（赠送）') : purchased ? tr('（充值）') : ''
  return <div className="arkme-points-call">
-        <div className="arkme-usage-call-title"><span>{item.model}</span><span>{formatAiPoints(item.chargedPoints)} {tr('积分')}</span></div>
+        <div className="arkme-usage-call-title"><span>{item.model}</span><span>{formatAiPoints(item.chargedPoints)} {tr('积分')}<span className="arkme-points-funding">{funding}</span></span></div>
         {item.services.length > 0 && <>
           <small>{tr('模型调用')} {formatAiPoints(item.modelPoints)} {tr('积分')}{item.services.map(service => <span key={service.code}> · {tr(service.code === 'web_search' || service.code === 'bailian.web_search.turbo' ? '联网搜索' : '附加服务')} {formatAiPoints(service.chargedPoints)} {tr('积分')}</span>)}</small>
         </>}
-        <small>{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(item.grantedPoints), v1: formatAiPoints(item.purchasedPoints) })}</small>
  </div>
 }

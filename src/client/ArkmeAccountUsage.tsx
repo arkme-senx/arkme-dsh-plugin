@@ -92,8 +92,8 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
     <span className="arkme-usage-summary-heading"><strong>{tr("用量与额度")}</strong><span>{tr("详情 ›")}</span></span>
     <span className="arkme-usage-summary-rows" aria-live="polite">
       <span className="arkme-usage-summary-row" data-usage-kind="ai-points">
-        <span className="arkme-usage-summary-label">{tr('AI 积分')}</span>
-        <strong className="arkme-usage-summary-total">{points.status === 'ready' ? `${formatAiPoints(points.value.availablePoints)} ${tr('可用')}` : status(points)}</strong>
+        <span className="arkme-usage-summary-label">{tr('AI 额度')}</span>
+        <strong className="arkme-usage-summary-total">{points.status === 'ready' ? `${formatAiPoints(points.value.availablePoints)} ${tr('积分')}` : status(points)}</strong>
       </span>
       <UsageSummaryRow label={tr("云端存储")} kind="storage" pending={status(storage)} measurement={storage.status === 'ready' ? {
         used: storage.value.usedBytes, total: storage.value.totalBytes, totalText: formatUsageBytes(storage.value.totalBytes),
@@ -142,7 +142,7 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRefreshMembersh
       setRevision(value => value + 1); onRefreshMembership()
     }}><ArrowsClockwise size={13} aria-hidden />{loading ? tr("读取中") : tr("刷新")}</button></header>
     <div className="arkme-usage-metric" data-usage-kind="ai-points" aria-live="polite">
-      <div className="arkme-usage-label"><strong>{tr('AI 积分')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
+      <div className="arkme-usage-label"><strong>{tr('AI 额度')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
       {points.status !== 'ready' ? <Pending status={points.status} /> : <>
         <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatAiPoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(points.value.grantedPoints), v1: formatAiPoints(points.value.purchasedPoints) })}</span></p>
         {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}

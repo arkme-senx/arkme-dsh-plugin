@@ -46,7 +46,7 @@ describe('Arkme billing settings migration', () => {
       onOpen={noop}
     />)
 
-    expect(markup).toMatch(/AI 积分[\s\S]*1,280\.17 积分[\s\S]*预占积分[\s\S]*30 积分[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/AI 额度[\s\S]*1,280\.17 积分[\s\S]*预占积分[\s\S]*30 积分[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
     expect(markup).toContain('class="arkme-redesign-reserved-help" tabindex="0" aria-label="预占积分说明" aria-describedby="arkme-reserved-balance-tooltip">?</span>')
     expect(markup).toContain('id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的积分，任务完成后将返还未用积分。</span>')
     expect(markup).toContain('>充值</button><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
@@ -68,7 +68,7 @@ describe('Arkme billing settings migration', () => {
     expect(markup).toContain('arkme-redesign-balance-row is-without-reserved')
     expect(markup).not.toContain('预占积分')
     expect(markup).not.toContain('arkme-reserved-balance-tooltip')
-    expect(markup).toMatch(/AI 积分[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/AI 额度[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
   })
 
   it('renders both available payment entries in the recharge dialog', () => {

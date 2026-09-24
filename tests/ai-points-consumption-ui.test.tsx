@@ -61,5 +61,27 @@ it('shows one task total and retains individual point charges in the expandable 
  expect(host.querySelector('summary')?.textContent).not.toContain('次调用')
  expect(host.querySelectorAll('.arkme-points-call')).toHaveLength(2)
  expect(host.querySelector('summary')?.textContent).not.toContain('Token')
- expect(host.querySelectorAll('details small')).toHaveLength(3)
+ expect(host.querySelectorAll('details small')).toHaveLength(1)
+})
+
+it.each([
+  ['arkme', 'Arkme 对话'], ['agent', 'Agent'], ['', 'AI 调用'], ['future-business', 'AI 调用'],
+])('shows the business purpose for %s and keeps the model in details', async (businessCode, label) => {
+  mocks.call.mockImplementation(async (_op, params) => ({ accountScope: 'prod:1', unit: 'ai_points', month: params.month, chargedPoints: row.chargedPoints, items: [{ ...row, businessCode }], nextBeforeId: '' }))
+  await render()
+  expect(host.querySelector('summary strong')?.textContent).toBe(label)
+  expect(host.querySelector('summary')?.textContent).not.toContain(row.model)
+  expect(host.querySelector('.arkme-points-call')?.textContent).toContain(row.model)
+})
+
+it.each([
+  ['1.73', '0', '1.73', '1.73 积分（充值）'],
+  ['1.73', '1.73', '0', '1.73 积分（赠送）'],
+  ['1.73', '0.5', '1.23', '1.73 积分（赠送 0.5 · 充值 1.23）'],
+  ['1.7300001', '0.0000001', '1.73', '1.73 积分（赠送 < 0.01 · 充值 1.73）'],
+])('shows %s charged from gift %s and purchased %s inline without zero sources', async (chargedPoints, grantedPoints, purchasedPoints, expected) => {
+  mocks.call.mockImplementation(async (_op, params) => ({ accountScope: 'prod:1', unit: 'ai_points', month: params.month, chargedPoints, items: [{ ...row, chargedPoints, grantedPoints, purchasedPoints }], nextBeforeId: '' }))
+  await render()
+  expect(host.querySelector('.arkme-usage-call-title > span:last-child')?.textContent).toBe(expected)
+  expect(host.querySelector('.arkme-points-call small')).toBeNull()
 })

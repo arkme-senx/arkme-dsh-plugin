@@ -262,7 +262,7 @@ Arkme 用户 {v0}|Arkme user {v0}
 参与者: {v0}|Participants: {v0}
 说话人 {v0}|Speaker {v0}
 
-AI 积分|AI points
+AI 额度|AI allowance
 积分|points
 赠送积分|Granted points
 充值积分|Purchased points
@@ -270,6 +270,11 @@ AI 积分|AI points
 任务进行中暂占|Reserved by running tasks:
 积分，结束后返还未用部分|points; unused points return when the task finishes
 赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
+Arkme 对话|Arkme chat
+AI 调用|AI usage
+（赠送）| (Gift)
+（充值）| (Purchased)
+（赠送 {v0} · 充值 {v1}）| (Gift {v0} · Purchased {v1})
 消费记录|Spending history
 模型调用|Model usage
 附加服务|Additional service
@@ -296,8 +301,8 @@ AI 积分|AI points
 可用积分已刷新：|Available points refreshed:
 积分暂未刷新：|Points have not refreshed:
 刷新积分|Refresh points
-AI 积分 {v0}|AI points {v0}
-AI 积分充值流程|AI point purchase
+AI 额度 {v0}|AI allowance {v0}
+AI 额度充值流程|AI point purchase
 次调用|calls
 按用量扣积分 · 计费说明|Usage-based points · Pricing details
 `.trim().split('\n').map(line => { const p = line.indexOf('|'); return [line.slice(0, p), line.slice(p + 1)] }))
