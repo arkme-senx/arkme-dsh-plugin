@@ -1762,7 +1762,7 @@ export class ArkmeService {
       [...profiles].filter(([, profile]) => profile.avatarUrl).map(async ([id]) => [id, await this.profile.sealProfileImageRef(viewer, id)] as const),
     ))
     const presentActor = (userId: number, profileName: string | undefined, label?: { remark: string; groupNickname: string }, avatarRef?: string) => ({
-      userId, displayName: label?.remark || profileName?.trim() || '用户',
+      userId, displayName: label?.remark || label?.groupNickname || profileName?.trim() || '用户',
       ...(label?.groupNickname ? { groupNickname: label.groupNickname } : {}),
       ...(avatarRef ? { avatarRef } : {}),
     })

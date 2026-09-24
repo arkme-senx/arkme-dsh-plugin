@@ -6516,6 +6516,18 @@ describe('conversation send directory projection', () => {
     expect(visibleItemUids).toEqual(['before-parent', 'extension-parent-old', 'after-parent'])
     expect(scrollTo).toHaveBeenCalledTimes(1)
     expect(scrollTo).toHaveBeenCalledWith({ top: 130, behavior: 'auto' })
+
+    // A normal sidebar click on an unread conversation must leave its saved history window.
+    const incoming = { ...latestExtension, itemUid: 'new-unread-message', sequence: 51, sendAtMillis: 51, textContent: '新收到的普通消息', isMe: false }
+    timeline = [incoming]
+    const unreadSource = { ...target, latestSequence: 51, unreadCount: 1 }
+    await act(async () => {
+      arkmeChatDirectory.upsert(unreadSource)
+      arkmeChatDirectory.markReadOptimistic(unreadSource, unreadSource.sourceKey, 51)
+      arkmeUi.selectSource({ ...unreadSource, unreadCount: 0 })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
   })
 
   it('does not let an older background latest response replace an installed around window', async () => {
