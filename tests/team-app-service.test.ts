@@ -54,6 +54,12 @@ describe('Team App owner adapter', () => {
     expect(page.messages[0]?.content?.text_content).toBe('已收到')
     expect(page.messages[0]!.media[0]!.url).toBe(`/custom/api/team/media?ref=${encodeURIComponent(page.messages[0]!.media[0]!.ref)}`)
   })
+  it.each([true,false,undefined])('preserves recipient read truth without interpreting unknown as unread: %s', async value => {
+    const f=fixture(path=>path.endsWith('/open') ? {channel,conversation} : {conversation,messages:[{...message,recipient_read:value}]})
+    const opened=await open(f)
+    const page=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    expect(page.messages[0]!.recipientRead).toBe(value)
+  })
   it('rejects cross-account and forged references before contacting owner', async () => {
     const f = fixture(() => ({ channel, conversation }))
     const opened = await open(f), count = f.requests.length

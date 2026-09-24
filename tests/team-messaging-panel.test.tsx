@@ -1,3 +1,4 @@
+import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
@@ -38,6 +39,36 @@ describe('Team send UI recovery', () => {
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
+  it('retains the live editor DOM and selection on background invalidation', async () => {
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() })
+      const editor = host.querySelector('[contenteditable="true"]') as HTMLElement
+      editor.focus()
+      const text = editor.firstChild!
+      const range = document.createRange(); range.setStart(text, 1); range.collapse(true)
+      window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range)
+      await act(async () => { invalidateTeamMessages('account'); await tick() })
+      expect(editor.firstChild).toBe(text)
+      expect(text.isConnected).toBe(true)
+      expect(window.getSelection()!.anchorOffset).toBe(1)
+      expect(document.activeElement).toBe(editor)
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+  it.each([false, true, undefined])('shows the shared receipt accessory for own messages: %s', async read => {
+    const own = {key:'m',ref:'m',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:read}
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? {conversation,messages:[own,{...own,key:'other',own:false,side:'team'}],hasMore:false,beforeSeq:0}
+      : {teamRead:true,visitorRead:true,members:[]})
+    await mount()
+    const indicator = renderer!.root.findByProps({'data-arkme-read-receipt-indicator':read === undefined ? 'error' : read ? 'all-read' : 'unread'})
+    const button = indicator.parent!
+    await act(async () => { button.props.onClick(); await tick() })
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)
+    await act(async () => { button.props.onClick(); await tick() })
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+  })
   it('shows directory failure and retries without claiming there are no conversations', async () => {
     let failed = true
     mocks.call.mockImplementation(async (op: string, payload: { side?: string }) => {

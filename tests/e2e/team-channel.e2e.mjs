@@ -158,6 +158,14 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const externalReceipt = await teamCall(users.visitor, 'conversations/read-receipts/query', { conversation_uid: uid, side: 'external', message_uid: message.message_uid })
       expect(externalReceipt.team_read).toBe(true); expect(externalReceipt.members).toBeUndefined()
       const article = panel.locator('article').filter({ hasText: reply })
+      const readIndicator = article.getByRole('button', {name:'未读，查看阅读状态', exact:true})
+      await readIndicator.waitFor()
+      const ownPage = await teamCall(users.member, 'conversations/timeline/page', {conversation_uid:uid,side:'team'})
+      expect(ownPage.messages.find(item=>item.message_uid===published.message_uid).recipient_read).toBe(false)
+      await teamCall(users.visitor, 'conversations/read/advance', {conversation_uid:uid,side:'external',read_seq:published.seq})
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+      await article.getByRole('button',{name:'已读，查看阅读状态',exact:true}).waitFor()
+
       // Settle the locator's viewport scroll before opening a point menu, whose
       // shared dismissal contract intentionally closes it on source scrolling.
       await article.getByLabel('消息操作', { exact: true }).scrollIntoViewIfNeeded()

@@ -25,6 +25,7 @@ export interface TeamMessage {
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
+  recipientRead?: boolean
 }
 export interface TeamPage<T> { items: T[]; hasMore: boolean; nextCursor?: string }
 export interface TeamTimeline { conversation: TeamConversation; messages: TeamMessage[]; hasMore: boolean; beforeSeq: number }

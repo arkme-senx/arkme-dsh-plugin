@@ -1,3 +1,5 @@
+import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
+import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
@@ -8,7 +10,7 @@ import { startTeamAttention } from './team-attention-store.js'
 import { showBrowserNotification } from './browser-notification.js'
 import { teamText as tr } from './team-messaging-i18n.js'
 import { useArkmeLocale } from './locale.js'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeUploadedAsset } from '../types.js'
@@ -28,6 +30,8 @@ import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
 import { ArkmeReadReceiptMember, ArkmeReadReceiptPanel, ArkmeReadReceiptStatus } from './ArkmeReadReceiptPanel.js'
+
+const emptyComposerEntities = Object.freeze([])
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
 function inaccessible(error: unknown): boolean { return /team-(not_accessible|account-changed)|login-/.test(String((error as { body?: { code?: string } })?.body?.code)) }
@@ -137,10 +141,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
-  const [receipt, setReceipt] = useState<{ message: TeamMessage; value: TeamReceipts }>()
+  const [receipt, setReceipt] = useState<{ message: TeamMessage; value?: TeamReceipts; error?: string }>()
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; needsReload?: boolean; latestText?: string }>(), [deleting, setDeleting] = useState<TeamMessage>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const fileInput = useRef<HTMLInputElement>(null)
+  const viewport = useRef<ArkmeConversationViewportSnapshot>()
   const sendBusy = useRef(false), receiptsBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
@@ -150,13 +155,16 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const receiptGeneration = useRef(0)
   const receiptAnchor = useRef<HTMLElement | null>(null)
   const readReceipts = useCallback(async (message: TeamMessage, more = false) => {
-    if (receiptsBusy.current) return
+    const previous = receiptRef.current?.message.key === message.key ? receiptRef.current : undefined
+    if (receiptsBusy.current && previous) return
     receiptsBusy.current = true
-    const token = ++receiptGeneration.current, previous = receiptRef.current?.message.key === message.key ? receiptRef.current : undefined
+    const token = ++receiptGeneration.current
+    const opening = { message, ...(previous?.value ? { value: previous.value } : {}) }
+    receiptRef.current = opening; setReceipt(opening)
     try {
-      let value = await callArkme<TeamReceipts>('team.app.receipts', { messageRef: message.ref, ...(more ? { cursor: previous?.value.nextCursor } : {}) }, ctrl.current.signal)
-      const members = [...(more ? previous?.value.members ?? [] : []), ...value.members], seen = new Set<string>()
-      while (!more && members.length < (previous?.value.members.length ?? 0) && value.hasMore) {
+      let value = await callArkme<TeamReceipts>('team.app.receipts', { messageRef: message.ref, ...(more ? { cursor: previous?.value?.nextCursor } : {}) }, ctrl.current.signal)
+      const members = [...(more ? previous?.value?.members ?? [] : []), ...value.members], seen = new Set<string>()
+      while (!more && members.length < (previous?.value?.members.length ?? 0) && value.hasMore) {
         if (!value.nextCursor || seen.has(value.nextCursor)) throw new Error(tr('消息分页异常，请重试'))
         seen.add(value.nextCursor)
         if (ctrl.current.signal.aborted || token !== receiptGeneration.current) return
@@ -164,8 +172,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         members.push(...value.members)
       }
       if (!ctrl.current.signal.aborted && token === receiptGeneration.current) { const next = { message, value: { ...value, members } }; receiptRef.current = next; setReceipt(next) }
-    } catch (e) { if (!ctrl.current.signal.aborted && token === receiptGeneration.current) setError(errorText(e)) }
-    finally { receiptsBusy.current = false }
+    } catch (e) {
+      if (!ctrl.current.signal.aborted && token === receiptGeneration.current) {
+        const failed = { ...opening, error: errorText(e) }; receiptRef.current = failed; setReceipt(failed)
+      }
+    } finally { if (token === receiptGeneration.current) receiptsBusy.current = false }
   }, [])
   const refresh = useCallback(async (beforeSeq = 0) => {
     const token = ++generation.current
@@ -181,18 +192,14 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         for (const message of data.messages) messages.set(message.key, message)
       }
       data = { ...data, conversation: head, messages: [...messages.values()].sort((a,b) => a.seq-b.seq) }
-      const element = scroller.current
-      const anchor = element && [...element.querySelectorAll<HTMLElement>('[data-team-message-key]')].find(node => node.getBoundingClientRect().bottom >= element.getBoundingClientRect().top)
-      const anchorKey = anchor?.dataset.teamMessageKey, anchorTop = anchor?.getBoundingClientRect().top ?? 0
       if (ctrl.current.signal.aborted || token !== generation.current) return
+      if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
       setTimeline(data)
-      if (anchorKey && (beforeSeq || !visible.current)) requestAnimationFrame(() => { const node = [...(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? [])].find(v => v.dataset.teamMessageKey === anchorKey); if (node && scroller.current) scroller.current.scrollTop += node.getBoundingClientRect().top - anchorTop })
       setError('')
-      if (!beforeSeq && (visible.current || !old)) requestAnimationFrame(() => { const node = scroller.current; if (node) node.scrollTop = node.scrollHeight })
       if (receiptRef.current) await readReceipts(receiptRef.current.message)
       if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); setTimeline(undefined); ++receiptGeneration.current; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); setTimeline(undefined); ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
   }, [conversation.ref, readReceipts])
   useEffect(() => { void refresh(); return subscribeTeamMessageChanges(account => { if (account === accountKey) { void refresh() } }) }, [refresh, accountKey])
   useEffect(() => {
@@ -200,6 +207,18 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     window.addEventListener('focus', focus)
     return () => window.removeEventListener('focus', focus)
   }, [refresh])
+  // Same before-paint scroll restoration as ordinary conversation previews.
+  // A refresh must never paint at the wrong position then jump on the next frame.
+  useLayoutEffect(() => {
+    const node = scroller.current
+    if (!node || !timeline) return
+    const offset = arkmeConversationAnchorOffset(node, viewport.current?.anchorId)
+    node.scrollTop = arkmeConversationRestoredScrollTop(viewport.current, {
+      currentScrollTop: node.scrollTop, scrollHeight: node.scrollHeight,
+      ...(offset === undefined ? {} : { anchorOffset: offset }),
+    })
+    viewport.current = arkmeConversationViewport(node)
+  }, [timeline])
   const advance = useCallback(() => {
     const current = latest.current
     if (!current || !visible.current || document.visibilityState !== 'visible' || !document.hasFocus()) return
@@ -327,7 +346,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     </header>
     {error && <div role="alert" className="team-error">{error}</div>}
     {current.side === 'external' && <p className="team-consultation-notice">{tr(current.channel.jotmoId === 'arkme_cn' ? "此对话由团队成员共同查看和回复；与作者的历史私聊仍保留在原会话。" : "此对话由团队成员共同查看和回复，仅你与团队可见。")}</p>}
-    <div ref={scroller} className="team-message-list" aria-label={tr("团队消息记录")}>
+    <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {timeline?.messages.map((m, index) => <Fragment key={m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(timeline.messages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
@@ -335,15 +354,17 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           showReceipts={current.side === 'team' || m.side === 'external'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
-          onReceipts={anchor => { receiptAnchor.current = anchor; void readReceipts(m) }} onError={setError} />
+          onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
     </div>
     {receipt && <ArkmeReadReceiptPanel anchor={receiptAnchor.current} label={tr('查看阅读状态')}
-      onClose={() => { ++receiptGeneration.current; receiptRef.current = undefined; setReceipt(undefined) }}>
-      <ArkmeReadReceiptStatus>{current.side === 'external' ? receipt.value.teamRead ? tr('团队已查看') : tr('团队未查看') : receipt.value.visitorRead ? tr('用户已查看') : tr('用户未查看')}</ArkmeReadReceiptStatus>
-      {receipt.value.members.map((v, i) => <ArkmeReadReceiptMember key={i} name={v.nickname || tr('用户')} read={v.read} readAt={v.readAt} avatar={<TeamAvatar identity={v} size={20} />} />)}
-      {receipt.value.hasMore && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message, true) }}>{tr('更多成员')}</ArkmeReadReceiptStatus>}
+      onClose={() => { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) }}>
+      {!receipt.value && !receipt.error && <ArkmeReadReceiptStatus>{tr('加载中...')}</ArkmeReadReceiptStatus>}
+      {receipt.error && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message) }}>{tr('加载失败')}</ArkmeReadReceiptStatus>}
+      {receipt.value && <ArkmeReadReceiptStatus>{current.side === 'external' ? receipt.value?.teamRead ? tr('团队已查看') : tr('团队未查看') : receipt.value?.visitorRead ? tr('用户已查看') : tr('用户未查看')}</ArkmeReadReceiptStatus>}
+      {receipt.value?.members.map((v, i) => <ArkmeReadReceiptMember key={i} name={v.nickname || tr('用户')} read={v.read} readAt={v.readAt} avatar={<TeamAvatar identity={v} size={20} />} />)}
+      {receipt.value?.hasMore && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message, true) }}>{tr('更多成员')}</ArkmeReadReceiptStatus>}
     </ArkmeReadReceiptPanel>}
     {deleting && <ArkmeConfirmDialog titleId="team-message-delete-title" title={tr('删除快记')}
       description={tr('删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。')}
@@ -357,7 +378,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={busy} onClose={() => {setEditing(undefined);setError('')}} />}
       <div style={{ ...composerLayout.composerInner, ...arkmeConversationComposerBorder(arkmeTheme.border, !!editing, false), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>
         {(!current.channel.enabled || current.blocked) && <p>{tr(current.blocked ? '此对话已被屏蔽，双方暂时不能发送或编辑消息' : '团队已暂停接收新消息')}</p>}
-        <ArkmeRichComposerInput key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={tr('发送消息…')} value={editing?.text ?? draft.text} mentions={[]} emojis={[]} maxLength={20_000}
+        <ArkmeRichComposerInput key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={tr('发送消息…')} value={editing?.text ?? draft.text} mentions={emptyComposerEntities} emojis={emptyComposerEntities} maxLength={20_000}
           disabled={(!editing && !!draft.attempt) || uploading || busy}
           style={{ ...composerLayout.textarea, background: 'transparent', color: arkmeTheme.text }}
           onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
