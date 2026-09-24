@@ -6,7 +6,7 @@ import { once } from 'node:events'
 import { createRequire } from 'node:module'
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -63,7 +63,6 @@ describe('packed social access on the target Harness', () => {
       await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-social-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
       scaffold = await launchWebScaffold({
         extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')],
-        replayFixture: resolve(dshRoot, 'snapshots/web/fresh-round-trip/session.v2.jsonl'), compareReplaySession: false,
       })
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(10001)).toMatchObject({ status: 'authenticated', userId: 10001 })
@@ -113,7 +112,7 @@ describe('packed social access on the target Harness', () => {
         requestAnimationFrame(sample)
       })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-      const frame = await (await page.waitForSelector('iframe[title="DeepSeek Harness"]')).contentFrame()
+      const frame = page.frameLocator('iframe[title="DeepSeek Harness"]')
       await connectFreshWorkspaceZh(frame, scaffold.workspaceCwd)
       const input = frame.locator('[data-composer-input]').first()
       const navigation = name => page.getByRole('button', { name, exact: true })
@@ -137,7 +136,9 @@ describe('packed social access on the target Harness', () => {
         expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
         expect(await input.evaluate(node => node === window.socialComposerBeforeRefresh)).toBe(true)
         expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
-
+        if (state === false && process.env.ARKME_E2E_SCREENSHOT) {
+          await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.unbound.png` })
+        }
       }
       expect(requests.some(path => path.includes('social-access'))).toBe(false)
       expect(pageErrors).toEqual([])
