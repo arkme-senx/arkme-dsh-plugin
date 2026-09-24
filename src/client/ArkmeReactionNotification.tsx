@@ -23,7 +23,7 @@ export function openReactionHistory(message: ReactionOriginalMessage, expression
  if (auth?.status === 'authenticated' && expression) reactionNotifications.beginHistoryViewing(`${auth.environment}:${auth.userId}`, message.source.sourceKey, message.itemUid, expressionIdentity(expression))
  arkmeUi.showConversationTarget(message.source, message.itemUid, message.sendAtMillis, message.recordOwnerUserId, undefined, true)
 }
-export function ArkmeReactionNotificationPreview({ source }: { source: ArkmeSourceItem }) {
+export function ArkmeReactionNotificationPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
  const { items } = useNotifications(source)
  const item = items.reduce<ReactionNotification | undefined>((latest, row) => !latest || row.selections.at(-1)!.at > latest.selections.at(-1)!.at ? row : latest, undefined)
  if (!item) return null
@@ -31,7 +31,7 @@ export function ArkmeReactionNotificationPreview({ source }: { source: ArkmeSour
  const expression = expressionLabel(value)
  const imageLabel = value.emoji ? expressionLabel({ ...value, text: '' }) : ''
  const label = reactionLabelText(expression)
- return <button type="button" data-arkme-reaction-notice onDoubleClick={event => event.stopPropagation()} title="查看收到表态的消息" aria-label={`新表态：${label}，${item.text || '查看原消息'}`} onClick={event => { event.stopPropagation(); openReactionNotification(source, item) }}
+ return <button type="button" disabled={disabled} data-arkme-reaction-notice onDoubleClick={event => event.stopPropagation()} title="查看收到表态的消息" aria-label={`新表态：${label}，${item.text || '查看原消息'}`} onClick={event => { event.stopPropagation(); if (!disabled) openReactionNotification(source, item) }}
  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 0, padding: 0, color: c.text, font: 'inherit', fontSize: 12, width: '100%', maxWidth: '100%', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left', cursor: 'pointer' }}>
  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, minWidth: 0, maxWidth: '55%', color: '#ff8700' }}>
  <span style={{ flexShrink: 0 }}>[</span>

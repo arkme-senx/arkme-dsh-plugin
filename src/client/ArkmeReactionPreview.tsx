@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { reactionPreview, type ReactionPreviewTarget } from './reaction-preview-store.js'
 import { arkmeTheme as c } from './arkme-theme.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
+import { watchVisibleReactionTarget } from './reaction-visible-target.js'
 
 const button: CSSProperties = { border: `1px solid ${c.border}`, borderRadius: 9, padding: '5px 10px', background: c.base, color: c.text, font: 'inherit', cursor: 'pointer' }
 const row: CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }
@@ -46,9 +47,11 @@ export function ReactionAddIcon() {
 export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
+  const latestTarget = useRef(target)
+  latestTarget.current = target
   // A conversation reference also carries its latest message sequence. Updating it
   // must not dispose the subscription (and erase reactions) for this message.
-  useEffect(() => reactionPreview.watch(scope, target), [activeScope, scope, target.id])
+  useEffect(() => watchVisibleReactionTarget(message.current, () => reactionPreview.watch(scope, latestTarget.current)), [activeScope, scope, target.id])
   useEffect(() => { reactionPreview.updateTarget(scope, target) }, [activeScope, scope, target])
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState('')
@@ -224,7 +227,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
       <span style={{ color: c.secondary, borderLeft: `1px solid ${c.border}`, marginLeft: 6, padding: '0 2px 0 7px', lineHeight: '16px' }}>
         {snapshot?.actors_visible ? <>
           {(group.actors?.length ? group.actors : mine ? [{ userId: Number(scope.split(':').at(-1)), displayName: '我' }] : []).map((actor, index) => {
-            const identity: ReactionActor = actor.displayName === '我' ? { ...actor, displayName: actorName,
+            const identity: ReactionActor = actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我' ? { ...actor, displayName: actorName,
               ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
               ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}),
             } : actor

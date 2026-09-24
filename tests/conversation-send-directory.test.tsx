@@ -7388,10 +7388,12 @@ describe('conversation send directory projection', () => {
       sendAtMillis: 8, textContent: '定位目标', status: 1 }]
     const body = {
       scrollTop: 0, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
       scrollTo: vi.fn((options: ScrollToOptions) => { body.scrollTop = options.top ?? body.scrollTop }),
       getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
       querySelectorAll: () => [{
         querySelector: () => null,
+        ownerDocument: Object.assign(new EventTarget(), { hidden: false, hasFocus: () => true, defaultView: new EventTarget() }),
         dataset: { arkmeConversationRow: 'message:navigation-target', arkmeMessageItemUid: 'navigation-target' },
         getBoundingClientRect: () => ({ top: 900 - body.scrollTop, bottom: 980 - body.scrollTop, height: 80 }),
       }],
@@ -7460,7 +7462,7 @@ describe('conversation send directory projection', () => {
       position: 'absolute',
       top: -6,
       right: -6,
-      bottom: 12,
+      bottom: -6,
       left: -6,
       background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
       pointerEvents: 'none',

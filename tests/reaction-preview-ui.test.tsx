@@ -21,6 +21,18 @@ beforeEach(() => {
 
 afterEach(async () => { reactionPreview.setScope(undefined); vi.unstubAllGlobals() })
 describe('reaction review UI', () => {
+  it('does not substitute the current profile for another actor whose real name is 我', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    reactionPreview.setScope('test:1')
+    const actor = { userId: 2, displayName: '我', avatarRef: 'other-avatar' }
+    const snapshot = vi.spyOn(reactionPreview, 'snapshot').mockReturnValue({ target_id: 'card', mine: { revision: 0, selections: [] }, actors_visible: true, private: false, has_more: false, groups: [{ key: 'received', expression: { text: '收到' }, count: 1, actors: [actor] }] })
+    let ui!: ReturnType<typeof create>
+    try {
+      await act(async () => { ui = create(<ArkmeReactionSelections scope="test:1" target={{ id: 'card', source: '群', text: '' }} actorName="兔老大" actorAvatarRef="my-avatar" />) })
+      await act(async () => ui.root.findByProps({ 'aria-label': '查看我的资料' }).props.onClick({ stopPropagation() {} }))
+      expect(ui.root.findByType(ArkmeReactionActorCard).props.actor).toEqual(actor)
+    } finally { await act(async () => ui?.unmount()); snapshot.mockRestore() }
+  })
   it('highlights only the exact historical expression including its color', async () => {
     reactionPreview.setScope('test:1')
     const blue = { text: '收到', color: 'blue' }, red = { text: '收到', color: 'red' }

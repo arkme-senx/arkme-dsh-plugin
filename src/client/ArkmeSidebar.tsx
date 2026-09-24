@@ -3985,6 +3985,7 @@ export function ArkmeSurface({
       let animationFrame = 0
       let remainingRenderAttempts = 3
       let cancelReactionLayout: (() => void) | undefined
+      const reactionLocateController = new AbortController()
       const locateRenderedTarget = () => {
         const body = bodyRef.current
         const row = arkmeConversationTargetRow(body, target)
@@ -4018,11 +4019,17 @@ export function ArkmeSurface({
           highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
           arkmeUi.consumeConversationTarget(target.revision)
         }
-        if (target.transientHighlight) cancelReactionLayout = afterReactionLayout(row, locate)
+        if (target.transientHighlight) {
+          const settle = () => { if (!reactionLocateController.signal.aborted) cancelReactionLayout = afterReactionLayout(row, locate) }
+          const item = items.find(item => item.itemUid === target.itemUid)
+          if (item && row.querySelector('[data-arkme-reaction-ready="false"]')) {
+            void prepareTimelineReactions([item], reactionLocateController.signal).then(settle, settle)
+          } else settle()
+        }
         else locate()
       }
       locateRenderedTarget()
-      return () => { cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
+      return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
       && recordOwnerId(target.recordOwnerUserId) !== 0

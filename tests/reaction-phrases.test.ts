@@ -62,3 +62,24 @@ it('keeps same-text color variants distinct across save, reload, reorder and del
  await writeReactionCollection('test:1', [blue]); await reactionLibrary.load('test:1')
  expect(readReactionCollection('test:1')).toEqual([blue])
 })
+
+
+it('keeps a confirmed library save when an older read completes later', async () => {
+  let resolveRead!: (value: unknown) => void
+  let reads = 0
+  const saved = { revision: 2, items: [{ text: '新短语', color: 'blue' }] }
+  const store = new ReactionLibraryStore(async request => {
+    if (request.action === 'library-query') {
+      if (++reads === 1) return { revision: 1, items: [] }
+      return new Promise(resolve => { resolveRead = resolve })
+    }
+    return { outcome: 'updated', library: saved }
+  })
+  store.setScope('test:1')
+  await store.load('test:1')
+  const stale = store.load('test:1')
+  await store.save('test:1', saved.items)
+  resolveRead({ revision: 1, items: [] })
+  expect(await stale).toEqual(saved)
+  expect(store.read('test:1')).toEqual(saved)
+})

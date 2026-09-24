@@ -31,7 +31,9 @@ export class ReactionLibraryStore {
       if (signal.aborted || scope !== this.scope) throw new Error('账号已变化')
       const value = raw as ReactionLibrary
       if (!Number.isSafeInteger(value.revision) || !Array.isArray(value.items)) throw new Error('短语数据不完整')
-      this.value = value; this.publish(); return value
+      // A read started before a confirmed save cannot roll the library back.
+      if (!this.value || value.revision >= this.value.revision) { this.value = value; this.publish() }
+      return this.value
     })
     this.loading = operation
     try { return await operation } finally { if (this.loading === operation) this.loading = undefined }

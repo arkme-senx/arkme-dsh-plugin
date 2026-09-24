@@ -683,11 +683,11 @@ export function arkmeRootChatUnreadPlacement(source: {
     : 'none'
 }
 
-export function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
+export function ArkmeRootChatPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
-  if (reactionNotifications.forSource(scope, source.sourceKey).length) return <ArkmeReactionNotificationPreview source={source} />
+  if (reactionNotifications.forSource(scope, source.sourceKey).length) return <ArkmeReactionNotificationPreview source={source} disabled={disabled} />
 
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>
@@ -2236,7 +2236,7 @@ export function ArkmeNavigation({
             aria-busy={mutationPending || undefined}
             onClick={() => { if (!interactionsDisabled) selectSource(source) }}
             onKeyDown={event => { if (event.target === event.currentTarget && !interactionsDisabled && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selectSource(source) } }}
-            onDoubleClick={() => { if (source.kind === 'private_chat' || source.kind === 'group_chat') openIndependentConversation(source) }}
+            onDoubleClick={() => { if (!interactionsDisabled && (source.kind === 'private_chat' || source.kind === 'group_chat')) openIndependentConversation(source) }}
             title={tr('双击在独立窗口打开')}
             onContextMenu={event => {
               event.preventDefault()
@@ -2266,7 +2266,7 @@ export function ArkmeNavigation({
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
-                <ArkmeRootChatPreview source={source} />
+                <ArkmeRootChatPreview source={source} disabled={interactionsDisabled} />
                 {source.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
               </span>
             </span>

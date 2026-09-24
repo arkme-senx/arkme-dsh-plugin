@@ -6,6 +6,16 @@ vi.mock('../src/client/auth-store.js',()=>{const state={auth:undefined};return {
 vi.mock('../src/client/reaction-notifications.js',()=>({reactionNotifications:{subscribe:()=>()=>{},getSnapshot:()=>0,startHighlights:vi.fn(),highlights:()=>undefined,forSource:()=>rows,beginViewing:vi.fn()}}))
 vi.mock('../src/client/ui-controller.js',()=>({arkmeUi:{showConversationTarget:open}}))
 describe('reaction notice presentation',()=>{
+ it('cannot reopen a conversation through its reminder while removal is pending',()=>{
+  open.mockClear()
+  let ui!:ReturnType<typeof create>
+  act(()=>{ui=create(<ArkmeReactionNotificationPreview source={{sourceKey:'chat'} as never} disabled />)})
+  const button=ui.root.findByType('button')
+  expect(button.props.disabled).toBe(true)
+  act(()=>button.props.onClick({stopPropagation(){}}))
+  expect(open).not.toHaveBeenCalled()
+  act(()=>ui.unmount())
+ })
  it('renders the original face and gesture assets, and locates without marking read',()=>{
   let ui!:ReturnType<typeof create>
   const source={sourceKey:'chat'} as never
