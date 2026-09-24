@@ -1,5 +1,6 @@
 // Visual/interaction acceptance of the installed artifact on unmodified DSH.
-// Identity/upstream and Team browser DTOs are synthetic fixtures; this is not a backend E2E.
+// Owner responses and image bytes are synthetic. Avatar identity crosses the
+// installed Host adapter, including per-refresh OSS signatures; no live backend.
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:https'
 import { once } from 'node:events'
@@ -19,6 +20,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
   const root = await mkdtemp(join(tmpdir(), 'arkme team layout '))
   let scaffold, browser, page
   const failures = [], calls = []
+  let teamOwnerFixture
   const api = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
     const input = JSON.parse(Buffer.concat(chunks).toString() || '{}')
@@ -28,6 +30,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       const token = [{ alg: 'none' }, { user_id: input.user_id, exp: Math.floor(Date.now() / 1000) + 3600 }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.') + '.fixture'
       data = { access_token: token, refresh_token: 'layout-fixture' }
     } else if (path.endsWith('/get-user-info')) data = { user_id: 99001001, nick_name: '布局验收', jotmo_id: 'layout_test', phone: '13800000000' }
+    else if (path.startsWith('/api/v1/team/') && teamOwnerFixture) data = teamOwnerFixture(path)
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 200, data }))
   })
   try {
@@ -43,6 +46,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await scaffold.ctx.get('arkmeData').testLogin(99001001)).toMatchObject({ status: 'authenticated' })
     browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
     page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
+    page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
     const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
@@ -53,6 +57,22 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       {key:'image-only',ref:'image-only',seq:3,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'',template_kind:2},media:[{ref:'team-image',key:'team-asset',url:'/arkme-self/test-team-media/image',name:'界面截图.png',mimeType:'image/png',size:4096}]},
     ].map((m,i)=>({...m,revision:1,state:'published',createdAt:Date.now()-120000+i*30000,canEdit:m.own,canDelete:m.own,recipientRead:false,version:1,contentStatus:'available'}))
     let grantRevision = 0
+    const rawChannel = { team_id: 42, name: 'Arkme Internal Interview', jotmo_id: 'arkme_cn', public_ref: publicRef, enabled: true }
+    const rawConversation = { conversation_uid: 'signed-avatar-fixture', channel: rawChannel, side: 'team' }
+    let signatureRevision = 0
+    teamOwnerFixture = path => {
+      if (path.endsWith('/conversations/open')) return { channel: rawChannel, conversation: rawConversation }
+      if (path.endsWith('/timeline/page')) {
+        const signature = ++signatureRevision
+        return { conversation: rawConversation, messages: messages.map(m => ({
+          message_uid: m.key, seq: m.seq, side: m.side, own: m.own, state: 'published',
+          sender: { nickname: m.sender.nickname, avatar_url: `https://jotmo-userfiles.senguo.me/avatars/${encodeURIComponent(m.sender.nickname)}.png?x-oss-signature=signature-${signature}&x-oss-date=20260924T${String(signature).padStart(6,'0')}Z&x-oss-expires=120&x-oss-process=image%2Fresize%2Cw_80` },
+        })) }
+      }
+      return {}
+    }
+    const hostOwner = scaffold.ctx.get('arkmeData')
+    const avatarConversation = (await hostOwner.executeTeamApp('team.app.open', {publicRef})).conversation
     const mediaRequests=[]
     const fixtureImage=await readFile(new URL('../../assets/branding/jiwo-about-icon.png',import.meta.url))
     // Serve bytes normally: browser-wide interception can suspend about:blank popup requests.
@@ -69,11 +89,16 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if(op === 'team.app.open') value={channel:channel(),conversation:conversation()}
       else if(op === 'team.app.timeline') {
         const revision=++grantRevision
-        value={conversation:conversation(),messages:messages.map(m=>({...m,ref:`${m.key}-grant-${revision}`,
-          sender:{...m.sender,imageKey:`avatar-${m.sender.nickname}`,imageRef:`avatar-${revision}-${m.sender.nickname}`},
+        const avatarPage = await hostOwner.executeTeamApp('team.app.timeline', {conversationRef:avatarConversation.ref})
+        value={conversation:conversation(),messages:messages.map((m,i)=>({...m,ref:`${m.key}-grant-${revision}`,
+          sender:avatarPage.messages[i].sender,
           media:m.media.map(f=>({...f,key:`asset-${m.key}`,ref:`media-grant-${revision}`,url:`/arkme-self/test-team-media/image?grant=${revision}`}))})),hasMore:false,beforeSeq:0}
       }
-      else if(op === 'team.app.image') value={base64:fixtureImage.toString('base64'),mimeType:'image/png'}
+      else if(op === 'team.app.image') {
+        // Make a wrong reload observable, including frames before the next bytes arrive.
+        await new Promise(resolve=>setTimeout(resolve,150))
+        value={base64:fixtureImage.toString('base64'),mimeType:'image/png'}
+      }
       else if(op === 'team.app.send') {
         const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
         messages.push(m);value={message:m}
@@ -83,7 +108,10 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         {nickname:'设计同事',read:false,readAt:0},{nickname:'研发同事',read:false,readAt:0}]}
       else if(op === 'team.app.read') value={}
       else if(op === 'team.app.home.visibility') value={version:1,showInHome:true}
-      else if (op === 'team.app.applications' || op === 'team.app.conversations') value = { items: [], hasMore: false }
+      else if (op === 'team.app.conversations') value = { items: params.side === 'team'
+        ? [conversation()]
+        : [{...conversation(),key:'contacted-team',side:'external',channel:{...channel(),name:'设计团队',jotmoId:'design_team'}}], hasMore:false }
+      else if (op === 'team.app.applications') value = { items: [], hasMore: false }
       else if (op === 'team.app.attention') value = { team: false, external: false, applications: false }
       else { await route.continue(); return }
       await route.fulfill({ json: { ok: true, value } })
@@ -168,18 +196,51 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const input=pane.getByRole('textbox',{name:'团队消息内容'})
     await input.fill('发送后，已有图片保持原位')
     const retainedText = await input.evaluateHandle(node => node.firstChild)
+    await expect.poll(()=>pane.locator('.team-avatar img').count()).toBe(3)
     const avatars = await pane.locator('.team-avatar img').elementHandles()
-    const timelineRequests = calls.filter(op=>op==='team.app.timeline').length
+    await expect.poll(()=>pane.locator('.team-avatar img').evaluateAll(nodes=>nodes.every(node=>node.complete && node.naturalWidth>0))).toBe(true)
+    const avatarRequests = calls.filter(op=>op==='team.app.image').length
+    await pane.evaluate(node=>{
+      const images=[...node.querySelectorAll('.team-avatar img')]
+      const sources=images.map(image=>image.src)
+      const check=()=>{window.teamFlashCheck.samples++; if(images.some((image,i)=>!image.isConnected || image.src!==sources[i] || !image.complete || !image.naturalWidth)) window.teamFlashCheck.flashes++}
+      window.teamFlashCheck={samples:0,flashes:0,frame:0,observer:new MutationObserver(check)}
+      window.teamFlashCheck.observer.observe(node,{childList:true,subtree:true,attributes:true,attributeFilter:['src']})
+      const frame=()=>{check();window.teamFlashCheck.frame=requestAnimationFrame(frame)};frame()
+    })
+    const nextTimeline = () => page.waitForResponse(response => response.url().endsWith('/arkme-self/api') && response.request().postDataJSON()?.operation === 'team.app.timeline')
+    const focusRefresh = nextTimeline()
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
-    await expect.poll(()=>calls.filter(op=>op==='team.app.timeline').length).toBeGreaterThan(timelineRequests)
+    await focusRefresh
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     expect(await retainedText.evaluate(node=>node.isConnected)).toBe(true)
+    expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
+    const sentRefresh = nextTimeline()
     await pane.getByRole('button',{name:'发送',exact:true}).click()
     await pane.getByText('发送后，已有图片保持原位',{exact:true}).waitFor()
     await expect.poll(()=>input.textContent()).toBe('')
+    await sentRefresh
+    await expect.poll(()=>pane.locator('.team-avatar img').count()).toBe(4)
+    for (let i=0;i<3;i++) {
+      const refreshed = nextTimeline()
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+      await refreshed
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    }
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     expect(await retainedImage.evaluate(node=>node.isConnected && node === document.querySelector('[data-team-message-key="image-only"] img[alt="界面截图.png"]'))).toBe(true)
     for (const avatar of avatars) expect(await avatar.evaluate(node=>node.isConnected && node.complete && node.naturalWidth>0)).toBe(true)
+    const flashCheck=await page.evaluate(()=>{
+      const {samples,flashes,frame,observer}=window.teamFlashCheck
+      cancelAnimationFrame(frame);observer.disconnect();delete window.teamFlashCheck
+      return {samples,flashes}
+    })
+    expect(flashCheck.samples).toBeGreaterThan(2)
+    expect(flashCheck.flashes).toBe(0)
+    expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests+1)
+    if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
+    await page.locator('[data-team-side="team"]').getByText('代表团队',{exact:true}).waitFor()
+    await page.locator('[data-team-side="external"]').getByText('联系团队',{exact:true}).waitFor()
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
