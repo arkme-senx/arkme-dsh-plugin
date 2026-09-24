@@ -1,3 +1,5 @@
+import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
+import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -1150,6 +1152,26 @@ export class RecordingService {
       false,
       409,
     )
+  }
+
+  async recordingHistory(input: { cursor: string }, signal?: AbortSignal): Promise<RecordingHistoryPage> {
+    this.assertWorkbenchEnabled()
+    if (typeof input.cursor !== 'string' || input.cursor.length > 512) {
+      throw new ArkmePluginError('recording-history-invalid', '录音记录查询参数无效', false)
+    }
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<unknown>('/api/v1/audio/recording-presence/history', {
+      cursor: input.cursor, limit: 20,
+    }, session, signal, { bypassCache: true })
+    return parseRecordingHistory(data)
+  }
+
+  async recordingPresence(signal?: AbortSignal): Promise<RecordingPresenceSnapshot> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<unknown>(
+      '/api/v1/audio/recording-presence/list', {}, session, signal, { bypassCache: true },
+    )
+    return parseRecordingPresence(data)
   }
 
   async recordingCalendar(
