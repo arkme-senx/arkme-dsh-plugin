@@ -339,7 +339,7 @@ function ArrangementBoard({ accountScope, onBack, onAddArrangement, createdItems
     {!accountScope && <p role="status">{tr('请先登录')}</p>}
     {arrangementColumns.some(status => !columns[status].cached && columns[status].board?.supported === false) && <p className="arkme-arrangement-message" role="status">{tr('当前服务暂不支持手动排序')}</p>}
     <DndContext sensors={sensors} collisionDetection={collisionDetection} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-      autoScroll={{ canScroll: (element: HTMLElement) => element === (over ? lists.current.get(over) : undefined) }}
+      autoScroll={{ canScroll: (element: Element) => element === (over ? lists.current.get(over) : undefined) }}
       onDragStart={startDrag} onDragOver={projectDrag} onDragMove={projectDrag} onDragCancel={clearDrag} onDragEnd={finishDrag}
       accessibility={{ screenReaderInstructions: { draggable: tr('按空格开始排序，方向键移动，空格放置，Escape 取消。按 Enter 展开原文。') }, announcements: {
         onDragStart: () => tr('已开始拖动安排'), onDragOver: ({over}: DragOverEvent) => over ? tr('已更新安排插入位置') : tr('当前位置不可放置'), onDragEnd: () => tr('拖动结束'), onDragCancel: () => tr('已取消拖动'),
