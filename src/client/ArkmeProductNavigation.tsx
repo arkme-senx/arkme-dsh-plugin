@@ -1,5 +1,6 @@
 import { arkmeBadgeUnreadCount } from '../chat-attention.js'
 import { useSocialAccess, socialAccessStore } from './social-access-store.js'
+import { ArkmeSocialBindingHint } from './ArkmeSocialBindingHint.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -339,6 +340,7 @@ export function ArkmeProductNavigation({
             </button>
             {socialAllowed && <button type="button" className="arkme-profile-world-entry" onClick={() => { setProfileOpen(false); arkmeUi.showWorld('mine') }}>{tr("我的世界")}<CaretRight size={13} aria-hidden /></button>}
           </div>
+          {!socialAllowed && <ArkmeSocialBindingHint onOpen={() => { setProfileOpen(false) }} />}
           <button type="button" className="arkme-member-entry" aria-label={tr("查看会员权益")} onClick={() => { setProfileOpen(false); setMembershipOpenScope(memberScope) }}>
             <span><strong>{membershipLabel(membership.state)}</strong><small>{membershipDescription(membership.state)}</small></span>
             <span>{tr(membership.state.status === 'ready' && membership.state.value.memberType === 0 ? '升级会员' : '查看权益')} ›</span>
