@@ -121,7 +121,20 @@
 .arkme-usage-dialog .arkme-usage-track { height: 5px; margin-top: 9px; }
 
 .arkme-usage-summary-row[data-usage-kind="ai-points"] { grid-template-columns: minmax(0, 1fr) auto; }
+.arkme-account-usage .arkme-points-disclosure { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.arkme-usage-breakdown[data-usage-detail="points"] { margin-top: 8px; }
+.arkme-points-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.arkme-points-toolbar > span { color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-usage-breakdown[data-usage-detail="points"] input { max-width: 100%; padding: 5px 7px; font: inherit; color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 6px; }
-.arkme-usage-breakdown[data-usage-detail="points"] summary { cursor: pointer; padding: 10px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; padding: 12px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary::-webkit-details-marker { display: none; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary > span:first-child { min-width: 0; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary strong { font-weight: 500; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary small { display: block; margin-top: 4px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-points-record-amount { flex: none; white-space: nowrap; }
+.arkme-points-chevron { display: inline-block; margin-left: 4px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-usage-breakdown[data-usage-detail="points"] details[open] > summary .arkme-points-chevron { transform: rotate(90deg); }
 .arkme-usage-breakdown[data-usage-detail="points"] details { border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); }
+.arkme-points-call { margin-bottom: 12px; padding-left: 12px; border-left: 2px solid var(--dsw-alias-border-l2, #e1e3e6); overflow-wrap: anywhere; }
+.arkme-points-call small { display: block; margin-top: 4px; color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-usage-breakdown[data-usage-detail="points"] input:focus-visible, .arkme-usage-breakdown[data-usage-detail="points"] summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }

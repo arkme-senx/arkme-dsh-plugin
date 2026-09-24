@@ -142,15 +142,13 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRefreshMembersh
       setRevision(value => value + 1); onRefreshMembership()
     }}><ArrowsClockwise size={13} aria-hidden />{loading ? tr("读取中") : tr("刷新")}</button></header>
     <div className="arkme-usage-metric" data-usage-kind="ai-points" aria-live="polite">
-      <div className="arkme-usage-label"><strong>{tr('AI 积分')}</strong><span className="arkme-usage-label-actions">
-        <button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button>
-        <button type="button" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr(pointsOpen ? '收起消费明细' : '查看消费明细')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
-      </span></div>
+      <div className="arkme-usage-label"><strong>{tr('AI 积分')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
       {points.status !== 'ready' ? <Pending status={points.status} /> : <>
         <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatAiPoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(points.value.grantedPoints), v1: formatAiPoints(points.value.purchasedPoints) })}</span></p>
         {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
         {pointsUnits(points.value.reservedPoints) > 0n && <small>{tr('任务进行中暂占')} {formatAiPoints(points.value.reservedPoints)} {tr('积分，结束后返还未用部分')}</small>}
       </>}
+      <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
       {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
     </div>
     <div className="arkme-usage-metric" data-usage-level={storageLevel} aria-live="polite">

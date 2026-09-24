@@ -14,12 +14,13 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 const render = async (scope = 'prod:1') => { await act(async () => root.render(<ArkmePointsConsumption scope={scope} revision={0} />)) }
-it('shows a non-zero tiny charge and keeps Token diagnostics in an expandable record', async () => {
+it('shows a non-zero tiny charge without exposing Token diagnostics or exact precision', async () => {
   await render()
   expect(host.textContent).toContain('< 0.01 积分')
   expect(host.querySelector('details')?.open).toBe(false)
   expect(host.querySelector('summary')?.textContent).not.toContain('Token')
-  expect(host.querySelector('details')?.textContent).toContain('精确消费 0.0000001 积分')
+  expect(host.textContent).not.toMatch(/Token|缓存|精确消费|0\.0000001/)
+  expect(host.querySelector('.arkme-points-call')?.textContent).toContain('< 0.01 积分')
   expect(host.textContent).not.toContain('实体提取'); expect(host.textContent).not.toContain('阿森有想法')
   expect(mocks.call.mock.calls[0]?.[0]).toBe('account.points.consumption')
 })
@@ -28,8 +29,8 @@ it('keeps model and search costs inside the same expanded charge', async () => {
   await render()
   expect(host.querySelectorAll('details')).toHaveLength(1)
   expect(host.querySelector('summary')?.textContent).not.toContain('联网搜索')
-  expect(host.querySelector('details')?.textContent).toContain('模型调用 0.685 积分')
-  expect(host.querySelector('details')?.textContent).toContain('联网搜索 0.315 积分')
+  expect(host.querySelector('details')?.textContent).toContain('模型调用 0.68 积分')
+  expect(host.querySelector('details')?.textContent).toContain('联网搜索 0.31 积分')
 })
 it('preserves existing rows on a failed next page and retries the same cursor', async () => {
   mocks.call.mockImplementation(async (_op, params) => {
@@ -53,11 +54,12 @@ it('cancels a pending account read and ignores its late result', async () => {
   expect(host.textContent).toContain('暂无积分消费'); expect(host.textContent).not.toContain('DeepSeek Pro')
 })
 
-it('shows one task total and retains exact calls inside the expandable row',async()=>{
+it('shows one task total and retains individual point charges in the expandable row',async()=>{
  mocks.call.mockImplementation(async (_op,params)=>({accountScope:'prod:1',unit:'ai_points',month:params.month,chargedPoints:'0.0000002',nextBeforeId:'',items:[{...row,operationUid:'run'},{...row,requestUid:'two',operationUid:'run'}]}))
  await render()
  expect(host.querySelectorAll('details')).toHaveLength(1)
- expect(host.querySelector('summary')?.textContent).toContain('2 次调用')
+ expect(host.querySelector('summary')?.textContent).not.toContain('次调用')
+ expect(host.querySelectorAll('.arkme-points-call')).toHaveLength(2)
  expect(host.querySelector('summary')?.textContent).not.toContain('Token')
- expect(host.querySelectorAll('details small').length).toBeGreaterThan(2)
+ expect(host.querySelectorAll('details small')).toHaveLength(3)
 })

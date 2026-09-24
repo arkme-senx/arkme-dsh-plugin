@@ -4,7 +4,6 @@ import { callArkme } from './api.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 
 const calendarMonth = () => new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', timeZone: 'Asia/Shanghai' }).format(new Date())
-const tokenCount = (value: string) => value.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 type PageState = { key: string; status: 'loading' | 'ready' | 'error'; items: ArkmeAiPointsConsumption[]; total: string; next: string; more: 'idle' | 'loading' | 'error' }
 
 export function ArkmePointsConsumption({ scope, revision }: { scope: string; revision: number }) {
@@ -39,14 +38,16 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
   useEffect(() => { void read(); return () => request.current?.abort() }, [key])
   const current = state?.key === key ? state : undefined
   return <div className="arkme-usage-breakdown" data-usage-detail="points">
-    <label>{tr('月份')} <input aria-label={tr('消费月份')} type="month" value={month} max={calendarMonth()} onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value) && event.target.value <= calendarMonth()) setMonth(event.target.value) }} /></label>
+    <div className="arkme-points-toolbar">
+      <input aria-label={tr('消费月份')} type="month" value={month} max={calendarMonth()} onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value) && event.target.value <= calendarMonth()) setMonth(event.target.value) }} />
+      {current?.status === 'ready' && <span>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</span>}
+    </div>
     {(!current || current.status === 'loading') && <p role="status">{tr('读取中…')}</p>}
     {current?.status === 'error' && <p role="alert">{tr('暂时无法读取消费明细。')} <button type="button" onClick={() => setRetry(value => value + 1)}>{tr('重试')}</button></p>}
     {current?.status === 'ready' && <>
-      <p>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</p>
       {current.items.length === 0 && <p>{tr('该月暂无积分消费')}</p>}
-      {groupPointsConsumption(current.items).map(group => <details className="arkme-usage-metric" key={group.key}>
-        <summary><strong>{group.calls[0]!.businessCode === 'agent' ? 'Agent' : group.calls[0]!.model}{group.calls.length > 1 && ` · ${group.calls.length} ${tr('次调用')}`}</strong> · {formatAiPoints(group.chargedPoints)} {tr('积分')}<br /><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></summary>
+      {groupPointsConsumption(current.items).map(group => <details key={group.key}>
+        <summary><span><strong>{group.calls[0]!.businessCode === 'agent' ? 'Agent' : group.calls[0]!.model}</strong><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></span><span className="arkme-points-record-amount">−{formatAiPoints(group.chargedPoints)} {tr('积分')} <span className="arkme-points-chevron" aria-hidden>›</span></span></summary>
         {group.calls.map(item => <PointsCallDetails key={item.requestUid} item={item} />)}
       </details>)}
       {current.more === 'error' && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
@@ -56,15 +57,11 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
 }
 
 function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {
- return <div>
-        <p>{item.model}</p>
+ return <div className="arkme-points-call">
+        <div className="arkme-usage-call-title"><span>{item.model}</span><span>{formatAiPoints(item.chargedPoints)} {tr('积分')}</span></div>
         {item.services.length > 0 && <>
-          <p>{tr('模型调用')} {item.modelPoints} {tr('积分')}</p>
-          {item.services.map(service => <p key={service.code}>{tr(service.code === 'web_search' ? '联网搜索' : '附加服务')} {service.chargedPoints} {tr('积分')}</p>)}
+          <small>{tr('模型调用')} {formatAiPoints(item.modelPoints)} {tr('积分')}{item.services.map(service => <span key={service.code}> · {tr(service.code === 'web_search' || service.code === 'bailian.web_search.turbo' ? '联网搜索' : '附加服务')} {formatAiPoints(service.chargedPoints)} {tr('积分')}</span>)}</small>
         </>}
-        <p>{tr('赠送积分')} {formatAiPoints(item.grantedPoints)} · {tr('充值积分')} {formatAiPoints(item.purchasedPoints)}</p>
-        <small>{tr('精确消费')} {item.chargedPoints} {tr('积分')}</small>
-        <p>{tr('输入 Token')} {tokenCount((BigInt(item.tokens.cacheHitInput) + BigInt(item.tokens.cacheMissInput)).toString())} · {tr('输出 Token')} {tokenCount(item.tokens.output)}</p>
-        <small>{tr('缓存命中')} {tokenCount(item.tokens.cacheHitInput)} · {tr('缓存未命中')} {tokenCount(item.tokens.cacheMissInput)}</small>
+        <small>{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(item.grantedPoints), v1: formatAiPoints(item.purchasedPoints) })}</small>
  </div>
 }

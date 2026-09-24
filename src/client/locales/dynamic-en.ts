@@ -270,13 +270,13 @@ AI 积分|AI points
 任务进行中暂占|Reserved by running tasks:
 积分，结束后返还未用部分|points; unused points return when the task finishes
 赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
-收起消费明细|Hide spending details
-查看消费明细|View spending details
+消费记录|Spending history
+模型调用|Model usage
+附加服务|Additional service
 消费月份|Spending month
 该月消费|Spent in selected month
 该月暂无积分消费|No point spending in selected month
 暂时无法读取消费明细。|Spending details could not be loaded.
-精确消费|Exact charge
 输入 Token|Input tokens
 输出 Token|Output tokens
 缓存命中|Cache hit
