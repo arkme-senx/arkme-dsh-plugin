@@ -34,7 +34,7 @@ it.each(['query', 'groups', 'actors'] as const)('adds nicknames through the shar
   expect(reactionActorLabels).toHaveBeenCalledExactlyOnceWith('signed', [7], undefined)
   remark = ''
   const unremarked = await ArkmeService.prototype.reactions.call(owner as never, { ...request, accountKey: 'test:7' })
-  expect(JSON.stringify(unremarked)).toContain('"displayName":"兔老大","groupNickname":"项目负责人"')
+  expect(JSON.stringify(unremarked)).toContain('"displayName":"项目负责人","groupNickname":"项目负责人"')
   reactionActorLabels.mockRejectedValueOnce(new Error('member unavailable'))
   const degraded = await ArkmeService.prototype.reactions.call(owner as never, { ...request, accountKey: 'test:7' })
   expect(JSON.stringify(degraded)).toContain('"displayName":"兔老大"')

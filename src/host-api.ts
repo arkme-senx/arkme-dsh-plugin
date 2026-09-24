@@ -1,3 +1,4 @@
+import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
@@ -931,7 +932,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1367,6 +1368,13 @@ export async function dispatchArkmeHostOperation(
     case 'bots.private-chat.notification.update': return await service.updateBotNotificationPreference(
       stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'recordings.history': return await service.recordingHistory({ cursor: stringParam(params, 'cursor') }, requestSignal)
+    case 'recordings.presence': return await service.recordingPresence(requestSignal)
+    case 'recordings.presence.capture': return await service.reportRecordingPresence(
+      stringParam(params, 'accountKey'), { operation: stringParam(params, 'operation') as 'start' | 'update' | 'stop',
+        recordingId: stringParam(params, 'recordingId'), startedAt: numberParam(params, 'startedAt', 0),
+        elapsedMillis: numberParam(params, 'elapsedMillis', 0), reason: stringParam(params, 'reason') },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
@@ -1631,11 +1639,38 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'arrangements.board-cache': {
+      let pages
+      if (Object.hasOwn(params, 'pages')) {
+        try { pages = parseArrangementBoardCachePages(params.pages) }
+        catch { throw new ArkmePluginError('invalid-params', '安排看板缓存格式无效', false, 400) }
+      }
+      return await service.arrangementBoardCache(stringParam(params, 'accountScope'), pages)
+    }
+    case 'arrangements.create': {
+      if (!Array.isArray(params.texts) || params.texts.some(text => typeof text !== 'string')) throw new ArkmePluginError('arrangement-create-invalid', '安排输入无效', false, 400)
+      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[] })
+    }
+    case 'arrangements.recognition': {
+      if (!Array.isArray(params.arrangementRefs) || params.arrangementRefs.some(ref => typeof ref !== 'string')) throw new ArkmePluginError('arrangement-read-invalid', '安排引用无效', false, 400)
+      return service.arrangementRecognition(params.arrangementRefs as string[])
+    }
     case 'arrangements.list': return await service.listArrangements({
       status: arrangementListStatusParam(params),
+      ...(params.order === 'board' ? { order: 'board' as const, ...(stringParam(params, 'boardVersion') ? { boardVersion: stringParam(params, 'boardVersion') } : {}) } : {}),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.reorder': {
+      const status = arrangementListStatusParam(params)
+      if (status === 'all') throw new ArkmePluginError('arrangement-order-invalid', '安排排序状态无效', false, 400)
+      return await service.reorderArrangement({
+        arrangementRef: stringParam(params, 'arrangementRef'), status,
+        ...(stringParam(params, 'beforeRef') ? { beforeRef: stringParam(params, 'beforeRef') } : {}),
+        ...(stringParam(params, 'afterRef') ? { afterRef: stringParam(params, 'afterRef') } : {}),
+        boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
+      })
+    }
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),

@@ -31,7 +31,8 @@ export function ArkmeComposerSendIcon() {
   </svg>
 }
 
-export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick }: {
+export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick, style }: {
+  style?: CSSProperties
   ariaLabel: string
   disabled: boolean
   onClick: () => void
@@ -43,6 +44,7 @@ export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick }: {
     style={{
       ...arkmeComposerSendButtonStyle,
       ...(buttonDisabled ? arkmeComposerSendButtonDisabledStyle : {}),
+      ...style,
     }}
     disabled={buttonDisabled}
     aria-label={ariaLabel}

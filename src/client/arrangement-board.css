@@ -1,0 +1,136 @@
+.arkme-arrangement-board { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; padding: 24px; gap: 20px; color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-arrangement-header { display: flex; align-items: center; gap: 12px; flex: none; }
+.arkme-arrangement-header h2 { margin: 0; font-size: 20px; }
+.arkme-arrangement-board button, .arkme-arrangement-entry { border: 1px solid var(--dsw-alias-border-l2, #ddd); border-radius: 8px; background: var(--dsw-alias-bg-base, #fff); color: inherit; padding: 8px 12px; cursor: pointer; font: inherit; }
+.arkme-arrangement-header button { display: grid; place-items: center; padding: 8px; border: 0; }
+.arkme-arrangement-entry { display: block; width: 100%; margin-top: 16px; text-align: left; }
+.arkme-arrangement-entry[aria-pressed=true] { font-weight: 600; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-arrangement-columns { display: flex; flex: 1; min-height: 0; overflow-x: auto; gap: 16px; padding-bottom: 4px; }
+.arkme-arrangement-column { flex: 1 0 260px; min-width: 260px; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l1, #e8ecf1); border-radius: 16px; background: #f5f6f8; transition: border-color 120ms ease, box-shadow 120ms ease; }
+/* Compact semantic icons distinguish the arrangement states. */
+.arkme-arrangement-column[data-arrangement-column=identified] { --arrangement-status-rgb: 164, 164, 164; }
+.arkme-arrangement-column[data-arrangement-column=following] { --arrangement-status-rgb: 237, 190, 9; }
+.arkme-arrangement-column[data-arrangement-column=completed] { --arrangement-status-rgb: 9, 184, 62; }
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=identified] { --arrangement-status-rgb: 136, 136, 136; }
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=following] { --arrangement-status-rgb: 224, 179, 32; }
+.arkme-arrangement-column[data-drag-over=true] { border-color: rgb(var(--arrangement-status-rgb)); box-shadow: inset 0 0 0 1px rgb(var(--arrangement-status-rgb)); }
+.arkme-arrangement-column-header { flex: none; display: flex; align-items: center; gap: 14px; padding: 16px 12px 12px; }
+.arkme-arrangement-status-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; color: #fff; background: rgb(var(--arrangement-status-rgb)); box-shadow: 0 0 0 3px rgba(var(--arrangement-status-rgb), .08); }
+.arkme-arrangement-column[data-arrangement-column=identified] .arkme-arrangement-status-icon { background: rgba(var(--arrangement-status-rgb), .16); color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-arrangement-heading-copy { flex: 1; min-width: 0; }
+.arkme-arrangement-column h3 { margin: 0; font-size: 18px; font-weight: 600; line-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.arkme-arrangement-count { flex: none; min-width: 22px; box-sizing: border-box; padding: 1px 7px; border-radius: 999px; background: #e7e9ee; color: var(--dsw-alias-label-secondary, #586272); font-size: 12px; font-weight: 600; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+.arkme-arrangement-count[data-wide=true] { padding-inline: 8px; }
+.arkme-arrangement-list { flex: 1; min-height: 80px; overflow-y: auto; padding: 2px 12px 12px; }
+.arkme-arrangement-card { display: flex; align-items: flex-start; gap: 12px; padding: 18px 16px; margin-bottom: 12px; border: 1px solid var(--dsw-alias-border-l1, #e6eaf0); border-radius: 12px; background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px rgba(0, 0, 0, .035); cursor: grab; overflow-wrap: anywhere; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.arkme-arrangement-card:hover { border-color: var(--dsw-alias-border-l2, #c6ced9); box-shadow: 0 2px 8px rgba(0, 0, 0, .055); }
+.arkme-arrangement-card[aria-busy=true] { cursor: progress; opacity: .65; }
+.arkme-arrangement-card[data-dragging=true] { opacity: .45; }
+.arkme-arrangement-card-content { flex: 1; min-width: 0; }
+.arkme-arrangement-card h4 { margin: 0; font-size: 14px; font-weight: 600; line-height: 22px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.arkme-arrangement-empty, .arkme-arrangement-message, .arkme-arrangement-card small { color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; line-height: 1.6; }
+.arkme-arrangement-card small { display: block; margin-top: 8px; }
+.arkme-arrangement-message { margin: 0; }
+.arkme-arrangement-empty { padding: 16px 0; }
+.arkme-personal-day-body[hidden] { display: none; }
+.arkme-arrangement-reminder { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 12px; line-height: 1.6; color: #e5484d; }
+.arkme-arrangement-reminder svg { flex: none; }
+.arkme-arrangement-reminder[data-upcoming=true] { color: #09b83e; }
+body[data-ds-dark-theme] .arkme-arrangement-reminder { color: #ff7075; }
+body[data-ds-dark-theme] .arkme-arrangement-reminder[data-upcoming=true] { color: #28b561; }
+@media (max-width: 680px) { .arkme-arrangement-board { height: 70vh; min-height: 360px; padding: 16px; } }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-card, .arkme-arrangement-column { transition: none; } }
+
+body[data-ds-dark-theme] .arkme-arrangement-column { background: #25272b; }
+body[data-ds-dark-theme] .arkme-arrangement-count { background: #393d44; }
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=completed] { --arrangement-status-rgb: 40, 181, 97; }
+.arkme-arrangement-content { margin-top: 8px; cursor: default; }
+.arkme-arrangement-content-detail { border-top: 1px solid var(--dsw-alias-border-l1, #e6eaf0); padding-top: 12px; margin-bottom: 8px; max-height: 240px; overflow-y: auto; overscroll-behavior: auto; font-size: 13px; line-height: 1.7; user-select: text; }
+.arkme-arrangement-content-detail strong { display: block; margin-bottom: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-arrangement-content-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.arkme-arrangement-content-empty { color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-arrangement-source-item + .arkme-arrangement-source-item { border-top: 1px solid var(--dsw-alias-border-l1, #e6eaf0); margin-top: 10px; padding-top: 10px; }
+.arkme-arrangement-card:focus-visible { outline: 2px solid #09b83e; outline-offset: 2px; }
+.arkme-arrangement-content:empty { display: none; }
+
+/* Flutter completed: tagOrange (#EDBE09) at 80% over a light surface. */
+.arkme-arrangement-column[data-arrangement-column=following] .arkme-arrangement-status-icon { color: #614900; background: #f1cb3a; }
+.arkme-arrangement-column[data-arrangement-column=following] .arkme-arrangement-count { background: #fbf2ce; color: #765800; }
+.arkme-arrangement-column[data-arrangement-column=completed] .arkme-arrangement-count { background: #d9f3e2; color: #20743a; }
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=following] .arkme-arrangement-count { background: #4d401e; color: #f3d36b; }
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=completed] .arkme-arrangement-count { background: #203f2c; color: #85d9a0; }
+
+body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=following] .arkme-arrangement-status-icon { background: #edbe09; }
+
+.arkme-arrangement-drop-list { min-height: 100%; }
+.arkme-arrangement-card[data-dragging=true] { opacity: .2; border: 2px dashed rgb(var(--arrangement-status-rgb)); background: rgba(var(--arrangement-status-rgb), .12); }
+.arkme-arrangement-card[data-sort-disabled=true] { cursor: pointer; }
+.arkme-arrangement-drag-snapshot { pointer-events: none; cursor: grabbing; box-shadow: 0 12px 28px rgba(0,0,0,.18); border-radius: 12px; overflow: hidden; }
+.arkme-arrangement-drag-snapshot .arkme-arrangement-card { opacity: .96; }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-card { transition: none !important; } }
+.arkme-arrangement-origin-placeholder { box-sizing: border-box; margin-bottom: 12px; border: 1px dashed rgba(var(--arrangement-status-rgb), .3); border-radius: 12px; background: rgba(var(--arrangement-status-rgb), .04); }
+
+.arkme-arrangement-entry, .arkme-arrangement-entry[aria-pressed=true] { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; background: var(--dsw-alias-button-primary-fill, #17191c); border-color: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); font-weight: 600; }
+.arkme-arrangement-entry:hover { background: color-mix(in srgb, var(--dsw-alias-button-primary-fill, #17191c) 88%, var(--dsw-alias-label-primary-inverted, #fff)); border-color: transparent; color: var(--dsw-alias-label-primary-inverted, #fff); opacity: 1; }
+.arkme-arrangement-entry:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }
+.arkme-day-arrangements { overflow-y: auto; min-height: 0; padding: 0 4px 16px; }
+.arkme-day-arrangements section + section { margin-top: 24px; }
+.arkme-day-arrangements h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.arkme-day-arrangements .arkme-arrangement-card { flex-direction: column; align-items: stretch; gap: 0; margin: 10px 0; padding: 14px 16px; cursor: default; }
+.arkme-day-arrangement-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border: 0; padding: 0; width: 100%; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.arkme-day-arrangement-summary strong { overflow-wrap: anywhere; }
+.arkme-day-arrangement-due { font-size: 12px; color: var(--dsw-alias-label-secondary, #727780); }
+
+.arkme-arrangement-header .arkme-arrangement-add { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; background: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); border-color: transparent; }
+.arkme-arrangement-create-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.12); display: flex; justify-content: flex-end; }
+.arkme-arrangement-create { width: min(420px, 100%); height: 100%; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #17191c); box-shadow: -6px 0 24px rgba(0,0,0,.12); }
+.arkme-arrangement-create header { display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; height: 60px; flex: 0 0 60px; padding: 0 20px; border-bottom: 1px solid var(--dsw-alias-border-l2, #eee); }
+.arkme-arrangement-create h2 { font-size: 18px; margin: 0; }
+.arkme-arrangement-create button { border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-arrangement-create button:disabled { opacity: .5; cursor: default; }
+.arkme-arrangement-create-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; }
+.arkme-arrangement-create-messages > p { color: var(--dsw-alias-label-secondary, #727780); font-size: 13px; }
+/* Match Flutter's right-side RecordCardBubbleShell. */
+.arkme-arrangement-create-message { position: relative; box-sizing: border-box; width: fit-content; max-width: 72%; padding: 10px; border-radius: 12px 4px 12px 12px; background: #f1f3f5; margin: 0 0 8px auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; }
+body[data-ds-dark-theme] .arkme-arrangement-create-message { background: #252525; }
+.arkme-arrangement-create-message button { position: absolute; right: 100%; top: 4px; margin-right: 4px; padding: 3px; opacity: 0; background: transparent; }
+.arkme-arrangement-create-message:hover button, .arkme-arrangement-create-message:focus-within button { opacity: 1; }
+@media (hover: none) { .arkme-arrangement-create-message button { opacity: 1; } }
+.arkme-arrangement-create footer { padding: 16px 20px 20px; border-top: 1px solid var(--dsw-alias-border-l2, #eee); }
+.arkme-arrangement-create footer [role=alert] { color: var(--dsw-alias-state-error-primary, #d14343); font-size: 13px; }
+.arkme-arrangement-create-input { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; padding: 12px; border-radius: 12px; background: #f6f6f6; }
+body[data-ds-dark-theme] .arkme-arrangement-create-input { background: #252525; }
+.arkme-arrangement-create-input-icon { flex: none; align-self: flex-start; margin-top: 4px; color: var(--dsw-alias-label-tertiary, #858a92); }
+.arkme-arrangement-create .arkme-arrangement-create-input textarea { flex: 1; min-width: 0; box-sizing: border-box; resize: none; min-height: 28px; max-height: 160px; overflow-y: auto; border: 0; border-radius: 0; padding: 0; outline: none; box-shadow: none; background: transparent; color: inherit; font: inherit; line-height: 28px; }
+.arkme-arrangement-create-input:focus-within { box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, #ddd); }
+.arkme-arrangement-create-input button { padding: 0; }
+.arkme-arrangement-create .arkme-arrangement-create-finish { width: 100%; min-height: 42px; background: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); font-weight: 600; }
+.arkme-arrangement-header .arkme-arrangement-add:hover, .arkme-arrangement-create .arkme-arrangement-create-finish:not(:disabled):hover { background: color-mix(in srgb, var(--dsw-alias-button-primary-fill, #17191c) 88%, var(--dsw-alias-label-primary-inverted, #fff)); }
+
+/* First entry only: retain the same column width and leave cached cards intact. */
+.arkme-arrangement-skeletons { display: flex; flex-direction: column; gap: 14px; }
+.arkme-arrangement-skeleton-card { min-height: 88px; padding: 20px 18px; border-radius: 14px; box-sizing: border-box; background: var(--dsw-alias-bg-base, #fff); }
+.arkme-arrangement-skeleton-card span, .arkme-arrangement-skeleton-count { display: block; border-radius: 5px; background: linear-gradient(100deg, color-mix(in srgb, var(--dsw-alias-label-secondary, #727780) 10%, transparent) 20%, color-mix(in srgb, var(--dsw-alias-label-secondary, #727780) 19%, transparent) 45%, color-mix(in srgb, var(--dsw-alias-label-secondary, #727780) 10%, transparent) 70%); background-size: 220% 100%; animation: arkme-arrangement-skeleton 1.6s ease-in-out infinite; }
+.arkme-arrangement-skeleton-card span { width: 78%; height: 15px; }
+.arkme-arrangement-skeleton-card span + span { width: 44%; height: 11px; margin-top: 14px; }
+.arkme-arrangement-skeleton-count { width: 22px; height: 15px; }
+@keyframes arkme-arrangement-skeleton { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-skeleton-card span, .arkme-arrangement-skeleton-count { animation: none; } }
+
+.arkme-arrangement-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.arkme-arrangement-title-row > h4, .arkme-arrangement-title-row > strong { min-width: 0; }
+.arkme-arrangement-recognition { display: inline-flex; flex: 0 0 14px; width: 14px; height: 14px; color: var(--dsw-alias-state-success-primary, #09b83e); }
+.arkme-arrangement-recognition svg { animation: arkme-arrangement-recognizing 900ms linear infinite; }
+@keyframes arkme-arrangement-recognizing { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-recognition svg { animation: none; } }
+
+.arkme-day-arrangements .arkme-arrangement-card, .arkme-day-arrangements .arkme-arrangement-card:hover { box-shadow: none; }
+.arkme-day-arrangement-summary:hover { background: transparent; box-shadow: none; }
+.arkme-day-arrangement-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; }
+.arkme-day-arrangement-heading > .arkme-arrangement-title-row { flex: 1; }
+.arkme-day-arrangement-status { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 20px; white-space: nowrap; background: #e7e9ee; color: var(--dsw-alias-label-secondary, #586272); }
+.arkme-day-arrangement-status[data-arrangement-status=following] { background: #fbf2ce; color: #765800; }
+.arkme-day-arrangement-status[data-arrangement-status=completed] { background: #d9f3e2; color: #20743a; }
+body[data-ds-dark-theme] .arkme-day-arrangement-status { background: #393d44; }
+body[data-ds-dark-theme] .arkme-day-arrangement-status[data-arrangement-status=following] { background: #4d401e; color: #f3d36b; }
+body[data-ds-dark-theme] .arkme-day-arrangement-status[data-arrangement-status=completed] { background: #203f2c; color: #85d9a0; }

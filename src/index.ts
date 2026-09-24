@@ -839,6 +839,10 @@ export function apply(ctx: Context, config: Config): void {
     openApiMcpController.start()
     return async () => { await openApiMcpController.dispose() }
   }, 'dsh-arkme: managed OpenAPI credential and MCP lifecycle')
+  ctx.effect(async () => {
+    await service.resumeRecordingPresence().catch(() => undefined)
+    return () => undefined
+  }, 'dsh-arkme: recording presence recovery')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())

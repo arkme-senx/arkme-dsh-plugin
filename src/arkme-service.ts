@@ -1,3 +1,6 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
 import { stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
@@ -150,6 +153,8 @@ import type {
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
+  ArkmeArrangementReorderInput,
+  ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
   ArkmeArrangementMutationIntent,
@@ -359,6 +364,7 @@ export class ArkmeService {
   private readonly membershipOwner: MembershipService
   private readonly fileTransfers: FileTransfers | undefined
   private readonly desktopScreenshot: ArkmeDesktopScreenshot
+  private readonly recordingPresenceWriter: RecordingPresenceWriter
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
@@ -375,6 +381,7 @@ export class ArkmeService {
   ) {
     this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
+    this.recordingPresenceWriter = new RecordingPresenceWriter(this.runtime, config.fileStateDirectory ?? join(homedir(), '.arkme', 'recording-presence'))
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
@@ -603,6 +610,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.calendar.dispose()
@@ -765,7 +773,9 @@ export class ArkmeService {
   }
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.authStatus()
+    const snapshot = await this.auth.authStatus()
+    void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
+    return snapshot
   }
 
   async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }
@@ -956,6 +966,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.directory.dispose()
@@ -1025,6 +1036,12 @@ export class ArkmeService {
   async listExtensionReviews(extensionIdValue: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionReviewPage> { return await this.extensionReview.listExtensionReviews(extensionIdValue, options) }
   async createExtensionReview(input: ArkmeExtensionReviewCreateInput, signal?: AbortSignal): Promise<ArkmeExtensionReviewCreateResult> { return await this.extensionReview.createExtensionReview(input, signal) }
 
+  async recordingPresence(signal?: AbortSignal) {
+    await this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
+    return await this.recording.recordingPresence(signal)
+  }
+  async resumeRecordingPresence(): Promise<void> { await this.recordingPresenceWriter.resumeCurrent() }
+  async reportRecordingPresence(accountKey: string, fact: CapturePresenceFact): Promise<void> { await this.recordingPresenceWriter.report(accountKey, fact) }
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
@@ -1060,6 +1077,7 @@ export class ArkmeService {
   }
   /** Account-bound status shared by the UI and recording tool. */ async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
   /** @internal Built-in loopback UI only. */ async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> { return await this.recording.recordingImportList(signal) }
+  /** @internal Built-in loopback UI only. */ async recordingHistory(input: { cursor: string }, signal?: AbortSignal) { return await this.recording.recordingHistory(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportHistory(input: { toMillis: number; limit: number; offset: number }, signal?: AbortSignal): Promise<PublicRecordingImportHistoryPage> { return await this.recording.recordingImportHistory(input, signal) }
   /** Account-bound retry shared by the UI and recording tool. */ async retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob> { return await this.recording.retryRecordingImport(importRef, expectedRevision, signal) }
   /** @internal Built-in loopback UI only. */ async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.cancelRecordingImport(importRef, expectedRevision) }
@@ -1762,7 +1780,7 @@ export class ArkmeService {
       [...profiles].filter(([, profile]) => profile.avatarUrl).map(async ([id]) => [id, await this.profile.sealProfileImageRef(viewer, id)] as const),
     ))
     const presentActor = (userId: number, profileName: string | undefined, label?: { remark: string; groupNickname: string }, avatarRef?: string) => ({
-      userId, displayName: label?.remark || profileName?.trim() || '用户',
+      userId, displayName: label?.remark || label?.groupNickname || profileName?.trim() || '用户',
       ...(label?.groupNickname ? { groupNickname: label.groupNickname } : {}),
       ...(avatarRef ? { avatarRef } : {}),
     })
@@ -2067,6 +2085,7 @@ export class ArkmeService {
   async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    this.recordingPresenceWriter.revoke()
     return await this.auth.logout()
   }
 
@@ -2227,13 +2246,25 @@ export class ArkmeService {
   }
 
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
+  async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
+
+  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal) {
+    return this.arrangement.createArrangement(input, signal)
+  }
+  async arrangementRecognition(refs: string[], signal?: AbortSignal) {
+    return this.arrangement.arrangementRecognition(refs, signal)
+  }
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.arrangement.listArrangements(options)
   }
 
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */
+  async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
+    return await this.arrangement.reorderArrangement(input, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     return await this.arrangement.arrangementDetail(arrangementRef, signal)
   }

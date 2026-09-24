@@ -1,5 +1,76 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+今天已识别|Identified today
+当天已识别|Identified on this day
+今天到期|Due today
+当天到期|Due on this day
+正在加载当天安排…|Loading arrangements for this day…
+当天正在更新…|Updating…
+更新失败，已保留当前内容|Update failed. Current content has been kept.
+安排加载失败|Unable to load arrangements for this day
+暂无安排|No arrangements
+到期时间|Due time
+添加安排|Add arrangement
+输入安排内容|Arrangement content
+输入安排内容…|Enter arrangement content…
+待创建的安排内容|Draft arrangement content
+输入想做的事，完成后先保存，再由AI识别安排。|Describe what you want to do. Finish saves it first, then AI recognizes the arrangements.
+移除此条内容|Remove this entry
+最多输入10条，每条500字，总计2000字|Up to 10 entries, 500 characters each and 2,000 in total
+正在创建…|Creating…
+未能确认创建结果，输入已保留；重试不会重复创建。|Could not confirm creation. Your input is retained; retrying will not duplicate it.
+AI识别中…|AI recognition in progress…
+今天创建|Created today
+当天创建|Created on this day
+更新识别结果|Update recognition result
+安排已保存，未完成AI识别|Saved; AI recognition did not complete
+安排已保存，AI识别尚未结束，可稍后更新结果。|Saved. AI recognition is still running; you can update the result later.
+安排已保存，暂未获取识别结果，请稍后重试。|Saved. Recognition results are unavailable; try again later.
+安排已不可访问，请刷新确认。|Arrangement is unavailable. Refresh to check.
+待确认的内容|Content
+展开|Expand
+创建原文|Original source
+创建原文加载失败|Unable to load original source
+创建原文暂不可查看|Original source is currently unavailable
+暂无创建原文|No original source
+内容加载失败|Unable to load content
+暂无关联内容|No related content
+按空格开始排序，方向键移动，空格放置，Escape 取消。按 Enter 展开原文。|Press Space to pick up, arrow keys to move, Space to drop, or Escape to cancel. Press Enter to expand the source.
+已开始拖动安排|Arrangement picked up
+已更新安排插入位置|Arrangement insertion position updated
+当前位置不可放置|Cannot drop at this position
+拖动结束|Drag ended
+已取消拖动|Drag cancelled
+当前服务暂不支持手动排序|Manual sorting is unavailable for this service
+安排|Arrangements to confirm
+正在推进的事项|Work in progress
+每一步都算数|Every step counts
+已识别 · 待确认|Identified · Awaiting confirmation
+安排|Arrangements
+已识别|Identified
+跟进中|Following
+已完成|Completed
+返回日历|Back to calendar
+通知时间|Notification time
+未设置通知时间|No notification time set
+安排加载失败|Unable to load arrangements
+暂无安排，可将其他区块的安排拖到这里|No arrangements. Drag one here from another column.
+安排未能完成移动，已重新读取实际状态；请确认后重试。|The move could not be completed. Review the refreshed status and try again.
+部分安排暂未同步，请重试加载后再操作。|Some arrangements could not be refreshed. Retry loading before continuing.
+录音记录|Recording history
+最近录音记录|Recent recordings
+各设备同步的录音记录，按开始时间倒序|Synced recordings from your devices, newest start time first
+录音设备|Recording device
+录音模式|Recording mode
+累计时长|Recorded duration
+服务端确认停止|Stop confirmed by server
+关闭录音记录|Close recording history
+当前账号已上传的录音，按开始时间倒序|Uploaded recordings for this account, newest start time first
+设备录音|Device recording
+文件录音|Audio file
+正在加载录音记录…|Loading recordings…
+录音记录加载失败|Could not load recordings
+暂无录音记录|No recordings yet
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens
@@ -1357,6 +1428,18 @@ ICP备案号|ICP registration
 不可修改|Cannot be changed
 修改|Edit
 录音中|Recording
+设备录音状态|Device recording status
+正在同步设备录音状态…|Syncing device recording status…
+设备录音状态暂未启用|Device recording status is not enabled yet
+同步暂时失败，正在重试|Sync failed temporarily. Retrying
+暂无设备上报录音状态|No devices are reporting recording status
+已暂停|Paused
+已中断|Interrupted
+录音异常|Recording error
+状态待确认|Status unconfirmed
+最后确认|Last confirmed
+手动录音|Manual recording
+长录音|Long recording
 录音，本机正在录音，点击查看|Recordings. This device is recording. Click to view.
 确认裁剪|Confirm crop
 处理中…|Processing…

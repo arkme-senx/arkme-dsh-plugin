@@ -638,12 +638,12 @@ export interface ArkmeRecordingImportDialogHandle {
 
 export type RecordingImportButtonStatus = 'idle' | 'uploading' | 'finalizing' | 'failed'
 
-export function ArkmeRecordingImportTrigger({ onClick, status = 'idle' }: { onClick(): void; status?: RecordingImportButtonStatus }) {
+export function ArkmeRecordingImportTrigger({ onClick, status = 'idle', fullWidth = false }: { onClick(): void; status?: RecordingImportButtonStatus; fullWidth?: boolean }) {
   const busy = status === 'uploading' || status === 'finalizing'
   const label = status === 'uploading' ? '音频上传中' : status === 'finalizing' ? '正在完成导入' : status === 'failed' ? '导入失败，查看' : '导入历史音频'
   return <button data-arkme-feedback="danger" type="button" data-arkme-recording-tour-target="import" data-arkme-recording-import-status={status} aria-live="polite"
     title={status === 'idle' ? tr("导入历史音频") : tr("{v0}，点击查看导入任务", { v0: label })}
-    style={{ ...styles.trigger, outlineColor: desktop.secondary, ...(status === 'failed' ? { color: arkmeTheme.danger } : {}) }}
+    style={{ ...styles.trigger, ...(fullWidth ? { width: '100%', gridColumn: '1 / -1' } : {}), outlineColor: desktop.secondary, ...(status === 'failed' ? { color: arkmeTheme.danger } : {}) }}
     onClick={onClick}>{busy ? <CircleNotch size={16} style={{ flexShrink: 0 }} className="arkme-icon-spin" aria-hidden /> : status === 'failed' ? <WarningCircle size={16} style={{ flexShrink: 0 }} aria-hidden /> : <UploadSimple size={16} style={{ flexShrink: 0 }} aria-hidden />}{label}</button>
 }
 

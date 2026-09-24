@@ -39,6 +39,9 @@ export interface ArkmeDayTimelineProps {
   renderCallDetail?(call: NonNullable<DayActivityDetailPage['call']>): ReactNode
   onRefresh?(): void
   onDetailChange?(): void
+  arrangementsActive?: boolean
+  onArrangementsChange?(active: boolean): void
+  arrangementsContent?: ReactNode
   generateRecap?: DayRecapGenerator
 }
 
@@ -47,7 +50,7 @@ export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap }: ArkmeDayTimelineProps) {
+function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
   useArkmeLocale()
   const data = useDayActivities(query, reader)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -138,7 +141,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
     <header className="arkme-day-heading">
       <div><h2>{tr("我的一天")}</h2><p>{query.bucketDate} · {query.timezone}</p></div>
       <div className="arkme-day-heading-actions">
-        {(!reader?.capabilities || reader.capabilities.modes.length > 1) && <div className="arkme-day-modes" aria-label={tr("显示方式")}>
+        {!arrangementsActive && (!reader?.capabilities || reader.capabilities.modes.length > 1) && <div className="arkme-day-modes" aria-label={tr("显示方式")}>
           <button type="button" aria-pressed={query.mode === 'activities'} onClick={() => change({ mode: 'activities' })}>{tr("活动片段")}</button>
           <button type="button" aria-pressed={query.mode === 'records'} onClick={() => change({ mode: 'records', includeBackground: true })}>{tr("原始明细")}</button>
         </div>}
@@ -148,11 +151,11 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
       </div>
     </header>
 
-    {reactionData.busy && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
-    {reactionData.error && <p role="alert">{reactionData.error} <button type="button" onClick={() => void reactionData.load()}>重试表态记录</button></p>}
-    {reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
-    {data.page && <>
-      <p className="arkme-day-overview">{reactionData.busy && !items.length && !visibleReactions.length ? '正在加载当天活动…' : dayActivityOverview(items, query.mode, visibleReactions.length)}</p>
+    {!arrangementsActive && reactionData.busy && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
+    {!arrangementsActive && reactionData.error && <p role="alert">{reactionData.error} <button type="button" onClick={() => void reactionData.load()}>重试表态记录</button></p>}
+    {!arrangementsActive && reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
+    {!arrangementsActive && data.page && <>
+      <p className="arkme-day-overview">{!arrangementsActive && reactionData.busy && !items.length && !visibleReactions.length ? '正在加载当天活动…' : dayActivityOverview(items, query.mode, visibleReactions.length)}</p>
       <details className="arkme-day-scope-details"><summary>{incomplete ? '部分来源已加载' : '当前来源已加载'} <span>{tr("查看范围")}</span></summary>
         {reader?.capabilities && <p>{reader.capabilities.notice}</p>}
         {data.page.notice && <p>{data.page.notice}</p>}
@@ -164,14 +167,16 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
 
     <div className="arkme-day-filters" aria-label={tr("活动类型")}>
       {dayActivityFilters.filter(({ kind }) => kind === 'all' || !reader?.capabilities
-        || reader.capabilities.kinds.some(source => dayActivityMatchesFilter(kind, source))).map(({ kind, label }) => <button type="button" key={kind}
-        aria-pressed={query.kind === kind}
-        onClick={() => change({ kind })}>{label}</button>)}
-      {reader?.loadLocation && <button type="button" aria-pressed={placesOnly} onClick={() => setPlacesOnly(value => !value)}>{tr("地点")}</button>}
-      {reader?.capabilities?.background !== false && (!reader?.capabilities || reader.capabilities.kinds.includes('group_chat')) && query.mode === 'activities' && dayActivityMatchesFilter(query.kind, 'group_chat') && <label className="arkme-day-background">
+        || reader.capabilities.kinds.some(source => dayActivityMatchesFilter(kind, source))).map(({ kind, label }) => <Fragment key={kind}>
+        {kind === 'call' && onArrangementsChange && <button type="button" data-day-arrangements-tab aria-pressed={!!arrangementsActive} onClick={() => { onDetailChange?.(); onArrangementsChange(true) }}>{tr('安排')}</button>}
+        <button type="button" aria-pressed={!arrangementsActive && query.kind === kind}
+          onClick={() => { onArrangementsChange?.(false); change({ kind }) }}>{label}</button></Fragment>)}
+      {!arrangementsActive && reader?.loadLocation && <button type="button" aria-pressed={placesOnly} onClick={() => setPlacesOnly(value => !value)}>{tr("地点")}</button>}
+      {!arrangementsActive && reader?.capabilities?.background !== false && (!reader?.capabilities || reader.capabilities.kinds.includes('group_chat')) && query.mode === 'activities' && dayActivityMatchesFilter(query.kind, 'group_chat') && <label className="arkme-day-background">
         <input type="checkbox" checked={query.includeBackground} onChange={event => change({ includeBackground: event.target.checked })} />{tr("其他群动态")}</label>}
     </div>
 
+    {arrangementsActive ? arrangementsContent : <>
     {!reader && <p className="arkme-day-status" role="status">{tr("多维活动数据尚未接入，原有日历仍可使用。")}</p>}
     {reader && data.loading && <p className="arkme-day-status" role="status">{tr("正在加载当天活动…")}</p>}
     {data.error && <div className="arkme-day-status" role="alert">{data.error}<button type="button" onClick={data.refresh}>{tr("重试")}</button></div>}
@@ -293,6 +298,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
       </aside>}
     </div>
     <p className="arkme-day-footnote">{tr("查看活动及其预览不会更改会话已读状态。地点仅来自已加载记录的位置线索，不是全天完整轨迹。")}</p>
+    </>}
   </section>
 }
 

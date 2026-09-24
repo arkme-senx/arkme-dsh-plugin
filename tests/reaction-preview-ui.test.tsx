@@ -6,7 +6,7 @@ import { ArkmeReactionActorCard } from '../src/client/ArkmeReactionActorCard.js'
 import { arkmeDefaultEmojis } from '../src/client/arkme-emoji.js'
 import { act, create } from 'react-test-renderer'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { ArkmeReactionPreview, ArkmeReactionSelections, reactionToolbarPosition, reactionPanelPosition, reactionActorLabel } from '../src/client/ArkmeReactionPreview.js'
+import { ArkmeReactionPreview, ArkmeReactionSelections, reactionToolbarPosition, reactionPanelPosition } from '../src/client/ArkmeReactionPreview.js'
 import { reactionPreview } from '../src/client/reaction-preview-store.js'
 
 import { reactionFixture } from './reaction-fixture.js'
@@ -53,17 +53,9 @@ describe('reaction review UI', () => {
     let ui!: ReturnType<typeof create>
     try {
       await act(async () => { ui = create(<ArkmeReactionSelections scope="test:1" target={{ id: 'card', source: '群', text: '' }} />) })
-      await act(async () => ui.root.findByProps({ 'aria-label': '查看哇咔咔（负责人）的资料' }).props.onClick({ stopPropagation() {} }))
+      await act(async () => ui.root.findByProps({ 'aria-label': '查看哇咔咔的资料' }).props.onClick({ stopPropagation() {} }))
       expect(ui.root.findByType(ArkmeReactionActorCard).props.actor).toEqual(actor)
     } finally { await act(async () => ui?.unmount()); snapshot.mockRestore() }
-  })
-  it.each([
-    ['兔老大', '项目负责人', '兔老大（项目负责人）'],
-    ['兔老大', undefined, '兔老大'],
-    ['兔老大', '  ', '兔老大'],
-    ['兔老大', '兔老大', '兔老大'],
-  ])('formats %s with optional group nickname %s', (name, nickname, expected) => {
-    expect(reactionActorLabel(name!, nickname)).toBe(expected)
   })
   it('highlights only the new actor in an old group and the entire newly added group', async () => {
     reactionPreview.setScope('test:1')
@@ -231,7 +223,7 @@ describe('reaction review UI', () => {
     })
     let box = { left: 200, right: 600, bottom: 300 }
     const bubble = { getBoundingClientRect: () => box }
-    const root = { querySelector: () => bubble, closest: () => null, getBoundingClientRect: () => ({ left: 100, top: 100 }) }
+    const root = { querySelector: (selector: string) => selector === '[data-arkme-message-direction]' ? bubble : null, closest: () => null, getBoundingClientRect: () => ({ left: 100, top: 100 }) }
     let ui: ReturnType<typeof create>
     await act(async () => { ui = create(<ArkmeReactionPreview scope="test:1" isMe target={{ id: 'm', source: '我', text: '原文' }} />, {
       createNodeMock: element => element.props['data-arkme-reaction-preview'] === true ? root : null,
@@ -269,6 +261,10 @@ describe('reaction review UI', () => {
   it('anchors outgoing left and incoming right at the bottom without layout space', async () => {
     const box = { left: 200, right: 500, bottom: 300 }, parent = { left: 200, top: 100 }, edges = { left: 8, right: 900 }
     expect(reactionToolbarPosition(true, box, parent, edges)).toMatchObject({ left: -32, top: 174 })
+    // Stay above the receipt and leave six pixels clear of the message bubble.
+    expect(reactionToolbarPosition(true, box, parent, edges, { left: 182, right: 194, top: 288 })).toMatchObject({ left: -32, top: 156 })
+    // When the receipt leaves no room beside it, use the space below the bubble.
+    expect(reactionToolbarPosition(true, { ...box, left: 27 }, { ...parent, left: 9 }, edges, { left: 9, right: 15, top: 294 })).toMatchObject({ left: 18, top: 200 })
     expect(reactionToolbarPosition(false, box, parent, edges)).toMatchObject({ left: 300, top: 174 })
     expect(reactionToolbarPosition(true, { ...box, left: 10 }, { ...parent, left: 10 }, edges)).toMatchObject({ left: 0, top: 200 })
   })

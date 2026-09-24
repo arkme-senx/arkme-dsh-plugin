@@ -58,10 +58,56 @@ describe('direct microphone recording lifecycle', () => {
     expect(h.store.getSnapshot().pending).toHaveLength(0)
     expect(h.store.getSnapshot().acceptedRevision).toBe(1)
   })
+  it('reports real PCM capture and stops presence before waiting for local save', async () => {
+    const h = await setup()
+    const facts: Array<{ operation: string; elapsedMillis: number }> = []
+    h.deps.presence = vi.fn(async (_key, fact) => { facts.push(fact) })
+    let complete!: () => void
+    vi.spyOn(h.journal, 'finish').mockImplementationOnce(async () => await new Promise<void>(resolve => { complete = resolve }))
+    await h.store.start(); expect(facts).toEqual([])
+    h.chunk(32000); await flush()
+    expect(facts[0]).toMatchObject({ operation: 'start', elapsedMillis: 1000 })
+    const recordingId = h.store.getSnapshot().recordingId
+    const stopping = h.store.stop(); await flush()
+    expect(h.store.getSnapshot().stoppedRecordingIds).toContain(recordingId)
+    expect(facts.at(-1)).toMatchObject({ operation: 'stop', elapsedMillis: 1000 })
+    complete(); await stopping
+    expect(h.store.getSnapshot().stoppedRecordingIds).toContain(recordingId)
+    h.store.configure(undefined)
+    expect(h.store.getSnapshot().stoppedRecordingIds).toEqual([])
+  })
+  it('reports a terminal capture error even if microphone stop throws', async () => {
+    const h = await setup()
+    const facts: Array<{ operation: string; reason?: string }> = []
+    h.deps.presence = vi.fn(async (_key, fact) => { facts.push(fact) })
+    h.stop.mockRejectedValueOnce(new Error('device failure'))
+    await h.store.start(); h.chunk(); await flush(); await h.store.stop(); await flush()
+    expect(facts.at(-1)).toMatchObject({ operation: 'stop', reason: 'capture_error' })
+    expect(h.store.getSnapshot().error).toContain('device failure')
+  })
+  it('retries a failed local start with the same recording ID before stopping', async () => {
+    const h = await setup()
+    const reports: Array<{ operation: string; recordingId: string; elapsedMillis: number }> = []
+    let failed = false
+    h.deps.presence = vi.fn(async (_key, fact) => {
+      reports.push(fact)
+      if (fact.operation === 'start' && !failed) { failed = true; throw new Error('host unavailable') }
+    })
+    await h.store.start(); h.chunk(); await flush(); h.chunk(); await flush(); await h.store.stop(); await flush()
+    expect(reports.map(item => item.operation)).toEqual(['start', 'start', 'stop'])
+    expect(new Set(reports.map(item => item.recordingId)).size).toBe(1)
+    expect(reports.at(-1)!.elapsedMillis).toBe(2000)
+  })
   it('prevents double start and double stop', async () => {
     const h = await setup(); await Promise.all([h.store.start(), h.store.start()]); h.chunk()
     await Promise.all([h.store.stop(), h.store.stop()])
     expect(h.capture).toHaveBeenCalledOnce(); expect(h.stop).toHaveBeenCalledOnce(); expect(h.upload).toHaveBeenCalledOnce()
+  })
+  it('exposes only the current local recording ID and clears it after capture is saved', async () => {
+    const h = await setup(); expect(h.store.getSnapshot().recordingId).toBeUndefined()
+    await h.store.start(); expect(h.store.getSnapshot().recordingId).toBe('record-1')
+    h.chunk(); await h.store.stop()
+    expect(h.store.getSnapshot().recordingId).toBeUndefined()
   })
   it('keeps submitted coverage until same-account cloud chunks cover the whole recording', async () => {
     const h = await setup(); await h.store.start(); h.chunk(); h.chunk(); await h.store.stop()
@@ -101,6 +147,7 @@ describe('direct microphone recording lifecycle', () => {
   it('stops and retains the old account recording, never uploads it into the new account', async () => {
     const h = await setup(); await h.store.start(); h.chunk(); await flush()
     h.store.configure({ ...account, key: 'prod:43', userId: 43 }); await flush()
+    expect(h.store.getSnapshot().recordingId).toBeUndefined()
     expect(h.stop).toHaveBeenCalledOnce(); expect(h.options.signal.aborted).toBe(true)
     expect(h.upload).not.toHaveBeenCalled(); expect(h.store.getSnapshot().pending).toHaveLength(0)
     expect((await h.journal.list('prod:42'))[0]!.bytes).toBe(32000)

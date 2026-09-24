@@ -1,3 +1,4 @@
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ArkmeSourceItem } from '../types.js'
 import type { ReactionExpression, ReactionOriginalMessage, ReactionNotification } from '../reaction-contract.js'
@@ -23,9 +24,17 @@ export function openReactionHistory(message: ReactionOriginalMessage, expression
  if (auth?.status === 'authenticated' && expression) reactionNotifications.beginHistoryViewing(`${auth.environment}:${auth.userId}`, message.source.sourceKey, message.itemUid, expressionIdentity(expression))
  arkmeUi.showConversationTarget(message.source, message.itemUid, message.sendAtMillis, message.recordOwnerUserId, undefined, true)
 }
+/** Ordinary unread messages take precedence; preview selection never acknowledges reactions. */
+export function latestReactionPreview(items: readonly ReactionNotification[], unreadCount: number, readPending = false) {
+ if (unreadCount > 0 || readPending) return undefined
+ return items.reduce<ReactionNotification | undefined>((latest, row) => {
+  const at = row.selections.at(-1)?.at ?? 0
+  return at > (latest?.selections.at(-1)?.at ?? 0) ? row : latest
+ }, undefined)
+}
 export function ArkmeReactionNotificationPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
  const { items } = useNotifications(source)
- const item = items.reduce<ReactionNotification | undefined>((latest, row) => !latest || row.selections.at(-1)!.at > latest.selections.at(-1)!.at ? row : latest, undefined)
+ const item = latestReactionPreview(items, source.unreadCount, arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0))
  if (!item) return null
  const value = item.selections.at(-1)!.expression
  const expression = expressionLabel(value)
