@@ -99,6 +99,27 @@ describe('registerArkmeTools', () => {
     await mounted.dispose()
   })
 
+  it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
+    const ctx = await setup()
+    const reactions = vi.fn(async () => ({ revision: 0, items: [] }))
+    const registration = await mountArkmeTools(ctx, 'business', { ...ports, reactions } as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '保存收到这个短语' }], source: { kind: 'user' } } }])
+    const agent = { id: SessionId('reactions'), session: { get events() { return events } } } as unknown as Agent
+    const signal = new AbortController().signal
+    const read = await ctx.tools.execute({ callId: CallId('reaction-read'), name: 'arkme_reactions_read', arguments: { request_json: JSON.stringify({action:'library-query',accountKey:'test:7'}) }, agent, signal })
+    expect(read.isError).toBe(false)
+    const args = { request_json: JSON.stringify({action:'library-set',accountKey:'test:7',expected_revision:0,request_id:'stable',items:[{text:'收到'}]}) }
+    const base = { name: 'arkme_reactions_write', arguments: args, agent, signal }
+    const prepared = await ctx.tools.execute({ ...base, callId: CallId('reaction-prepare') })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(reactions).toHaveBeenCalledTimes(1)
+    events.push({seq:1,type:'user/message',data:{content:[{type:'text',text:'确认保存'}],source:{kind:'user'}}})
+    const saved = await ctx.tools.execute({...base,callId:CallId('reaction-save')})
+    expect(saved.isError).toBe(false)
+    expect(reactions).toHaveBeenCalledTimes(2)
+    await registration.dispose()
+    expect(ctx.tools.schemas().some(item=>item.name==='arkme_reactions_read')).toBe(false)
+  })
   it.each(['business', 'hybrid'] as const)('keeps attachment-only re-edit instructions consistent in the %s profile', profile => {
     const prompt = promptForArkmeToolProfile(profile)
     expect(prompt).toContain('text, title, or attachments')
@@ -256,6 +277,7 @@ describe('registerArkmeTools', () => {
       'arkme_direct_message_refusal_set',
       'arkme_group_ai_polish_manage',
       'arkme_favorite_stickers_list',
+      'arkme_reactions_read', 'arkme_reactions_write',
       'arkme_favorite_sticker_add',
       'arkme_favorite_sticker_send',
       'arkme_favorite_sticker_manage',

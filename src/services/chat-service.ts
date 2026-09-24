@@ -1833,10 +1833,11 @@ export class ChatService {
     return result
   }
 
-  private async memberRead(session: ArkmeSessionCredentials, group: string, path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  private async memberRead(session: ArkmeSessionCredentials, group: string, path: string, body: Record<string, unknown>, signal?: AbortSignal, cacheMs?: number): Promise<Record<string, unknown>> {
     try {
       return await this.runtime.authenticatedChatPost(path, body, session, signal, {
         lane: path.endsWith('/members/page') ? 'interactive-read' : 'background-read', key: `members:${this.runtime.memberCacheEpoch?.() ?? 0}:${path}:${JSON.stringify(body)}`, failureCooldownMs: 2_000,
+        ...(cacheMs === undefined ? {} : { cacheMs }),
       })
     } catch (error) {
       if (invalidatesMemberSnapshot(error)) {
@@ -3294,6 +3295,42 @@ export class ChatService {
     const identity = { viewerUserId: session.userId, recordUid: reference.recordUid }
     return reference.sourceKind === 'record' ? { ...identity, kind: 'owned' }
       : { ...identity, kind: 'chat', chatSessionUid: reference.chatSessionUid, relationUid: reference.relationUid, recordOwnerUserId: reference.recordOwnerUserId }
+  }
+
+  async reactionTarget(sourceRef: string, messageActionRef: string): Promise<import('./reaction-service.js').ReactionWireTarget> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
+    if (reference.sourceKind === 'record') return { record_uid: reference.recordUid, owned: true }
+    return { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid }
+  }
+
+  /** Keep viewer-owned remarks separate from group nicknames and public profiles. */
+  async reactionActorLabels(sourceRef: string, userIds: readonly number[], signal?: AbortSignal): Promise<Map<number, { remark: string; groupNickname: string }>> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const names = new Map<number, { remark: string; groupNickname: string }>()
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') return names
+    const ids = [...new Set(userIds)].sort((left, right) => left - right)
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      signal?.throwIfAborted()
+      const batch = ids.slice(offset, offset + 50)
+      const data = await this.memberRead(session, source.ownerRef, '/api/v1/chats/members/by-user-ids', {
+        chat_session_uid: source.ownerRef, user_ids: batch, active_only: true, include_stats: false,
+      }, signal, 5_000)
+      const items = listValue(data.items).map(objectValue)
+      if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items)
+        || items.length > batch.length || items.some(item => !batch.includes(numberValue(item.user_id)) || numberValue(item.status) !== 1)) {
+        throw new ArkmePluginError('member-presentation-invalid-response', '成员资料响应无效', true, 502)
+      }
+      for (const item of items) {
+        const userId = numberValue(item.user_id)
+        const groupNickname = source.kind === 'group_chat' ? firstUsableChatMemberName([item.display_name_snapshot], userId) : ''
+        const remark = userId === session.userId ? '' : normalizedJoinDisplayName(item.remark)
+        names.set(userId, { remark, groupNickname })
+      }
+    }
+    return names
   }
 
   async sourceMessageExtensionContext(

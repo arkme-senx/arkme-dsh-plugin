@@ -1,3 +1,4 @@
+import { ArkmeRecordingPresence } from './recordings/ArkmeRecordingPresence.js'
 import { resolveRecordingSearchTarget } from './recordings/recording-search-target.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
@@ -77,8 +78,8 @@ const colors = {
   warningSoft: arkmeTheme.warningSoft,
 }
 const styles: Record<string, CSSProperties> = {
-  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '425px minmax(0,1fr)', alignItems: 'stretch', padding: '32px 12px 0', boxSizing: 'border-box', color: colors.text, background: colors.base },
-  left: { width: 425, flex: 'none', minHeight: 0, display: 'flex', flexDirection: 'column' },
+  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '425px minmax(0,1fr)', columnGap: 16, alignItems: 'stretch', padding: '32px 12px 0', boxSizing: 'border-box', color: colors.text, background: colors.base },
+  left: { width: 425, flex: 'none', minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' },
   calendar: { width: 409, maxWidth: '100%', padding: '12px 18px 12px 12px', boxSizing: 'border-box', border: 0, background: 'transparent' },
   monthHeader: { minHeight: 32, paddingBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   navCluster: { display: 'flex', alignItems: 'center', gap: 2 },
@@ -106,8 +107,8 @@ const styles: Record<string, CSSProperties> = {
   monthDuration: { minWidth: 15, padding: '2px 4px', background: 'transparent', color: colors.secondary, fontSize: 10, lineHeight: '10px', fontWeight: 500 },
   monthDurationBrief: { color: colors.secondary },
   selectedMonthDuration: { color: colors.text },
-  toolbar: { marginTop: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 11 },
-  mobileGuideButton: { minHeight: 36, padding: '8px 12px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexShrink: 0, whiteSpace: 'nowrap', border: `1px solid ${colors.tertiary}`, borderRadius: 8, background: '#17191c', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 500 },
+  toolbar: { marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', alignItems: 'stretch', gap: 8 },
+  mobileGuideButton: { minHeight: 36, padding: '8px 6px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexShrink: 0, whiteSpace: 'nowrap', border: `1px solid ${colors.tertiary}`, borderRadius: 8, background: '#17191c', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 500 },
   content: { minWidth: 0, minHeight: 0, flex: 1, display: 'grid', gridTemplateRows: 'auto minmax(0,1fr)', gap: 16, paddingBottom: 20, boxSizing: 'border-box' },
   dayTimeline: { minWidth: 0, minHeight: 0 },
   emptyDay: { minWidth: 0, minHeight: 0, paddingTop: 88, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', color: colors.text, fontSize: 13.286, lineHeight: '19.929px', letterSpacing: '.1557px' },
@@ -1039,12 +1040,13 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       </section>
       <div style={styles.toolbar}>{workbenchEnabled && <>
         <ArkmeDirectRecordingButton onStart={() => { tour.finish(false); const now = new Date(); now.setHours(0, 0, 0, 0); setVisibleMonth(monthStart(now)); setSelectedDate(now) }} />
-        <ArkmeRecordingImportTrigger status={recordingImportStatus} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
-        <button data-arkme-feedback="neutral" ref={mobileGuideTrigger} type="button" style={styles.mobileGuideButton} aria-haspopup="dialog" aria-expanded={mobileGuideOpen}
+        <button data-arkme-feedback="recording-action" ref={mobileGuideTrigger} type="button" style={styles.mobileGuideButton} aria-haspopup="dialog" aria-expanded={mobileGuideOpen}
           onClick={() => { tour.finish(false); setMobileGuideOpen(true) }}><Microphone size={16} style={{ flexShrink: 0 }} aria-hidden />{tr("全天候录音")}</button>
-        <button data-arkme-feedback="neutral" type="button" style={styles.mobileGuideButton}
+        <button data-arkme-feedback="recording-action" type="button" style={styles.mobileGuideButton}
           onClick={() => { tour.finish(false); arkmeUi.showVoiceprint() }}><Fingerprint size={16} aria-hidden />{tr("声纹管理")}<CaretRight size={12} aria-hidden /></button>
+        <ArkmeRecordingImportTrigger fullWidth status={recordingImportStatus} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
       </>}</div>
+      {workbenchEnabled && <ArkmeRecordingPresence accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined} active={active && ui.mode === 'recordings'} />}
       {workbenchEnabled && <ArkmeDirectRecordingStatus onShowTasks={() => onOpenRecordingImport(selectedDate.getTime())} />}
       {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}{calendarLoading && calendar === undefined && <div style={styles.status}>{tr("正在读取录音…")}</div>}
     </aside>}

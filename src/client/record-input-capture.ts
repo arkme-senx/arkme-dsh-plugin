@@ -921,6 +921,7 @@ export class ArkmeRecordInputCaptureOwner {
   private readonly now: () => number
   private readonly createCaptureId: () => string
   private readonly captureContext: () => Promise<ArkmeRecordCaptureContext>
+  private contextSample: { startedAtMillis: number; promise: Promise<ArkmeRecordCaptureContext> } | undefined
   private readonly enabledReader: () => boolean
   private readonly microphoneReadyReader: () => boolean
   private readonly requestMicrophonePermission: () => Promise<'granted'>
@@ -1062,6 +1063,7 @@ export class ArkmeRecordInputCaptureOwner {
    * request; focus, effects and re-renders never request permission.
    */
   beginUserInput(draftKeyValue: string | undefined): void {
+    if (!this.disposed && draftKeyValue?.trim()) void this.sampleContext()
     if (this.disposed || !this.readEnabled() || this.readMicrophoneReady()) return
     this.activate()
     const draftKey = draftKeyValue?.trim()
@@ -1106,12 +1108,22 @@ export class ArkmeRecordInputCaptureOwner {
     }
   }
 
+  private sampleContext(): Promise<ArkmeRecordCaptureContext> {
+    const now = this.now()
+    // One account-scoped sample, refreshed by actual input, never a background poll.
+    // At most five seconds of device/network staleness is accepted at submission.
+    if (this.contextSample !== undefined && now - this.contextSample.startedAtMillis >= 0
+      && now - this.contextSample.startedAtMillis < 5_000) return this.contextSample.promise
+    const promise = Promise.resolve().then(() => this.captureContext())
+      .catch((): ArkmeRecordCaptureContext => ({ clientName: '未知电脑（浏览器）' }))
+    this.contextSample = { startedAtMillis: now, promise }
+    return promise
+  }
+
   async finishForSubmit(draftKey: string): Promise<ArkmeRecordInputCaptureResult> {
     const state = this.session(draftKey)
     const completedAtMillis = this.now()
-    const contextPromise = this.captureContext().catch((): ArkmeRecordCaptureContext => ({
-      clientName: '未知电脑（浏览器）',
-    }))
+    const contextPromise = this.sampleContext()
     // A quick send can arrive before the zero-delay timer fires or while
     // getUserMedia/MediaRecorder is still starting. Finalize that same owner
     // generation first; otherwise a valid granted draft silently loses its
@@ -1219,6 +1231,7 @@ export class ArkmeRecordInputCaptureOwner {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.contextSample = undefined
     this.activationRevision += 1
     this.activated = false
     this.unsubscribePreference()

@@ -25,6 +25,13 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeRecordingSurface layout', () => {
+  it('keeps the calendar actions and device list reachable in short wide windows', () => {
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
+    const aside = matchStyle(markup, /<aside style="([^"]+)"/)
+    expect(aside.get('overflow-y')).toBe('auto')
+    expect(aside.get('min-height')).toBe('0')
+  })
+
   it('keeps the desktop workbench behavior while allowing the DSH layout to adapt', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
