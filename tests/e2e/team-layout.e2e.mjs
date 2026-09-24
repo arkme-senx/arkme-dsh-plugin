@@ -51,7 +51,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       {key:'own-text',ref:'own-text',seq:1,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'你好，我想反馈一个使用问题。',template_kind:1},media:[]},
       {key:'reply',ref:'reply',seq:2,side:'team',own:false,sender:{nickname:'Loki1999'},content:{text_content:'你好，请发一张截图，我们一起确认。',template_kind:1},media:[]},
       {key:'image-only',ref:'image-only',seq:3,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'',template_kind:2},media:[{ref:'team-image',key:'team-asset',url:'/arkme-self/test-team-media/image',name:'界面截图.png',mimeType:'image/png',size:4096}]},
-    ].map((m,i)=>({...m,revision:1,state:'published',createdAt:Date.now()-120000+i*30000,canEdit:m.own,canDelete:m.own,version:1,contentStatus:'available'}))
+    ].map((m,i)=>({...m,revision:1,state:'published',createdAt:Date.now()-120000+i*30000,canEdit:m.own,canDelete:m.own,recipientRead:false,version:1,contentStatus:'available'}))
     let grantRevision = 0
     const mediaRequests=[]
     const fixtureImage=await readFile(new URL('../../assets/branding/jiwo-about-icon.png',import.meta.url))
@@ -167,19 +167,26 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const headerBefore=await pane.locator('header').first().boundingBox()
     const input=pane.getByRole('textbox',{name:'团队消息内容'})
     await input.fill('发送后，已有图片保持原位')
+    const retainedText = await input.evaluateHandle(node => node.firstChild)
+    const avatars = await pane.locator('.team-avatar img').elementHandles()
+    const timelineRequests = calls.filter(op=>op==='team.app.timeline').length
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+    await expect.poll(()=>calls.filter(op=>op==='team.app.timeline').length).toBeGreaterThan(timelineRequests)
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    expect(await retainedText.evaluate(node=>node.isConnected)).toBe(true)
     await pane.getByRole('button',{name:'发送',exact:true}).click()
     await pane.getByText('发送后，已有图片保持原位',{exact:true}).waitFor()
     await expect.poll(()=>input.textContent()).toBe('')
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     expect(await retainedImage.evaluate(node=>node.isConnected && node === document.querySelector('[data-team-message-key="image-only"] img[alt="界面截图.png"]'))).toBe(true)
+    for (const avatar of avatars) expect(await avatar.evaluate(node=>node.isConnected && node.complete && node.naturalWidth>0)).toBe(true)
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
     const receiptTarget=pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true})
     await receiptTarget.scrollIntoViewIfNeeded()
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-    await receiptTarget.click({button:'right'})
-    await page.getByRole('menuitem',{name:'查看阅读状态',exact:true}).click()
+    await pane.locator('[data-team-message-key="own-text"]').getByRole('button',{name:'未读，查看阅读状态',exact:true}).click()
     const receiptPanel=page.getByRole('dialog',{name:'查看阅读状态',exact:true})
     await receiptPanel.getByText('Loki1999',{exact:true}).waitFor()
     expect(await receiptPanel.getAttribute('data-arkme-read-receipt-panel-placement')).toMatch(/above|below/)
