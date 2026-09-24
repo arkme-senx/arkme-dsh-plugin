@@ -184,7 +184,6 @@ export function useAccountSessionCatalog(surface: Element) {
   const snapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
   useEffect(() => {
     catalog.start()
-    void catalog.refresh()
     return () => catalog.dispose()
   }, [catalog])
   return snapshot
