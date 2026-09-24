@@ -102,12 +102,12 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
 
 function createCatalog(surface: Element, remove: () => void) {
     const owner = surface.ownerDocument
-    let rows: DshAccountSession[] = [], localRuntimeRef: string | undefined, users = 0
-    let snapshot = { rows, localRuntimeRef }, active = true, busy = false
+    let rows: DshAccountSession[] = [], localRuntimeRef: string | undefined, localDesktopName: string | undefined, users = 0
+    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false
     const listeners = new Set<() => void>()
     let controller = new AbortController()
     let stopRefresh: (() => void) | undefined
-    const publish = () => { snapshot = { rows, localRuntimeRef }; listeners.forEach(listener => listener()) }
+    const publish = () => { snapshot = { rows, localRuntimeRef, localDesktopName }; listeners.forEach(listener => listener()) }
     const refresh = async () => {
       if (!active || busy || owner.hidden) return
       busy = true
@@ -119,6 +119,7 @@ function createCatalog(surface: Element, remove: () => void) {
           const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, ...(cursor ? { cursor } : {}) }, signal)
           if (page.contractVersion !== 1 || !Array.isArray(page.items)) throw new Error('会话目录不可用')
           localRuntimeRef = page.localRuntimeRef
+          localDesktopName = page.localRuntime?.desktopName
           next.push(...page.items.map(row => {
             const previous = rows.find(old => accountSessionKey(old) === accountSessionKey(row))
             return page.warning && previous && row.workspaceName === '工作区信息暂不可用' ? { ...row, workspaceName: previous.workspaceName } : row
@@ -135,7 +136,8 @@ function createCatalog(surface: Element, remove: () => void) {
         } while (cursor && active)
         if (!active || signal.aborted) return
         const merged = reconcileAccountSessions(rows, next)
-        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows); publish() }
+        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows) }
+        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
       } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
       finally { if (signal === controller.signal) busy = false }
     }
@@ -175,13 +177,29 @@ function accountSessionCatalog(surface: Element) {
   return entry
 }
 
-/** All native sources share one account-scoped catalog. */
-export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
-  const account = useSyncExternalStore(listener => {
+/** Header and browser consume the same account-scoped discovery owner. */
+export function useAccountSessionCatalog(surface: Element) {
+  const account = useSurfaceAccount(surface)
+  const catalog = useMemo(() => accountSessionCatalog(surface), [surface, account])
+  const snapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+  useEffect(() => {
+    catalog.start()
+    return () => catalog.dispose()
+  }, [catalog])
+  return snapshot
+}
+
+function useSurfaceAccount(surface: Element): string {
+  return useSyncExternalStore(listener => {
     const observer = new MutationObserver(listener)
     observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-account-id', 'data-arkme-account-scope'] })
     return () => observer.disconnect()
   }, () => `${surface.getAttribute('data-arkme-account-id')}:${surface.getAttribute('data-arkme-account-scope')}`)
+}
+
+/** All native sources share one account-scoped catalog. */
+export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
+  const account = useSurfaceAccount(surface)
   return <AccountBrowser key={account} Native={Native} surface={surface} {...props} />
 }
 
@@ -235,7 +253,7 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
     // Verify the positional binding before decorating; never infer source from title alone.
     if (!native || ![...element.children].some(node => node.textContent === native.displayTitle)) return undefined
     const row = snapshot.rows.find(row => (row.runtimeRef === (sourceRuntime ?? snapshot.localRuntimeRef) ? row.sessionRef : accountSessionKey(row)) === id)
-    return row ? { title: native.displayTitle, lines: sessionOrigin(row) } : undefined
+    return row ? { title: native.displayTitle, lines: sessionOrigin(row, snapshot.localDesktopName) } : undefined
   }
   useEffect(() => installSessionOriginHover(document, element => originResolver.current(element)), [])
   const useSessions: Hook<SessionsState> = select => select(sessionState)

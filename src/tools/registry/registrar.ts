@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_reactions_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
   'arkme_topic_home_visibility',
@@ -79,6 +80,15 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_reactions_write') {
+    const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
+    if (request.action === 'history-policy-set') return request.locked === true
+      ? '是否确认锁定自己的表态操作记录？锁定后时间轴、数据管理和 AI 都不能读取这些记录。'
+      : '是否确认解锁自己的表态操作记录，恢复时间轴、数据管理和 AI 的读取？'
+    if (request.action === 'notifications-read') return '是否将刚才指定的表态提醒标记为已查看？'
+    if (request.action === 'library-set') return '是否确认保存刚才指定的短语、颜色和顺序？这不会发送表态。'
+    return request.active === true ? '是否确认给刚才指定的消息添加这个表态？' : '是否确认取消刚才指定的表态？'
+  }
   if (name === 'arkme_direct_message_refusal_set') return args.refused === true
     ? '是否确认拒收这个私聊用户的消息？拒收期间双方都无法发送新消息，历史记录保留。'
     : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'

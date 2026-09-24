@@ -1902,6 +1902,11 @@ export class ArkmeSdk {
     return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
   }
 
+  async reactions<R extends import('../reaction-contract.js').ReactionRequest>(input: R, signal?: AbortSignal): Promise<import('../reaction-contract.js').ReactionResponse<R>> {
+    if ((await this.capabilities(signal)).features.reactionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持表态，请升级', retryable: false })
+    return await this.call('reactions', input, signal)
+  }
+
   async addFavoriteSticker(
     item: ArkmeFavoriteStickerAddInput,
     signal?: AbortSignal,
@@ -2314,3 +2319,4 @@ export async function callArkme<T>(
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
 
 export type { ArkmeDshInputOrigin } from '../types.js'
+export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'

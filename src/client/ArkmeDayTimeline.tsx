@@ -1,5 +1,9 @@
+import { ReactionLabel } from './ReactionLabel.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useReactionHistory } from './use-reaction-history.js'
+import type { ReactionExpression, ReactionOriginalMessage } from '../reaction-contract.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ArkmeDayRecap, DayRecordingReview } from './ArkmeDayRecap.js'
 import type { DayRecapGenerator } from './day-recap-input.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -29,6 +33,7 @@ export interface ArkmeDayTimelineProps {
   reader?: DayActivityReader
   onQueryChange(query: DayActivityQuery): void
   onOpenSource?(sourceRef: string): void
+  onOpenReactionSource?(message: ReactionOriginalMessage, expression?: ReactionExpression): void
   onClose?(): void
   renderRecord?(record: DayActivityDetailPage['items'][number]): ReactNode
   renderCallDetail?(call: NonNullable<DayActivityDetailPage['call']>): ReactNode
@@ -45,9 +50,12 @@ export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
+function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
   useArkmeLocale()
   const data = useDayActivities(query, reader)
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const reactionData = useReactionHistory(auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined, data.page?.dayStartMillis, data.page?.dayEndMillis)
+  const reactionEvents = reactionData.events
   const [selectedId, setSelectedId] = useState<string>()
   const [locationRequestedId, setLocationRequestedId] = useState<string>()
   const [placesOnly, setPlacesOnly] = useState(false)
@@ -115,7 +123,19 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
     ? { ...entry, access: 'restricted' as const } : entry) ?? []
   const incomplete = data.page?.completeness === 'partial' || (data.page?.missingKinds.length ?? 0) > 0
   const missing = data.page?.missingKinds.filter(kind => !reader?.capabilities || reader.capabilities.kinds.includes(kind)) ?? []
-  const empty = reader && !data.loading && !data.error && data.page && items.length === 0
+  const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: query.timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
+  const visibleReactions = auth?.status === 'authenticated' && !placesOnly
+    ? reactionEvents.map((event, index) => ({ event, index: event.eventId ?? String(index) })).filter(({ event }) => dateFormat.format(new Date(event.at)) === query.bucketDate
+      && (query.kind === 'all' || event.sourceKind !== undefined && dayActivityMatchesFilter(query.kind,
+        event.sourceKind === 'private_chat' || event.sourceKind === 'group_chat' ? event.sourceKind : 'note'))) : []
+  const timeline = [
+    ...items.map(item => ({ type: 'activity' as const, at: item.startAtMillis, item })),
+    ...visibleReactions.map(({ event, index }) => ({ type: 'reaction' as const, at: event.at, event, index })),
+  ].sort((a, b) => data.page?.order === 'ascending' ? a.at - b.at : b.at - a.at)
+  const selectedReaction = timeline.find(entry => entry.type === 'reaction' && selectedId === `reaction:${entry.index}`)
+  const reactionDetail = selectedReaction?.type === 'reaction' ? selectedReaction : undefined
+  const reactionHistory = reactionDetail ? reactionEvents.map((event, index) => ({ event, index: event.eventId ?? String(index) })).filter(({ event }) => event.id === reactionDetail.event.id).sort((a, b) => a.event.at - b.event.at || a.index.localeCompare(b.index)) : []
+  const empty = visibleReactions.length === 0 && reader && !data.loading && !data.error && !reactionData.busy && !reactionData.error && data.page && items.length === 0
 
   return <section ref={root} className="arkme-day-timeline" aria-label={tr("我的一天")}>
     <header className="arkme-day-heading">
@@ -126,13 +146,16 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
           <button type="button" aria-pressed={query.mode === 'records'} onClick={() => change({ mode: 'records', includeBackground: true })}>{tr("原始明细")}</button>
         </div>}
         <button type="button" aria-label={tr("刷新当天活动")} disabled={!reader || data.loading} className="arkme-day-icon"
-          onClick={() => { setSelectedId(undefined); setLocationRequestedId(undefined); setLocations({ values: {} }); setRestrictedIds(new Set()); data.refresh(); onRefresh?.() }}><ArrowClockwise size={18} aria-hidden /></button>
+          onClick={() => { setSelectedId(undefined); setLocationRequestedId(undefined); setLocations({ values: {} }); setRestrictedIds(new Set()); data.refresh(); void reactionData.load(); onRefresh?.() }}><ArrowClockwise size={18} aria-hidden /></button>
         {onClose && <button type="button" className="arkme-day-icon" aria-label={tr("关闭我的一天")} onClick={onClose}><X size={18} aria-hidden /></button>}
       </div>
     </header>
 
+    {!arrangementsActive && reactionData.busy && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
+    {!arrangementsActive && reactionData.error && <p role="alert">{reactionData.error} <button type="button" onClick={() => void reactionData.load()}>重试表态记录</button></p>}
+    {!arrangementsActive && reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
     {!arrangementsActive && data.page && <>
-      <p className="arkme-day-overview">{dayActivityOverview(items, query.mode)}</p>
+      <p className="arkme-day-overview">{!arrangementsActive && reactionData.busy && !items.length && !visibleReactions.length ? '正在加载当天活动…' : dayActivityOverview(items, query.mode, visibleReactions.length)}</p>
       <details className="arkme-day-scope-details"><summary>{incomplete ? '部分来源已加载' : '当前来源已加载'} <span>{tr("查看范围")}</span></summary>
         {reader?.capabilities && <p>{reader.capabilities.notice}</p>}
         {data.page.notice && <p>{data.page.notice}</p>}
@@ -169,14 +192,39 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
         requestAnimationFrame(() => root.current?.querySelector('.arkme-day-detail')?.scrollIntoView({ block: 'nearest' })) }} />}
     {data.page && (query.kind === 'all' || query.kind === 'recording') && !placesOnly && <DayRecordingReview page={data.page} />}
 
-    <div className="arkme-day-columns" data-detail-open={!!selected}>
+    <div className="arkme-day-columns" data-detail-open={!!selected || !!reactionDetail}>
       <div className="arkme-day-list" aria-label={query.mode === 'activities' ? '当天活动片段' : '当天原始明细'}>
-        {items.map((item, index) => <Fragment key={item.id}>
-          {(index === 0 || dayActivityPeriod(Math.max(items[index - 1]!.startAtMillis, data.page!.dayStartMillis), query.timezone)
-            !== dayActivityPeriod(Math.max(item.startAtMillis, data.page!.dayStartMillis), query.timezone)) && <h3 className="arkme-day-period">
-            {dayActivityPeriod(Math.max(item.startAtMillis, data.page!.dayStartMillis), query.timezone)}</h3>}
+        {timeline.map((entry, index) => {
+          const period = dayActivityPeriod(Math.max(entry.at, data.page?.dayStartMillis ?? entry.at), query.timezone)
+          const previous = timeline[index - 1]
+          const heading = !previous || dayActivityPeriod(Math.max(previous.at, data.page?.dayStartMillis ?? previous.at), query.timezone) !== period
+            ? <h3 className="arkme-day-period">{period}</h3> : null
+          if (entry.type === 'reaction') return <Fragment key={`reaction:${entry.index}`}>
+            {heading}
+            <article className="arkme-day-entry" aria-label="表态动态">
+              <DayActivityTimestamp at={entry.at} timezone={query.timezone} />
+              <div className="arkme-day-entry-body">
+                <button type="button" className="arkme-day-entry-content" aria-expanded={selectedId === `reaction:${entry.index}`}
+                  onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(current => current === `reaction:${entry.index}` ? undefined : `reaction:${entry.index}`) }}>
+                  <div className="arkme-day-entry-title">
+                    <span className="arkme-day-identity-icon" aria-hidden><DayActivityAvatar item={{ kind: entry.event.sourceKind === 'group_chat' || entry.event.sourceKind === 'private_chat' ? entry.event.sourceKind : 'note', access: 'available', ...(entry.event.avatar ? { avatar: entry.event.avatar } : {}) }} /></span>
+                    <strong>{entry.event.sourceName || entry.event.source}</strong><span className="arkme-day-kind">表态</span></div>
+                  <div className="arkme-day-excerpts"><p><span className="arkme-day-excerpt-author">我：</span><ReactionAction added={entry.event.added} label={entry.event.label} /></p>
+                    <p><span className="arkme-day-excerpt-author">{entry.event.authorName || '原消息'}：</span>{entry.event.text || (entry.event.restricted ? '原消息已不可访问' : '暂无文字内容')}</p>
+                    </div>
+                  <div className="arkme-day-entry-meta">
+                    <span>{dayActivityTime(entry.at, query.timezone)}</span>
+                    <span className="arkme-day-expand">{selectedId === `reaction:${entry.index}` ? tr('收起') : tr('展开')}<CaretRight size={12} aria-hidden /></span>
+                  </div>
+                </button>
+              </div>
+            </article>
+          </Fragment>
+          const item = entry.item
+          return <Fragment key={item.id}>
+          {heading}
           <article className="arkme-day-entry" data-activity-id={item.id}>
-          <time>{dayActivityTime(Math.max(item.startAtMillis, data.page!.dayStartMillis), query.timezone)}</time>
+          <DayActivityTimestamp at={Math.max(item.startAtMillis, data.page!.dayStartMillis)} timezone={query.timezone} />
           <div className="arkme-day-entry-body">
           <button type="button" className="arkme-day-entry-content" disabled={item.access !== 'available'}
             aria-expanded={selected?.id === item.id} onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(current => current === item.id ? undefined : item.id) }}>
@@ -198,11 +246,28 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
             <MapPin size={14} aria-hidden /><span>{knownLocation(item)?.label || item.locationSummary?.label || '已记录设备位置'}</span>
           </button>}
           </div>
-        </article></Fragment>)}
+        </article></Fragment>
+        })}
         {data.page?.hasMore && <button type="button" className="arkme-day-more" disabled={data.loadingMore}
           onClick={() => { void data.loadMore() }}>{data.loadingMore ? tr("正在加载…") : tr("加载更多")}</button>}
       </div>
 
+      {reactionDetail && <aside className="arkme-day-detail" aria-label={tr("活动详情")}>
+        <header><h3>{reactionDetail.event.sourceName || reactionDetail.event.source}</h3>
+          <button type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setSelectedId(undefined) }}><X size={18} aria-hidden /></button>
+        </header>
+        <article className="arkme-day-message">
+          <div>{reactionDetail.event.authorName || tr('原消息')}{reactionDetail.event.originalMessage && <> · <DayActivityTimestamp at={reactionDetail.event.originalMessage.sendAtMillis} timezone={query.timezone} /></>}</div>
+          <p>{reactionDetail.event.text || (reactionDetail.event.restricted ? '原消息已不可访问' : '暂无文字内容')}</p>
+        </article>
+        <div className="arkme-day-entry-meta">{tr('表态记录')}</div>
+        {reactionHistory.map(({ event, index }) => <article key={index} className="arkme-day-message" aria-current={index === reactionDetail.index ? 'true' : undefined}>
+          <div>我 · <DayActivityTimestamp at={event.at} timezone={query.timezone} /></div>
+          <p><ReactionAction added={event.added} label={event.label} /></p>
+        </article>)}
+        {reactionDetail.event.originalMessage && !reactionDetail.event.restricted && onOpenReactionSource && <button type="button" className="arkme-day-source"
+          onClick={() => onOpenReactionSource(reactionDetail.event.originalMessage!, reactionDetail.event.expression)}>{tr('前往原始来源')}</button>}
+      </aside>}
       {selected && <aside className="arkme-day-detail" aria-label={tr("活动详情")}>
         <header><h3>{detail.page?.access === 'restricted' || detail.error ? tr("活动详情") : dayActivityTitle(selected)}</h3>
           <button type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(undefined) }}><X size={18} aria-hidden /></button>
@@ -214,7 +279,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
             {detail.page.call && (renderCallDetail ? renderCallDetail(detail.page.call) : <p>{detail.page.call.detail.summaryText || detail.page.call.detail.resultLabel}</p>)}
             {!detail.page.call && detail.page.items.length === 0 && <p className="arkme-day-status">{detail.page.hasMore ? '可继续加载原始记录。' : '暂无可查看的原始记录。'}</p>}
             {detail.page.items.map(item => <article key={item.id} className="arkme-day-message">
-              <div>{dayActivityDisplayName(item.author)} · <time>{dayActivityTime(item.occurredAtMillis, query.timezone)}</time></div>
+              <div>{dayActivityDisplayName(item.author)} · <DayActivityTimestamp at={item.occurredAtMillis} timezone={query.timezone} /></div>
               {renderRecord ? renderRecord(item) : <p>{item.text}</p>}
             </article>)}
             {(selected.canLoadLocation && reader?.loadLocation || hasLocationHint(selected)) && <section className="arkme-day-location" aria-label={tr("记录地点")}>
@@ -237,7 +302,15 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
   </section>
 }
 
-function DayActivityAvatar({ item }: { item: DayActivityEntry }) {
+function ReactionAction({ added, label }: { added: boolean; label: string }) {
+  return added ? <>表态「<ReactionLabel label={label} />」</> : <>取消表态<del className="arkme-reaction-cancelled">「<ReactionLabel label={label} />」</del></>
+}
+
+function DayActivityTimestamp({ at, timezone }: { at: number; timezone: string }) {
+  return <time dateTime={new Date(at).toISOString()}>{dayActivityTime(at, timezone)}</time>
+}
+
+function DayActivityAvatar({ item }: { item: Pick<DayActivityEntry, 'kind' | 'access' | 'avatar'> }) {
   if (item.access === 'available' && item.avatar && (item.avatar.avatarRef || item.avatar.avatarRefs?.length || item.avatar.groupAvatar)) {
     return item.kind === 'group_chat' && (item.avatar.avatarRefs?.length || item.avatar.groupAvatar)
       ? <ArkmeSourceAvatar kind="group" avatarRefs={item.avatar.avatarRefs} groupAvatar={item.avatar.groupAvatar} size={24} />

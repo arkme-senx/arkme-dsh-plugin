@@ -371,9 +371,9 @@ describe('Arkme Chat message notification projection', () => {
     }
 
     await vi.waitFor(() => {
-      expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(1)
+      expect(events.filter(event => event.type === 'sessions-delta').flatMap(event => event.updates as unknown[])).toHaveLength(4)
     }, { timeout: 8_000 })
-    const delta = events.find(event => event.type === 'sessions-delta') as {
+    const delta = { updates: events.filter(event => event.type === 'sessions-delta').flatMap(event => event.updates as unknown[]) } as {
       updates: Array<{ source: { displayName: string; unreadCount: number; badgeUnreadCount?: number; notificationAllowed?: boolean } }>
     }
     expect(delta.updates.find(update => update.source.displayName === '免打扰群')?.source).toMatchObject({

@@ -1,6 +1,7 @@
 import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
+import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
@@ -1137,6 +1138,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
       </SettingsGroup>
 
       {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title={tr("隐私与权限")}>
+        {authenticatedAccountKey && <ArkmeReactionHistoryLock key={authenticatedAccountKey} scope={authenticatedAccountKey} />}
         <BackgroundSoundSettingsRow
           checked={backgroundSoundCapability === 'supported' && backgroundSoundEligibility === 'eligible' && backgroundSoundEnabled}
           busy={backgroundSoundBusy || backgroundSoundCapability === 'loading' || backgroundSoundEligibility === 'loading'}

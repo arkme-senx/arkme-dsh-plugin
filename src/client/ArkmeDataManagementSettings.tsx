@@ -1,6 +1,7 @@
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeReactionHistoryRecords } from './ArkmeReactionHistorySettings.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
@@ -98,5 +99,6 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
         <small>{tr("这里只查询导出条件，不会创建导出任务或消耗导出次数。")}</small>
       </div>}
     </>}
+    {page === 'home' && <ArkmeReactionHistoryRecords scope={scope} />}
   </section>
 }

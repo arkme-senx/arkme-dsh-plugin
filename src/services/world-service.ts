@@ -334,6 +334,15 @@ function worldImageAssetIdentity(raw: string): string {
 }
 
 export class WorldService {
+  /** Called only for a Record-owner-authorized received-reaction response. */
+  async reactionReference(recordUid: string): Promise<string> {
+    const session = await this.runtime.requireSession()
+    return this.worldRecordRef(session.userId, recordUid, { ownerUserId: session.userId })
+  }
+  async reactionTarget(recordRef: string): Promise<import('./reaction-service.js').ReactionWireTarget> {
+    const session = await this.runtime.requireSession()
+    return { record_uid: this.openWorldRecordRef(recordRef, session.userId).recordUid }
+  }
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
   private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
   private readonly extensionPublicationShareCache = new Map<string, ArkmeWorldExtensionShareCacheEntry>()

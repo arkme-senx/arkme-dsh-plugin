@@ -1,3 +1,4 @@
+import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture.js'
 import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
@@ -1223,6 +1224,33 @@ describe('conversation send directory projection', () => {
     owner.merge('self', [retained('three')], 3)
     expect(owner.merge('self', [], 4).map(item => item.itemUid)).toEqual(['two'])
     expect(owner.merge('self', [], 60_001)).toEqual([])
+  })
+
+  it.each([40, 400, 1000])('isolates input render at %i loaded chat rows', async rowCount => {
+    activeSource = {...target, latestSequence: rowCount}; arkmeUi.selectSource(activeSource)
+    timeline = Array.from({length: rowCount}, (_, index) => ({itemUid:`audit-${index}`, senderName:'同事', isMe:false, sendAtMillis:index+1, textContent:'用于隔离性能检查的普通消息', status:1, sequence:index+1}))
+    let commits = 0; let durations:number[] = []
+    await act(async () => { renderer = create(<Profiler id="audit" onRender={(_id,_phase,duration)=>{commits++;durations.push(duration)}}><ArkmeSurface productChrome={false} productNavigation={false}/></Profiler>) })
+    const row = renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'audit-0' })[0]!
+    const originalChildren = row.props.children
+    commits = 0; durations=[]; mocks.callArkme.mockClear()
+    for (let i=0;i<20;i++) await act(async () => {renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('测试输入'.repeat(i+1))})
+    const mounted=renderer!.root.findAll(node=>typeof node.type==='string' && node.props['data-arkme-message-item-uid']!==undefined).length
+    process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
+    expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
+  })
+  it('shows the submitted bubble before context capture finishes and preserves the next draft', async () => {
+    const capture = deferred<Awaited<ReturnType<ArkmeRecordInputCaptureOwner['finishForSubmit']>>>()
+    vi.spyOn(ArkmeRecordInputCaptureOwner.prototype, 'finishForSubmit').mockReturnValue(capture.promise)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('先显示的消息') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(false)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条') })
+    await act(async () => { capture.resolve({schemaVersion:1,captureId:'test',completedAtMillis:48,recordDurationMillis:1,captureContext:{clientName:'test'},backgroundSound:{enabled:false,state:'disabled',segments:[],amplitudes:[]}}) })
+    expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(42,target)).text).toBe('下一条')
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(true)
   })
 
   beforeEach(() => {
@@ -6488,6 +6516,18 @@ describe('conversation send directory projection', () => {
     expect(visibleItemUids).toEqual(['before-parent', 'extension-parent-old', 'after-parent'])
     expect(scrollTo).toHaveBeenCalledTimes(1)
     expect(scrollTo).toHaveBeenCalledWith({ top: 130, behavior: 'auto' })
+
+    // A normal sidebar click on an unread conversation must leave its saved history window.
+    const incoming = { ...latestExtension, itemUid: 'new-unread-message', sequence: 51, sendAtMillis: 51, textContent: '新收到的普通消息', isMe: false }
+    timeline = [incoming]
+    const unreadSource = { ...target, latestSequence: 51, unreadCount: 1 }
+    await act(async () => {
+      arkmeChatDirectory.upsert(unreadSource)
+      arkmeChatDirectory.markReadOptimistic(unreadSource, unreadSource.sourceKey, 51)
+      arkmeUi.selectSource({ ...unreadSource, unreadCount: 0 })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
   })
 
   it('does not let an older background latest response replace an installed around window', async () => {
@@ -7355,6 +7395,40 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(640)
   })
 
+  it.each(['current', 'cached', 'hidden'] as const)('locates a reaction on the first click from a %s conversation', async mode => {
+    timeline = [{ itemUid: 'navigation-target', sequence: 8, senderName: '同事', isMe: false,
+      sendAtMillis: 8, textContent: '定位目标', status: 1 }]
+    const body = {
+      scrollTop: 0, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      scrollTo: vi.fn((options: ScrollToOptions) => { body.scrollTop = options.top ?? body.scrollTop }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [{
+        querySelector: () => null,
+        ownerDocument: Object.assign(new EventTarget(), { hidden: false, hasFocus: () => true, defaultView: new EventTarget() }),
+        dataset: { arkmeConversationRow: 'message:navigation-target', arkmeMessageItemUid: 'navigation-target' },
+        getBoundingClientRect: () => ({ top: 900 - body.scrollTop, bottom: 980 - body.scrollTop, height: 80 }),
+      }],
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+      })
+    })
+    body.scrollTop = 300
+    act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
+    if (mode === 'cached') await act(async () => { arkmeUi.selectSource(other) })
+    if (mode === 'hidden') await act(async () => {
+      renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />)
+    })
+    await act(async () => {
+      arkmeUi.showConversationTarget(target, 'navigation-target', 8, undefined, undefined, true)
+      if (mode === 'hidden') renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} />)
+    })
+    expect(body.scrollTo).toHaveBeenCalled()
+    expect(body.scrollTop).toBe(640)
+  })
+
   it('uses a layout-neutral desktop-style backdrop for a located quick note', async () => {
     timeline = [{
       itemUid: 'highlight-target', senderName: '同事', isMe: false, sendAtMillis: 11,
@@ -7400,7 +7474,71 @@ describe('conversation send directory projection', () => {
       position: 'absolute',
       top: -6,
       right: -6,
-      bottom: 12,
+      bottom: -6,
+      left: -6,
+      background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
+      pointerEvents: 'none',
+      zIndex: -1,
+    })
+    expect(locatedRow.props.style.outline).toBeUndefined()
+    expect(locatedRow.props.style.borderRadius).toBeUndefined()
+  })
+
+  it.each(['current', 'other'] as const)('highlights a canceled reaction original after returning from %s conversation', async (from) => {
+    timeline = [{
+      itemUid: 'highlight-target', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '需要定位的快记', status: 1, sequence: 11,
+    }]
+    const targetRow = {
+      ownerDocument: Object.assign(new EventTarget(), { hidden: false, hasFocus: () => true, defaultView: new EventTarget() }),
+      querySelector: () => null,
+      dataset: { arkmeConversationRow: 'message:highlight-target', arkmeMessageItemUid: 'highlight-target' },
+      getBoundingClientRect: () => ({ left: 0, top: 240, right: 600, bottom: 320, width: 600, height: 80 }),
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 900,
+      clientHeight: 600,
+      scrollTo: vi.fn(),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    if (from === 'other') await act(async () => { arkmeUi.selectSource(other) })
+    await act(async () => {
+      const { openReactionHistory } = await import('../src/client/ArkmeReactionNotification.js')
+      openReactionHistory({ source: target, itemUid: 'highlight-target', sendAtMillis: 11, recordOwnerUserId: 7 }, { emoji: 'smile', hand: '', text: '', color: '' })
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 220)) })
+
+    const locatedRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'highlight-target' })
+    expect(locatedRow.props.style).toMatchObject({
+      background: 'transparent',
+      position: 'relative',
+      isolation: 'isolate',
+      transition: 'background-color .3s ease',
+    })
+    expect(locatedRow.props.style.padding).toBeUndefined()
+    expect(locatedRow.props.style.margin).toBeUndefined()
+    expect(renderer!.root.findByProps({ 'data-arkme-highlight-backdrop': 'true' }).props.style).toMatchObject({
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      bottom: -6,
       left: -6,
       background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
       pointerEvents: 'none',

@@ -57,6 +57,20 @@ AI识别中…|AI recognition in progress…
 暂无安排，可将其他区块的安排拖到这里|No arrangements. Drag one here from another column.
 安排未能完成移动，已重新读取实际状态；请确认后重试。|The move could not be completed. Review the refreshed status and try again.
 部分安排暂未同步，请重试加载后再操作。|Some arrangements could not be refreshed. Retry loading before continuing.
+录音记录|Recording history
+最近录音记录|Recent recordings
+各设备同步的录音记录，按开始时间倒序|Synced recordings from your devices, newest start time first
+录音设备|Recording device
+录音模式|Recording mode
+累计时长|Recorded duration
+服务端确认停止|Stop confirmed by server
+关闭录音记录|Close recording history
+当前账号已上传的录音，按开始时间倒序|Uploaded recordings for this account, newest start time first
+设备录音|Device recording
+文件录音|Audio file
+正在加载录音记录…|Loading recordings…
+录音记录加载失败|Could not load recordings
+暂无录音记录|No recordings yet
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens
@@ -1414,6 +1428,18 @@ ICP备案号|ICP registration
 不可修改|Cannot be changed
 修改|Edit
 录音中|Recording
+设备录音状态|Device recording status
+正在同步设备录音状态…|Syncing device recording status…
+设备录音状态暂未启用|Device recording status is not enabled yet
+同步暂时失败，正在重试|Sync failed temporarily. Retrying
+暂无设备上报录音状态|No devices are reporting recording status
+已暂停|Paused
+已中断|Interrupted
+录音异常|Recording error
+状态待确认|Status unconfirmed
+最后确认|Last confirmed
+手动录音|Manual recording
+长录音|Long recording
 录音，本机正在录音，点击查看|Recordings. This device is recording. Click to view.
 确认裁剪|Confirm crop
 处理中…|Processing…

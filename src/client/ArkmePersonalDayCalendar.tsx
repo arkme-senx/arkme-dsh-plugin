@@ -7,6 +7,7 @@ import { ArkmeArrangementCreate, useCreatedArrangements } from './ArkmeArrangeme
 import { ArkmeDayArrangements } from './ArkmeDayArrangements.js'
 import { ArkmeArrangementBoard } from './ArkmeArrangementBoard.js'
 import { ArkmeDayTimeline } from './ArkmeDayTimeline.js'
+import { openReactionHistory } from './ArkmeReactionNotification.js'
 import { ArkmeCalendarMonthView, ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
@@ -116,6 +117,10 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
       <ArkmeDayTimeline key={revision} arrangementsActive={dayArrangementsOpen} onArrangementsChange={setDayArrangementsOpen}
         arrangementsContent={<><ArkmeDayArrangements active={!arrangementsOpen} recentItems={createdArrangements.items} accountScope={accountScope} bucketDate={query.bucketDate} timezone={query.timezone} />{createdArrangements.notice && <p role="status">{createdArrangements.notice}<button type="button" onClick={createdArrangements.retry}>{tr("更新识别结果")}</button></p>}</>} query={query} reader={reader} generateRecap={generateDayRecap} onClose={onClose} onRefresh={refreshMonth} onDetailChange={() => setRichDetail(undefined)}
         onQueryChange={next => { setRichDetail(undefined); setQuery(next) }}
+        onOpenReactionSource={(message, expression) => {
+          onClose()
+          openReactionHistory(message, expression)
+        }}
         onOpenSource={ref => {
           const target = reader.resolveTarget(ref)
           if (!target) return

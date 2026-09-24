@@ -1,4 +1,8 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
 import { stringValue } from './services/service.js'
+import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
 import { ArkmeDesktopScreenshot } from './desktop-screenshot.js'
@@ -360,6 +364,7 @@ export class ArkmeService {
   private readonly membershipOwner: MembershipService
   private readonly fileTransfers: FileTransfers | undefined
   private readonly desktopScreenshot: ArkmeDesktopScreenshot
+  private readonly recordingPresenceWriter: RecordingPresenceWriter
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
@@ -376,6 +381,7 @@ export class ArkmeService {
   ) {
     this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
+    this.recordingPresenceWriter = new RecordingPresenceWriter(this.runtime, config.fileStateDirectory ?? join(homedir(), '.arkme', 'recording-presence'))
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
@@ -604,6 +610,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.calendar.dispose()
@@ -766,7 +773,9 @@ export class ArkmeService {
   }
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.authStatus()
+    const snapshot = await this.auth.authStatus()
+    void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
+    return snapshot
   }
 
   async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }
@@ -850,6 +859,7 @@ export class ArkmeService {
         messageReport: true,
         userBanManagement: true,
         directMessageAdmission: true,
+        reactionsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -956,6 +966,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
     this.directory.dispose()
@@ -1025,6 +1036,12 @@ export class ArkmeService {
   async listExtensionReviews(extensionIdValue: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionReviewPage> { return await this.extensionReview.listExtensionReviews(extensionIdValue, options) }
   async createExtensionReview(input: ArkmeExtensionReviewCreateInput, signal?: AbortSignal): Promise<ArkmeExtensionReviewCreateResult> { return await this.extensionReview.createExtensionReview(input, signal) }
 
+  async recordingPresence(signal?: AbortSignal) {
+    await this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
+    return await this.recording.recordingPresence(signal)
+  }
+  async resumeRecordingPresence(): Promise<void> { await this.recordingPresenceWriter.resumeCurrent() }
+  async reportRecordingPresence(accountKey: string, fact: CapturePresenceFact): Promise<void> { await this.recordingPresenceWriter.report(accountKey, fact) }
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
@@ -1060,6 +1077,7 @@ export class ArkmeService {
   }
   /** Account-bound status shared by the UI and recording tool. */ async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
   /** @internal Built-in loopback UI only. */ async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> { return await this.recording.recordingImportList(signal) }
+  /** @internal Built-in loopback UI only. */ async recordingHistory(input: { cursor: string }, signal?: AbortSignal) { return await this.recording.recordingHistory(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportHistory(input: { toMillis: number; limit: number; offset: number }, signal?: AbortSignal): Promise<PublicRecordingImportHistoryPage> { return await this.recording.recordingImportHistory(input, signal) }
   /** Account-bound retry shared by the UI and recording tool. */ async retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob> { return await this.recording.retryRecordingImport(importRef, expectedRevision, signal) }
   /** @internal Built-in loopback UI only. */ async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.cancelRecordingImport(importRef, expectedRevision) }
@@ -1718,6 +1736,97 @@ export class ArkmeService {
   }
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
+  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+    const result = await new ReactionService(this.runtime, target => target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
+      const session = await this.runtime.requireSession()
+      const [sources, profiles] = await Promise.all([
+        this.source.chatSourcesBySessionUids([...new Set(items.map(item => item.sessionUID).filter(Boolean))], signal),
+        this.profile.publicProfileSummariesByUserIds([...new Set(items.map(item => item.senderID).filter(id => id > 0))], session, signal, 5_000),
+      ])
+      // Match the existing day-calendar projection: directory entries may omit lazy avatars.
+      const missingAvatars = [...sources].filter(([, source]) => !source.avatarRef && !source.avatarRefs?.length && !source.groupAvatar)
+      if (missingAvatars.length > 0) {
+        try {
+          const hydrated = await this.source.hydrateDirectoryPage(missingAvatars.map(([, source]) => source), signal ?? new AbortController().signal)
+          missingAvatars.forEach(([uid], index) => { if (hydrated[index]) sources.set(uid, hydrated[index]!) })
+        } catch {
+          // An optional avatar failure must not hide the user's action history.
+          signal?.throwIfAborted()
+        }
+      }
+      const selfSource: ArkmeSourceItem | undefined = items.some(item => item.sourceKind === 'send_to_self' && item.message)
+        ? { sourceRef: await this.source.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'), kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 } : undefined
+      return items.map(item => {
+        const source = item.sourceKind === 'send_to_self' ? selfSource : sources.get(item.sessionUID)
+        return {
+          sourceName: item.sourceKind === 'send_to_self' ? '发给自己' : source?.displayName,
+          authorName: item.senderID === session.userId ? '我' : profiles.get(item.senderID)?.displayName,
+          ...(source && item.message ? { originalMessage: { source, itemUid: item.message.recordUID, recordOwnerUserId: item.message.ownerUserID, sendAtMillis: item.message.sendAtMillis } } : {}),
+          ...(source ? { avatar: { ...(source.avatarRef ? { avatarRef: source.avatarRef } : {}), ...(source.avatarRefs ? { avatarRefs: source.avatarRefs } : {}), ...(source.groupAvatar ? { groupAvatar: source.groupAvatar } : {}) } } : {}),
+        }
+      })
+    }).request(input, signal)
+    if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+    const actorLabels = async (sourceRef: string | undefined, ids: number[]) => {
+      if (!sourceRef || !ids.length) return new Map<number, { remark: string; groupNickname: string }>()
+      try { return await this.chat.reactionActorLabels(sourceRef, ids, signal) }
+      catch (error) {
+        if (signal?.aborted) throw error
+        // Optional presentation must not hide a successfully loaded reaction.
+        return new Map<number, { remark: string; groupNickname: string }>()
+      }
+    }
+    const actorAvatars = async (viewer: number, profiles: Map<number, { avatarUrl?: string }>) => new Map(await Promise.all(
+      [...profiles].filter(([, profile]) => profile.avatarUrl).map(async ([id]) => [id, await this.profile.sealProfileImageRef(viewer, id)] as const),
+    ))
+    const presentActor = (userId: number, profileName: string | undefined, label?: { remark: string; groupNickname: string }, avatarRef?: string) => ({
+      userId, displayName: label?.remark || label?.groupNickname || profileName?.trim() || '用户',
+      ...(label?.groupNickname ? { groupNickname: label.groupNickname } : {}),
+      ...(avatarRef ? { avatarRef } : {}),
+    })
+    if (input.action === 'query' || input.action === 'groups') {
+      type WireGroup = import('./reaction-contract.js').ReactionGroup & { actorIds: number[] }
+      const page = result as { items: (Omit<import('./reaction-contract.js').ReactionSnapshot, 'groups'> & { groups: WireGroup[] })[] }
+      const groupPage = result as { items: WireGroup[]; has_more: boolean }
+      const groups = input.action === 'query' ? page.items.flatMap(item => item.actors_visible ? item.groups : []) : groupPage.items
+      const ids = [...new Set(groups.flatMap(group => group.actorIds))]
+      const session = await this.runtime.requireSession()
+      const sourceByTarget = new Map(input.action === 'query' ? input.targets.map(target => [target.id, target.sourceRef]) : [])
+      const sourceIds = new Map<string, Set<number>>()
+      const include = (sourceRef: string | undefined, actorIds: number[]) => {
+        if (!sourceRef || !actorIds.length) return
+        const users = sourceIds.get(sourceRef) ?? new Set<number>()
+        actorIds.forEach(id => users.add(id)); sourceIds.set(sourceRef, users)
+      }
+      if (input.action === 'query') {
+        for (const item of page.items) if (item.actors_visible) include(sourceByTarget.get(item.target_id), item.groups.flatMap(group => group.actorIds))
+      } else include(input.target.sourceRef, ids)
+      const [profiles, labels] = await Promise.all([
+        this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000),
+        (async () => {
+          const labels = new Map<string, Map<number, { remark: string; groupNickname: string }>>()
+          for (const [sourceRef, users] of sourceIds) labels.set(sourceRef, await actorLabels(sourceRef, [...users]))
+          return labels
+        })(),
+      ])
+      const avatars = await actorAvatars(session.userId, profiles)
+      if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+      const present = ({ actorIds, ...group }: WireGroup, sourceRef: string | undefined, visible = true) => ({ ...group, actors: visible ? actorIds.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(sourceRef ?? '')?.get(userId), avatars.get(userId))) : [] })
+      return input.action === 'query'
+        ? { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(group => present(group, sourceByTarget.get(item.target_id), item.actors_visible)) })) }
+        : { ...groupPage, items: groupPage.items.map(group => present(group, input.target.sourceRef)) }
+    }
+    if (input.action !== 'actors') return result
+    const page = result as { user_ids: number[]; has_more: boolean }
+    const session = await this.runtime.requireSession()
+    const [profiles, labels] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(page.user_ids, session, signal, 5_000),
+      actorLabels(input.target.sourceRef, page.user_ids),
+    ])
+    const avatars = await actorAvatars(session.userId, profiles)
+    if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+    return { items: page.user_ids.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(userId), avatars.get(userId))), has_more: page.has_more }
+  }
   async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
   async sendFavoriteSticker(sourceRef: string, fileAssetUid: string, options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.sendFavoriteSticker(sourceRef, fileAssetUid, options) }
   async manageFavoriteSticker(fileAssetUid: string, action: ArkmeFavoriteStickerManageAction, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.manageFavoriteSticker(fileAssetUid, action, signal) }
@@ -1976,6 +2085,7 @@ export class ArkmeService {
   async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    this.recordingPresenceWriter.revoke()
     return await this.auth.logout()
   }
 
