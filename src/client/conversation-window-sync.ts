@@ -6,6 +6,16 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { conversationAccountKey, conversationWindowBridge, conversationWindowRequested, type ConversationWindowBridge } from './conversation-window.js'
 let pending: Promise<unknown> = Promise.resolve()
+const draftFlushers = new Set<() => void>()
+async function flushDrafts(): Promise<void> {
+ while (true) {
+  for (const flush of draftFlushers) flush()
+  const current = pending
+  await current
+  for (const flush of draftFlushers) flush()
+  if (current === pending) return
+ }
+}
 const busy = new Set<string>()
 const listeners = new Set<() => void>()
 let revision = 0
@@ -22,7 +32,9 @@ export async function connectConversationDrafts(bridge: ConversationWindowBridge
  const prefix = `arkme-composer:${userId}:source:`
  let applying = false, stopped = false
  const hydrated = new Set<string>()
- let previous = store.entries()
+ let previous = new Map(store.entries())
+ const queued = new Map<string, unknown>()
+ let publishTimer: ReturnType<typeof setTimeout> | undefined
  let previousArticles = articles.entries()
  const articlePrefix = `${accountKey}:${prefix}`
  const apply = (event: Awaited<ReturnType<ConversationWindowBridge['snapshot']>>[number]) => {
@@ -34,8 +46,10 @@ export async function connectConversationDrafts(bridge: ConversationWindowBridge
   }
   if (event.kind !== 'draft' || !event.key.startsWith(prefix)) return
   hydrated.add(event.key)
+  // A received snapshot predates local edits that have not reached the broker yet.
+  if (queued.has(event.key)) return
   applying = true
-  try { store.applyRemote(event.key,event.value); previous = store.entries() } finally { applying = false }
+  try { store.applyRemote(event.key,event.value); previous = new Map(store.entries()) } finally { applying = false }
  }
  let booting = true
  const buffered: Parameters<typeof apply>[0][] = []
@@ -53,18 +67,32 @@ export async function connectConversationDrafts(bridge: ConversationWindowBridge
   for (const key of new Set([...previousArticles.keys(),...next.keys()])) if (key.startsWith(articlePrefix) && previousArticles.get(key) !== next.get(key)) publish(key,next.get(key) ?? null,'article')
   previousArticles = next
  })
- const stopStore = store.subscribe(() => {
+ const flush = () => {
+  if (publishTimer !== undefined) clearTimeout(publishTimer)
+  publishTimer = undefined
+  for (const [key, value] of queued) publish(key, value)
+  queued.clear()
+ }
+ draftFlushers.add(flush)
+ if (typeof window !== 'undefined') window.addEventListener('pagehide', flush)
+ const stopStore = store.subscribe(changedKey => {
   if (applying || stopped) return
-  const next = store.entries()
-  for (const key of new Set([...previous.keys(),...next.keys()])) {
-   if (!key.startsWith(prefix) || previous.get(key) === next.get(key)) continue
+  const next = changedKey === undefined ? store.entries() : undefined
+  const keys = changedKey === undefined ? new Set([...previous.keys(), ...next!.keys()]) : [changedKey]
+  for (const key of keys) {
+   if (!key.startsWith(prefix)) continue
+   const draft = store.get(key)
+   const value = draft.text === '' && draft.attachments.length === 0 && draft.markdown === undefined ? null : draft
    // Object URLs belong to their creating page; receivers resolve previews from the asset/file reference.
-   const value = next.get(key)
-   publish(key, value ? {...value, attachments: value.attachments.map(({previewUrl: _preview, ...item}) => item)} : null)
+   queued.set(key, value ? {...value, attachments: value.attachments.map(({previewUrl: _preview, ...item}) => item)} : null)
+   if (value === null) previous.delete(key); else previous.set(key, value)
   }
-  previous = next
+  if (next !== undefined) previous = new Map(next)
+  // A fixed window coalesces edits without postponing replication during continuous typing.
+  publishTimer ??= setTimeout(flush, 40)
  })
- return () => { stopped = true; stopEvents(); stopStore(); stopArticles(); busy.clear(); revision++; for (const listener of listeners) listener() }
+
+ return () => { flush(); draftFlushers.delete(flush); if (typeof window !== 'undefined') window.removeEventListener('pagehide', flush); stopped = true; stopEvents(); stopStore(); stopArticles(); busy.clear(); revision++; for (const listener of listeners) listener() }
 }
 export function bindConversationWindows(): () => void {
  const bridge = conversationWindowBridge(); if (!bridge) return () => {}
@@ -108,7 +136,7 @@ export async function withConversationSend(key: string | undefined, send: (consu
  const account = conversationAccountKey()
  if (!account) throw new Error('请先登录')
  const token = crypto.randomUUID()
- await pending
+ await flushDrafts()
  if (account !== conversationAccountKey() || !await bridge.acquire(key,account,token)) return
  try {
   // The broker serializes edits and submissions. Re-read after acquiring, so a stale
@@ -117,8 +145,8 @@ export async function withConversationSend(key: string | undefined, send: (consu
    if (event.kind === 'draft' && event.key === key) arkmeComposerDraftStore.applyRemote(key,event.value)
    if (event.kind === 'article' && event.key === `${account}:${key}`) composerArticleStore.applyRemote(event.key,event.value)
   }
-  await send(async () => { await pending; await bridge.consumed(key,account,token) })
-  await pending
+  await send(async () => { await flushDrafts(); await bridge.consumed(key,account,token) })
+  await flushDrafts()
   await bridge.publish({kind:'changed'},account)
  } finally { await bridge.release(key,account,token) }
 }

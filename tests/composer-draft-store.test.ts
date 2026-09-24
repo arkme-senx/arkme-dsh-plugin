@@ -331,3 +331,17 @@ describe('Arkme composer draft store', () => {
     expect(store.get(key)).toMatchObject({ text: '前后', mentions: [] })
   })
 })
+
+it('persists durable drafts synchronously without rewriting them for unrelated text edits', () => {
+ const storage = { getItem: () => null, setItem: vi.fn() }
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = arkmeSourceComposerDraftKey(1001, {kind:'private_chat',sourceRef:'first'})!
+ store.appendAttachments(key, [{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ const changed = vi.fn(); store.subscribe(changed)
+ for (let i = 1; i <= 20; i++) store.setText('other', 'x'.repeat(i))
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ expect(changed).toHaveBeenLastCalledWith('other')
+ store.take(key)
+ expect(storage.setItem).toHaveBeenLastCalledWith('arkme-local-file-drafts-v1', '[]')
+})

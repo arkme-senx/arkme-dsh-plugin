@@ -268,7 +268,9 @@ export function releaseArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot):
 
 export class ArkmeComposerDraftStore {
   private readonly drafts = new Map<string, ArkmeComposerDraftSnapshot>()
-  private readonly listeners = new Set<() => void>()
+  private readonly listeners = new Set<(key?: string) => void>()
+  private readonly persisted = new Map<string, string>()
+  private lastPersisted = ''
   private revision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
@@ -297,6 +299,8 @@ export class ArkmeComposerDraftStore {
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
         if (attachments.length > 0 || draft.markdown?.document?.type === 'doc') { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
       }
+      this.refreshPersisted()
+      this.lastPersisted = this.persistedPayload()
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
   }
 
@@ -304,7 +308,7 @@ export class ArkmeComposerDraftStore {
   entries(): ReadonlyMap<string, ArkmeComposerDraftSnapshot> { return new Map(this.drafts) }
 
   applyRemote(key: string, value: unknown): void {
-    if (value === null) { if (this.drafts.delete(key)) this.publish(); return }
+    if (value === null) { if (this.drafts.delete(key)) this.publish(key); return }
     const draft = value as ArkmeComposerDraftSnapshot | undefined
     if (!draft || typeof draft.text !== 'string' || !Array.isArray(draft.attachments)
       || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) return
@@ -313,7 +317,7 @@ export class ArkmeComposerDraftStore {
 
   readonly getRevision = (): number => this.revision
 
-  readonly subscribe = (listener: () => void): (() => void) => {
+  readonly subscribe = (listener: (key?: string) => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
@@ -527,7 +531,7 @@ export class ArkmeComposerDraftStore {
     const current = this.drafts.get(key)
     if (current === undefined) return EMPTY_DRAFT
     this.drafts.delete(key)
-    this.publish()
+    this.publish(key)
     return current
   }
 
@@ -569,7 +573,7 @@ export class ArkmeComposerDraftStore {
     if (current === undefined) return
     this.drafts.delete(key)
     releaseArkmeComposerDraft(current)
-    this.publish()
+    this.publish(key)
   }
 
   clearAccount(userId: number): void {
@@ -591,7 +595,7 @@ export class ArkmeComposerDraftStore {
     const hasMarkdownStructure = snapshot.markdown?.document.content?.some(node => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
     if (snapshot.text === '' && !hasMarkdownStructure && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
       if (!this.drafts.delete(key)) return
-      this.publish()
+      this.publish(key)
       return
     }
     this.store(key, snapshot)
@@ -607,19 +611,42 @@ export class ArkmeComposerDraftStore {
       emojis: Object.freeze(snapshot.emojis.map(emoji => Object.freeze({ ...emoji }))),
       ...(snapshot.fileSendIdentity === undefined ? {} : { fileSendIdentity: Object.freeze({ ...snapshot.fileSendIdentity }) }),
     }))
-    this.publish()
+    this.publish(key)
   }
 
-  private publish(): void {
+  private refreshPersisted(key?: string): void {
+    const keys = key === undefined ? new Set([...this.persisted.keys(), ...this.drafts.keys()]) : [key]
+    for (const changedKey of keys) {
+      const draft = this.drafts.get(changedKey)
+      if (draft === undefined || (draft.markdown === undefined && !draft.attachments.some(item => item.localFile !== undefined))) {
+        this.persisted.delete(changedKey)
+      } else {
+        this.persisted.set(changedKey, JSON.stringify([changedKey, { ...draft,
+          attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]),
+        }]))
+      }
+    }
+  }
+
+  private persistedPayload(): string { return `[${[...this.persisted.values()].join(',')}]` }
+
+  private publish(key?: string): void {
     try {
-      // Markdown documents and file drafts survive a window restart, scoped by account and source.
-      const entries = [...this.drafts].filter(([, draft]) => draft.markdown !== undefined || draft.attachments.some(item => item.localFile !== undefined))
-        .map(([key, draft]) => [key, { ...draft, attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]) }])
-      this.storage?.setItem(ArkmeComposerDraftStore.storageKey, JSON.stringify(entries))
+      // Persist only durable drafts. Plain typing must not serialize every other conversation.
+      const before = key === undefined ? undefined : this.persisted.get(key)
+      this.refreshPersisted(key)
+      if (key === undefined || before !== this.persisted.get(key)) {
+        const payload = this.persistedPayload()
+        if (payload !== this.lastPersisted) {
+          this.storage?.setItem(ArkmeComposerDraftStore.storageKey, payload)
+          this.lastPersisted = payload
+        }
+      }
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1
-    for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) listener(key)
   }
+
 }
 
 function browserDraftStorage(): Storage | undefined { try { return typeof window === 'undefined' ? undefined : window.localStorage } catch { return undefined } }
