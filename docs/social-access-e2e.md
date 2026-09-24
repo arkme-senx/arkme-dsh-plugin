@@ -1,8 +1,9 @@
-# 社交资格目标运行时验收
+# 社交 UI 目标运行时验收
 
-`tests/e2e/social-access.e2e.mjs` 使用目标版本的未修改官方 DSH Web scaffold、正式安装的插件包和真实 Chrome。它验证首次已绑定导航不分批补显，资格允许/故障/拒绝/恢复期间个人草稿与编辑器不被替换，公开 SDK 与真实 Agent 会话工具结果一致，以及拒绝发生在通话业务请求之前。
+`tests/e2e/social-access.e2e.mjs` 使用未修改官方 DSH Web scaffold、正式安装的插件包和真实 Chrome，验证已绑定首屏完整呈现、资料读取失败不改变展示、明确未绑定隐藏主要导航、恢复后草稿和编辑器身份保留。
 
-账号、外围业务 HTTP 和模型 replay 是隔离夹具；该测试不等同于生产账号、真实短信或供应商通话。测试只使用本次创建的状态目录和唯一 Keychain service，结束时通过原账号 owner 退出并清理。不得指定用户正在使用的 Profile。
+账号/业务 HTTP 与浏览器收到的 profile 绑定观察是隔离夹具。既有 Host 登录资料保持绑定，不为 UI 测试改动登录策略；本次没有新增 Tools/SDK/Host 能力。本测试不等同于生产账号、短信或供应商通话验收。只使用本次创建的状态目录和唯一 Keychain service，不指定用户正在使用的 Profile。
+
 
 准备条件：
 

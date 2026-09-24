@@ -26,9 +26,9 @@ function fixture() {
   const forward = vi.fn(async () => ({ recordUid: 'sent' }))
   const requireSession = vi.fn(async () => session)
   const post = vi.fn(async (path: string) => path.endsWith('one-day-trans') ? data : { spk_ls: [{ id: 'speaker', nick_name: '本人' }] })
-  const runtime = { subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }} as unknown as ServiceRuntime
+  const runtime = { subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
   const service = new RecordingService(runtime, { forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
-  return { data, forward, service, requireSession, post , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+  return { data, forward, service, requireSession, post }
 }
 
 describe('recording transcript owner boundaries', () => {
@@ -165,7 +165,7 @@ describe('recording destination owner contracts', () => {
     const realtime = { scheduleChatSessionProjection: vi.fn(), invalidateRecordProjection: vi.fn(async () => {}) }
     const comments = { sendSourceText: vi.fn(async () => ({ itemUid: 'comment', localState: 'synced' })) }
     const result = new OwnerRecordingForwardGateway({ authenticatedChatPost: chat, authenticatedPost: record } as unknown as ServiceRuntime,
-      { openSourceRef: vi.fn(async () => ({ kind, ownerRef: 'target-owner' })) , get openAccessibleSourceRef() { return this.openSourceRef }} as never, realtime, comments as never)
+      { openSourceRef: vi.fn(async () => ({ kind, ownerRef: 'target-owner' })) } as never, realtime, comments as never)
     return { result, chat, record, realtime, comments }
   }
 

@@ -17,7 +17,7 @@ function fixture() {
     authenticatedChatPost: vi.fn(async (path: string) => path.endsWith('contacts/summary')
       ? { ...coverage, latest: occurrence, unread_count: 1, attention_count: 1 }
       : { ...coverage, items: [occurrence], has_more: false }),
-   socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+  }
   const source = {
     openSourceRef: vi.fn(async (_ref: string, user: number) => {
       if (user !== 1) throw new Error('reference account mismatch')
@@ -25,7 +25,7 @@ function fixture() {
     }),
     sealSourceRef: vi.fn(async (_user, kind) => `opaque-${String(kind)}`),
     chatDirectorySourceKey: vi.fn(async () => 'opaque-private-key'),
-   get openAccessibleSourceRef() { return this.openSourceRef }}
+  }
   const service = new InterwovenService(runtime as never, source as never, {} as never)
   return { service, runtime, source, switchAccount: () => { userId = 2 } }
 }

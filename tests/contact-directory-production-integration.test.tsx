@@ -418,10 +418,3 @@ it('accepts a later server directory refresh after a local remark save on a stab
   expect(text(renderer.root.findByProps({ 'data-directory-row-ref': 'contact-1' }))).toBe('别端新备注')
   expect(arkmeContactsTab.getSnapshot().contactProfiles).toEqual({})
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

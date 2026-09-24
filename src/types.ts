@@ -1367,7 +1367,6 @@ export interface ArkmeProviderCapabilities {
     commonGroups?: true
     dshAccountSessions?: true
     remoteRecordSearch?: true
-    socialAccess?: true
     contactDirectoryReads?: true
     speakerPresence?: true
     sourceTimeline: true
@@ -3769,7 +3768,6 @@ export type ArkmePluginOperation =
   | 'provider.state'
   | 'chat.realtime.state'
   | 'auth.status'
-  | 'social.access'
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
@@ -4245,11 +4243,4 @@ export interface ArkmePrivateInteractionQueryOptions {
   cursor?: string
   expectedVersion?: string
   signal?: AbortSignal
-}
-
-/** Safe account-scoped presentation result, never a login or phone-binding fact. */
-export interface ArkmeSocialAccessSnapshot {
-  userId: number
-  allowed: boolean | null
-  reason?: 'PHONE_BINDING_REQUIRED' | 'SOCIAL_ACCESS_UNAVAILABLE'
 }

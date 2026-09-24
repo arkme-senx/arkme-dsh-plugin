@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { openRecordDeletionRef } from '../src/record-deletion-ref.js'
 import { openRecordTopicAssignmentRef } from '../src/record-topic-assignment-ref.js'
 import { createHmac } from 'node:crypto'

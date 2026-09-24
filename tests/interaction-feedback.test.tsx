@@ -153,10 +153,3 @@ describe('shared Arkme interaction feedback', () => {
     dom.window.close()
   })
 })
-
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

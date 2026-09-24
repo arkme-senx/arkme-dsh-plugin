@@ -134,9 +134,9 @@ describe('record re-edit mention identities', () => {
         }
         return { record_core: core }
       },
-     socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    }
     const media = { hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map() }), richContentBlocks: () => [] }
-    let service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source , get openAccessibleSourceRef() { return this.openSourceRef }}, undefined, undefined, undefined, validate)
+    let service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source }, undefined, undefined, undefined, validate)
     const detail = await service.recordReeditEditor('source-ref', 'record-1')
     expect(detail.mentions).toEqual([original])
     await service.saveRecordReeditDraft({ sourceRef: 'source-ref', itemUid: 'record-1', expectedVersion: 1,
@@ -145,7 +145,7 @@ describe('record re-edit mention identities', () => {
     })
     service.dispose()
     runtime.stateStore = new ArkmeStateStore(root)
-    service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source , get openAccessibleSourceRef() { return this.openSourceRef }}, undefined, undefined, undefined, validate)
+    service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source }, undefined, undefined, undefined, validate)
     const restored = await service.recordReeditEditor('source-ref', 'record-1')
     expect(restored.draft).toMatchObject({ textContent: remove ? '更新' : adding ? '😀 @小明 @小红 更新' : '😀 @小明 更新',
       mentions: remove ? [] : [{ ...original, startIndex: 3 }, ...(adding ? [{ mentionRef: 'new-human', displayName: '小红', startIndex: 7, length: 3 }] : [])] })
@@ -169,11 +169,11 @@ it.each(['human', 'bot'] as const)('persists new %s mention intent while Chat is
     origin_kind: 4, origin_container_ref: 'chat-1', template_kind: 1, title: '', text_content: '原文', status: 1, version: 1 }
   const stateStore = new ArkmeStateStore(directory)
   const runtime = { config: { maxTextLength: 20000 }, stateStore, requireSession: async () => session,
-    authenticatedPost: vi.fn(async (_path: string, _body: unknown) => ({ record_core: core })) , socialAccess: { status: async () => ({ userId: 42, allowed: true }), require: async () => {} }}
+    authenticatedPost: vi.fn(async (_path: string, _body: unknown) => ({ record_core: core })) }
   const reference = kind === 'human' ? { mentionRef: 'signed-ref' } : { botRef: 'signed-bot-ref' }
   const validator = vi.fn(async (): Promise<ResolvedMentions> => { throw new Error('chat-members-unavailable') })
   const media = { hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map() }), richContentBlocks: () => [] }
-  let service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source , get openAccessibleSourceRef() { return this.openSourceRef }}, undefined, undefined, undefined, validator)
+  let service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source }, undefined, undefined, undefined, validator)
   try {
     await service.recordReeditEditor('source-ref', 'record-1')
     const before = await service.saveRecordReeditDraft({ sourceRef: 'source-ref', itemUid: 'record-1', expectedVersion: 1, newText: '已保存草稿', mentions: [] })
@@ -189,7 +189,7 @@ it.each(['human', 'bot'] as const)('persists new %s mention intent while Chat is
     expect(validator).not.toHaveBeenCalled()
     service.dispose()
     runtime.stateStore = new ArkmeStateStore(directory)
-    service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source , get openAccessibleSourceRef() { return this.openSourceRef }}, undefined, undefined, undefined, validator)
+    service = new RecordService(runtime as never, media as never, { openSourceRef: async () => source }, undefined, undefined, undefined, validator)
     const restored = await service.recordReeditEditor('source-ref', 'record-1')
     expect(restored.draft).toMatchObject({ textContent: '@小红 新输入', mentions: [reference] })
     await expect(service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', expectedVersion: 1 }))

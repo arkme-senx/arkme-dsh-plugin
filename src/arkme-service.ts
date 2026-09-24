@@ -876,7 +876,6 @@ export class ArkmeService {
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
-        socialAccess: true,
         contactDirectoryReads: true,
         speakerPresence: true,
         sourceTimeline: true,
@@ -1041,8 +1040,6 @@ export class ArkmeService {
   async resolveSharePreview(url: string, signal?: AbortSignal): Promise<import('./share-link-preview.js').ShareLinkPreview | null> {
     return await new SharePreviewService(this.runtime).resolve(url, signal)
   }
-  async socialAccessStatus(): Promise<import('./types.js').ArkmeSocialAccessSnapshot> { return await this.runtime.socialAccess.status(true) }
-
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
   /** @internal Team presentation adapter; public identity remains owned by Backend. */
   async publicAvatarPresentationsByArkmeIds(

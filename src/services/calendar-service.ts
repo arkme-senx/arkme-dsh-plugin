@@ -305,7 +305,7 @@ export class CalendarService {
   }): Promise<ArkmeCalendarBucketPage> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
-    const source = await this.source.openAccessibleSourceRef(options.sourceRef, session.userId)
+    const source = await this.source.openSourceRef(options.sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('calendar-source-invalid', '会话日历仅支持私聊和群聊', false, 400)
     }
@@ -368,9 +368,7 @@ export class CalendarService {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
     const timezone = readTimezone(options.timezone)
-    if (options.sourceRef !== undefined) await this.source.openAccessibleSourceRef(options.sourceRef, session.userId)
-    const socialAllowed = (await this.runtime.socialAccess.status()).allowed === true
-    const key = JSON.stringify([session.userId, socialAllowed, options.sourceRef ?? 'global', options.startDate, options.endDate, timezone,
+    const key = JSON.stringify([session.userId, options.sourceRef ?? 'global', options.startDate, options.endDate, timezone,
       this.runtime.config?.selfCalendarViewsEnabled !== false ? 'views-v1:natural' : 'legacy'])
     const revision = () => this.runtime.calendarReadRevision?.(`user:${session.userId}`, options.startDate, options.endDate, timezone) ?? '0'
     const version = revision()
@@ -380,7 +378,7 @@ export class CalendarService {
       return structuredClone(cached.value)
     }
     return structuredClone(await this.monthReads.run(`${key}:${version}`, async (signal, isCurrent) => {
-      const { value, expires } = await this.bucketPageUncached({ ...options, timezone, signal, socialAllowed })
+      const { value, expires } = await this.bucketPageUncached({ ...options, timezone, signal })
       signal.throwIfAborted()
       if (isCurrent() && revision() === version) {
         this.months.delete(key)
@@ -392,7 +390,7 @@ export class CalendarService {
   }
 
   private async bucketPageUncached(options: {
-    startDate: string; endDate: string; sourceRef?: string; timezone?: string; background?: boolean; signal?: AbortSignal; socialAllowed: boolean
+    startDate: string; endDate: string; sourceRef?: string; timezone?: string; background?: boolean; signal?: AbortSignal
   }): Promise<{ value: ArkmeCalendarBucketPage; expires: number }> {
     const startDate = readCalendarDate(options.startDate, 'start_date')
     const endDate = readCalendarDate(options.endDate, 'end_date')
@@ -455,7 +453,7 @@ export class CalendarService {
         options.signal,
         {
           key: `calendar:buckets:${bucket.kind === 1 ? 'self' : `topic:${bucket.uid}`}:${startDate}:${endDate}:${timezone}`,
-          cacheMs: 0,
+          cacheMs: 30_000,
           lane: options.background ? 'background-read' : 'interactive-read',
           failureCooldownMs: 2_000,
         },
@@ -477,7 +475,7 @@ export class CalendarService {
       if (scope.kind === 'self') {
         return contributors[0]?.day ?? { bucketDate, count: 0, protectedCount: 0, hasRecords: false }
       }
-      const key = JSON.stringify([session.userId, options.socialAllowed, options.sourceRef, timezone, bucketDate,
+      const key = JSON.stringify([session.userId, options.sourceRef, timezone, bucketDate,
         // Upstream changes are another invalidation signal, even before a
         // realtime event arrives. Never use an old count for a changed subtree.
         contributors.map(({ bucket, day }) => [bucket.kind, bucket.uid, day.count, day.firstSendAtMillis]).sort(),
@@ -599,7 +597,7 @@ export class CalendarService {
       options.signal,
       {
         key: `calendar:records:self:${bucketDate}:${timezone}:${String(limit)}:${String(cursorSendAt)}:${cursorRecordUid}`,
-        cacheMs: 0,
+        cacheMs: 10_000,
         failureCooldownMs: 2_000,
       },
     )
@@ -671,7 +669,7 @@ export class CalendarService {
 
   private async resolveScope(sourceRef: string | undefined, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<CalendarScope> {
     if (sourceRef === undefined) return { kind: 'self', buckets: [{ kind: 1, uid: '' }] }
-    const source = await this.source.openAccessibleSourceRef(sourceRef, session.userId)
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (this.runtime.config?.selfCalendarViewsEnabled !== false) {
       if (source.kind === 'send_to_self' || source.kind === 'default_category') return {
         kind: source.kind === 'send_to_self' ? 'send_to_self' : 'uncategorized', buckets: [],
@@ -692,7 +690,7 @@ export class CalendarService {
     if (metadata.topicKind === ARKME_DSH_INPUT_TOPIC_KIND) return { kind: 'topic', buckets: [] }
     const topics = await this.source.topicSubtreeSources(sourceRef, signal)
     const buckets = await mapBounded(topics, async topic => {
-      const opened = await this.source.openAccessibleSourceRef(topic.sourceRef, session.userId)
+      const opened = await this.source.openSourceRef(topic.sourceRef, session.userId)
       const meta = opened.ownerRef === source.ownerRef ? metadata : await readTopicMetadata(this.runtime, session, opened.ownerRef, signal)
       return meta.privacyState === 2 || meta.topicKind === ARKME_DSH_INPUT_TOPIC_KIND ? [] : [{ kind: 2 as const, uid: opened.ownerRef }]
     })
@@ -719,7 +717,7 @@ export class CalendarService {
         ...(cursor ? { cursor_send_at: cursor.sendAtMillis, cursor_record_uid: cursor.recordUid } : {}),
       }, session, signal, {
         key: `calendar:records:${bucket.kind === 1 ? 'self' : `topic:${bucket.uid}`}:${bucketDate}:${timezone}:50:${key}`,
-        cacheMs: 0, failureCooldownMs: 2_000,
+        cacheMs: 10_000, failureCooldownMs: 2_000,
         lane: background ? 'background-read' : 'interactive-read',
       })
       for (const raw of listValue(data.items)) {

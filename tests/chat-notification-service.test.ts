@@ -1,5 +1,3 @@
-import { qualifiedSocialAccountFixture } from './helpers/qualified-social-access.js'
-qualifiedSocialAccountFixture()
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'

@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it , vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
@@ -19,9 +19,3 @@ describe('call history surface integration', () => {
     expect(markup).not.toContain('aria-label="发送消息"')
   })
 })
-
-// This suite renders the existing qualified-account layout.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(), useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))

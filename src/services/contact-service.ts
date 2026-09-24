@@ -68,7 +68,7 @@ export class ContactService {
   dispose(): void { this.candidates.clear() }
 
   async search(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const normalized = normalizeIdentifier(identifier)
     const candidate = await this.lookup(normalized, session, options.signal)
     this.prune()
@@ -81,7 +81,7 @@ export class ContactService {
     contactRef: string,
     options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeContactAddResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     this.prune()
     const normalizedContactRef = contactRef.trim()
     if (!CONTACT_REF_PATTERN.test(normalizedContactRef)) {

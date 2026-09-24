@@ -42,7 +42,7 @@ export class OutgoingCallService {
 
   async createShareCallLink(mediaType: ArkmeOutgoingCallMediaType): Promise<ArkmeShareCallLink> {
     if (mediaType !== 'audio' && mediaType !== 'video') throw new ArkmePluginError('call-media-invalid', '通话类型无效', false, 400)
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
       '/api/v1/trtc/share-call-link/create', { call_media_type: mediaType === 'video' ? 1 : 0 }, session,
     )
@@ -65,7 +65,7 @@ export class OutgoingCallService {
   }
 
   async prepareCallReceiver(): Promise<ArkmeCallReceiverPrepareResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const profile = (await this.profile.refreshProfile()).profile
     if (profile === null) throw new ArkmePluginError('profile-contract-invalid', '无法读取当前账号资料', true, 502)
     const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
@@ -85,7 +85,7 @@ export class OutgoingCallService {
   }
 
   async claimIncomingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     return { expiresAtMillis: this.broker.acquireLease(session.userId, callRequestId) }
   }
 
@@ -94,7 +94,7 @@ export class OutgoingCallService {
     mediaType: ArkmeOutgoingCallMediaType,
     signal?: AbortSignal,
   ): Promise<ArkmeOutgoingCallToolResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
@@ -115,7 +115,7 @@ export class OutgoingCallService {
   }
 
   async claimOutgoingCallIntent(): Promise<ArkmeOutgoingCallIntentClaim | null> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const claim = this.broker.claim(session.userId)
     if (claim !== null) callDiag('claim_intent', {
       userId: session.userId,
@@ -130,7 +130,7 @@ export class OutgoingCallService {
   async resolveOutgoingCallIntent(
     input: Omit<ArkmeOutgoingCallIntentResolutionInput, 'userId'>,
   ): Promise<void> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     callDiag('resolve_intent', {
       userId: session.userId,
       intentId: input.intentId,
@@ -146,7 +146,7 @@ export class OutgoingCallService {
     callRequestId: string
     signal?: AbortSignal
   }): Promise<ArkmeOutgoingCallPrepareResult> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(input.sourceRef, session.userId)
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
@@ -294,7 +294,7 @@ export class OutgoingCallService {
   }
 
   async heartbeatOutgoingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     const expiresAtMillis = this.broker.heartbeatLease(session.userId, callRequestId)
     callDiag('heartbeat', { userId: session.userId, callRequestId, expiresAtMillis })
     return { expiresAtMillis }

@@ -92,8 +92,7 @@ export class ContactDirectoryService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<Array<{ userId: number; label: string; avatarRef?: string }>> {
-    const social = await this.runtime.socialAccess.status()
-    const snapshot = social.allowed === true ? await this.contactSnapshot(session, signal === undefined ? {} : { signal }) : { value: { coverage: 'complete', descriptors: [] as ContactDirectoryDescriptor[] } }
+    const snapshot = await this.contactSnapshot(session, signal === undefined ? {} : { signal })
     if (snapshot.value.coverage !== 'complete') throw new ArkmePluginError('directory-contact-incomplete', '联系人尚未加载完整，请稍后重试', true, 503)
     const descriptors = snapshot.value.descriptors
     const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
@@ -133,7 +132,6 @@ export class ContactDirectoryService {
     if (section === 'unmarked-speakers' || section === 'teams') {
       throw new ArkmePluginError('directory-section-not-owned', '该目录由独立业务服务提供', false, 501)
     }
-    if (section !== 'bots') await this.runtime.socialAccess.require()
     if (options.countOnly === true) return await this.count(section, options)
     switch (section) {
       case 'groups': return await this.listGroups(options)
@@ -247,7 +245,7 @@ export class ContactDirectoryService {
 
   async openGroupChat(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem> {
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
@@ -554,7 +552,7 @@ export class ContactDirectoryService {
   private async resolveContactRef(contactRef: string): Promise<{
     session: ArkmeSessionCredentials; entry: ContactDirectoryRefEntry
   }> {
-    const session = await this.runtime.requireSocialSession()
+    const session = await this.runtime.requireSession()
     this.pruneContactRefs()
     const normalized = contactRef.trim()
     if (!CONTACT_DIRECTORY_REF_PATTERN.test(normalized)) {

@@ -9,7 +9,6 @@ const source = {
 
 function fixture(authResult: Record<string, unknown>) {
   const runtime = {
-    requireSocialSession: vi.fn(async () => session),
     requireSession: vi.fn(async () => session),
     authenticatedAuthPost: vi.fn(async () => authResult),
     authenticatedChatPost: vi.fn(async () => ({ session: { chat_session_uid: 'chat-returned', session_kind: 1 } })),

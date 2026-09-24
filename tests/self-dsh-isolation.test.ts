@@ -14,7 +14,7 @@ function fixture() {
   const runtime = { config: { maxTextLength: 20_000 }, stateStore: { uniqueCode: async () => 'test-key' },
     requireSession: async () => ({ userId: 42 }), authenticatedPost: vi.fn() }
   const source = {
-    openAccessibleSourceRef: async (kind: string) => ({ kind, userId: 42, ownerRef: 'personal' }),
+    openSourceRef: async (kind: string) => ({ kind, userId: 42, ownerRef: 'personal' }),
     sourceItem: async ({ kind }: { kind: string }) => ({ kind, sourceRef: kind, displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }),
   }
   const media = { recordMediaUnavailable: () => false, richContentBlocks: () => [], hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }

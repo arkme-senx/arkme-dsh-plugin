@@ -235,9 +235,3 @@ it('shows single-note preparation feedback outside selection mode and disables d
   const entry = renderer.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '消息操作')!.props.actions.find((item: { id: string }) => item?.id === 'ask-dsh')
   expect(entry.disabled).toBe(true)
 })
-// Qualified-account presentation fixture; social-access UI tests cover eligibility transitions.
-vi.mock('../src/client/social-access-store.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/client/social-access-store.js')>(),
-  useSocialAccess: () => true,
-  useSocialAccessPresentation: () => ({ visible: true, ready: true }),
-}))
