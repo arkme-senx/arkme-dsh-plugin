@@ -139,11 +139,23 @@ export async function withConversationSend(key: string | undefined, send: (consu
  await flushDrafts()
  if (account !== conversationAccountKey() || !await bridge.acquire(key,account,token)) return
  try {
-  // The broker serializes edits and submissions. Re-read after acquiring, so a stale
-  // renderer cannot send a draft that another window has already consumed.
-  for (const event of await bridge.snapshot(account)) {
-   if (event.kind === 'draft' && event.key === key) arkmeComposerDraftStore.applyRemote(key,event.value)
-   if (event.kind === 'article' && event.key === `${account}:${key}`) composerArticleStore.applyRemote(event.key,event.value)
+  // Edits can arrive during acquire or snapshot. Flush them and only apply a
+  // snapshot while both local drafts still have the identities it was read for.
+  const articleKey = `${account}:${key}`
+  while (true) {
+   const draft = arkmeComposerDraftStore.get(key), article = composerArticleStore.get(articleKey)
+   await flushDrafts()
+   if (account !== conversationAccountKey()) return
+   if (draft !== arkmeComposerDraftStore.get(key) || article !== composerArticleStore.get(articleKey)) continue
+   const snapshot = await bridge.snapshot(account)
+   if (account !== conversationAccountKey()) return
+   if (draft !== arkmeComposerDraftStore.get(key) || article !== composerArticleStore.get(articleKey)) continue
+   // Keep the broker's consumed-draft protection for stale secondary windows.
+   for (const event of snapshot) {
+    if (event.kind === 'draft' && event.key === key) arkmeComposerDraftStore.applyRemote(key,event.value)
+    if (event.kind === 'article' && event.key === articleKey) composerArticleStore.applyRemote(event.key,event.value)
+   }
+   break
   }
   await send(async () => { await flushDrafts(); await bridge.consumed(key,account,token) })
   await flushDrafts()

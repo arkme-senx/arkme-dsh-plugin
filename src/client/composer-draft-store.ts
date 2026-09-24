@@ -271,6 +271,7 @@ export class ArkmeComposerDraftStore {
   private readonly listeners = new Set<(key?: string) => void>()
   private readonly persisted = new Map<string, string>()
   private lastPersisted = ''
+  private pendingPersisted: string | undefined
   private revision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
@@ -636,11 +637,16 @@ export class ArkmeComposerDraftStore {
       const before = key === undefined ? undefined : this.persisted.get(key)
       this.refreshPersisted(key)
       if (key === undefined || before !== this.persisted.get(key)) {
-        const payload = this.persistedPayload()
-        if (payload !== this.lastPersisted) {
-          this.storage?.setItem(ArkmeComposerDraftStore.storageKey, payload)
-          this.lastPersisted = payload
+        this.pendingPersisted = this.persistedPayload()
+      }
+      // A failed write remains pending, including deletions. Plain edits retry
+      // the cached payload without serializing unrelated durable drafts again.
+      if (this.pendingPersisted !== undefined) {
+        if (this.pendingPersisted !== this.lastPersisted) {
+          this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.pendingPersisted)
+          this.lastPersisted = this.pendingPersisted
         }
+        this.pendingPersisted = undefined
       }
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1

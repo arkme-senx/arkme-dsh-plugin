@@ -345,3 +345,23 @@ it('persists durable drafts synchronously without rewriting them for unrelated t
  store.take(key)
  expect(storage.setItem).toHaveBeenLastCalledWith('arkme-local-file-drafts-v1', '[]')
 })
+
+
+it.each(['save', 'delete'] as const)('retries failed durable %s on the next plain edit without repeated successful writes', action => {
+ let saved: string | null = null, unavailable = action === 'save'
+ const storage = {getItem:()=>saved,setItem:vi.fn((_key:string,value:string)=>{
+  if(unavailable)throw new Error('storage temporarily unavailable')
+  saved=value
+ })}
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = 'arkme-composer:42:source:private_chat:durable'
+ store.appendAttachments(key,[{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ if(action==='delete'){unavailable=true;store.take(key)}
+ expect(()=>store.setText('other','still editable')).not.toThrow()
+ unavailable=false
+ store.setText('other','next draft')
+ expect(new ArkmeComposerDraftStore(storage).get(key).attachments).toHaveLength(action==='save'?1:0)
+ const writes=storage.setItem.mock.calls.length
+ store.setText('other','another plain edit')
+ expect(storage.setItem).toHaveBeenCalledTimes(writes)
+})

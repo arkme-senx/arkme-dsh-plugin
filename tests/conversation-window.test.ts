@@ -128,3 +128,44 @@ it('flushes the last key before acquiring send ownership and keeps concurrent su
  expect(order.indexOf('publish')).toBeLessThan(order.indexOf('acquire'))
  releaseSend(); await Promise.all([first,second]);stop();store.clearAccount(42)
 })
+
+
+it.each([['acquire', false], ['snapshot', false], ['acquire', true], ['snapshot', true]] as const)('protects drafts while awaiting %s, account change=%s', async (phase, accountChanged) => {
+ const {arkmeAuthStore} = await import('../src/client/auth-store.js')
+ const {arkmeComposerDraftStore: store} = await import('../src/client/composer-draft-store.js')
+ const {withConversationSend} = await import('../src/client/conversation-window-sync.js')
+ vi.useFakeTimers()
+ arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42})
+ const key = 'arkme-composer:42:source:private_chat:send-race'
+ let current: any, inSend = false, release!: () => void, entered!: () => void
+ const waiting = new Promise<void>(resolve => { entered = resolve })
+ const hold = new Promise<void>(resolve => { release = resolve })
+ const bridge: any = {version:1,onEvent:()=>()=>{},
+  snapshot:async()=>{
+   const snapshot = current ? [current] : []
+   if (phase === 'snapshot' && inSend) { inSend = false; entered(); await hold }
+   return snapshot
+  },
+  publish:async(event:any)=>{if(event.kind==='draft')current=event;return true},
+  acquire:async()=>{inSend=true;if(phase==='acquire'){entered();await hold}return true},
+  consumed:vi.fn(async()=>{}),release:vi.fn(async()=>{}),
+ }
+ vi.stubGlobal('arkmeConversation',bridge)
+ const stop = await connectConversationDrafts(bridge,store,42,'test:42')
+ try {
+  store.setText(key,'A')
+  let sent = ''
+  const work = withConversationSend(key,async consumed=>{
+   sent = store.take(key).text
+   store.setText(key,'next draft')
+   await consumed()
+  })
+  await waiting;store.setText(key,'AB')
+  if(accountChanged)arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:43})
+  release();await work
+  expect(sent).toBe(accountChanged ? '' : 'AB')
+  expect(store.get(key).text).toBe(accountChanged ? 'AB' : 'next draft')
+  expect(bridge.consumed).toHaveBeenCalledTimes(accountChanged ? 0 : 1)
+  expect(bridge.release).toHaveBeenCalledOnce()
+ } finally {release();stop();store.clearAccount(42);vi.useRealTimers()}
+})

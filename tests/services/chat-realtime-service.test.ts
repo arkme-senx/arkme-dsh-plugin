@@ -416,7 +416,8 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
-  it('bounds native notification delivery at three while preserving ordered Browser fallbacks', async () => {
+  it.each(['normal', 'held', 'disposed', 'account-changed'] as const)('bounds native notifications without blocking session updates: %s', async scenario => {
+    const held = scenario !== 'normal'
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -476,6 +477,8 @@ describe('ChatRealtimeService', () => {
         status: 1, sequence: index + 1,
       })),
     ]))
+    let releaseNative!: () => void
+    const nativeHold = new Promise<void>(resolve => { releaseNative = resolve })
     let active = 0
     let maxActive = 0
     let releaseScheduled = false
@@ -489,6 +492,7 @@ describe('ChatRealtimeService', () => {
         nativeBodies.set(payload.idempotencyKey, payload.presentation.body)
         active += 1
         maxActive = Math.max(maxActive, active)
+        if (held) await nativeHold
         await new Promise<void>(resolve => {
           pendingResolvers.push(() => {
             active -= 1
@@ -553,7 +557,22 @@ describe('ChatRealtimeService', () => {
       },
     ])
 
-    await expect(service.refreshChatSessionProjectionBatch(pending)).resolves.toEqual([])
+    const work = service.refreshChatSessionProjectionBatch(pending)
+    try {
+      if (held) {
+        await vi.waitFor(() => expect(startedKeys).toHaveLength(3))
+        await vi.waitFor(() => expect(events.filter(event => event.type === 'sessions-delta')
+          .flatMap(event => (event as any).updates)).toHaveLength(chatSessionCount))
+        if (scenario === 'disposed') service.dispose()
+        if (scenario === 'account-changed') service.resetAttentionSummary()
+      }
+    } finally { releaseNative(); await work }
+    expect(await work).toEqual([])
+    if (scenario === 'disposed' || scenario === 'account-changed') {
+      expect(startedKeys).toHaveLength(3)
+      expect(events.filter(event => event.type === 'message-notification')).toEqual([])
+      service.dispose(); runtime.dispose(); return
+    }
 
     expect(maxActive).toBe(3)
     expect(active).toBe(0)

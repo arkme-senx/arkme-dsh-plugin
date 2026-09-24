@@ -197,6 +197,7 @@ export class ChatRealtimeService {
 
   dispose(): void {
     this.disposed = true
+    this.attentionOwnerGeneration += 1
     this.attentionController.abort()
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     if (this.connectionBaselineRetryTimer !== undefined) clearTimeout(this.connectionBaselineRetryTimer)
@@ -1046,6 +1047,11 @@ export class ChatRealtimeService {
       }
       return bundles
     })().catch(() => undefined)
+    const failed: Array<[string, PendingChatProjection]> = []
+    // Three notification lanes preserve per-session order without occupying
+    // the three body-projection workers. The batch owns and awaits both groups.
+    const notificationLanes = Array.from({ length: 3 }, () => Promise.resolve())
+    let nextNotificationLane = 0
     const project = async ([uid, projection]: [string, PendingChatProjection]) => {
       let timelineProjection: {
         items: ArkmeTimelineItem[]
@@ -1228,94 +1234,98 @@ export class ChatRealtimeService {
         }
         void this.refreshAttentionSummary()
       }
-      const deliveries: Array<{
-        entry: (typeof notifications)[number]
-        fallbackToBrowser: boolean
-        outcome: ArkmeDesktopNotificationDispatchResult['outcome'] | 'exception'
-      }> = []
-      for (let offset = 0; offset < notifications.length; offset += 1) {
-        const chunk = notifications.slice(offset, offset + 1)
-        deliveries.push(...await Promise.all(chunk.map(async entry => {
-          const { notification, candidate } = entry
-          if (ownerGeneration !== this.attentionOwnerGeneration) {
-            return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
+      if (notifications.length > 0) {
+        const lane = nextNotificationLane++ % notificationLanes.length
+        notificationLanes[lane] = notificationLanes[lane]!.then(async () => {
+          const deliveries: Array<{
+            entry: (typeof notifications)[number]
+            fallbackToBrowser: boolean
+            outcome: ArkmeDesktopNotificationDispatchResult['outcome'] | 'exception'
+          }> = []
+          for (let offset = 0; offset < notifications.length; offset += 1) {
+            const chunk = notifications.slice(offset, offset + 1)
+            deliveries.push(...await Promise.all(chunk.map(async entry => {
+              const { notification, candidate } = entry
+              if (ownerGeneration !== this.attentionOwnerGeneration) {
+                return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
+              }
+              const dispatchStartedAtMillis = Date.now()
+              try {
+                const outcome = await this.nativeAttention.showNotification({
+                  idempotencyKey: notification.eventUid,
+                  kind: 'chat.message',
+                  occurredAtMillis: notification.eventAtMillis,
+                  expiresAtMillis: notification.eventAtMillis + NOTIFICATION_EXPIRY_MILLIS,
+                  presentation: { title: notification.title, body: notification.body },
+                  activation: {
+                    kind: 'chat-source',
+                    sourceRef: notification.sourceRef,
+                    sourceKey: notification.sourceKey,
+                  },
+                })
+                const completedAtMillis = Date.now()
+                notificationDiagnostic('notification_native_dispatch_completed', {
+                  eventUid: notification.eventUid,
+                  connectionGeneration: candidate.connectionGeneration,
+                  attempt: candidate.attempts,
+                  outcome: outcome.outcome,
+                  completedAtMillis,
+                  dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
+                  ...(candidate.receivedAtMillis === undefined ? {} : {
+                    durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
+                  }),
+                })
+                return { entry, fallbackToBrowser: outcome.fallbackToBrowser, outcome: outcome.outcome }
+              } catch {
+                // Retry only the same idempotency key; an uncertain native attempt must
+                // never fan out into a second Browser delivery.
+                const completedAtMillis = Date.now()
+                notificationDiagnostic('notification_native_dispatch_completed', {
+                  eventUid: notification.eventUid,
+                  connectionGeneration: candidate.connectionGeneration,
+                  attempt: candidate.attempts,
+                  outcome: 'exception',
+                  completedAtMillis,
+                  dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
+                  ...(candidate.receivedAtMillis === undefined ? {} : {
+                    durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
+                  }),
+                })
+                return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
+              }
+            })))
           }
-          const dispatchStartedAtMillis = Date.now()
-          try {
-            const outcome = await this.nativeAttention.showNotification({
-              idempotencyKey: notification.eventUid,
-              kind: 'chat.message',
-              occurredAtMillis: notification.eventAtMillis,
-              expiresAtMillis: notification.eventAtMillis + NOTIFICATION_EXPIRY_MILLIS,
-              presentation: { title: notification.title, body: notification.body },
-              activation: {
-                kind: 'chat-source',
-                sourceRef: notification.sourceRef,
-                sourceKey: notification.sourceKey,
-              },
-            })
-            const completedAtMillis = Date.now()
-            notificationDiagnostic('notification_native_dispatch_completed', {
-              eventUid: notification.eventUid,
-              connectionGeneration: candidate.connectionGeneration,
-              attempt: candidate.attempts,
-              outcome: outcome.outcome,
-              completedAtMillis,
-              dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
-              ...(candidate.receivedAtMillis === undefined ? {} : {
-                durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
-              }),
-            })
-            return { entry, fallbackToBrowser: outcome.fallbackToBrowser, outcome: outcome.outcome }
-          } catch {
-            // Retry only the same idempotency key; an uncertain native attempt must
-            // never fan out into a second Browser delivery.
-            const completedAtMillis = Date.now()
-            notificationDiagnostic('notification_native_dispatch_completed', {
-              eventUid: notification.eventUid,
-              connectionGeneration: candidate.connectionGeneration,
-              attempt: candidate.attempts,
-              outcome: 'exception',
-              completedAtMillis,
-              dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
-              ...(candidate.receivedAtMillis === undefined ? {} : {
-                durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
-              }),
-            })
-            return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
-          }
-        })))
-      }
-      if (ownerGeneration !== this.attentionOwnerGeneration) return []
-      for (const { entry, fallbackToBrowser, outcome } of deliveries) {
-        const { notification, candidate, uid, latestSequence } = entry
-        if (outcome === 'native-failed' || outcome === 'rate-limited' || outcome === 'exception') {
-          if (!notificationExpired(candidate)) {
-            const attempts = candidate.attempts + 1
-            this.mergePendingChatProjection(uid, {
-              latestSequence,
-              notificationHints: [{
-                ...candidate,
-                attempts,
-                nextAttemptAtMillis: Date.now() + notificationRetryDelay(attempts),
-              }],
-              refreshSource: false,
-              accountUserId: session.userId,
-              accountOwnerGeneration: ownerGeneration,
+          if (ownerGeneration !== this.attentionOwnerGeneration) return []
+          for (const { entry, fallbackToBrowser, outcome } of deliveries) {
+            const { notification, candidate, uid, latestSequence } = entry
+            if (outcome === 'native-failed' || outcome === 'rate-limited' || outcome === 'exception') {
+              if (!notificationExpired(candidate)) {
+                const attempts = candidate.attempts + 1
+                this.mergePendingChatProjection(uid, {
+                  latestSequence,
+                  notificationHints: [{
+                    ...candidate,
+                    attempts,
+                    nextAttemptAtMillis: Date.now() + notificationRetryDelay(attempts),
+                  }],
+                  refreshSource: false,
+                  accountUserId: session.userId,
+                  accountOwnerGeneration: ownerGeneration,
+                })
+              }
+              continue
+            }
+            if (!fallbackToBrowser) continue
+            this.emitChatClientEvent({
+              type: 'message-notification',
+              revision: this.nextChatClientRevision(),
+              notification,
             })
           }
-          continue
-        }
-        if (!fallbackToBrowser) continue
-        this.emitChatClientEvent({
-          type: 'message-notification',
-          revision: this.nextChatClientRevision(),
-          notification,
-        })
+        }).then(() => undefined).catch(() => { failed.push([uid, projection]) })
       }
       return []
     }
-    const failed: Array<[string, PendingChatProjection]> = []
     let next = 0
     await Promise.all(Array.from({ length: Math.min(3, pending.length) }, async () => {
       while (next < pending.length && ownerGeneration === this.attentionOwnerGeneration) {
@@ -1323,6 +1333,7 @@ export class ChatRealtimeService {
         try { failed.push(...await project(entry)) } catch { failed.push(entry) }
       }
     }))
+    await Promise.all(notificationLanes)
     return failed
   }
 
