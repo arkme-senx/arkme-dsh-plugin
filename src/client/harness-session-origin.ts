@@ -1,8 +1,13 @@
 import type { DshAccountSession } from '../dsh-remote/account-session-types.js'
 
-export function sessionOrigin(row: DshAccountSession): string[] {
-  if (row.local) return []
-  return [`实例：${row.runtimeName}`, ...(row.sameDesktop ? [] : [`电脑：${row.desktopName}`])]
+export function isRemoteComputer(row: DshAccountSession, localDesktopName?: string): boolean {
+  const localName = localDesktopName?.trim().toLowerCase(), name = row.desktopName.trim().toLowerCase()
+  // ponytail: desktopRef identifies a login. Hide ambiguous names until the directory provides physical machine identity; never use this display rule for routing.
+  return !row.local && !row.sameDesktop && !!localName && !!name && name !== localName
+}
+
+export function sessionOrigin(row: DshAccountSession, localDesktopName?: string): string[] {
+  return isRemoteComputer(row, localDesktopName) ? [`电脑：${row.desktopName.trim()}`] : []
 }
 
 /** Current-version presentation adapter. Native card, title, time, status and copy remain owned by DSH. */
