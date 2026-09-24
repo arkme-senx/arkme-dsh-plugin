@@ -1,5 +1,7 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  "代表团队": "On behalf of team",
+  "已读状态同步中": "Syncing read status",
   "未读，查看阅读状态": "Unread, view read status",
   "已读，查看阅读状态": "Read, view read status",
   "已读状态同步中，查看阅读状态": "Read status syncing, view details",
