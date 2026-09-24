@@ -35,5 +35,5 @@ it('places the retained page outside the mode switch, scoped to the authenticate
   expect(source).toContain("const retainedCallPage = authView === 'content' && <ArkmeRetainedCallPage")
   expect(source).toContain('key={`calls:${auth?.status}:${auth?.environment}:${auth?.userId}`}')
   expect(source).toContain("active={active && socialAllowed && ui.mode === 'calls'}")
-  expect(source).toContain("ui.mode === 'calls' ? null")
+  expect(source).toContain("ui.mode === 'calls' ? (socialAllowed ? null : <ArkmeSocialBindingHint />)")
 })

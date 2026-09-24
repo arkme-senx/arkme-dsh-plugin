@@ -1,5 +1,7 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+绑定手机号后可使用聊天、世界、联系人和通话|Link a phone number to use chats, World, contacts and calls.
+去绑定|Link phone number
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens

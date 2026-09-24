@@ -51,6 +51,7 @@ import {
 } from './record-input-capture.js'
 import { arkmeUi } from './ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+import { socialBindingDescription } from './ArkmeSocialBindingHint.js'
 
 export type ArkmeBackgroundSoundEligibilityStatus = 'loading' | ArkmeBackgroundSoundEligibilityReason
 export type ArkmeBackgroundSoundCapabilityStatus = 'loading' | 'supported' | 'unsupported'
@@ -645,7 +646,8 @@ export function PhoneBindDialog({
 
   return <SettingsDialog title={actionLabel} onClose={() => { if (!busyRef.current) onClose() }}>
     <form className="arkme-account-form" onSubmit={event => { void verify(event) }}>
-      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p> : null}
+      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p>
+        : <p className="arkme-account-rule">{tr(socialBindingDescription)}</p>}
       {!unbind && <label>
         <span>{tr("手机号")}</span>
         <input value={phone} autoFocus inputMode="tel" placeholder={tr("请输入手机号")} onChange={event => { setPhone(event.target.value) }} />

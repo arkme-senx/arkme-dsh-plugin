@@ -73,7 +73,12 @@ describe('packed social access on the target Harness', () => {
       // receives the binding observations under test; no permission API exists.
       await page.route('**/arkme-self/api', async route => {
         const operation = route.request().postDataJSON()?.operation
-        if (operation !== 'user.profile') { await route.continue(); return }
+        if (operation === 'auth.phone.verify') {
+          allowed = true
+          await route.fulfill({ json: { ok: true, value: await service.authStatus() } })
+          return
+        }
+        if (operation !== 'user.profile' && operation !== 'user.profile.refresh') { await route.continue(); return }
         if (allowed === null) { await route.fulfill({ status: 503, body: 'profile unavailable' }); return }
         const response = await route.fetch()
         const body = await response.json()
@@ -139,7 +144,47 @@ describe('packed social access on the target Harness', () => {
         if (state === false && process.env.ARKME_E2E_SCREENSHOT) {
           await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.unbound.png` })
         }
+        if (state === false) {
+          await navigation('个人资料').click()
+          const menu = page.getByRole('dialog', { name: '个人菜单', exact: true })
+          await menu.locator('[data-arkme-social-binding-hint]').waitFor({ state: 'visible' })
+          if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.account-guide.png` })
+          await menu.getByRole('button', { name: '去绑定', exact: true }).click()
+          await menu.waitFor({ state: 'hidden' })
+          await page.locator('[data-arkme-settings-view="account"]').waitFor({ state: 'visible' })
+          await page.keyboard.press('Escape')
+          expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
+        }
       }
+      const callsProfileRead = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
+        && response.request().postDataJSON()?.operation === 'user.profile')
+      await navigation('通话').click()
+      await (await callsProfileRead).finished()
+      // Let the navigation refresh publish before simulating a later account update.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      await page.locator('[data-arkme-retained-call-page="true"]').waitFor({ state: 'visible' })
+      allowed = false
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await navigation('通话').waitFor({ state: 'hidden' })
+      const hint = page.locator('[data-arkme-owned="product-surface"] [data-arkme-social-binding-hint]').first()
+      await hint.waitFor({ state: 'visible' })
+      expect(await hint.innerText()).toContain('绑定手机号后可使用聊天、世界、联系人和通话')
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.call-guide.png` })
+      await hint.getByRole('button', { name: '去绑定', exact: true }).click()
+      const account = page.locator('.arkme-redesign-settings-surface').filter({ hasText: '手机号' })
+      await account.waitFor({ state: 'visible' })
+      // The existing account form owns binding; the UI fixture confirms the
+      // mutation without sending a real SMS or changing the Host login policy.
+      await account.locator('.arkme-account-info-row').filter({ hasText: '手机号' }).click()
+      await page.getByPlaceholder('请输入手机号', { exact: true }).fill('13800000000')
+      await page.getByPlaceholder('请输入验证码', { exact: true }).fill('123456')
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.binding-form.png` })
+      await page.getByRole('button', { name: '绑 定', exact: true }).click()
+      await page.getByRole('dialog', { name: '绑定手机号', exact: true }).waitFor({ state: 'hidden' })
+      await page.keyboard.press('Escape')
+      for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
+      await hint.waitFor({ state: 'hidden' })
+      expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
       expect(requests.some(path => path.includes('social-access'))).toBe(false)
       expect(pageErrors).toEqual([])
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
