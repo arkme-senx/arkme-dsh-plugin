@@ -2,6 +2,7 @@ import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule
 import { archiveToolModules } from './conversation/archive.js'
 import { memberPageToolModules } from './conversation/member-pages.js'
 import { arkoToolModules } from './arko/index.js'
+import { readReactionsToolModule, writeReactionsToolModule } from './conversation/reactions.js'
 import { botToolModules } from './bots/index.js'
 import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
@@ -99,6 +100,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   directMessageRefusalToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  readReactionsToolModule,
+  writeReactionsToolModule,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

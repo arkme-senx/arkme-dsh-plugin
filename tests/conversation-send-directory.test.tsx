@@ -7383,6 +7383,40 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(640)
   })
 
+  it.each(['current', 'cached', 'hidden'] as const)('locates a reaction on the first click from a %s conversation', async mode => {
+    timeline = [{ itemUid: 'navigation-target', sequence: 8, senderName: '同事', isMe: false,
+      sendAtMillis: 8, textContent: '定位目标', status: 1 }]
+    const body = {
+      scrollTop: 0, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      scrollTo: vi.fn((options: ScrollToOptions) => { body.scrollTop = options.top ?? body.scrollTop }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [{
+        querySelector: () => null,
+        ownerDocument: Object.assign(new EventTarget(), { hidden: false, hasFocus: () => true, defaultView: new EventTarget() }),
+        dataset: { arkmeConversationRow: 'message:navigation-target', arkmeMessageItemUid: 'navigation-target' },
+        getBoundingClientRect: () => ({ top: 900 - body.scrollTop, bottom: 980 - body.scrollTop, height: 80 }),
+      }],
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+      })
+    })
+    body.scrollTop = 300
+    act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
+    if (mode === 'cached') await act(async () => { arkmeUi.selectSource(other) })
+    if (mode === 'hidden') await act(async () => {
+      renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />)
+    })
+    await act(async () => {
+      arkmeUi.showConversationTarget(target, 'navigation-target', 8, undefined, undefined, true)
+      if (mode === 'hidden') renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} />)
+    })
+    expect(body.scrollTo).toHaveBeenCalled()
+    expect(body.scrollTop).toBe(640)
+  })
+
   it('uses a layout-neutral desktop-style backdrop for a located quick note', async () => {
     timeline = [{
       itemUid: 'highlight-target', senderName: '同事', isMe: false, sendAtMillis: 11,
@@ -7428,7 +7462,71 @@ describe('conversation send directory projection', () => {
       position: 'absolute',
       top: -6,
       right: -6,
-      bottom: 12,
+      bottom: -6,
+      left: -6,
+      background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
+      pointerEvents: 'none',
+      zIndex: -1,
+    })
+    expect(locatedRow.props.style.outline).toBeUndefined()
+    expect(locatedRow.props.style.borderRadius).toBeUndefined()
+  })
+
+  it.each(['current', 'other'] as const)('highlights a canceled reaction original after returning from %s conversation', async (from) => {
+    timeline = [{
+      itemUid: 'highlight-target', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '需要定位的快记', status: 1, sequence: 11,
+    }]
+    const targetRow = {
+      ownerDocument: Object.assign(new EventTarget(), { hidden: false, hasFocus: () => true, defaultView: new EventTarget() }),
+      querySelector: () => null,
+      dataset: { arkmeConversationRow: 'message:highlight-target', arkmeMessageItemUid: 'highlight-target' },
+      getBoundingClientRect: () => ({ left: 0, top: 240, right: 600, bottom: 320, width: 600, height: 80 }),
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 900,
+      clientHeight: 600,
+      scrollTo: vi.fn(),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    if (from === 'other') await act(async () => { arkmeUi.selectSource(other) })
+    await act(async () => {
+      const { openReactionHistory } = await import('../src/client/ArkmeReactionNotification.js')
+      openReactionHistory({ source: target, itemUid: 'highlight-target', sendAtMillis: 11, recordOwnerUserId: 7 }, { emoji: 'smile', hand: '', text: '', color: '' })
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 220)) })
+
+    const locatedRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'highlight-target' })
+    expect(locatedRow.props.style).toMatchObject({
+      background: 'transparent',
+      position: 'relative',
+      isolation: 'isolate',
+      transition: 'background-color .3s ease',
+    })
+    expect(locatedRow.props.style.padding).toBeUndefined()
+    expect(locatedRow.props.style.margin).toBeUndefined()
+    expect(renderer!.root.findByProps({ 'data-arkme-highlight-backdrop': 'true' }).props.style).toMatchObject({
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      bottom: -6,
       left: -6,
       background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
       pointerEvents: 'none',

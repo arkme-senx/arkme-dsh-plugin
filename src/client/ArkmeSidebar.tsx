@@ -1,8 +1,13 @@
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
+import { useProfileRevision } from './profile-change-store.js'
 import { AskDshIcon } from './AskDshIcon.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
+import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layout.js'
+import { reactionNotifications } from './reaction-notifications.js'
+import { ArkmeReactionPreview, ReactionAddIcon, ArkmeReactionSelections } from './ArkmeReactionPreview.js'
+import { reactionPreview } from './reaction-preview-store.js'
 import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
 import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
@@ -2220,6 +2225,9 @@ export function ArkmeSurface({
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
   const authenticatedAccountKey = arkmeAuthenticatedAccountKey(auth)
+  useEffect(() => {
+    reactionPreview.setScope(authenticatedAccountKey)
+  }, [authenticatedAccountKey, auth?.environment])
   const communityWelcome = useSyncExternalStore(betaCommunityWelcomeStore.subscribe,
     betaCommunityWelcomeStore.getSnapshot, betaCommunityWelcomeStore.getSnapshot)
   // Resolve the one legacy local welcome through the existing read API. New joins
@@ -2748,6 +2756,7 @@ export function ArkmeSurface({
     })
   }, [])
   const [selfProfile, setSelfProfile] = useState<ArkmeUserProfile>()
+  const selfProfileRevision = useProfileRevision()
   const [drawer, setDrawer] = useState<'detail' | 'copyLink'>()
   const [groupMembersOpen, setGroupMembersOpen] = useState(false)
   const [detailItemUid, setDetailItemUid] = useState('')
@@ -2825,8 +2834,26 @@ export function ArkmeSurface({
   const [loadingNewer, setLoadingNewer] = useState(false)
   const newerSentinelArmedRef = useRef(true)
   const [highlightedTargetUid, setHighlightedTargetUid] = useState('')
+  const transientReactionHighlightRef = useRef(false)
   const calendarHighlightTimerRef = useRef<ReturnType<typeof setTimeout>>()
-  useEffect(() => () => { clearTimeout(calendarHighlightTimerRef.current) }, [conversationKey, authenticatedAccountKey])
+  const pendingMessageHighlightRef = useRef<() => void>()
+  useEffect(() => () => {
+    clearTimeout(calendarHighlightTimerRef.current)
+    pendingMessageHighlightRef.current?.()
+  }, [conversationKey, authenticatedAccountKey])
+  const highlightLocatedMessage = useCallback((body: HTMLElement, row: HTMLElement, uid: string, transient: boolean, expires: boolean) => {
+    pendingMessageHighlightRef.current?.()
+    clearTimeout(calendarHighlightTimerRef.current)
+    const highlight = () => {
+      transientReactionHighlightRef.current = transient
+      setHighlightedTargetUid(uid)
+      if (expires) calendarHighlightTimerRef.current = setTimeout(() => {
+        setHighlightedTargetUid(current => current === uid ? '' : current)
+      }, 2_000)
+    }
+    if (transient) pendingMessageHighlightRef.current = afterMessageVisible(body, row, highlight)
+    else highlight()
+  }, [])
   const conversationTargetPagingRef = useRef({ revision: 0, pages: 0, aroundRequested: false })
   const conversationTargetLocatedRevisionRef = useRef(0)
   const conversationTargetAbortRef = useRef<AbortController>()
@@ -2884,6 +2911,8 @@ export function ArkmeSurface({
     hoverAnchor?: HTMLElement
     hoverSide?: 'left' | 'right'
   }>()
+  useEffect(() => authenticatedAccountKey ? reactionNotifications.acquire(authenticatedAccountKey) : undefined, [authenticatedAccountKey])
+  const [reactionMenuRequest, setReactionMenuRequest] = useState<{ scope: string; occurrenceKey: string; toggle?: boolean }>()
   const [messageMenu, setMessageMenu] = useState<{
     occurrenceKey: string
     left: number
@@ -3075,7 +3104,7 @@ export function ArkmeSurface({
 
   useEffect(() => {
     let active = true
-    setSelfProfile(undefined)
+    setSelfProfile(current => current?.userId === authenticatedUserId ? current : undefined)
     if (!activeConversation && ui.mode !== 'world' && ui.mode !== 'extensions') return () => { active = false }
     if (authenticatedUserId === undefined) return () => { active = false }
     void callArkme<ArkmeUserProfileSnapshot>('user.profile')
@@ -3087,7 +3116,7 @@ export function ArkmeSurface({
       })
       .catch(() => undefined)
     return () => { active = false }
-  }, [activeConversation, authenticatedUserId, ui.mode])
+  }, [activeConversation, authenticatedUserId, ui.mode, selfProfileRevision])
 
   useEffect(() => {
     if (ui.mode !== 'contact-add' || typeof document === 'undefined') return
@@ -3155,6 +3184,7 @@ export function ArkmeSurface({
     itemUid: string
     revision: number
     momentId?: string
+    transientHighlight?: boolean
   }>()
   const interwovenRequestRef = useRef<AbortController>()
   const interwovenGenerationRef = useRef(0)
@@ -3691,6 +3721,14 @@ export function ArkmeSurface({
   })
   const { finish: finishCalendarNavigation, owns: ownsCalendarNavigation } = calendarNavigation
 
+  const prepareTimelineReactions = useCallback(async (pageItems: ArkmeTimelineItem[], signal: AbortSignal) => {
+    if (!authenticatedAccountKey || !source) return
+    await reactionPreview.prepare(authenticatedAccountKey, pageItems.filter(item => !!item.messageActionRef).map(item => ({
+      id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, sourceKey: source.sourceKey, itemUid: item.itemUid,
+      messageActionRef: item.messageActionRef!, source: source.displayName, text: item.textContent ?? '',
+    })), signal)
+  }, [authenticatedAccountKey, conversationKey, source])
+
   const loadTimeline = useCallback(async (
     cursor?: ArkmeTimelineCursor,
     preserve = false,
@@ -3755,6 +3793,7 @@ export function ArkmeSurface({
       }, { signal }), controller.signal)
       page = refreshWindow === undefined ? await readPage(cursor)
         : await readConversationTimelineWindow(refreshWindow, readPage, controller.signal)
+      if (refreshWindow === undefined && intent !== 'return-to-latest') await prepareTimelineReactions(page.items, controller.signal)
     } catch (caught) {
       if (isArkmeRequestAbort(caught, controller.signal)) return
       throw caught
@@ -3878,7 +3917,7 @@ export function ArkmeSurface({
       })
       else await refresh
     }
-  }, [acknowledgeRead, confirmedSendRetention, interwovenMoments, source, sourceIsChat, sourceProjectionRevision])
+  }, [acknowledgeRead, confirmedSendRetention, interwovenMoments, prepareTimelineReactions, source, sourceIsChat, sourceProjectionRevision])
 
   useEffect(() => {
     if (!activeConversation || source === undefined || authenticatedUserId === undefined) return
@@ -3914,6 +3953,7 @@ export function ArkmeSurface({
     const target = ui.conversationTarget
     if (!activeConversation || !authenticated || source === undefined || target === undefined
       || timelineStateKey !== conversationKey) return
+    if (conversationTargetLocatedRevisionRef.current === target.revision) return
     if (conversationTargetPagingRef.current.revision !== target.revision) {
       // A newer locate wins even when its row is already loaded (no around request).
       const returning = timelineRequestsRef.current.get('initial')
@@ -3929,9 +3969,10 @@ export function ArkmeSurface({
       if (pendingConversationTargetLocateRef.current?.revision !== target.revision) {
         pendingConversationTargetLocateRef.current = undefined
       }
+      clearTimeout(calendarHighlightTimerRef.current)
+      pendingMessageHighlightRef.current?.()
       setHighlightedTargetUid('')
     }
-    if (conversationTargetLocatedRevisionRef.current === target.revision) return
     const highlightUid = target.momentId ? `moment:${target.momentId}` : target.itemUid
     if (target.momentId && !interwovenMoments.some(moment => moment.momentId === target.momentId)) {
       finishCalendarNavigation(target.revision, '该群聊互动已不可用，请刷新后重试')
@@ -3943,6 +3984,8 @@ export function ArkmeSurface({
       if (pendingConversationTargetLocateRef.current?.revision === target.revision) return
       let animationFrame = 0
       let remainingRenderAttempts = 3
+      let cancelReactionLayout: (() => void) | undefined
+      const reactionLocateController = new AbortController()
       const locateRenderedTarget = () => {
         const body = bodyRef.current
         const row = arkmeConversationTargetRow(body, target)
@@ -3963,21 +4006,30 @@ export function ArkmeSurface({
           arkmeUi.consumeConversationTarget(target.revision)
           return
         }
-        const calendarLocate = ownsCalendarNavigation(target.revision)
-        body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
-          behavior: calendarLocate ? 'auto' : 'smooth' })
-        setHighlightedTargetUid(highlightUid)
-        conversationTargetLocatedRevisionRef.current = target.revision
-        if (finishCalendarNavigation(target.revision)) {
-          clearTimeout(calendarHighlightTimerRef.current)
-          calendarHighlightTimerRef.current = setTimeout(() => {
-            setHighlightedTargetUid(current => current === highlightUid ? '' : current)
-          }, 2_000)
+        const locate = () => {
+          // Explicit message navigation supersedes a cached conversation's bottom/reading restore.
+          // Match the around-message path even when the target was already cached.
+          pendingViewportRestoreRef.current = undefined
+          viewportRestoreIntentRef.current = false
+          const calendarLocate = ownsCalendarNavigation(target.revision)
+          body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
+            behavior: calendarLocate ? 'auto' : 'smooth' })
+          conversationTargetLocatedRevisionRef.current = target.revision
+          const calendarFinished = finishCalendarNavigation(target.revision)
+          highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
+          arkmeUi.consumeConversationTarget(target.revision)
         }
-        arkmeUi.consumeConversationTarget(target.revision)
+        if (target.transientHighlight) {
+          const settle = () => { if (!reactionLocateController.signal.aborted) cancelReactionLayout = afterReactionLayout(row, locate) }
+          const item = items.find(item => item.itemUid === target.itemUid)
+          if (item && row.querySelector('[data-arkme-reaction-ready="false"]')) {
+            void prepareTimelineReactions([item], reactionLocateController.signal).then(settle, settle)
+          } else settle()
+        }
+        else locate()
       }
       locateRenderedTarget()
-      return () => { if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
+      return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
       && recordOwnerId(target.recordOwnerUserId) !== 0
@@ -4000,7 +4052,8 @@ export function ArkmeSurface({
           beforeLimit: 20,
           afterLimit: 20,
         }, signal)
-      }, { signal }), controller.signal).then(page => {
+      }, { signal }), controller.signal).then(async page => {
+        await prepareTimelineReactions(page.items, controller.signal)
         if (controller.signal.aborted || generation !== timelineGenerationRef.current
           || windowRevision !== timelineWindowRevisionRef.current
           || arkmeUi.getSnapshot().conversationTarget?.revision !== target.revision) return
@@ -4040,6 +4093,7 @@ export function ArkmeSurface({
           sourceKey: conversationKey,
           itemUid: target.itemUid,
           revision: target.revision,
+          transientHighlight: target.transientHighlight === true,
           ...(target.momentId ? { momentId: target.momentId } : {}),
         }
         setTimelineView({
@@ -4104,7 +4158,7 @@ export function ArkmeSurface({
       .finally(() => {
         if (conversationTargetPagingRef.current.revision === target.revision) setLoadingOlder(false)
       })
-  }, [activeConversation, authenticated, conversationKey, hasMore, items, interwovenMoments, loadTimeline, loadingOlder, nextCursor, source, sourceIsChat, sourceProjectionRevision, timelineStateKey, ui.conversationTarget, finishCalendarNavigation, ownsCalendarNavigation])
+  }, [activeConversation, authenticated, conversationKey, hasMore, items, interwovenMoments, loadTimeline, prepareTimelineReactions, loadingOlder, nextCursor, source, sourceIsChat, sourceProjectionRevision, timelineStateKey, ui.conversationTarget, finishCalendarNavigation, ownsCalendarNavigation])
 
   useEffect(() => {
     if (!authStoreSnapshot.checked) void refreshAuth()
@@ -5999,14 +6053,9 @@ export function ArkmeSurface({
     viewportRestoreIntentRef.current = false
     body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'), behavior: 'auto' })
     const highlightUid = pending.momentId ? `moment:${pending.momentId}` : pending.itemUid
-    setHighlightedTargetUid(highlightUid)
     conversationTargetLocatedRevisionRef.current = pending.revision
-    if (finishCalendarNavigation(pending.revision)) {
-      clearTimeout(calendarHighlightTimerRef.current)
-      calendarHighlightTimerRef.current = setTimeout(() => {
-        setHighlightedTargetUid(current => current === highlightUid ? '' : current)
-      }, 2_000)
-    }
+    const calendarFinished = finishCalendarNavigation(pending.revision)
+    highlightLocatedMessage(body, row, highlightUid, pending.transientHighlight === true, calendarFinished || pending.transientHighlight === true)
     arkmeUi.consumeConversationTarget(pending.revision)
   }, [displayRows, timelineStateKey, finishCalendarNavigation, ownsCalendarNavigation])
   const activeSelectMode = selectMode?.sourceKey === conversationKey ? selectMode : undefined
@@ -7440,6 +7489,7 @@ export function ArkmeSurface({
                   : null
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
+                const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
@@ -7467,9 +7517,10 @@ export function ArkmeSurface({
                     }}
                   >
                     {isHighlighted && <span
+                      key={`highlight:${conversationTargetLocatedRevisionRef.current}`}
                       aria-hidden="true"
                       data-arkme-highlight-backdrop="true"
-                      style={styles.rowSearchTargetBackdrop}
+                      style={{ ...styles.rowSearchTargetBackdrop, bottom: messageLineBottomGap - 6, ...(highlightedTargetUid === item.itemUid && transientReactionHighlightRef.current ? { animation: 'arkme-reaction-highlight 2s ease-out both' } : {}) }}
                     />}
                     {activeSelectMode !== undefined && <ArkmeMessageSelectionControl
                       anchor={selectionAnchor}
@@ -7485,7 +7536,7 @@ export function ArkmeSurface({
                       ...(isSharedRecordingCard ? styles.sharedRecordingMessageLine : {}),
                       ...(activeSelectMode !== undefined && selectionAnchor === 'card-center' ? styles.messageLineSelectCardCenterMode : {}),
                       // The viewport already supplies the gap above the composer.
-                      ...(index === displayRows.length - 1 ? { marginBottom: 0 } : {}),
+                      marginBottom: messageLineBottomGap,
                     }}>
                       {!isExtensionMessage && messageAvatar}
                       <div style={{
@@ -7496,6 +7547,8 @@ export function ArkmeSurface({
                       }}>
                         {!isSharedRecordingCard && !isExtensionMessage && messageHeader}
                         {(() => {
+                          const reactionTarget = { sourceKey: source.sourceKey, itemUid: item.itemUid, id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, messageActionRef: item.messageActionRef ?? '', source: source.displayName, sourceKind: source.kind, text: item.textContent ?? '' }
+                          const canReact = !!item.messageActionRef
                           const messageBubble = <div
                             role="button"
                             tabIndex={0}
@@ -7559,6 +7612,11 @@ export function ArkmeSurface({
                               }}
                             />
                             {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
+                            {canReact && authenticatedAccountKey && activeSelectMode === undefined && <ArkmeReactionSelections scope={authenticatedAccountKey} target={reactionTarget}
+                              actorName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
+                              actorGroupNickname={source.kind === 'group_chat' ? selfConversationMember?.memberName : undefined}
+                              actorAvatarRef={selfProfile?.avatarRef}
+                              onAdd={() => setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(item), toggle: true })} />}
                             {timelineReeditJobs.filter(job => job.itemUid === item.itemUid && (job.state === 'failed' || job.state === 'uncertain')).map(job => <div key={job.submissionId} role="status" aria-label={tr("重新编辑保存状态")} style={styles.polishMeta}>
                               {job.state === 'failed' ? tr("保存失败：{v0}", { v0: job.error ?? '请恢复编辑后重试' }) : '保存结果待确认'}
                               {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
@@ -7594,8 +7652,17 @@ export function ArkmeSurface({
                                 {...(selfTopicPresentation.displayLabel === undefined ? {} : { displayLabel: selfTopicPresentation.displayLabel })}
                                 onSelect={(...args) => timelineActions.current.activateSelfSource(...args)}
                               />
+                          const reactionMessageLine = canReact && authenticatedAccountKey && activeSelectMode === undefined
+                              ? <ArkmeReactionPreview
+                                key={`reaction:${conversationKey}:${item.itemUid}`}
+                                isMe={item.isMe}
+                                scope={authenticatedAccountKey}
+                                openRequested={reactionMenuRequest?.scope === authenticatedAccountKey && reactionMenuRequest?.occurrenceKey === arkmeTimelineOccurrenceKey(item)}
+                                toggleRequested={reactionMenuRequest?.toggle === true}
+                                onOpenHandled={() => setReactionMenuRequest(undefined)}
+                                target={reactionTarget}>{messageContentLine}</ArkmeReactionPreview> : messageContentLine
                           if (!isExtensionMessage || item.extensionParent === undefined) return <>
-                            {messageContentLine}
+                            {reactionMessageLine}
                             {fileSendStatus}
                             {topicBadge}
                           </>
@@ -7631,7 +7698,7 @@ export function ArkmeSurface({
                                 ...(item.isMe ? styles.extensionChildBodyMe : {}),
                               }}>
                                 {messageHeader}
-                                {messageContentLine}
+                                {reactionMessageLine}
                                 {fileSendStatus}
                                 {topicBadge}
                               </div>
@@ -7647,7 +7714,7 @@ export function ArkmeSurface({
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
-    reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale])
+    reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, reactionMenuRequest])
 
   const directRecordingNotice = ui.mode !== 'recordings' || !active ? <ArkmeDirectRecordingStatus floating /> : null
 
@@ -8188,7 +8255,9 @@ export function ArkmeSurface({
             {displayRows.length > 0 && <ul ref={recordsRef} className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
+
               {renderedMessageRows}
+
             </ul>}
             <div ref={newerSentinelRef} style={styles.sentinel} />
             <div ref={endAccessoryRef} data-arkme-conversation-end-accessory aria-hidden={activeSelectMode !== undefined || undefined}
@@ -8688,6 +8757,10 @@ export function ArkmeSurface({
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeActionMenu
           label={tr("消息操作")} point={{ x: messageMenu.left, y: messageMenu.top }} onClose={closeMessageMenu}
           actions={[
+            !!messageMenuItem.messageActionRef && authenticatedAccountKey !== undefined && activeSelectMode === undefined && { id: 'reaction', label: '表态', icon: <ReactionAddIcon />, onSelect: () => {
+              setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(messageMenuItem) })
+              closeMessageMenu()
+            } },
             { id: 'copy', label: ARKME_MESSAGE_ACTION_MENU_LABELS[0], icon: <ArkmeMessageActionIcon kind="copy" />, onSelect: () => { void copyMessageText(messageMenuItem) } },
             { id: 'link', label: ARKME_MESSAGE_ACTION_MENU_LABELS[1], icon: <ArkmeMessageActionIcon kind="link" />, disabled: arkmeTimelineMessageActionRef(messageMenuItem) === '', onSelect: () => { void copyMessageLink([messageMenuItem]) } },
             !archiveReadOnly && { id: 'extend', label: ARKME_MESSAGE_ACTION_MENU_LABELS[2], icon: <ArkmeDesktopExtensionIcon />, disabled: arkmeTimelineMessageActionRef(messageMenuItem) === '', onSelect: () => startMessageExtension(messageMenuItem) },
