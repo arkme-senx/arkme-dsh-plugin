@@ -8,6 +8,7 @@ import { ArkmeFileQuickView } from '../src/client/ArkmeFileQuickView.js'
 import { ArkmeFileCard } from '../src/client/ArkmeRichContent.js'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
+import { ArkmeMediaAccessContext } from '../src/client/media-access.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
@@ -17,6 +18,25 @@ const original = { localRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('file save UI', () => {
+  it('uses contextual bytes for Save As without treating a URL as a native file grant', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const writable = { write: vi.fn(), close: vi.fn(), abort: vi.fn() }
+    vi.stubGlobal('window', { showSaveFilePicker: async () => ({ createWritable: async () => writable }) })
+    const fetcher = vi.fn(async () => new Response('contextual bytes'))
+    vi.stubGlobal('fetch', fetcher)
+    const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile')
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeMediaAccessContext.Provider value={{ url: () => '/authorized-context-file' }}><ArkmeFileViewer block={block} onClose={() => {}} /></ArkmeMediaAccessContext.Provider>) })
+      expect(view.root.findByProps({ 'aria-label': '打开文件' }).props.disabled).toBe(true)
+      const save = view.root.findByProps({ 'aria-label': '另存为文件' })
+      expect(save.props.disabled).toBe(false)
+      await act(async () => { save.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(fetcher).toHaveBeenCalledWith('/authorized-context-file', { signal: expect.any(AbortSignal) })
+      expect(writable.close).toHaveBeenCalledOnce()
+      expect(receive).not.toHaveBeenCalled()
+    } finally { if (view) await act(async () => view.unmount()) }
+  })
   it.each(['a.pdf', 'a.md', 'a.txt'])('pairs the portaled %s preview surface and text with host theme tokens', async fileName => {
     vi.stubGlobal('document', { body: {}, activeElement: null })
     vi.stubGlobal('fetch', async () => new Response('Preview text'))

@@ -1,3 +1,4 @@
+import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
 import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview } from './attachment-preview-window.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -236,8 +237,8 @@ export function arkmeContentMediaUrl(block: ArkmeContentBlock): string {
   return `${mediaRoute}?ref=${encodeURIComponent(block.mediaRef)}`
 }
 
-function mediaAttemptUrl(block: ArkmeContentBlock, attempt: number): string {
-  const url = arkmeContentMediaUrl(block)
+function mediaAttemptUrl(block: ArkmeContentBlock, attempt: number, resolvedUrl?: string): string {
+  const url = resolvedUrl ?? arkmeContentMediaUrl(block)
   return attempt > 0 ? `${url}${url.includes('?') ? '&' : '?'}retry=${String(attempt)}` : url
 }
 
@@ -384,6 +385,7 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
   onRetry: (block: ArkmeContentBlock) => void
   onOpenAsFile: (block: ArkmeContentBlock) => void
 }) {
+  const mediaUrl = useArkmeMediaUrl()
   const columns = mediaColumns(blocks.length)
   const tileSize = columns === 1 ? 150 : 75
   const width = tileSize * columns + mediaGap * (columns - 1)
@@ -395,7 +397,7 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
     {blocks.map(block => {
       const failure = failures.get(block.mediaRef)
       if (failure !== undefined) return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure={failure} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
-      const src = mediaAttemptUrl(block, retryVersions.get(block.mediaRef) ?? 0)
+      const src = mediaAttemptUrl(block, retryVersions.get(block.mediaRef) ?? 0, mediaUrl(block))
       return <button
         key={`${block.mediaRef}:${String(block.sortOrder)}`}
         type="button"
@@ -566,6 +568,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   openLocalFile?: boolean
   forceDownload?: boolean
 }) {
+  const mediaUrl = useArkmeMediaUrl()
   const previewDocument = useContext(AttachmentPreviewSurface)
   const standalone = previewDocument !== undefined
   const document = previewDocument ?? globalThis.document
@@ -593,7 +596,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   const original = useArkmeOriginal(selected, selected.kind === 'image')
   const keepLiveCoverPreview = selected.kind === 'image' && selected.dynamicPhoto !== undefined
     && !arkmeCanInlineLocalFile(selected.mimeType, selected.fileName) && selected.mediaRef !== selected.localFileRef
-  const originalUrl = previewUrl ?? (keepLiveCoverPreview ? `${mediaRoute}?ref=${encodeURIComponent(selected.mediaRef)}`
+  const originalUrl = previewUrl ?? mediaUrl(selected) ?? (keepLiveCoverPreview ? `${mediaRoute}?ref=${encodeURIComponent(selected.mediaRef)}`
     : original.localRef === undefined ? arkmeContentMediaUrl(selected) : arkmeLocalFileUrl(original.localRef))
   const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice(standalone ? 2000 : 800)
   const previousDisabled = navigation === undefined ? index <= 0 : navigation.previous === undefined
@@ -843,7 +846,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
         {standalone ? <span style={{ color: "white", padding: "0 16px" }}>{index + 1} / {blocks.length}</span> : <span aria-hidden style={styles.previewActionWideGap} />}
         <ArkmeFileActionNavButton label={tr("下一个媒体")} direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else selectMedia(blocks[index + 1]!) } }} /></>}
         <span aria-hidden style={styles.previewActionWideGap} />
-        <ArkmeFileActions block={selected} original={original} copySourceUrl={previewUrl ?? (selected.mediaRef === selected.localFileRef ? undefined : `${mediaRoute}?ref=${encodeURIComponent(selected.mediaRef)}`)} onImageCopyNotice={showActionNotice} onDownloadNotice={standalone ? showActionNotice : undefined} showDownloadStatus={false} hideDownloadAfterSave={false} style={styles.previewActionPair} />
+        <ArkmeFileActions block={selected} original={original} copySourceUrl={previewUrl ?? mediaUrl(selected) ?? (selected.mediaRef === selected.localFileRef ? undefined : `${mediaRoute}?ref=${encodeURIComponent(selected.mediaRef)}`)} onImageCopyNotice={showActionNotice} onDownloadNotice={standalone ? showActionNotice : undefined} showDownloadStatus={false} hideDownloadAfterSave={false} style={styles.previewActionPair} />
       </div>
       <ArkmeFileActionToast notice={actionNotice} style={styles.previewActionToast} />
     </div>
@@ -958,6 +961,8 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
+  const mediaUrl = useArkmeMediaUrl()
+  const mediaAccess = useContext(ArkmeMediaAccessContext)
   const [articleWindowError, setArticleWindowError] = useState('')
   const readMentionMembers = useReadMentionMembers(item.itemUid, sourceRef)
   // Access references rotate on new messages; only a different conversation ends this media scope.
@@ -1036,7 +1041,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   const openPreview = (block: ArkmeContentBlock, forceDownload = false) => {
     if (sessionAttachmentPreview && attachmentPreviewBridge()?.version === 1) {
       try {
-        openSessionAttachmentPreview(visualBlocks, block, `${mediaSourceKey ?? ''}:${item.itemUid}`, forceDownload)
+        openSessionAttachmentPreview(visualBlocks, block, `${mediaSourceKey ?? ''}:${item.itemUid}`, forceDownload, mediaAccess)
         setPreviewError('')
       } catch { setPreviewError('无法创建预览窗口，请再次点击附件重试') }
       return
@@ -1058,7 +1063,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   const renderVoice = (block: ArkmeContentBlock, withTranscript = false) => <ArkmeVoiceContent
     key={block.mediaRef}
     sourceKey={`${sourceRef ?? ''}:${item.itemUid}:${block.fileAssetUid ?? block.mediaRef}`}
-    src={arkmeVoiceMediaUrl(block.mediaRef)}
+    src={mediaUrl(block) ?? arkmeVoiceMediaUrl(block.mediaRef)}
     durationSeconds={block.durationSec ?? (isVoiceNote && item.recordDurationMillis !== undefined ? item.recordDurationMillis / 1000 : undefined)}
     downloadName={block.fileName}
     collapsible={withTranscript && presentation !== 'detail' && collapseText && shouldCollapseText(text)}
@@ -1084,7 +1089,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     if (failure !== undefined) return <VisualMediaFallback key={row.mediaRef} block={row} failure={failure} onRetry={() => { retryMedia(row) }} onOpenAsFile={() => { openAsFile(row) }} {...(styles.sticker === undefined ? {} : { style: styles.sticker })} />
     if (row.renderRole === 3 && row.kind === 'image') return <img
       key={row.mediaRef}
-      src={mediaAttemptUrl(row, retryVersions.get(row.mediaRef) ?? 0)}
+      src={mediaAttemptUrl(row, retryVersions.get(row.mediaRef) ?? 0, mediaUrl(row))}
       alt={row.fileName}
       title={row.fileName}
       draggable={false}
@@ -1202,12 +1207,13 @@ export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, 
 }
 
 /** Session-only entry; owns a snapshot independent of the currently selected chat. */
-export function openSessionAttachmentPreview(blocks: ArkmeContentBlock[], selected: ArkmeContentBlock, source: string, forceDownload = false): void {
+export function openSessionAttachmentPreview(blocks: ArkmeContentBlock[], selected: ArkmeContentBlock, source: string, forceDownload = false, mediaAccess?: ArkmeMediaAccess): void {
   const identity = `${source}:${selected.fileAssetUid ?? selected.mediaRef}:${String(forceDownload)}`
-  showAttachmentPreview(identity, doc => { doc.title = selected.fileName || '文件预览'; return <SessionAttachmentPreview key={identity} blocks={blocks} initial={selected} source={source} forceDownload={forceDownload} /> })
+  showAttachmentPreview(identity, doc => { doc.title = selected.fileName || '文件预览'; return <ArkmeMediaAccessContext.Provider value={mediaAccess}><SessionAttachmentPreview key={identity} blocks={blocks} initial={selected} source={source} forceDownload={forceDownload} /></ArkmeMediaAccessContext.Provider> })
 }
 function SessionAttachmentPreview({blocks, initial: selected, source, forceDownload}: {blocks: ArkmeContentBlock[]; initial: ArkmeContentBlock; source: string; forceDownload: boolean}) {
-  const select = (block: ArkmeContentBlock) => openSessionAttachmentPreview(blocks, block, source, forceDownload)
+  const mediaAccess = useContext(ArkmeMediaAccessContext)
+  const select = (block: ArkmeContentBlock) => openSessionAttachmentPreview(blocks, block, source, forceDownload, mediaAccess)
   const index = blocks.findIndex(block => (block.fileAssetUid ?? block.mediaRef) === (selected.fileAssetUid ?? selected.mediaRef))
   return <div onKeyDownCapture={event => {
     const target = event.target as HTMLElement

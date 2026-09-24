@@ -1099,7 +1099,7 @@ export class RecordService {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于当前会话', false, 403)
       }
     } else if (source.kind === 'default_category') {
-      if (!personalSource || originContainerRef !== '' || topicUid !== '') {
+      if (!personalSource || topicUid !== '') {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于未分类来源', false, 403)
       }
     } else if (source.kind === 'send_to_self' && !personalSource && !topicSource) {

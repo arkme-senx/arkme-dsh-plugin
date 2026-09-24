@@ -75,7 +75,7 @@ export class TeamAppService {
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid }
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor), own: v.own === true,
-      state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canWithdraw: v.can_withdraw === true,
+      state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
         text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
         ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
@@ -222,7 +222,13 @@ export class TeamAppService {
         return { message: await this.message(data, actor, m) }
       }
       case 'team.app.edit': { const m = await message(); return await post('conversations/messages/update', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version), content: obj(p.content) }) }
-      case 'team.app.withdraw': { const m = await message(); return await post('conversations/messages/withdraw', { message_uid: m.message_uid, side: m.side }) }
+      case 'team.app.cancel': { const m = await message(); return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side }) }
+      case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
+      case 'team.app.home.visibility': {
+        const data = await post('conversations/home-visibility', { ...await conversation(), expected_version: num(p.version), ...(typeof p.showInHome === 'boolean' ? {show_in_home:p.showInHome} : {}) })
+        if (typeof data.show_in_home !== 'boolean' || !Number.isSafeInteger(data.version) || num(data.version) < 0) throw invalid()
+        return {showInHome:data.show_in_home,version:num(data.version)}
+      }
       case 'team.app.read': return await post('conversations/read/advance', { ...await conversation(), read_seq: num(p.readSeq) })
       case 'team.app.receipts': {
         const context = await message()

@@ -92,6 +92,10 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       }
       const conversation = (await teamCall(users.visitor, 'conversations/open', { public_ref: channel.public_ref })).conversation
       const uid = conversation.conversation_uid
+      // The synthetic official team and its visitor conversation survive reruns.
+      // Reset only this fixture account's preference before exercising the menu.
+      const home = await teamCall(users.member, 'conversations/home-visibility', { conversation_uid: uid, side: 'team' })
+      if (!home.show_in_home) await teamCall(users.member, 'conversations/home-visibility', { conversation_uid: uid, side: 'team', expected_version: home.version, show_in_home: true })
       const marker = `真实团队链路 ${randomUUID()}`
       const command = { conversation_uid: uid, side: 'external', client_message_uid: randomUUID(), content: { text_content: marker, template_kind: 1 } }
       const message = await teamCall(users.visitor, 'conversations/messages/send', command)
@@ -120,6 +124,10 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await expect.poll(() => panel.evaluate(node => getComputedStyle(node).display)).toBe('flex')
       expect(await page.getByRole('dialog', { name: /^团队消息/ }).count()).toBe(0)
       await panel.getByText(marker, { exact: true }).waitFor()
+      expect(await panel.getByRole('button',{name:'刷新',exact:true}).count()).toBe(0)
+      await panel.getByRole('button',{name:'对话选项',exact:true}).click()
+      await page.getByRole('menuitem',{name:'快记不显示在首页',exact:true}).click()
+      await expect.poll(async()=> (await teamCall(users.member,'conversations/home-visibility',{conversation_uid:uid,side:'team'})).show_in_home).toBe(false)
       const reply = `插件真实回复 ${randomUUID()}`
       await panel.getByRole('textbox', { name: '团队消息内容' }).fill(reply)
       // Another member replies after this screen loaded. The accepted draft
@@ -129,8 +137,8 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const otherReply = await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: head.conversation.latest_team_reply_seq, content: { text_content: concurrentReply, template_kind: 1 } })
       await panel.getByRole('button', { name: '发送', exact: true }).click()
       await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).waitFor()
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe(reply)
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).isDisabled()).toBe(true)
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe(reply)
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).getAttribute('contenteditable')).toBe('false')
       await panel.locator('article').getByText(concurrentReply, { exact: true }).waitFor()
       // A second race during explicit confirmation must refresh again, never loop
       // forever on the stale expected sequence or silently publish.
@@ -150,15 +158,24 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const externalReceipt = await teamCall(users.visitor, 'conversations/read-receipts/query', { conversation_uid: uid, side: 'external', message_uid: message.message_uid })
       expect(externalReceipt.team_read).toBe(true); expect(externalReceipt.members).toBeUndefined()
       const article = panel.locator('article').filter({ hasText: reply })
-      await article.getByRole('button', { name: '编辑', exact: true }).click()
-      await panel.getByRole('textbox', { name: '修改消息内容' }).fill(`${reply} 已修改`)
+      // Settle the locator's viewport scroll before opening a point menu, whose
+      // shared dismissal contract intentionally closes it on source scrolling.
+      await article.getByLabel('消息操作', { exact: true }).scrollIntoViewIfNeeded()
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      const messageHeight = await article.evaluate(node => node.getBoundingClientRect().height)
+      await article.getByLabel('消息操作',{exact:true}).click({button:'right'})
+      expect(await article.evaluate(node => node.getBoundingClientRect().height)).toBe(messageHeight)
+      await page.getByRole('menuitem',{name:'编辑',exact:true}).click()
+      await expect.poll(() => page.getByRole('menu', { name: '消息操作', exact: true }).count()).toBe(0)
+      const editDialog=page.locator('[data-team-composer="reedit"]')
+      await editDialog.getByRole('textbox', { name: '修改消息内容' }).fill(`${reply} 已修改`)
       await teamCall(users.member, 'conversations/messages/update', { message_uid: published.message_uid, side: 'team', expected_record_version: published.record.version, content: { text_content: `${reply} 另一设备修改`, template_kind: 1 } })
-      await panel.getByRole('button', { name: '确认修改', exact: true }).click()
-      await panel.getByRole('button', { name: '读取最新版本', exact: true }).waitFor()
-      expect(await panel.getByRole('textbox', { name: '修改消息内容' }).inputValue()).toBe(`${reply} 已修改`)
-      await panel.getByRole('button', { name: '读取最新版本', exact: true }).click()
-      await panel.getByText(/最新内容：.*另一设备修改/).waitFor()
-      await panel.getByRole('button', { name: '确认覆盖最新版本', exact: true }).click()
+      await editDialog.getByRole('button', { name: '保存修改', exact: true }).click()
+      await editDialog.getByRole('button', { name: '读取最新版本', exact: true }).waitFor()
+      expect(await editDialog.getByRole('textbox', { name: '修改消息内容' }).textContent()).toBe(`${reply} 已修改`)
+      await editDialog.getByRole('button', { name: '读取最新版本', exact: true }).click()
+      await editDialog.getByText(`${reply} 另一设备修改`, { exact: true }).waitFor()
+      await editDialog.getByRole('button', { name: '确认覆盖最新版本', exact: true }).click()
       await panel.locator('article').getByText(`${reply} 已修改`, { exact: true }).waitFor()
       expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === published.message_uid).record.text_content).toBe(`${reply} 已修改`)
       const preview = (await teamCall(users.visitor,'conversations/list',{side:'external'})).items.find(item=>item.conversation_uid===uid)
@@ -181,7 +198,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
         await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
       }
       await teamCall(users.owner, 'members/remove', { team_id: team.team_id, target_user_id: users.member })
-      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
       await panel.getByRole('alert').filter({ hasText: /权限|访问|不可/ }).waitFor()
       expect(await panel.getByText(`${reply} 已修改`, { exact: true }).count()).toBe(0)
       expect(await teamCall(users.member,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'not_member'})
@@ -212,7 +229,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect((await teamCall(users.stranger, 'conversations/open', { public_ref: oldRef }, true)).data.reason).toBe('not_accessible')
       const beforePause = await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })
       channel = await teamCall(users.owner, 'message-channel/configure', { team_id: team.team_id, expected_revision: channel.revision, enabled: false })
-      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
       await panel.getByText('团队已暂停接收新消息', { exact: true }).waitFor()
       const rejected = { ...command, client_message_uid: randomUUID(), content: { text_content: 'must not publish', template_kind: 1 } }
       expect((await teamCall(users.visitor, 'conversations/messages/send', rejected, true)).data.reason).toBe('channel_paused')
@@ -231,17 +248,23 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const application = await teamCall(users.visitor, 'join-requests/create', { team_id: team.team_id, request_uid: randomUUID() })
       await teamCall(users.owner, 'join-requests/decide', { team_id: team.team_id, user_id: users.visitor, revision: application.revision, approve: true })
       expect((await teamCall(users.visitor, 'conversations/open', { public_ref: channel.public_ref })).open_inbox).toBe(true)
-      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
       await directory.getByRole('treeitem', { name: /验收-visitor/ }).click()
-      await expect.poll(() => panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe('')
+      await expect.poll(() => panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('')
       await panel.getByRole('textbox', { name: '团队消息内容' }).fill('团队侧未发送草稿')
       await directory.locator('[data-team-side="external"]').filter({ hasText: team.name }).click()
-      await expect.poll(() => panel.getByRole('textbox', { name: '团队消息内容' }).inputValue()).toBe('咨询侧未发送草稿')
-      await teamCall(users.visitor, 'conversations/messages/withdraw', { message_uid: message.message_uid, side: 'external' })
-      const withdrawn = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === message.message_uid)
-      expect(withdrawn.state).toBe('withdrawn'); expect(withdrawn.record).toBeUndefined()
-      await panel.locator('.team-conversation-pane').getByRole('button', { name: '刷新', exact: true }).click()
-      await expect.poll(() => panel.getByText('这条消息已撤回', { exact: true }).count()).toBeGreaterThan(0)
+      await expect.poll(() => panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('咨询侧未发送草稿')
+      const ownMessage = panel.locator('article').filter({ hasText: marker }).getByLabel('消息操作', { exact: true })
+      await ownMessage.scrollIntoViewIfNeeded()
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      await ownMessage.click({ button: 'right' })
+      await page.getByRole('menuitem', { name: '删除', exact: true }).click()
+      await page.getByRole('button', { name: '确认删除', exact: true }).click()
+      await expect.poll(async () => (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === message.message_uid)?.record?.status).toBe('deleted')
+      const deleted = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.message_uid === message.message_uid)
+      expect(deleted.state).toBe('published'); expect(deleted.record.status).toBe('deleted')
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+      await expect.poll(() => panel.getByText('消息已删除', { exact: true }).count()).toBeGreaterThan(0)
       await expect.poll(() => panel.getByText(marker, { exact: true }).count()).toBe(0)
       // Owner management uses the same live approval contract and current status.
       await teamCall(users.stranger,'join-requests/create',{team_id:team.team_id,request_uid:randomUUID()})
