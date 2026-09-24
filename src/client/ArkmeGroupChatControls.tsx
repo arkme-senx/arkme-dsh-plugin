@@ -1160,6 +1160,11 @@ function GroupSettingsMenu(props: {
 }) {
   useArkmeLocale()
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
+  const [managementOpen, setManagementOpen] = useState(false)
+  const managementFocusRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    managementFocusRef.current?.closest('button')?.focus({ preventScroll: true })
+  }, [managementOpen])
   const [notification, setNotification] = useState<ArkmeGroupNotificationResult>({
     messageDnd: props.source.isMuted === true,
     chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
@@ -1174,7 +1179,6 @@ function GroupSettingsMenu(props: {
     if (!props.open) return
     const controller = new AbortController()
     let active = true
-    setSnapshot(undefined)
     void callArkme<ArkmeGroupSettingsSnapshot>('group.settings', {
       sourceRef: props.source.sourceRef,
     }, controller.signal)
@@ -1185,7 +1189,10 @@ function GroupSettingsMenu(props: {
           ? current : { messageDnd: value.messageDnd, chatNotificationPolicyUpdatedAtMillis: value.chatNotificationPolicyUpdatedAtMillis ?? 0 })
       })
       .catch(caught => {
-        if (active && !isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught))
+        if (active && !isArkmeRequestAbort(caught, controller.signal)) {
+          setSnapshot(undefined)
+          props.onError(errorMessage(caught))
+        }
       })
     return () => {
       active = false
@@ -1195,7 +1202,7 @@ function GroupSettingsMenu(props: {
 
   useEffect(() => {
     if (props.open) return
-    setSnapshot(undefined)
+    setManagementOpen(false)
     setNotification({
       messageDnd: props.source.isMuted === true,
       chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
@@ -1290,8 +1297,8 @@ function GroupSettingsMenu(props: {
   }
   const entries: MenuEntry[] = [
     { type: 'label', id: 'personal-label', text: '个人设置' },
+    { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
-  if (effective.selfStatus === 'active') entries.push({ id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> })
   entries.push({
     id: 'message-dnd',
     label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1314,16 +1321,21 @@ function GroupSettingsMenu(props: {
         close()
         props.onAiPolishOpen()
       }}
-    ><span>{tr("AI 表达润色")}</span><span style={{ marginLeft: 'auto', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} aria-hidden /></span>,
+    ><span style={{ flexShrink: 0 }}>{tr("AI 表达润色")}</span><span style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} style={{ flexShrink: 0 }} aria-hidden /></span>,
     icon: <MagicWandIcon />,
   })
-  if (effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) {
-    entries.push({ type: 'separator', id: 'management-separator' }, { type: 'label', id: 'management-label', text: '群管理' })
-    if (effective.canRename) entries.push({ id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} /> })
-    if (effective.selfRole === 'owner' && effective.selfStatus === 'active') {
-      entries.push({ id: 'restrictions', label: <span style={{ display: 'flex', alignItems: 'center' }}>{tr("禁止加入名单")}<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>, icon: <Prohibit size={16} aria-hidden /> })
-    }
-  }
+  const canManage = effective.selfRole === 'owner' && effective.selfStatus === 'active'
+  entries.push(
+    { type: 'separator', id: 'management-separator' },
+    { id: 'management', label: <span ref={managementFocusRef} style={{ display: 'flex', alignItems: 'center' }}>{tr('群管理')}<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>,
+      icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename && !canManage },
+  )
+  const managementEntries: MenuEntry[] = [
+    { id: 'back', label: <span ref={managementFocusRef}>{tr('返回群聊设置')}</span>, icon: <CaretRight size={16} style={{ transform: 'rotate(180deg)' }} aria-hidden /> },
+    { type: 'separator', id: 'management-separator' },
+    { id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename },
+    { id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage },
+  ]
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
@@ -1349,9 +1361,11 @@ function GroupSettingsMenu(props: {
     conversationAppearance
     align="end"
     portal
-    items={entries}
+    items={managementOpen ? managementEntries : entries}
     onClose={close}
     onSelect={id => {
+      if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
+      if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'message-dnd') {
@@ -1360,8 +1374,14 @@ function GroupSettingsMenu(props: {
         return
       }
       if (id === 'ai-polish') { close(); props.onAiPolishOpen(); return }
-      if (id === 'rename') { close(); props.onRename(actionTarget); return }
-      if (id === 'restrictions') { close(); props.onRestrictionsOpen(); return }
+      if (id === 'rename') {
+        if (effective.canRename) { close(); props.onRename(actionTarget) }
+        return
+      }
+      if (id === 'restrictions') {
+        if (canManage) { close(); props.onRestrictionsOpen() }
+        return
+      }
       if (id === 'leave') { close(); void leaveOrDissolve() }
     }}
     anchor={<ArkmeConversationHeaderIconButton
@@ -1690,6 +1710,7 @@ export function ArkmeGroupChatControls(props: {
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label={tr("查看群成员")} onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
       <GroupSettingsMenu
+        key={JSON.stringify([props.accountScope, props.source.sourceRef])}
         source={props.source}
         open={settingsOpen}
         buttonRef={settingsButtonRef}
