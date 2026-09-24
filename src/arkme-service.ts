@@ -415,7 +415,7 @@ export class ArkmeService {
       source, text, text, humans, bots, session, undefined, textFormat,
     ))
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
-    this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
+    this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.messageActions = new MessageActionService(
@@ -1941,13 +1941,37 @@ export class ArkmeService {
     return await this.auth.testLogin(userId)
   }
 
+  async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {
+    return await this.auth.sendEmailBindCode(expectedUserId, email)
+  }
+
+  async bindEmail(expectedUserId: number, email: string, code: string): Promise<{ bound: true }> {
+    return await this.auth.bindEmail(expectedUserId, email, code)
+  }
+
   async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
     return await this.auth.sendPhoneCode(phone, captcha)
+  }
+
+  async checkPhoneUnbindEligibility(expectedUserId: number): Promise<{ allowed: boolean }> {
+    return await this.auth.checkPhoneUnbindEligibility(expectedUserId)
+  }
+
+  async sendPhoneUnbindCode(captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
+    return await this.auth.sendPhoneUnbindCode(captcha)
+  }
+
+  async unbindPhone(code: string): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.unbindPhone(code)
   }
 
   async verifyPhoneCode(phone: string, code: string): Promise<ArkmeAuthSnapshot> {
     return await this.auth.verifyPhoneCode(phone, code)
   }
+
+  async previewCancellation(expectedUserId: number) { return await this.auth.previewCancellation(expectedUserId) }
+  async submitCancellation(expectedUserId: number, expectedMode: string) { return await this.auth.submitCancellation(expectedUserId, expectedMode) }
+  async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.auth.logout()

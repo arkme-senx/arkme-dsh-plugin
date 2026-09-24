@@ -161,3 +161,33 @@ it('registers the configured default workspace before creating an attachment con
   expect(createSession).toHaveBeenCalledWith({ sessionId: expect.any(String), workspaceId: 'default-id' })
   stop()
 })
+
+it.each(['stale', 'ready', 'missing'] as const)('confirms composer workspace membership (%s)', async state => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
+  let stop!: () => void
+  vi.stubGlobal('window', { frameElement: { parentElement: { isConnected: true, getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => ({ content: encodeURIComponent('/default') }) }))
+  let id: string | undefined
+  let items = [{ workspaceId: 'default', sessionIds: [] as string[] }]
+  const createWorkspace = vi.fn(async () => {
+    items = [{ workspaceId: 'default', sessionIds: id && state !== 'missing' ? [id] : [] }]
+    return items[0]!
+  })
+  apply({ effect: (effect: () => () => void) => { stop = effect() },
+    get: () => ({ create: createWorkspace, list: { getSnapshot: () => ({ items }) } }),
+    sessions: {
+      create: async (options: { sessionId: string }) => {
+        id = options.sessionId
+        if (state === 'ready') items = [{ workspaceId: 'default', sessionIds: [id] }]
+        return id
+      },
+      scope: () => { throw new Error('workspace confirmed before draft access') }, binding: () => undefined,
+      list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) },
+    },
+  } as unknown as ClientContext)
+  const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
+  await expect(bridge.prepare({ operationId: state, files: [], signal: new AbortController().signal }))
+    .rejects.toThrow(state === 'missing' ? '默认工作区尚未同步' : 'workspace confirmed before draft access')
+  expect(createWorkspace).toHaveBeenCalledTimes(state === 'ready' ? 1 : 2)
+  stop()
+})

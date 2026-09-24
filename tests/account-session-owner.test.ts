@@ -27,6 +27,57 @@ function fixture(initial?: ArkmeSessionCredentials, commitStatus: 'ready' | 'rel
 }
 
 describe('Arkme account session owner', () => {
+  test('persists a handoff before removing the same active credentials', async () => {
+    const initial = credentials(42)
+    const { owner, store } = fixture(initial)
+    const prepare = vi.fn(async () => { expect(await store.read()).toEqual(initial) })
+    await expect(owner.deleteIfCurrent(initial, prepare)).resolves.toBe(true)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(await store.read()).toBeUndefined()
+  })
+
+  test('does not remove active credentials when the handoff cannot be persisted', async () => {
+    const initial = credentials(42)
+    const { owner, store } = fixture(initial)
+    await expect(owner.deleteIfCurrent(initial, async () => { throw new Error('storage unavailable') })).rejects.toThrow('storage unavailable')
+    expect(await store.read()).toEqual(initial)
+    expect(store.delete).not.toHaveBeenCalled()
+  })
+
+  test('does not run an old handoff after another login wins the mutation queue', async () => {
+    const initial = credentials(42)
+    const replacement = credentials(43)
+    const { owner, store } = fixture(initial)
+    await owner.start()
+    const prepare = vi.fn(async () => {})
+    const switched = owner.write(replacement)
+    const removed = owner.deleteIfCurrent(initial, prepare)
+    await switched
+    await expect(removed).resolves.toBe(false)
+    expect(prepare).not.toHaveBeenCalled()
+    expect(await store.read()).toEqual(replacement)
+  })
+
+  test('hands off the current access token after a token refresh', async () => {
+    const initial = credentials(42)
+    const { owner } = fixture(initial)
+    await owner.updateAccessToken(initial, 'refreshed-access')
+    const handoff = vi.fn(async (_current: ArkmeSessionCredentials) => {})
+    await expect(owner.deleteIfCurrent(initial, handoff)).resolves.toBe(true)
+    expect(handoff).toHaveBeenCalledWith({ ...initial, accessToken: 'refreshed-access' })
+  })
+
+  test('rejects a handoff after the same account signs in again', async () => {
+    const initial = credentials(42)
+    const { owner, store } = fixture(initial)
+    const replacement = { ...initial, refreshToken: 'new-login' }
+    await owner.write(replacement)
+    const handoff = vi.fn(async () => {})
+    await expect(owner.deleteIfCurrent(initial, handoff)).resolves.toBe(false)
+    expect(handoff).not.toHaveBeenCalled()
+    expect(await store.read()).toEqual(replacement)
+  })
+
   test('retries startup after temporary credential failure without changing the login', async () => {
     const { owner, store, bridge } = fixture(credentials(42))
     vi.mocked(store.read).mockRejectedValueOnce(new Error('keychain temporarily locked'))

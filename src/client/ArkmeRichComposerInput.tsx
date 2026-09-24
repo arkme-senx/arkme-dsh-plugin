@@ -324,6 +324,15 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const nextSelection = pendingSelectionRef.current
         ?? (active ? editorSelection(root, selectionRef.current) : selectionRef.current)
       const activeHashTagStart = arkmeHashTagTrigger(value, nextSelection.start, nextSelection.end)?.startIndex
+      // Native plain-text edits already have the right DOM and selection. Replacing
+      // those nodes on each key also destroys the browser's editing/undo context.
+      if (mentions.length === 0 && emojis.length === 0 && !/[#＃]/u.test(value) && activeHashTagStart === undefined
+        && root.textContent === value && Array.from(root.childNodes).every(node => node.nodeType === Node.TEXT_NODE)) {
+        setEditorHasContent(value !== '')
+        pendingSelectionRef.current = undefined
+        selectionRef.current = nextSelection
+        return
+      }
       renderEditorContents(root, value, mentions, emojis, activeHashTagStart, textFormat)
       setEditorHasContent(value !== '')
       pendingSelectionRef.current = undefined

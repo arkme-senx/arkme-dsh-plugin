@@ -1,3 +1,4 @@
+import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture.js'
 import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
@@ -1223,6 +1224,33 @@ describe('conversation send directory projection', () => {
     owner.merge('self', [retained('three')], 3)
     expect(owner.merge('self', [], 4).map(item => item.itemUid)).toEqual(['two'])
     expect(owner.merge('self', [], 60_001)).toEqual([])
+  })
+
+  it.each([40, 400, 1000])('isolates input render at %i loaded chat rows', async rowCount => {
+    activeSource = {...target, latestSequence: rowCount}; arkmeUi.selectSource(activeSource)
+    timeline = Array.from({length: rowCount}, (_, index) => ({itemUid:`audit-${index}`, senderName:'同事', isMe:false, sendAtMillis:index+1, textContent:'用于隔离性能检查的普通消息', status:1, sequence:index+1}))
+    let commits = 0; let durations:number[] = []
+    await act(async () => { renderer = create(<Profiler id="audit" onRender={(_id,_phase,duration)=>{commits++;durations.push(duration)}}><ArkmeSurface productChrome={false} productNavigation={false}/></Profiler>) })
+    const row = renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'audit-0' })[0]!
+    const originalChildren = row.props.children
+    commits = 0; durations=[]; mocks.callArkme.mockClear()
+    for (let i=0;i<20;i++) await act(async () => {renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('测试输入'.repeat(i+1))})
+    const mounted=renderer!.root.findAll(node=>typeof node.type==='string' && node.props['data-arkme-message-item-uid']!==undefined).length
+    process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
+    expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
+  })
+  it('shows the submitted bubble before context capture finishes and preserves the next draft', async () => {
+    const capture = deferred<Awaited<ReturnType<ArkmeRecordInputCaptureOwner['finishForSubmit']>>>()
+    vi.spyOn(ArkmeRecordInputCaptureOwner.prototype, 'finishForSubmit').mockReturnValue(capture.promise)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('先显示的消息') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(false)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条') })
+    await act(async () => { capture.resolve({schemaVersion:1,captureId:'test',completedAtMillis:48,recordDurationMillis:1,captureContext:{clientName:'test'},backgroundSound:{enabled:false,state:'disabled',segments:[],amplitudes:[]}}) })
+    expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(42,target)).text).toBe('下一条')
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(true)
   })
 
   beforeEach(() => {

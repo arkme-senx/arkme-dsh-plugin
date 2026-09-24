@@ -1,3 +1,5 @@
+import type { ProfileService } from './profile-service.js'
+import { parseRecordingSearchItem } from '../recording-search-result.js'
 import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -38,6 +40,7 @@ export class SearchService {
     private readonly media: MediaService,
     private readonly source?: SourceService,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
+    private readonly profile?: ProfileService,
   ) {}
 
   async searchRecords(options: {
@@ -432,25 +435,36 @@ export class SearchService {
       '/api/v1/search/recordings/query',
       {
         keyword: query,
+        result_mode: 'segments',
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
       options.signal,
     )
+    const items = listValue(data.items).map(parseRecordingSearchItem)
+    const segments = items.flatMap(item => [item.previous, item.match, item.next].filter(value => value !== undefined))
+    const userIds = [...new Set(segments.flatMap(item => item.speaker?.userId === undefined ? [] : [item.speaker.userId]))]
+    if (this.profile !== undefined && userIds.length > 0) {
+      try {
+        const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, options.signal)
+        const avatars = new Map<number, string>()
+        await Promise.all([...profiles].map(async ([userId, profile]) => {
+          if (profile.avatarUrl !== undefined) avatars.set(userId, await this.profile!.sealProfileImageRef(session.userId, userId))
+        }))
+        for (const segment of segments) {
+          const speaker = segment.speaker
+          if (speaker?.userId === undefined) continue
+          const profile = profiles.get(speaker.userId)
+          const avatarRef = avatars.get(speaker.userId)
+          if (avatarRef !== undefined) speaker.avatarRef = avatarRef
+          if (profile && (speaker.userId === session.userId || speaker.label === '未知说话人')) speaker.label = profile.displayName.trim() || profile.nickname.trim() || speaker.label
+        }
+      } catch (error) { if (options.signal?.aborted) throw error }
+    }
     const guard = objectValue(data.query_guard)
     return {
-      items: listValue(data.items).map(raw => {
-        const item = objectValue(raw)
-        return {
-          sessionId: stringValue(item.session_id).trim(),
-          ...(stringValue(item.record_uid).trim() === '' ? {} : { recordUid: stringValue(item.record_uid).trim() }),
-          dateStamp: numberValue(item.date_stamp),
-          startAtMillis: numberValue(item.start_at),
-          snippet: clippedText(item.snippet, 1_000),
-          score: numberValue(item.score),
-        }
-      }).filter(item => item.sessionId !== '' && item.snippet !== ''),
+      items,
       hasMore: booleanValue(data.has_more),
       ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
       queryGuard: {

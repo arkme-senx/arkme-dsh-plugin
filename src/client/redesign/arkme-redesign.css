@@ -585,11 +585,21 @@ button.arkme-account-info-row { cursor: pointer; }
 [data-arkme-settings-view="account"] .arkme-account-info-row { grid-template-columns: 26px minmax(0, 1fr) 48px 18px; min-height: 54px; border-bottom: 0; }
 [data-arkme-settings-view="account"] .arkme-account-info-copy { grid-template-columns: minmax(70px, 1fr) minmax(0, auto); align-items: center; gap: 16px; }
 [data-arkme-settings-view="account"] .arkme-account-info-copy > small { text-align: right; }
-[data-arkme-settings-view="account"] .arkme-account-info-action { text-align: center; }
+[data-arkme-settings-view="account"] .arkme-account-info-action { text-align: right; }
+.arkme-account-info-value { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.arkme-account-info-value > small { overflow: hidden; color: #858992; font-size: 12px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-account-info-edit { grid-column: 3 / 5; display: grid; grid-template-columns: subgrid; align-items: center; gap: 10px; min-height: 36px; padding: 0; border: 0; background: transparent; color: #8d929b; font: inherit; cursor: pointer; }
+.arkme-account-info-edit:disabled { opacity: .6; cursor: default; }
+.arkme-account-info-edit:focus-visible, .arkme-account-profile-qr:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 4px; }
+[data-arkme-settings-view="account"] .arkme-account-info-row.is-status-only .arkme-account-info-copy { grid-column: 2 / 4; }
+[data-arkme-settings-view="account"] .arkme-account-info-row.is-status-only .arkme-account-info-action { display: none; }
+body[data-ds-dark-theme] .arkme-account-info-value > small,
+body[data-ds-dark-theme] .arkme-account-info-edit { color: var(--dsw-alias-label-secondary, #969ba5); }
 [data-arkme-settings-view="account"] .arkme-redesign-settings-group:has(.arkme-redesign-balance-row) { margin-top: 16px; }
 [data-arkme-settings-view="account"] .arkme-redesign-balance-main > small { color: inherit; font-size: 28px; line-height: 38px; font-weight: 600; }
-.arkme-account-logout { display: flex; justify-content: center; padding-top: 32px; }
+.arkme-account-logout { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 32px; }
 .arkme-account-logout > button { min-width: 128px; min-height: 40px; padding: 8px 24px; border: 1px solid #e1e2e5; border-radius: 8px; background: transparent; color: #dc4d43; font: inherit; cursor: pointer; }
+.arkme-account-logout > .arkme-account-logout-confirm { background-color: #dc4d43; border-color: #dc4d43; color: #fff; font-weight: 700; }
 .arkme-account-logout > button:disabled { cursor: default; opacity: .6; }
 [data-arkme-settings-view="general"] .arkme-redesign-settings-group:last-child { border-bottom: 0; }
 .arkme-about-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
@@ -733,6 +743,20 @@ button.arkme-account-info-row { cursor: pointer; }
   color: #fff;
 }
 .arkme-account-dialog-actions button:disabled { opacity: .55; cursor: default; }
+.arkme-account-dialog-actions button.arkme-phone-mode-action,
+body[data-ds-dark-theme] .arkme-account-dialog-actions button.arkme-phone-mode-action {
+  min-width: 0;
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #858992);
+  font-size: 12px;
+}
+.arkme-account-dialog-actions button.arkme-phone-mode-action:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary, #343944);
+  text-decoration: underline;
+}
 .arkme-account-dialog-status { margin: 0; color: #13a85b; font-size: 12px; line-height: 18px; }
 .arkme-account-dialog-status.is-error { color: #b54841; }
 .arkme-redesign-version-row { grid-template-columns: minmax(0, 1fr) minmax(150px, auto) auto 18px; }
@@ -1927,3 +1951,20 @@ body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #3
   outline: 2px solid var(--dsw-alias-label-secondary, #68707c);
   outline-offset: 2px;
 }
+
+/* Cancellation reuses account form geometry in both themes. */
+.arkme-cancellation-form { gap: 18px; font-size: 14px; line-height: 1.6; }
+.arkme-cancellation-description { margin: 0; overflow-wrap: anywhere; }
+.arkme-cancellation-form .arkme-account-rule { font-size: 13px; line-height: 1.6; }
+.arkme-cancellation-form label { font-size: 13px; }
+.arkme-cancellation-form input { font-size: 14px; }
+.arkme-cancellation-form .arkme-account-dialog-actions { flex-wrap: wrap; }
+.arkme-cancellation-dialog .arkme-account-dialog-actions .arkme-cancellation-confirm,
+body[data-ds-dark-theme] .arkme-cancellation-dialog .arkme-account-dialog-actions .arkme-cancellation-confirm {
+  border-color: #b54841;
+  background: #b54841;
+  color: #fff;
+}
+.arkme-cancellation-dialog .arkme-cancellation-confirm:hover:not(:disabled) { filter: brightness(.92); }
+.arkme-cancellation-dialog button:focus-visible { outline: 2px solid #9aa7c2; outline-offset: 2px; }
+.arkme-cancellation-dialog > header button:disabled { opacity: .55; cursor: default; }

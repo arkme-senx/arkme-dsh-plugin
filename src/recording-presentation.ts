@@ -18,6 +18,7 @@ export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTrans
   event?: string
   /** Owner ASR text kept separate from the cleaned transcript presentation. */
   generationText?: string
+  rawTranscriptText?: string
 }
 
 function recordingGenerationDateLabel(value: number): string {
@@ -408,6 +409,7 @@ export function projectRecordingTranscripts(
         isSelf,
         isBackground,
         text,
+        rawTranscriptText: stringValue(row.t ?? row.text),
         ...(generationText === text ? {} : { generationText }),
         ...(stringValue(row.p).trim() === '' ? {} : { event: stringValue(row.p).trim() }),
         sourceIndex,

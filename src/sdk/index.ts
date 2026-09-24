@@ -822,7 +822,18 @@ export class ArkmeSdk {
     return await this.call<{ sent: true }>('auth.phone.send', { phone: normalized, captcha }, signal)
   }
 
-  /** Verify a phone code and refresh the account auth/profile state. */
+  async checkPhoneUnbindEligibility(expectedUserId: number, signal?: AbortSignal): Promise<{ allowed: boolean }> {
+    return await this.call('auth.phone.unbind.check', { expectedUserId }, signal)
+  }
+
+  async sendPhoneUnbindCode(captcha: ArkmeCaptchaResult, signal?: AbortSignal): Promise<{ sent: true }> {
+    return await this.call('auth.phone.unbind.send', { captcha }, signal)
+  }
+
+  async unbindPhone(code: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    return await this.call('auth.phone.unbind', { code: code.trim() }, signal)
+  }
+
   async verifyPhoneCode(phone: string, code: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     const normalized = phone.replace(/[\s-]/g, '')
     const normalizedCode = code.trim()

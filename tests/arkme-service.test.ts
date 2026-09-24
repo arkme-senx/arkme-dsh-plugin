@@ -4823,7 +4823,7 @@ describe('ArkmeService', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push({ url, body })
       if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
-        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, start_at: 200, snippet: '北京复盘', score: 0.8 }],
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, score: 0.8, match: { session_id: 'session-1', child_id: 'child-1', item_index: 0, transcript_source: 'system', transcript_version: 'v1', start_at: 200, end_at: 300, text: '北京复盘' } }],
         has_more: false, query_guard: { state: 'complete' },
       } })
       return json({ code: 0, data: {
@@ -4866,7 +4866,7 @@ describe('ArkmeService', () => {
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
       { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
       { scene_kind: 3, limit: 10, search_scope: 'global' },
-      { keyword: '北京', limit: 9 },
+      { keyword: '北京', result_mode: 'segments', limit: 9 },
     ])
   })
 

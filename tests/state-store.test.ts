@@ -8,6 +8,17 @@ import type { ArkmeRecordReeditSubmission } from '../src/record-reedit-contract.
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  it('persists cancellation completion across host relaunch without storing credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-cancellation-'))
+    const store = new ArkmeStateStore(root)
+    const completion = { userId: 7, sessionHash: 'a'.repeat(64), result: { mode: 'immediate' as const, status: 'done' as const, cancel_at: 0, has_phone: false } }
+    await store.writeCancellationCompletion(completion)
+    const restarted = new ArkmeStateStore(root)
+    await expect(restarted.readCancellationCompletion()).resolves.toEqual(completion)
+    await restarted.writeCancellationCompletion(undefined)
+    await expect(new ArkmeStateStore(root).readCancellationCompletion()).resolves.toBeUndefined()
+  })
+
   it.each([undefined, 'b'.repeat(64)])('preserves a checkpoint with a missing or mismatched baseline fingerprint: %s', async fingerprint => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-reedit-checkpoint-baseline-'))
     const store = new ArkmeStateStore(root)

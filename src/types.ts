@@ -6,7 +6,7 @@ export type ArkmeEnvironment = 'test' | 'prod'
 export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
 export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
-export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
+export type ArkmeAuthStatus = 'logged-out' | 'cancellation-pending' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
 export interface ArkmeAuthSnapshot {
   status: ArkmeAuthStatus
@@ -15,6 +15,16 @@ export interface ArkmeAuthSnapshot {
   attemptId?: string
   qrContent?: string
   expiresAtMillis?: number
+  restDaysCancel?: number
+  cancellationNotice?: 'done' | 'waiting'
+}
+
+export interface ArkmeCancellationSnapshot {
+  mode: 'immediate' | 'waiting'
+  status: 'eligible' | 'waiting' | 'done'
+  cancel_at: number
+  has_phone: boolean
+  changed?: boolean
 }
 
 export interface ArkmeCaptchaResult {
@@ -1119,7 +1129,32 @@ export interface ArkmeRecordSearchResult {
   itemSize?: number
 }
 
+export interface ArkmeRecordingSearchIdentity {
+  sessionId: string
+  childId: string
+  itemIndex: number
+  transcriptSource: 'system'
+  transcriptVersion: string
+}
+
+export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentity {
+  startAtMillis: number
+  endAtMillis: number
+  text: string
+  speaker?: { speakerId: string; userId?: number; label: string; avatarRef?: string; colorIndex?: number }
+}
+
+export interface ArkmeRecordingTarget {
+  dateStamp: number
+  startAtMillis: number
+  segment?: ArkmeRecordingSearchIdentity
+}
+
 export interface ArkmeRecordingSearchItem {
+  match: ArkmeRecordingSearchSegment
+  previous?: ArkmeRecordingSearchSegment
+  next?: ArkmeRecordingSearchSegment
+  highlightRanges: Array<{ start: number; length: number }>
   sessionId: string
   recordUid?: string
   dateStamp: number
@@ -2904,6 +2939,9 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** Read-only precise search locator; never an authorization reference. */
+  searchIdentityHash?: string
+  searchVersion?: string
   itemId: string
   itemRef: string
   transcriptSource: ArkmeRecordingTranscriptSource
@@ -3595,8 +3633,16 @@ export type ArkmePluginOperation =
   | 'auth.app.poll'
   | 'auth.app.cancel'
   | 'auth.test.login'
+  | 'auth.email.send'
+  | 'auth.email.bind'
   | 'auth.phone.send'
   | 'auth.phone.verify'
+  | 'auth.phone.unbind.check'
+  | 'auth.phone.unbind.send'
+  | 'auth.phone.unbind'
+  | 'auth.cancellation.preview'
+  | 'auth.cancellation.submit'
+  | 'auth.cancellation.login.resolve'
   | 'auth.logout'
   | 'user-ban.status'
   | 'chat.direct-message-admission'

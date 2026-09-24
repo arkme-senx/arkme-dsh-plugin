@@ -29,6 +29,8 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
+  writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
   readonly commonGroups?: import('../common-groups.js').CommonGroupStore
   readRecordingSpeakerCache?(scope: string, userId: number): Promise<import('../types.js').ArkmeRecordingSpeakerCandidate[] | undefined>
   writeRecordingSpeakerCache?(scope: string, userId: number, candidates: import('../types.js').ArkmeRecordingSpeakerCandidate[]): Promise<void>
@@ -302,6 +304,14 @@ export class ServiceRuntime {
   }
   async writeSession(session: ArkmeSessionCredentials): Promise<void> { await this.accountSessions.write(session) }
   async deleteSession(): Promise<void> { await this.accountSessions.delete() }
+  async deleteSessionIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.accountSessions.deleteIfCurrent(expected)
+  }
+  async moveSessionToPendingBinding(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.accountSessions.deleteIfCurrent(expected, async current => {
+      await this.writePendingBindingSession(current)
+    })
+  }
 
   requestStats(): Record<string, ArkmeRequestStats> {
     return this.requestCoordinator.snapshotStats()
@@ -432,8 +442,8 @@ export class ServiceRuntime {
   }
 
   async writePendingBindingSession(session: ArkmeSessionCredentials): Promise<void> {
-    this.pendingBindingSession = session
     await this.pendingSessionStore?.write(session)
+    this.pendingBindingSession = session
   }
 
   async clearPendingBindingSession(): Promise<void> {
