@@ -696,7 +696,9 @@ describe('record re-edit attachment UI', () => {
       await flush()
     })
     const frames = mocks.renderedItems.filter(value => value.itemUid === item.itemUid)
-    expect(frames.length).toBeGreaterThan(0)
+    // An unchanged row may be memoized; the mounted view must keep both complete images.
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
+    expect(row.findByProps({ alt: 'b.png' }).props.src).toContain('complete-b')
     expect(frames.every(value => value.mediaUnavailable === false && value.contentBlocks?.length === 2)).toBe(true)
   })
 
