@@ -163,7 +163,7 @@ export function dayActivityPeriod(value: number, timezone: string): string {
   return hour < 6 ? '凌晨' : hour < 12 ? '上午' : hour < 18 ? '下午' : hour < 24 ? '晚上' : '时间未知'
 }
 
-export function dayActivityOverview(items: readonly DayActivityEntry[], mode: DayActivityMode): string {
+export function dayActivityOverview(items: readonly DayActivityEntry[], mode: DayActivityMode, reactionCount = 0): string {
   const available = items.filter(item => item.access === 'available')
   const parts = dayActivityFilters.filter(filter => filter.kind !== 'all').flatMap(filter => {
     const matches = available.filter(item => dayActivityMatchesFilter(filter.kind, item.kind))
@@ -173,6 +173,7 @@ export function dayActivityOverview(items: readonly DayActivityEntry[], mode: Da
       : filter.kind === 'call' ? `${count} 次通话` : filter.kind === 'recording' ? `${count} 个录音时段` : `${count} 条个人记录`
     return [label]
   })
+  if (reactionCount > 0) parts.push(`${reactionCount} 次表态操作`)
   return `已加载：${parts.join(' · ') || '暂无可显示的活动'}`
 }
 

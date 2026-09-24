@@ -327,7 +327,7 @@ export class ProfileService {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new ArkmePluginError('user-card-target-invalid', '用户信息参数无效', false)
     }
-    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal)).get(userId)
+    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal, 0)).get(userId)
     const displayName = profile?.displayName ?? '群成员'
     return {
       displayName,
@@ -501,6 +501,7 @@ export class ProfileService {
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    maxAgeMillis = PUBLIC_PROFILE_CACHE_TTL_MS,
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
       .sort((left, right) => left - right)
@@ -512,7 +513,8 @@ export class ProfileService {
     }
     for (const userId of normalized) {
       const cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
-      if (cached === undefined || cached.expiresAtMillis <= now) {
+      if (cached === undefined || cached.expiresAtMillis <= now
+        || cached.expiresAtMillis - (cached.value === null ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS : PUBLIC_PROFILE_CACHE_TTL_MS) + maxAgeMillis <= now) {
         missing.push(userId)
         continue
       }

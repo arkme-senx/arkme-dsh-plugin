@@ -1,3 +1,5 @@
+import { reactionNotifications } from './reaction-notifications.js'
+import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -682,6 +684,11 @@ export function arkmeRootChatUnreadPlacement(source: {
 }
 
 export function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
+  const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  if (reactionNotifications.forSource(scope, source.sourceKey).length) return <ArkmeReactionNotificationPreview source={source} />
+
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>
     {mentionPrefix !== '' && <span style={styles.mentionPreviewPrefix}>{mentionPrefix}</span>}
@@ -935,7 +942,7 @@ export function ArkmeNavigation({
   const [directoryAccountKey, setDirectoryAccountKey] = useState<string>()
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
-  const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
+  const rootRowElementsRef = useRef(new Map<string, HTMLElement>())
   const revealedSourceIdentityRef = useRef<string>()
   const unreadJumpCursorRef = useRef<string>()
   const unreadJumpHandledRef = useRef(0)
@@ -949,6 +956,8 @@ export function ArkmeNavigation({
   const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const createdHighlightFramesRef = useRef<number[]>([])
   const auth = authState.auth
+  const reactionAccount = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  useEffect(() => reactionAccount ? reactionNotifications.acquire(reactionAccount) : undefined, [reactionAccount])
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>('root')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     [],
@@ -2212,8 +2221,8 @@ export function ArkmeNavigation({
           const mutationPending = directoryMutation?.kind === 'source'
             && directoryMutation.key === arkmeSourceIdentityKey(source)
           const interactionsDisabled = (mutationPending && directoryMutation.action === 'dismiss') || removalPhase !== undefined
-          return <button
-            key={arkmeSourceIdentityKey(source)} data-arkme-directory-row="source" type="button" role="treeitem" aria-selected={selected}
+          return <div
+            key={arkmeSourceIdentityKey(source)} data-arkme-directory-row="source" tabIndex={interactionsDisabled ? -1 : 0} role="treeitem" aria-selected={selected}
             aria-label={unreadPlacement === 'avatar'
               ? tr("{v0}，{v1} 条未读", { v0: source.displayName, v1: String(badgeUnreadCount) })
               : unreadPlacement === 'dot' ? tr("{v0}，有未读消息，已免打扰", { v0: source.displayName }) : source.displayName}
@@ -2223,9 +2232,10 @@ export function ArkmeNavigation({
             }}
             data-arkme-removal-phase={removalPhase}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}), ...(interactionsDisabled ? styles.chatRowRemoving : {}), ...conversationRemovalRowStyle(removalPhase) }}
-            disabled={interactionsDisabled}
+            aria-disabled={interactionsDisabled}
             aria-busy={mutationPending || undefined}
-            onClick={() => { selectSource(source) }}
+            onClick={() => { if (!interactionsDisabled) selectSource(source) }}
+            onKeyDown={event => { if (event.target === event.currentTarget && !interactionsDisabled && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selectSource(source) } }}
             onDoubleClick={() => { if (source.kind === 'private_chat' || source.kind === 'group_chat') openIndependentConversation(source) }}
             title={tr('双击在独立窗口打开')}
             onContextMenu={event => {
@@ -2261,7 +2271,7 @@ export function ArkmeNavigation({
               </span>
             </span>
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
-          </button>
+          </div>
         })}</ArkmeDirectoryWindow>
         {privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
