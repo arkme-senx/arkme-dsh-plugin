@@ -411,7 +411,7 @@ describe('ArkmeStateStore', () => {
       jobId: 'job-1', userId: 10001, revision: 1, phase: 'prepared',
       fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
       durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-      belongUserId: 10001, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+      belongUserId: 10001, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
       createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
       ...overrides,
     }
@@ -538,6 +538,18 @@ describe('ArkmeStateStore', () => {
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('restores a historical recording job without classification as kind zero for server-side all-day compatibility', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-kind-legacy-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+    const path = join(root, 'state.json')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    delete raw.recordingImportJobsByUser['10001']['job-1'].recordingKind
+    await writeFile(path, JSON.stringify(raw))
+
+    await expect(new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({ recordingKind: 0 })
   })
 
   it('removes only the exact account-scoped recording import job', async () => {

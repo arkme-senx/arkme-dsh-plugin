@@ -608,6 +608,9 @@ describe('RecordingService', () => {
       sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }, 42)
     expect(accepted).toMatchObject({ phase: 'prepared', fileName: 'voice.wav', durationMillis: 1_000 })
+    expect(await stateStore.listRecordingImportJobs(42)).toEqual([
+      expect.objectContaining({ recordingKind: 0 }),
+    ])
     expect(JSON.stringify(accepted)).not.toContain(path)
     expect(accepted.importRef).toMatch(/^arkme-recording-import-v1\./)
 

@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'updateProfile', 'invitationRewards',
-  'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
+  'accountRecordingUsage', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',

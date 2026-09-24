@@ -35,7 +35,7 @@ async function fixture() {
   const job: RecordingImportJob = {
     jobId: 'one', userId: 42, revision: 1, phase: 'prepared', fileName: 'voice.wav', mimeType: 'audio/wav',
     fileSize: 100, durationMillis: 1000, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000,
-    belongUserId: 42, sourceHandle: '/private/one.upload', uploadedBytes: 0, createdAtMillis: 1, updatedAtMillis: 1,
+    belongUserId: 42, recordingKind: 3, sourceHandle: '/private/one.upload', uploadedBytes: 0, createdAtMillis: 1, updatedAtMillis: 1,
   }
   return { directory, store, job }
 }

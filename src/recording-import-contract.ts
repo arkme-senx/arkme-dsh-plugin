@@ -141,6 +141,8 @@ export interface RecordingImportOwnerGateway {
 }
 
 export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
+/** Zero preserves compatibility for restored jobs and callers which predate source classification. */
+export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
   jobId: string
@@ -154,6 +156,7 @@ export interface RecordingImportJob {
   sha256: string
   startAtMillis: number
   belongUserId: number
+  recordingKind: RecordingImportRecordingKind
   sourceHandle: string
   uploadedBytes: number
   createdAtMillis: number

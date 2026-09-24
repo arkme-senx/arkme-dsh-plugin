@@ -72,6 +72,8 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (requiredStrings.some(key => typeof source[key] !== 'string')) return undefined
   if (requiredNumbers.some(key => typeof source[key] !== 'number' || !Number.isFinite(source[key]))) return undefined
   if (typeof source.phase !== 'string' || !RECORDING_IMPORT_PHASES.has(source.phase as RecordingImportPhase)) return undefined
+  const recordingKind = source.recordingKind === undefined ? 0 : source.recordingKind
+  if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
     userId: source.userId as number,
@@ -84,6 +86,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     sha256: source.sha256 as string,
     startAtMillis: source.startAtMillis as number,
     belongUserId: source.belongUserId as number,
+    recordingKind,
     sourceHandle: source.sourceHandle as string,
     uploadedBytes: source.uploadedBytes as number,
     createdAtMillis: source.createdAtMillis as number,

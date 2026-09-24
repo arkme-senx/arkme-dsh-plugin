@@ -1165,6 +1165,12 @@ export async function dispatchArkmeHostOperation(
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.storage': return await service.accountStorageUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.voice': return await service.accountVoiceUsage(stringParam(params, 'expectedAccountScope'))
+    case 'account.usage.recording': {
+      const month = stringParam(params, 'month').trim()
+      return await service.accountRecordingUsage(
+        stringParam(params, 'expectedAccountScope'), month === '' ? undefined : month, requestSignal,
+      )
+    }
     case 'account.usage.token.summary': return await service.accountTokenUsageSummary(stringParam(params, 'expectedAccountScope'), {
       monthKey: stringParam(params, 'monthKey'), timezone: stringParam(params, 'timezone'),
     }, requestSignal)

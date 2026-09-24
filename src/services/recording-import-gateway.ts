@@ -518,6 +518,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       '/api/v1/audio/new-session',
       {
         source: 2,
+        recording_kind: job.recordingKind,
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,

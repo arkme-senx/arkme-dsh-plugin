@@ -3617,6 +3617,7 @@ export type ArkmePluginOperation =
   | 'account.usage.tokens'
   | 'account.usage.storage'
   | 'account.usage.voice'
+  | 'account.usage.recording'
   | 'account.usage.token.summary'
   | 'account.usage.token.operations'
   | 'account.usage.token.calls'

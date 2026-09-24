@@ -12,7 +12,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1', userId: 42, revision: 1, phase: 'prepared',
     fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
     durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    belongUserId: 42, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+    belongUserId: 42, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
     ...overrides,
   }

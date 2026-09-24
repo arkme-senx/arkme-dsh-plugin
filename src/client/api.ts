@@ -15,6 +15,8 @@ export interface RecordingImportUploadProgress {
 export interface RecordingImportUploadOptions {
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
+  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  recordingKind?: 1 | 3
 }
 
 function recordingImportMime(file: File): string {
@@ -55,6 +57,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
+    request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
     request.upload.onprogress = event => {
       options.onProgress?.({
         uploadedBytes: Math.max(0, Math.min(file.size, Math.trunc(event.loaded))),

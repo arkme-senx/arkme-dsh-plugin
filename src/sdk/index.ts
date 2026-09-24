@@ -375,7 +375,7 @@ export type {
 
 const DEFAULT_ROUTE = '/arkme-self/api'
 export type { ArkmeMembership, ArkmeMembershipCatalog, ArkmeMembershipProduct } from '../types.js'
-export type { ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage, ArkmeStorageBreakdown, ArkmeStorageCategory } from '../account-usage.js'
+export type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage, ArkmeRecordingKind, ArkmeRecordingUsageBreakdown, ArkmeStorageBreakdown, ArkmeStorageCategory } from '../account-usage.js'
 export type { ArkmeUsageTokens, ArkmeTokenUsageSummary, ArkmeTokenUsageOperation, ArkmeTokenUsageCall, ArkmeTokenUsagePage, ArkmeTokenUsageQuery } from '../account-usage-details.js'
 export type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
 

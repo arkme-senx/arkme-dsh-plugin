@@ -8,7 +8,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1', userId: 42, revision: 4, phase: 'uploading',
     fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
     durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    belongUserId: 42, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+    belongUserId: 42, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
     ...overrides,
   }
@@ -768,6 +768,24 @@ describe('AudioRecordingImportGateway', () => {
     )
     expect(progress).toHaveBeenLastCalledWith(1024, { uploadId: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
+  })
+
+  it.each([0, 1, 3] as const)('keeps recording kind %s on the new-session owner request', async recordingKind => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-1' }
+        return {}
+      },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ recordingKind }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ recording_kind: recordingKind })
   })
 
   it('rejects names returned by the owner using the conservative local conflict key', async () => {

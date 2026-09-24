@@ -612,6 +612,7 @@ export class RecordingService {
       sha256: string
       startAtMillis: number
       belongUserId: number
+      recordingKind?: 0 | 1 | 3
     },
     expectedUserId: number,
     signal?: AbortSignal,
@@ -638,9 +639,11 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
     }
+    const recordingKind = metadata.recordingKind ?? 0
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
-    const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity))
+    const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity)
+      && job.recordingKind === recordingKind)
     if (existing !== undefined) {
       const importRef = await this.recordingImportRef(existing)
       signal?.throwIfAborted()
@@ -685,6 +688,7 @@ export class RecordingService {
       sha256: metadata.sha256,
       startAtMillis,
       belongUserId,
+      recordingKind,
       sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,
