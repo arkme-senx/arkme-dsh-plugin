@@ -44,7 +44,17 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     let owner = true, enabled = true
     const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
-    await page.route('**/arkme-self/api', async route => {
+    const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'external', lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
+    const messages = [
+      {key:'own-text',ref:'own-text',seq:1,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'你好，我想反馈一个使用问题。',template_kind:1},media:[]},
+      {key:'reply',ref:'reply',seq:2,side:'team',own:false,sender:{nickname:'Loki1999'},content:{text_content:'你好，请发一张截图，我们一起确认。',template_kind:1},media:[]},
+      {key:'image-only',ref:'image-only',seq:3,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'',template_kind:2},media:[{ref:'team-image',name:'界面截图.png',mimeType:'image/png',size:4096}]},
+    ].map((m,i)=>({...m,revision:1,state:'published',createdAt:Date.now()-120000+i*30000,canEdit:m.own,canDelete:m.own,version:1,contentStatus:'available'}))
+    const mediaRequests=[]
+    const fixtureImage=await readFile(new URL('../../assets/branding/jiwo-about-icon.png',import.meta.url))
+    // Serve bytes normally: browser-wide interception can suspend about:blank popup requests.
+    scaffold.ctx.get('webServer').register({kind:'exact',path:'/arkme-self/test-team-media/image',handler:(req,res)=>{mediaRequests.push(req.url);res.writeHead(200,{'Content-Type':'image/png'});res.end(fixtureImage)}})
+    const mockTeamAPI = async route => {
       const { operation: op, params = {} } = route.request().postDataJSON()
       calls.push(op)
       let value
@@ -53,11 +63,17 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ userRef: `usr_v1_${String(i).repeat(32)}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
       else if (op === 'team.app.directory') value = { section: 'teams', items: params.countOnly ? [] : [{ kind: 'team', teamRef, displayName: channel().name, publicId: 'arkme_cn', role: owner ? 'owner' : 'member' }], total: 1, hasMore: false }
       else if (op === 'directory.list') value = { section: params.section, items: [], total: 0, hasMore: false }
+      else if(op === 'team.app.open') value={channel:channel(),conversation:conversation()}
+      else if(op === 'team.app.timeline') value={conversation:conversation(),messages,hasMore:false,beforeSeq:0}
+      else if(op === 'team.app.read') value={}
+      else if(op === 'team.app.media') value={url:new URL('/arkme-self/test-team-media/image',page.url()).href}
+      else if(op === 'team.app.home.visibility') value={version:1,showInHome:true}
       else if (op === 'team.app.applications' || op === 'team.app.conversations') value = { items: [], hasMore: false }
       else if (op === 'team.app.attention') value = { team: false, external: false, applications: false }
       else { await route.continue(); return }
       await route.fulfill({ json: { ok: true, value } })
-    })
+    }
+    await page.route('**/arkme-self/api', mockTeamAPI)
     await page.goto(scaffold.authenticatedUrl)
     await page.getByRole('button', { name: '联系人', exact: true }).click()
     const section = page.locator('[data-directory-section="teams"]')
@@ -119,6 +135,58 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await detail.getByRole('button', { name: '移除', exact: true }).count()).toBe(0)
     await capture('plugin-member-team')
     expect(calls).toContain('team.app.members')
+    await page.setViewportSize({width:1440,height:1000})
+    await page.getByRole('button',{name:'对话',exact:true}).click()
+    await page.getByRole('treeitem',{name:'联系作者',exact:true}).click()
+    const pane=page.locator('.team-conversation-pane')
+    const imageRow=pane.locator('[data-team-message-key="image-only"]')
+    const thumb=imageRow.getByRole('img',{name:'界面截图.png',exact:true})
+    await expect.poll(()=>thumb.evaluate(node=>node.complete && node.naturalWidth>0)).toBe(true)
+    expect(await imageRow.locator('p').filter({hasText:/^$/}).count()).toBe(0)
+    expect(await pane.locator('textarea').count()).toBe(0)
+    expect(await pane.getByRole('textbox',{name:'团队消息内容'}).getAttribute('contenteditable')).toBe('true')
+    expect(await pane.getByRole('button',{name:'刷新',exact:true}).count()).toBe(0)
+    await capture('plugin-conversation-media')
+    await pane.getByRole('button',{name:'对话选项',exact:true}).click()
+    await page.getByRole('menuitem',{name:'快记不显示在首页'}).waitFor()
+    expect(await page.getByRole('menuitem',{name:/刷新|关于此对话/}).count()).toBe(0)
+    await page.keyboard.press('Escape')
+    await pane.getByRole('textbox',{name:'团队消息内容'}).fill('尚未发送的草稿')
+    await pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true}).click({button:'right'})
+    await page.getByRole('menuitem',{name:'编辑',exact:true}).click()
+    await pane.locator('[data-team-composer="reedit"]').waitFor()
+    expect(await page.getByRole('dialog',{name:'编辑消息',exact:true}).count()).toBe(0)
+    await capture('plugin-inline-reedit')
+    await pane.getByRole('button',{name:'关闭重新编辑'}).click()
+    expect(await pane.getByRole('textbox',{name:'团队消息内容'}).textContent()).toBe('尚未发送的草稿')
+    // Browser fallback uses the same gallery as ordinary conversations.
+    await imageRow.getByRole('button',{name:'预览图片 界面截图.png',exact:true}).click()
+    const preview=page.locator('[data-arkme-image-preview-viewport] img')
+    await expect.poll(()=>preview.evaluate(node=>node.complete && node.naturalWidth>0)).toBe(true)
+    expect(await preview.getAttribute('src')).toContain('/arkme-self/test-team-media/')
+    await capture('plugin-image-preview')
+    await page.getByRole('button',{name:'关闭预览',exact:true}).click()
+    // Desktop preview capability opens a separate React root: Team grants must survive it.
+    await page.evaluate(()=>{window.arkmeAttachmentPreview={version:1,focus(){},close(){}}})
+    // Chrome's request interception stalls requests in an initial about:blank.
+    // The preview uses the real fixture byte route, so remove interception while it is open.
+    await page.unroute('**/arkme-self/api', mockTeamAPI)
+    const popupPromise=page.waitForEvent('popup')
+    await imageRow.getByRole('button',{name:'预览图片 界面截图.png',exact:true}).click()
+    const popup=await popupPromise
+    const popupImage=popup.locator('[data-arkme-image-preview-viewport] img')
+    await expect.poll(()=>popupImage.count()).toBe(1)
+    await expect.poll(()=>popupImage.evaluate(node=>node.complete && node.naturalWidth>0),{timeout:3000}).toBe(true)
+    expect(await popupImage.getAttribute('src')).toContain('/arkme-self/test-team-media/')
+    if(output) await popup.screenshot({path:join(output,'plugin-image-window.png')})
+    await page.route('**/arkme-self/api', mockTeamAPI)
+    await popup.close()
+    expect(mediaRequests.length).toBeGreaterThanOrEqual(1)
+    await page.setViewportSize({width:1024,height:768})
+    expect(await pane.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(false)
+    await capture('plugin-conversation-media-compact')
+    await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
+    await capture('plugin-conversation-media-dark')
   } catch (error) {
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})
