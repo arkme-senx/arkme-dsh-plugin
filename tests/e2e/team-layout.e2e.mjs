@@ -37,19 +37,22 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     for (const key of ['auth', 'subject', 'record', 'data', 'team', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
     const overlay = join(root, 'overlay.json')
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-team-layout', name: '@senguoyun/dsh-arkme', config }] }]))
-    scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], replayFixture: resolve(dshRoot, 'snapshots/web/plan-narrow-viewport/session.v3.jsonl'), replayProvidersOnly: true, compareReplaySession: false })
+    // The artifact's native imports resolve through its profile's parent fallback,
+    // which the official launcher maintains inside this same isolated home.
+    scaffold = await launchWebScaffold({ harnessHome: resolve(profile, '../..'), extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], replayFixture: resolve(dshRoot, 'snapshots/web/plan-narrow-viewport/session.v3.jsonl'), replayProvidersOnly: true, compareReplaySession: false })
     expect(await scaffold.ctx.get('arkmeData').testLogin(99001001)).toMatchObject({ status: 'authenticated' })
     browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
     page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
     let owner = true, enabled = true
     const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
-    const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'external', lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
+    const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'布局验收'}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
     const messages = [
       {key:'own-text',ref:'own-text',seq:1,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'你好，我想反馈一个使用问题。',template_kind:1},media:[]},
       {key:'reply',ref:'reply',seq:2,side:'team',own:false,sender:{nickname:'Loki1999'},content:{text_content:'你好，请发一张截图，我们一起确认。',template_kind:1},media:[]},
-      {key:'image-only',ref:'image-only',seq:3,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'',template_kind:2},media:[{ref:'team-image',name:'界面截图.png',mimeType:'image/png',size:4096}]},
+      {key:'image-only',ref:'image-only',seq:3,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'',template_kind:2},media:[{ref:'team-image',key:'team-asset',url:'/arkme-self/test-team-media/image',name:'界面截图.png',mimeType:'image/png',size:4096}]},
     ].map((m,i)=>({...m,revision:1,state:'published',createdAt:Date.now()-120000+i*30000,canEdit:m.own,canDelete:m.own,version:1,contentStatus:'available'}))
+    let grantRevision = 0
     const mediaRequests=[]
     const fixtureImage=await readFile(new URL('../../assets/branding/jiwo-about-icon.png',import.meta.url))
     // Serve bytes normally: browser-wide interception can suspend about:blank popup requests.
@@ -64,9 +67,21 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if (op === 'team.app.directory') value = { section: 'teams', items: params.countOnly ? [] : [{ kind: 'team', teamRef, displayName: channel().name, publicId: 'arkme_cn', role: owner ? 'owner' : 'member' }], total: 1, hasMore: false }
       else if (op === 'directory.list') value = { section: params.section, items: [], total: 0, hasMore: false }
       else if(op === 'team.app.open') value={channel:channel(),conversation:conversation()}
-      else if(op === 'team.app.timeline') value={conversation:conversation(),messages,hasMore:false,beforeSeq:0}
+      else if(op === 'team.app.timeline') {
+        const revision=++grantRevision
+        value={conversation:conversation(),messages:messages.map(m=>({...m,ref:`${m.key}-grant-${revision}`,
+          sender:{...m.sender,imageKey:`avatar-${m.sender.nickname}`,imageRef:`avatar-${revision}-${m.sender.nickname}`},
+          media:m.media.map(f=>({...f,key:`asset-${m.key}`,ref:`media-grant-${revision}`,url:`/arkme-self/test-team-media/image?grant=${revision}`}))})),hasMore:false,beforeSeq:0}
+      }
+      else if(op === 'team.app.image') value={base64:fixtureImage.toString('base64'),mimeType:'image/png'}
+      else if(op === 'team.app.send') {
+        const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
+        messages.push(m);value={message:m}
+      }
+      else if(op === 'team.app.receipts') value={teamRead:true,visitorRead:true,hasMore:false,members:[
+        {nickname:'Loki1999',read:true,readAt:Date.now(),imageKey:'receipt-avatar',imageRef:'receipt-avatar'},
+        {nickname:'设计同事',read:false,readAt:0},{nickname:'研发同事',read:false,readAt:0}]}
       else if(op === 'team.app.read') value={}
-      else if(op === 'team.app.media') value={url:new URL('/arkme-self/test-team-media/image',page.url()).href}
       else if(op === 'team.app.home.visibility') value={version:1,showInHome:true}
       else if (op === 'team.app.applications' || op === 'team.app.conversations') value = { items: [], hasMore: false }
       else if (op === 'team.app.attention') value = { team: false, external: false, applications: false }
@@ -147,6 +162,36 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await pane.getByRole('textbox',{name:'团队消息内容'}).getAttribute('contenteditable')).toBe('true')
     expect(await pane.getByRole('button',{name:'刷新',exact:true}).count()).toBe(0)
     await capture('plugin-conversation-media')
+    const retainedImage=await thumb.elementHandle()
+    const readsBefore=mediaRequests.length
+    const headerBefore=await pane.locator('header').first().boundingBox()
+    const input=pane.getByRole('textbox',{name:'团队消息内容'})
+    await input.fill('发送后，已有图片保持原位')
+    await pane.getByRole('button',{name:'发送',exact:true}).click()
+    await pane.getByText('发送后，已有图片保持原位',{exact:true}).waitFor()
+    await expect.poll(()=>input.textContent()).toBe('')
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    expect(await retainedImage.evaluate(node=>node.isConnected && node === document.querySelector('[data-team-message-key="image-only"] img[alt="界面截图.png"]'))).toBe(true)
+    expect(mediaRequests.length).toBe(readsBefore)
+    expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
+    expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
+    const receiptTarget=pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true})
+    await receiptTarget.scrollIntoViewIfNeeded()
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    await receiptTarget.click({button:'right'})
+    await page.getByRole('menuitem',{name:'查看阅读状态',exact:true}).click()
+    const receiptPanel=page.getByRole('dialog',{name:'查看阅读状态',exact:true})
+    await receiptPanel.getByText('Loki1999',{exact:true}).waitFor()
+    expect(await receiptPanel.getAttribute('data-arkme-read-receipt-panel-placement')).toMatch(/above|below/)
+    expect(await receiptPanel.getByLabel('未读',{exact:true}).count()).toBe(2)
+    expect(await page.locator('[data-arkme-confirm-dialog-backdrop]').count()).toBe(0)
+    const receiptBox=await receiptPanel.boundingBox()
+    expect(receiptBox.x).toBeGreaterThanOrEqual(0)
+    expect(receiptBox.y+receiptBox.height).toBeLessThanOrEqual(1000)
+    await capture('plugin-team-read-receipts')
+    await page.keyboard.press('Escape')
+    expect(await receiptPanel.count()).toBe(0)
+
     await pane.getByRole('button',{name:'对话选项',exact:true}).click()
     await page.getByRole('menuitem',{name:'快记不显示在首页'}).waitFor()
     expect(await page.getByRole('menuitem',{name:/刷新|关于此对话/}).count()).toBe(0)

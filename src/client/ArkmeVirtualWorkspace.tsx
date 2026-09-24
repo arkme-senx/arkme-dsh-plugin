@@ -2107,7 +2107,7 @@ export function ArkmeNavigation({
               style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}
               onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }}>
               <span style={styles.sourceAvatarWrap}>
-                <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { nickname: c.channel.name, ...(c.channel.imageRef ? { imageRef: c.channel.imageRef } : {}) }} />
+                <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
                 {c.unread > 0 && <span style={styles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
               </span>
               <span data-arkme-conversation-content style={styles.chatContent}>

@@ -52,8 +52,7 @@ describe('Team App owner adapter', () => {
     for (const secret of ['conversation-private', 'message-private', 'actor_user_id', 'record_owner_user_id', 'asset-secret', 'private-signed.invalid', 'userfiles.jotmo.cc']) expect(encoded).not.toContain(secret)
     expect(page.messages[0]?.sender.nickname).toBe('小林')
     expect(page.messages[0]?.content?.text_content).toBe('已收到')
-    const url = await f.service.execute('team.app.media', { mediaRef: page.messages[0]!.media[0]!.ref }) as { url: string }
-    expect(url.url.startsWith('/custom/api/team/media?ref=')).toBe(true)
+    expect(page.messages[0]!.media[0]!.url).toBe(`/custom/api/team/media?ref=${encodeURIComponent(page.messages[0]!.media[0]!.ref)}`)
   })
   it('rejects cross-account and forged references before contacting owner', async () => {
     const f = fixture(() => ({ channel, conversation }))
@@ -62,6 +61,27 @@ describe('Team App owner adapter', () => {
     await expect(f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref })).rejects.toMatchObject({ code: 'team-reference-invalid' })
     await expect(f.service.execute('team.app.channel', { teamRef: 'team-app-team.forged' })).rejects.toMatchObject({ code: 'team-reference-invalid' })
     expect(f.requests.length).toBe(count)
+  })
+  it('separates stable media presentation identity from rotating encrypted access references', async () => {
+    let current = structuredClone(message)
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [current] })
+    const opened = await open(f)
+    const read = async () => (await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline).messages[0]!
+    const first = await read(), second = await read()
+    expect(second.ref).not.toBe(first.ref)
+    expect(second.media[0]!.ref).not.toBe(first.media[0]!.ref)
+    expect(second.media[0]!.key).toBe(first.media[0]!.key)
+    expect(second.sender.imageRef).not.toBe(first.sender.imageRef)
+    expect(second.sender.imageKey).toBe(first.sender.imageKey)
+    current.record.version++
+    current.sender.avatar_url = 'https://userfiles.jotmo.cc/changed.png'
+    const edited = await read()
+    expect(edited.media[0]!.key).not.toBe(first.media[0]!.key)
+    expect(edited.sender.imageKey).not.toBe(first.sender.imageKey)
+    f.changeAccount()
+    const other = await open(f)
+    const page = await f.service.execute('team.app.timeline', { conversationRef: other.conversation!.ref }) as TeamTimeline
+    expect(page.messages[0]!.media[0]!.key).not.toBe(edited.media[0]!.key)
   })
   it('keeps draft and view identities separate when a visitor later joins the same team', async () => {
     let side = 'external'

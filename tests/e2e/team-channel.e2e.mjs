@@ -112,7 +112,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       for (const key of ['auth', 'subject', 'record', 'data', 'team', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
       const overlay = join(root, 'overlay.json')
       await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-team-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
-      scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], replayFixture: resolve(dshRoot, 'snapshots/web/plan-narrow-viewport/session.v3.jsonl'), replayProvidersOnly: true, compareReplaySession: false })
+      scaffold = await launchWebScaffold({ harnessHome: resolve(profile, '../..'), extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], replayFixture: resolve(dshRoot, 'snapshots/web/plan-narrow-viewport/session.v3.jsonl'), replayProvidersOnly: true, compareReplaySession: false })
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(users.member)).toMatchObject({ status: 'authenticated' })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })

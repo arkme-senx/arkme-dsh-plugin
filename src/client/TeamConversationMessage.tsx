@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
@@ -12,9 +12,10 @@ import type { ReactNode } from 'react'
 
 export function TeamConversationMessage({ message, avatar, writable, showReceipts, busy, onEdit, onDelete, onReceipts, onError }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; busy: boolean
-  onEdit(): void; onDelete(): void; onReceipts(): void; onError(error: string): void
+  onEdit(): void; onDelete(): void; onReceipts(anchor: HTMLElement | null): void; onError(error: string): void
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number }>()
+  const bubble = useRef<HTMLDivElement>(null)
   const select = (action: () => void) => { setMenu(undefined); action() }
   const published = message.state === 'published', available = published && message.contentStatus === 'available'
   return <article data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther) }}>
@@ -22,7 +23,7 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
       <div style={layout.messageAvatar}>{avatar}</div>
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
-        <div style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther) }} tabIndex={0}
+        <div ref={bubble} style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther) }} tabIndex={0}
           aria-label={tr('消息操作')}
           onContextMenu={event => { if (!published) return; event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }) }}
           onKeyDown={event => { if (published && (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey)) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setMenu({ x: rect.left, y: rect.bottom }) } }}>
@@ -33,7 +34,7 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
           available && !!message.content?.text_content && { id: 'copy', label: tr('复制'), icon: <Copy />, onSelect: () => select(() => { void navigator.clipboard.writeText(message.content!.text_content ?? '').catch(() => onError(tr('复制失败，请重试'))) }) },
           message.canEdit && writable && { id: 'edit', label: tr('编辑'), icon: <PencilSimple />, disabled: busy, onSelect: () => select(onEdit) },
           message.canDelete && { id: 'delete', label: tr('删除'), icon: <Trash />, disabled: busy, danger: true, onSelect: () => select(onDelete) },
-          showReceipts && { id: 'receipts', label: tr('查看阅读状态'), icon: <Checks />, onSelect: () => select(onReceipts) },
+          showReceipts && { id: 'receipts', label: tr('查看阅读状态'), icon: <Checks />, onSelect: () => select(() => onReceipts(bubble.current)) },
         ]} /></div>}
       </div>
     </div>

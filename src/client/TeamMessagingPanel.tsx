@@ -27,20 +27,25 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
+import { ArkmeReadReceiptMember, ArkmeReadReceiptPanel, ArkmeReadReceiptStatus } from './ArkmeReadReceiptPanel.js'
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
 function inaccessible(error: unknown): boolean { return /team-(not_accessible|account-changed)|login-/.test(String((error as { body?: { code?: string } })?.body?.code)) }
 
-export function TeamAvatar({ identity }: { identity: TeamIdentity }) {
+export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: number }) {
   const [url, setUrl] = useState('')
+  // Encrypted access references rotate on every response; display identity does not.
+  const imageKey = identity.imageKey ?? identity.imageRef
+  const image = useRef({ key: imageKey, ref: identity.imageRef })
+  if (image.current.key !== imageKey) image.current = { key: imageKey, ref: identity.imageRef }
   useEffect(() => {
-    setUrl(''); if (!identity.imageRef) return
+    setUrl(''); if (!image.current.ref) return
     const controller = new AbortController()
-    void callArkme<{ base64: string; mimeType: string }>('team.app.image', { imageRef: identity.imageRef }, controller.signal)
+    void callArkme<{ base64: string; mimeType: string }>('team.app.image', { imageRef: image.current.ref }, controller.signal)
       .then(v => { if (!controller.signal.aborted) setUrl(`data:${v.mimeType};base64,${v.base64}`) }).catch(() => {})
     return () => { controller.abort() }
-  }, [identity.imageRef])
-  return <span className="team-avatar" title={identity.nickname}>
+  }, [imageKey])
+  return <span className="team-avatar" title={identity.nickname} style={size ? {width:size,height:size,fontSize:Math.round(size * .5)} : undefined}>
     {url ? <img src={url} alt={identity.nickname} /> : <span>{identity.nickname.slice(0, 1)}</span>}
   </span>
 }
@@ -110,7 +115,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
         {!direct && <p className="team-empty">{tr('团队成员共同查看和回复，每位外部用户的对话彼此独立。')}</p>}
         {items.map(c => <button key={`${c.side}:${c.key}`} className="team-conversation-row" onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }}>
-          <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { nickname: c.channel.name, ...(c.channel.imageRef ? { imageRef: c.channel.imageRef } : {}) }} />
+          <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
           <span><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><small>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.text}</small></span>
           {c.unread > 0 && <b>{c.unread}</b>}
         </button>)}
@@ -143,6 +148,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   useEffect(() => () => { ctrl.current.abort() }, [])
   const receiptRef = useRef(receipt); receiptRef.current = receipt
   const receiptGeneration = useRef(0)
+  const receiptAnchor = useRef<HTMLElement | null>(null)
   const readReceipts = useCallback(async (message: TeamMessage, more = false) => {
     if (receiptsBusy.current) return
     receiptsBusy.current = true
@@ -183,7 +189,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       setTimeline(data)
       if (anchorKey && (beforeSeq || !visible.current)) requestAnimationFrame(() => { const node = [...(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? [])].find(v => v.dataset.teamMessageKey === anchorKey); if (node && scroller.current) scroller.current.scrollTop += node.getBoundingClientRect().top - anchorTop })
       setError('')
-      if (!beforeSeq && (visible.current || !old)) requestAnimationFrame(() => { bottom.current?.scrollIntoView({ block: 'end' }) })
+      if (!beforeSeq && (visible.current || !old)) requestAnimationFrame(() => { const node = scroller.current; if (node) node.scrollTop = node.scrollHeight })
       if (receiptRef.current) await readReceipts(receiptRef.current.message)
       if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); setTimeline(undefined); ++receiptGeneration.current; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
@@ -329,16 +335,16 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           showReceipts={current.side === 'team' || m.side === 'external'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
-          onReceipts={() => { void readReceipts(m) }} onError={setError} />
+          onReceipts={anchor => { receiptAnchor.current = anchor; void readReceipts(m) }} onError={setError} />
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
     </div>
-    {receipt && <ArkmeConfirmDialog layout="picker" titleId="team-receipts-title" title={tr('查看阅读状态')} busy={false} cancelLabel={tr('关闭阅读状态')}
+    {receipt && <ArkmeReadReceiptPanel anchor={receiptAnchor.current} label={tr('查看阅读状态')}
       onClose={() => { ++receiptGeneration.current; receiptRef.current = undefined; setReceipt(undefined) }}>
-      <p>{current.side === 'external' ? receipt.value.teamRead ? tr('团队已查看') : tr('团队未查看') : receipt.value.visitorRead ? tr('用户已查看') : tr('用户未查看')}</p>
-      {receipt.value.members.map((v, i) => <div className="team-member-row" key={i}><span>{v.nickname || tr('用户')}</span><span>{v.read ? tr('已读') : tr('未读')}</span></div>)}
-      {receipt.value.hasMore && <button onClick={() => { void readReceipts(receipt.message, true) }}>{tr('更多成员')}</button>}
-    </ArkmeConfirmDialog>}
+      <ArkmeReadReceiptStatus>{current.side === 'external' ? receipt.value.teamRead ? tr('团队已查看') : tr('团队未查看') : receipt.value.visitorRead ? tr('用户已查看') : tr('用户未查看')}</ArkmeReadReceiptStatus>
+      {receipt.value.members.map((v, i) => <ArkmeReadReceiptMember key={i} name={v.nickname || tr('用户')} read={v.read} readAt={v.readAt} avatar={<TeamAvatar identity={v} size={20} />} />)}
+      {receipt.value.hasMore && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message, true) }}>{tr('更多成员')}</ArkmeReadReceiptStatus>}
+    </ArkmeReadReceiptPanel>}
     {deleting && <ArkmeConfirmDialog titleId="team-message-delete-title" title={tr('删除快记')}
       description={tr('删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。')}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={busy} {...(error ? {error} : {})}
