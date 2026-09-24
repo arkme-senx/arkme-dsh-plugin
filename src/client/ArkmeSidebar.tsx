@@ -2205,7 +2205,7 @@ export function ArkmeSurface({
   ownsQrLogin = true,
   active = true,
 }: ArkmeSurfaceProps = {}) {
-  useArkmeLocale()
+  const locale = useArkmeLocale()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
@@ -4809,6 +4809,7 @@ export function ArkmeSurface({
     const textContent = textFormat === 'markdown' ? rawTextContent : rawTextContent.trim()
     if (textContent === '' && readyDraft.attachments.length === 0) return
     if (sameTargetComposer()) messagePreparing.stop()
+    const inputStartedAtMillis = recordInputCaptureOwner.getStartedAtMillis(targetDraftKey)
     const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
     const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = locationCaptureRequested
@@ -4847,21 +4848,6 @@ export function ArkmeSurface({
     const pendingAssets = pendingAttachments.flatMap(attachment => attachment.asset === undefined ? [] : [attachment.asset])
     const pendingFileRefs = pendingAttachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
     pendingComposerFocusDraftKeyRef.current = targetDraftKey
-    let inputCapture: ArkmeRecordInputCaptureResult
-    try {
-      inputCapture = await capturePromise
-    } catch (caught) {
-      if (sameTargetAccount()) restorePendingDraft()
-      else releaseArkmeComposerDraft(pendingDraft)
-      if (sameTargetComposer()) setError(errorMessage(caught) || '输入快照采集失败，请重试')
-      return
-    }
-    if (!sameTargetAccount()) {
-      releaseArkmeComposerDraft(pendingDraft)
-      return
-    }
-    const recordDurationMillis = inputCapture.recordDurationMillis
-    const captureContext = inputCapture.captureContext
     const now = Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
     const optimisticAvatarRef = selfProfile?.avatarRef.trim()
@@ -4872,13 +4858,14 @@ export function ArkmeSurface({
       textContent,
       textFormat,
     )
-    const optimistic: ArkmeTimelineItem = {
+    let optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
       ...(optimisticAvatarRef === undefined || optimisticAvatarRef === '' ? {} : { avatarRef: optimisticAvatarRef }),
       title: '', textContent, textFormat: textFormat ?? 'plain', status: 0,
+      contentBlocks: pendingAttachments.flatMap((attachment, index) => attachment.localFile === undefined
+        ? [] : [localFileBlock(attachment.localFile, index)]),
       ...(optimisticMentions.length === 0 ? {} : { mentions: optimisticMentions }),
-      ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
-      captureContext,
+      ...(inputStartedAtMillis === undefined ? {} : { recordDurationMillis: Math.max(0, now - inputStartedAtMillis) }),
       ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
         : {}),
@@ -4910,10 +4897,29 @@ export function ArkmeSurface({
       if (mention.botRef === undefined) return []
       return [{ botRef: mention.botRef, startIndex: mention.startIndex, length: mention.length }]
     })
-    if ((extensionTarget !== undefined || pendingFileRefs.length === 0) && sameTargetComposer()) {
+    if (sameTargetComposer()) {
       setItems(current => mergeItems(current, [optimistic]))
     }
     if (sameTargetComposer()) setError('')
+    let inputCapture: ArkmeRecordInputCaptureResult
+    try {
+      inputCapture = await capturePromise
+    } catch (caught) {
+      if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
+      if (sameTargetAccount()) restorePendingDraft()
+      else releaseArkmeComposerDraft(pendingDraft)
+      if (sameTargetComposer()) setError(errorMessage(caught) || '输入快照采集失败，请重试')
+      return
+    }
+    if (!sameTargetAccount()) {
+      releaseArkmeComposerDraft(pendingDraft)
+      return
+    }
+    const recordDurationMillis = inputCapture.recordDurationMillis
+    const captureContext = inputCapture.captureContext
+    optimistic = { ...optimistic, recordDurationMillis, captureContext }
+    if (sameTargetComposer()) setItems(current => current.map(item => item.itemUid === recordUid
+      ? { ...item, recordDurationMillis, captureContext } : item))
     let durableFileSendUncertain = false
     let stagedBackgroundFileRefs: string[] = []
     try {
@@ -5099,6 +5105,7 @@ export function ArkmeSurface({
         backgroundDirectUploadCacheRef.current.delete(recordUid)
         releaseArkmeComposerDraft(pendingDraft)
         fileTasks.accept(acceptedTask)
+        if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid || item.status !== 0))
         rememberSentHashTags(targetAccountKey, acceptedTask.recordUid, rawTextContent, now, textFormat)
         const locationFeedback = locationCaptureFeedback(locationCapture)
         if (sameTargetComposer()) {
@@ -7340,6 +7347,308 @@ export function ArkmeSurface({
     />
     : null
 
+  // Draft updates must not rebuild every loaded message. Event handlers read the
+  // latest committed actions; render dependencies below contain only timeline facts.
+  const timelineActionValues = { activateSelfSource, openChatMessage, openMemberEventProfile, openMemberHover, openMemberMenu, openMemberProfile, openMentionMemberProfile, openMessageCopyLinkDetail, openMessageMenu, openMomentDetail, openNoteDetail, openRecordReedit, retryAiPolish, toggleSelectedMessage, updateComposerText,
+    refreshFiles: fileTasks.refresh, refreshReedits: reeditSubmissions.refresh }
+  const timelineActions = useRef(timelineActionValues)
+  useLayoutEffect(() => { timelineActions.current = timelineActionValues })
+  const timelineReediting = activeRecordReeditComposer !== undefined
+  const timelineFileTasks = fileTasks.tasks
+  const timelineReeditJobs = reeditSubmissions.jobs
+  const renderedMessageRows = useMemo(() => {
+    if (source === undefined) return null
+    return displayRows.map((row, index) => {
+                const previous = index === 0 ? undefined : displayRows[index - 1]
+                const startsDay = previous === undefined
+                  || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
+                if (row.kind === 'community-welcome') return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  <li data-arkme-conversation-row={row.id}>
+                  <ArkmeBetaCommunityWelcome title={row.title}
+                    disabled={composerFilesDisabled || timelineReediting || archiveReadOnly}
+                    onChoose={text => {
+                      if (!composerDraftKey || composerFilesDisabled || timelineReediting || archiveReadOnly) return
+                      const current = arkmeComposerDraftStore.get(composerDraftKey)
+                      const previous = welcomeSuggestionRef.current
+                      const suggestionKey = `${authenticatedAccountKey}:${composerDraftKey}`
+                      const next = welcomeDraft(current.text, previous?.key === suggestionKey ? previous.text : undefined, text)
+                      if (current.attachments.length === 0 && next !== current.text) {
+                        timelineActions.current.updateComposerText(next)
+                        welcomeSuggestionRef.current = { key: suggestionKey, text: next }
+                      }
+                      textareaRef.current?.focus()
+                      const focusedEditor = document.activeElement
+                      // The controlled editor renders the new draft after this click.
+                      // Position the caret after that render, without stealing focus
+                      // if the user has switched conversations or focused elsewhere.
+                      requestAnimationFrame(() => {
+                        const editor = textareaRef.current
+                        if (!focusedEditor?.isConnected || document.activeElement !== focusedEditor || !editor || editor.disabled) return
+                        editor.setSelectionRange(editor.value.length, editor.value.length)
+                      })
+                    }} />
+                  </li>
+                </Fragment>
+                if (row.kind === 'member-event-gap') return <li key={row.id} data-arkme-member-event-gap={row.gapId} aria-hidden style={{height:1,width:'100%'}}/>
+                if (row.kind === 'member-event') return <ArkmeMemberLeaveNotice key={row.id} rowId={row.id} event={row.item} onOpen={(...args) => timelineActions.current.openMemberEventProfile(...args)}/>
+                if (row.kind === 'member-join') return <ArkmeMemberJoinNotice
+                  key={row.id}
+                  rowId={row.id}
+                  event={row.item}
+                  membersByRef={conversationMemberByRef}
+                  startsGroup={previous?.kind !== 'member-join'}
+                  onOpenMember={(...args) => timelineActions.current.openMemberProfile(...args)}
+                />
+                if (row.kind === 'notice') return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
+                </Fragment>
+                if (row.kind === 'moment') {
+                  return <Fragment key={row.id}>
+                    {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                    <ArkmeInterwovenMentionCard moment={row.item} rowId={row.id} onOpen={(...args) => timelineActions.current.openMomentDetail(...args)}
+                      highlighted={highlightedTargetUid === row.id} />
+                  </Fragment>
+                }
+                const item = row.item
+                const selfTopicPresentation = arkmeTimelineSelfTopicPresentation(item, source, selfSources)
+                const avatarRef = arkmeTimelineAvatarRef(item, isArkmeSelfWorkspaceSource(source) ? undefined : selfProfile)
+                const messageMember = item.memberRef === undefined
+                  ? (item.isMe ? selfConversationMember : undefined)
+                  : conversationMemberByRef.get(item.memberRef)
+                const messageHeader = item.isMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
+                  item={item}
+                  {...(selfProfile === undefined ? {} : { profile: selfProfile })}
+                  {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
+                />
+                const polishStatus = aiPolishStatus(item)
+                const selectedForAction = activeSelectMode?.selectedIds.has(arkmeTimelineOccurrenceKey(item)) === true
+                const isForwardMessageCard = item.forwardRecords !== undefined
+                const isSharedRecordingCard = item.sharedRecording !== undefined
+                const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
+                const isExtensionMessage = !isSharedRecordingCard && item.extensionParent !== undefined
+                const messageAvatar = showMessageAvatars && !isSharedRecordingCard
+                  ? <MessageAvatar senderKind={item.senderKind}
+                    {...(avatarRef === undefined ? {} : { avatarRef })}
+                    {...(messageMember === undefined ? {} : { member: messageMember })}
+                    profileEnabled={source?.kind === 'group_chat'}
+                    onOpen={(...args) => timelineActions.current.openMemberProfile(...args)}
+                    onContextMenu={(...args) => timelineActions.current.openMemberMenu(...args)}
+                    onHover={(...args) => timelineActions.current.openMemberHover(...args)}
+                  />
+                  : null
+                const selectionAnchor = arkmeMessageSelectionAnchor(item)
+                const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
+                return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
+                  <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
+                    data-arkme-width-avatar={avatarRef}
+                    data-arkme-width-sender={arkmeTimelineSenderName(item, selfProfile)}
+                    data-arkme-width-sender-kind={item.senderKind ?? 'human'}
+                    data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid} style={{
+                    ...styles.row,
+                    ...(activeSelectMode === undefined
+                      ? isSharedRecordingCard
+                        ? styles.sharedRecordingRow
+                        : item.isMe ? styles.rowMe : styles.rowOther
+                      : selectionAnchor === 'avatar'
+                        ? styles.rowSelectAvatarMode
+                        : styles.rowSelectCardCenterMode),
+                    ...(selectedForAction ? styles.rowSelectedForAction : {}),
+                    ...(isHighlighted ? styles.rowSearchTarget : {}),
+                  }}
+                    onClickCapture={event => {
+                      if (activeSelectMode === undefined) return
+                      if (!arkmeShouldToggleMessageSelectFromRowClick(event.target)) return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      timelineActions.current.toggleSelectedMessage(item)
+                    }}
+                  >
+                    {isHighlighted && <span
+                      aria-hidden="true"
+                      data-arkme-highlight-backdrop="true"
+                      style={styles.rowSearchTargetBackdrop}
+                    />}
+                    {activeSelectMode !== undefined && <ArkmeMessageSelectionControl
+                      anchor={selectionAnchor}
+                      checked={selectedForAction}
+                      disabled={messageActionBusy !== undefined}
+                      onToggle={() => { timelineActions.current.toggleSelectedMessage(item) }}
+                    />}
+                    <div style={{
+                      ...styles.messageLine,
+                      ...(activeSelectMode !== undefined && selectionAnchor === 'avatar' ? styles.messageLineSelectAvatarMode : {}),
+                      ...(item.isMe && !isSharedRecordingCard ? styles.messageLineMe : {}),
+                      ...(isForwardMessageCard ? styles.forwardMessageLine : {}),
+                      ...(isSharedRecordingCard ? styles.sharedRecordingMessageLine : {}),
+                      ...(activeSelectMode !== undefined && selectionAnchor === 'card-center' ? styles.messageLineSelectCardCenterMode : {}),
+                      // The viewport already supplies the gap above the composer.
+                      ...(index === displayRows.length - 1 ? { marginBottom: 0 } : {}),
+                    }}>
+                      {!isExtensionMessage && messageAvatar}
+                      <div style={{
+                        ...styles.messageBody,
+                        ...(item.isMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),
+                        ...(isForwardMessageCard ? styles.forwardMessageBody : {}),
+                        ...(isSharedRecordingCard ? styles.sharedRecordingMessageBody : {}),
+                      }}>
+                        {!isSharedRecordingCard && !isExtensionMessage && messageHeader}
+                        {(() => {
+                          const messageBubble = <div
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              ...styles.bubble,
+                              ...(isSharedRecordingCard ? styles.sharedRecordingBubble : item.isMe ? styles.bubbleMe : styles.bubbleOther),
+                              ...(isForwardMessageCard ? styles.forwardBubble : {}),
+                              ...(item.callRecord ? arkmeCallRecordBubbleStyle(item.isMe) : {}),
+                            }}
+                            onClick={event => {
+                              // Portal clicks follow the React tree but do not belong to this bubble's DOM.
+                              if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
+                              if (event.target.closest('button,a,audio,video,input,select,textarea,[contenteditable],[role=link],[role=slider]')) return
+                              if (window.getSelection()?.toString()) return
+                              event.currentTarget.focus({ preventScroll: true })
+                              timelineActions.current.openChatMessage(item)
+                            }}
+                            onKeyDown={event => {
+                              if (event.target !== event.currentTarget) return
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault(); timelineActions.current.openChatMessage(item)
+                            }}
+                            onContextMenu={event => { timelineActions.current.openMessageMenu(item, event, event.currentTarget) }}
+                            data-arkme-message-direction={item.isMe ? 'self' : 'other'}
+                            aria-label={item.callRecord ? '打开通话详情' : isSharedRecordingCard ? '打开录音详情' : tr("打开快记详情")}
+                          >{polishStatus !== '' && <span style={styles.polishMeta}>
+                            {item.aiPolish?.state === 'failed' ? <button data-arkme-feedback="neutral"
+                              type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.retryAiPolish(item) }}
+                            >{polishStatus}</button> : polishStatus}
+                          </span>}
+                            <ArkmeMessageContent
+                              key={`message-content:${conversationOverlayKey}`}
+                              sessionAttachmentPreview
+                              item={item}
+                              mediaSelectionIsExplicit={reeditItems.has(item)}
+                              onCallDetailOpen={videoUrl => { timelineActions.current.openNoteDetail(item, videoUrl) }}
+                              sourceRef={source.sourceRef}
+                              sourceIdentityKey={conversationKey}
+                              sourceDisplayName={source.displayName}
+                              highlightMentions
+                              shareWebsite={shareWebsite}
+                              onMessageCopyLinkOpen={(...args) => timelineActions.current.openMessageCopyLinkDetail(...args)}
+                              onMentionClick={(...args) => timelineActions.current.openMentionMemberProfile(...args)}
+                              isMentionClickable={mentionOpensMemberProfile}
+                              onLongArticleUpdated={detail => {
+                                setItems(current => current.map(candidate => candidate.itemUid === detail.itemUid
+                                  ? {
+                                    ...candidate,
+                                    title: detail.title,
+                                    textContent: detail.textContent,
+                                    textFormat: detail.textFormat ?? 'plain',
+                                    sendAtMillis: detail.sendAtMillis,
+                                    updateAtMillis: detail.updateAtMillis,
+                                    templateKind: 1,
+                                    displayKind: 1,
+                                    version: detail.version,
+                                    recordDurationMillis: detail.recordDurationMillis,
+                                    editDurationMillis: detail.editDurationMillis,
+                                  }
+                                  : candidate))
+                              }}
+                            />
+                            {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
+                            {timelineReeditJobs.filter(job => job.itemUid === item.itemUid && (job.state === 'failed' || job.state === 'uncertain')).map(job => <div key={job.submissionId} role="status" aria-label={tr("重新编辑保存状态")} style={styles.polishMeta}>
+                              {job.state === 'failed' ? tr("保存失败：{v0}", { v0: job.error ?? '请恢复编辑后重试' }) : '保存结果待确认'}
+                              {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
+                              {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
+                            </div>)}
+                          </div>
+                          const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <div key={task.taskRef} role="status" aria-label={tr("附件发送状态")} data-arkme-file-send-status={task.state} style={{ fontSize: 12, lineHeight: 1.5, color: arkmeTheme.secondary, maxWidth: '100%', overflowWrap: 'anywhere', textAlign: item.isMe ? 'right' : 'left' }}>
+                              {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
+                              {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(timelineActions.current.refreshFiles).catch(caught => setError(errorMessage(caught))) }}>{tr("重试")}</button>}
+                              {task.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { timelineActions.current.refreshFiles(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>{tr("核对发送结果")}</button>}
+                              {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button data-arkme-feedback="danger" type="button" aria-label={tr("清除发送记录")} onClick={event => {
+                                event.stopPropagation()
+                                if (task.state === 'uncertain' && !window.confirm('发送结果仍未确认。清除记录不会撤回可能已发送的消息，是否继续？')) return
+                                void callArkme('files.send.discard', { taskRef: task.taskRef })
+                                  .then(timelineActions.current.refreshFiles)
+                                  .catch(caught => setError(errorMessage(caught)))
+                              }}>{tr("清除")}</button></>}
+                            </div>)
+                          const messageContentLine = isSharedRecordingCard
+                            ? messageBubble
+                            : <ArkmeMessageReadReceiptLine
+                              key={`read-receipt:${conversationOverlayKey}`}
+                              source={source}
+                              item={item}
+                              wide={isStructuredMessageCard}
+                            >
+                              {messageBubble}
+                            </ArkmeMessageReadReceiptLine>
+                          const topicBadge = selfTopicPresentation === undefined
+                            ? null
+                            : <ArkmeTimelineSelfTopicBadge
+                                topic={selfTopicPresentation.topic}
+                                {...(selfTopicPresentation.displayLabel === undefined ? {} : { displayLabel: selfTopicPresentation.displayLabel })}
+                                onSelect={(...args) => timelineActions.current.activateSelfSource(...args)}
+                              />
+                          if (!isExtensionMessage || item.extensionParent === undefined) return <>
+                            {messageContentLine}
+                            {fileSendStatus}
+                            {topicBadge}
+                          </>
+                          return <div
+                            data-arkme-extension-message-cluster="true"
+                            style={{
+                              ...styles.extensionMessageGroup,
+                              ...(item.isMe ? styles.extensionMessageGroupMe : {}),
+                            }}
+                          >
+                            <ArkmeExtensionParentPreview
+                              parent={item.extensionParent}
+                              isMe={item.isMe}
+                              onSelect={() => {
+                                arkmeUi.showConversationTarget(
+                                  source,
+                                  item.extensionParent?.itemUid ?? '',
+                                  item.extensionParent?.sendAtMillis ?? 0,
+                                  item.extensionParent?.recordOwnerUserId,
+                                )
+                              }}
+                            />
+                            <div
+                              data-arkme-extension-child-line="true"
+                              style={{
+                                ...styles.extensionChildLine,
+                                ...(item.isMe ? styles.extensionChildLineMe : {}),
+                              }}
+                            >
+                              {messageAvatar}
+                              <div style={{
+                                ...styles.extensionChildBody,
+                                ...(item.isMe ? styles.extensionChildBodyMe : {}),
+                              }}>
+                                {messageHeader}
+                                {messageContentLine}
+                                {fileSendStatus}
+                                {topicBadge}
+                              </div>
+                            </div>
+                          </div>
+                        })()}
+                      </div>
+                    </div>
+                  </li>
+                </Fragment>
+              })
+  }, [displayRows, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef,
+    activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
+    timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
+    highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
+    reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale])
+
   const directRecordingNotice = ui.mode !== 'recordings' || !active ? <ArkmeDirectRecordingStatus floating /> : null
 
   const forwardDialogContent = forwardTargetPicker !== undefined && (activeConversation || forwardTargetPicker.native !== undefined) ? (<div
@@ -7879,291 +8188,7 @@ export function ArkmeSurface({
             {displayRows.length > 0 && <ul ref={recordsRef} className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
-              {displayRows.map((row, index) => {
-                const previous = index === 0 ? undefined : displayRows[index - 1]
-                const startsDay = previous === undefined
-                  || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
-                if (row.kind === 'community-welcome') return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
-                  <li data-arkme-conversation-row={row.id}>
-                  <ArkmeBetaCommunityWelcome title={row.title}
-                    disabled={composerFilesDisabled || activeRecordReeditComposer !== undefined || archiveReadOnly}
-                    onChoose={text => {
-                      if (!composerDraftKey || composerFilesDisabled || activeRecordReeditComposer !== undefined || archiveReadOnly) return
-                      const current = arkmeComposerDraftStore.get(composerDraftKey)
-                      const previous = welcomeSuggestionRef.current
-                      const suggestionKey = `${authenticatedAccountKey}:${composerDraftKey}`
-                      const next = welcomeDraft(current.text, previous?.key === suggestionKey ? previous.text : undefined, text)
-                      if (current.attachments.length === 0 && next !== current.text) {
-                        updateComposerText(next)
-                        welcomeSuggestionRef.current = { key: suggestionKey, text: next }
-                      }
-                      textareaRef.current?.focus()
-                      const focusedEditor = document.activeElement
-                      // The controlled editor renders the new draft after this click.
-                      // Position the caret after that render, without stealing focus
-                      // if the user has switched conversations or focused elsewhere.
-                      requestAnimationFrame(() => {
-                        const editor = textareaRef.current
-                        if (!focusedEditor?.isConnected || document.activeElement !== focusedEditor || !editor || editor.disabled) return
-                        editor.setSelectionRange(editor.value.length, editor.value.length)
-                      })
-                    }} />
-                  </li>
-                </Fragment>
-                if (row.kind === 'member-event-gap') return <li key={row.id} data-arkme-member-event-gap={row.gapId} aria-hidden style={{height:1,width:'100%'}}/>
-                if (row.kind === 'member-event') return <ArkmeMemberLeaveNotice key={row.id} rowId={row.id} event={row.item} onOpen={openMemberEventProfile}/>
-                if (row.kind === 'member-join') return <ArkmeMemberJoinNotice
-                  key={row.id}
-                  rowId={row.id}
-                  event={row.item}
-                  membersByRef={conversationMemberByRef}
-                  startsGroup={previous?.kind !== 'member-join'}
-                  onOpenMember={openMemberProfile}
-                />
-                if (row.kind === 'notice') return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
-                  <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
-                </Fragment>
-                if (row.kind === 'moment') {
-                  return <Fragment key={row.id}>
-                    {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
-                    <ArkmeInterwovenMentionCard moment={row.item} rowId={row.id} onOpen={openMomentDetail}
-                      highlighted={highlightedTargetUid === row.id} />
-                  </Fragment>
-                }
-                const item = row.item
-                const selfTopicPresentation = arkmeTimelineSelfTopicPresentation(item, source, selfSources)
-                const avatarRef = arkmeTimelineAvatarRef(item, isArkmeSelfWorkspaceSource(source) ? undefined : selfProfile)
-                const messageMember = item.memberRef === undefined
-                  ? (item.isMe ? selfConversationMember : undefined)
-                  : conversationMemberByRef.get(item.memberRef)
-                const messageHeader = item.isMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
-                  item={item}
-                  {...(selfProfile === undefined ? {} : { profile: selfProfile })}
-                  {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
-                />
-                const polishStatus = aiPolishStatus(item)
-                const selectedForAction = activeSelectMode?.selectedIds.has(arkmeTimelineOccurrenceKey(item)) === true
-                const isForwardMessageCard = item.forwardRecords !== undefined
-                const isSharedRecordingCard = item.sharedRecording !== undefined
-                const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
-                const isExtensionMessage = !isSharedRecordingCard && item.extensionParent !== undefined
-                const messageAvatar = showMessageAvatars && !isSharedRecordingCard
-                  ? <MessageAvatar senderKind={item.senderKind}
-                    {...(avatarRef === undefined ? {} : { avatarRef })}
-                    {...(messageMember === undefined ? {} : { member: messageMember })}
-                    profileEnabled={source?.kind === 'group_chat'}
-                    onOpen={openMemberProfile}
-                    onContextMenu={openMemberMenu}
-                    onHover={openMemberHover}
-                  />
-                  : null
-                const selectionAnchor = arkmeMessageSelectionAnchor(item)
-                const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
-                return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
-                  <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
-                    data-arkme-width-avatar={avatarRef}
-                    data-arkme-width-sender={arkmeTimelineSenderName(item, selfProfile)}
-                    data-arkme-width-sender-kind={item.senderKind ?? 'human'}
-                    data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid} style={{
-                    ...styles.row,
-                    ...(activeSelectMode === undefined
-                      ? isSharedRecordingCard
-                        ? styles.sharedRecordingRow
-                        : item.isMe ? styles.rowMe : styles.rowOther
-                      : selectionAnchor === 'avatar'
-                        ? styles.rowSelectAvatarMode
-                        : styles.rowSelectCardCenterMode),
-                    ...(selectedForAction ? styles.rowSelectedForAction : {}),
-                    ...(isHighlighted ? styles.rowSearchTarget : {}),
-                  }}
-                    onClickCapture={event => {
-                      if (activeSelectMode === undefined) return
-                      if (!arkmeShouldToggleMessageSelectFromRowClick(event.target)) return
-                      event.preventDefault()
-                      event.stopPropagation()
-                      toggleSelectedMessage(item)
-                    }}
-                  >
-                    {isHighlighted && <span
-                      aria-hidden="true"
-                      data-arkme-highlight-backdrop="true"
-                      style={styles.rowSearchTargetBackdrop}
-                    />}
-                    {activeSelectMode !== undefined && <ArkmeMessageSelectionControl
-                      anchor={selectionAnchor}
-                      checked={selectedForAction}
-                      disabled={messageActionBusy !== undefined}
-                      onToggle={() => { toggleSelectedMessage(item) }}
-                    />}
-                    <div style={{
-                      ...styles.messageLine,
-                      ...(activeSelectMode !== undefined && selectionAnchor === 'avatar' ? styles.messageLineSelectAvatarMode : {}),
-                      ...(item.isMe && !isSharedRecordingCard ? styles.messageLineMe : {}),
-                      ...(isForwardMessageCard ? styles.forwardMessageLine : {}),
-                      ...(isSharedRecordingCard ? styles.sharedRecordingMessageLine : {}),
-                      ...(activeSelectMode !== undefined && selectionAnchor === 'card-center' ? styles.messageLineSelectCardCenterMode : {}),
-                      // The viewport already supplies the gap above the composer.
-                      ...(index === displayRows.length - 1 ? { marginBottom: 0 } : {}),
-                    }}>
-                      {!isExtensionMessage && messageAvatar}
-                      <div style={{
-                        ...styles.messageBody,
-                        ...(item.isMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),
-                        ...(isForwardMessageCard ? styles.forwardMessageBody : {}),
-                        ...(isSharedRecordingCard ? styles.sharedRecordingMessageBody : {}),
-                      }}>
-                        {!isSharedRecordingCard && !isExtensionMessage && messageHeader}
-                        {(() => {
-                          const messageBubble = <div
-                            role="button"
-                            tabIndex={0}
-                            style={{
-                              ...styles.bubble,
-                              ...(isSharedRecordingCard ? styles.sharedRecordingBubble : item.isMe ? styles.bubbleMe : styles.bubbleOther),
-                              ...(isForwardMessageCard ? styles.forwardBubble : {}),
-                              ...(item.callRecord ? arkmeCallRecordBubbleStyle(item.isMe) : {}),
-                            }}
-                            onClick={event => {
-                              // Portal clicks follow the React tree but do not belong to this bubble's DOM.
-                              if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
-                              if (event.target.closest('button,a,audio,video,input,select,textarea,[contenteditable],[role=link],[role=slider]')) return
-                              if (window.getSelection()?.toString()) return
-                              event.currentTarget.focus({ preventScroll: true })
-                              openChatMessage(item)
-                            }}
-                            onKeyDown={event => {
-                              if (event.target !== event.currentTarget) return
-                              if (event.key !== 'Enter' && event.key !== ' ') return
-                              event.preventDefault(); openChatMessage(item)
-                            }}
-                            onContextMenu={event => { openMessageMenu(item, event, event.currentTarget) }}
-                            data-arkme-message-direction={item.isMe ? 'self' : 'other'}
-                            aria-label={item.callRecord ? '打开通话详情' : isSharedRecordingCard ? '打开录音详情' : tr("打开快记详情")}
-                          >{polishStatus !== '' && <span style={styles.polishMeta}>
-                            {item.aiPolish?.state === 'failed' ? <button data-arkme-feedback="neutral"
-                              type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
-                            >{polishStatus}</button> : polishStatus}
-                          </span>}
-                            <ArkmeMessageContent
-                              key={`message-content:${conversationOverlayKey}`}
-                              sessionAttachmentPreview
-                              item={item}
-                              mediaSelectionIsExplicit={reeditItems.has(item)}
-                              onCallDetailOpen={videoUrl => { openNoteDetail(item, videoUrl) }}
-                              sourceRef={source.sourceRef}
-                              sourceIdentityKey={conversationKey}
-                              sourceDisplayName={source.displayName}
-                              highlightMentions
-                              shareWebsite={shareWebsite}
-                              onMessageCopyLinkOpen={openMessageCopyLinkDetail}
-                              onMentionClick={openMentionMemberProfile}
-                              isMentionClickable={mentionOpensMemberProfile}
-                              onLongArticleUpdated={detail => {
-                                setItems(current => current.map(candidate => candidate.itemUid === detail.itemUid
-                                  ? {
-                                    ...candidate,
-                                    title: detail.title,
-                                    textContent: detail.textContent,
-                                    textFormat: detail.textFormat ?? 'plain',
-                                    sendAtMillis: detail.sendAtMillis,
-                                    updateAtMillis: detail.updateAtMillis,
-                                    templateKind: 1,
-                                    displayKind: 1,
-                                    version: detail.version,
-                                    recordDurationMillis: detail.recordDurationMillis,
-                                    editDurationMillis: detail.editDurationMillis,
-                                  }
-                                  : candidate))
-                              }}
-                            />
-                            {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
-                            {reeditSubmissions.jobs.filter(job => job.itemUid === item.itemUid && (job.state === 'failed' || job.state === 'uncertain')).map(job => <div key={job.submissionId} role="status" aria-label={tr("重新编辑保存状态")} style={styles.polishMeta}>
-                              {job.state === 'failed' ? tr("保存失败：{v0}", { v0: job.error ?? '请恢复编辑后重试' }) : '保存结果待确认'}
-                              {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
-                              {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void reeditSubmissions.refresh(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
-                            </div>)}
-                          </div>
-                          const fileSendStatus = fileTasks.tasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <div key={task.taskRef} role="status" aria-label={tr("附件发送状态")} data-arkme-file-send-status={task.state} style={{ fontSize: 12, lineHeight: 1.5, color: arkmeTheme.secondary, maxWidth: '100%', overflowWrap: 'anywhere', textAlign: item.isMe ? 'right' : 'left' }}>
-                              {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
-                              {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(fileTasks.refresh).catch(caught => setError(errorMessage(caught))) }}>{tr("重试")}</button>}
-                              {task.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { fileTasks.refresh(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>{tr("核对发送结果")}</button>}
-                              {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button data-arkme-feedback="danger" type="button" aria-label={tr("清除发送记录")} onClick={event => {
-                                event.stopPropagation()
-                                if (task.state === 'uncertain' && !window.confirm('发送结果仍未确认。清除记录不会撤回可能已发送的消息，是否继续？')) return
-                                void callArkme('files.send.discard', { taskRef: task.taskRef })
-                                  .then(fileTasks.refresh)
-                                  .catch(caught => setError(errorMessage(caught)))
-                              }}>{tr("清除")}</button></>}
-                            </div>)
-                          const messageContentLine = isSharedRecordingCard
-                            ? messageBubble
-                            : <ArkmeMessageReadReceiptLine
-                              key={`read-receipt:${conversationOverlayKey}`}
-                              source={source}
-                              item={item}
-                              wide={isStructuredMessageCard}
-                            >
-                              {messageBubble}
-                            </ArkmeMessageReadReceiptLine>
-                          const topicBadge = selfTopicPresentation === undefined
-                            ? null
-                            : <ArkmeTimelineSelfTopicBadge
-                                topic={selfTopicPresentation.topic}
-                                {...(selfTopicPresentation.displayLabel === undefined ? {} : { displayLabel: selfTopicPresentation.displayLabel })}
-                                onSelect={activateSelfSource}
-                              />
-                          if (!isExtensionMessage || item.extensionParent === undefined) return <>
-                            {messageContentLine}
-                            {fileSendStatus}
-                            {topicBadge}
-                          </>
-                          return <div
-                            data-arkme-extension-message-cluster="true"
-                            style={{
-                              ...styles.extensionMessageGroup,
-                              ...(item.isMe ? styles.extensionMessageGroupMe : {}),
-                            }}
-                          >
-                            <ArkmeExtensionParentPreview
-                              parent={item.extensionParent}
-                              isMe={item.isMe}
-                              onSelect={() => {
-                                arkmeUi.showConversationTarget(
-                                  source,
-                                  item.extensionParent?.itemUid ?? '',
-                                  item.extensionParent?.sendAtMillis ?? 0,
-                                  item.extensionParent?.recordOwnerUserId,
-                                )
-                              }}
-                            />
-                            <div
-                              data-arkme-extension-child-line="true"
-                              style={{
-                                ...styles.extensionChildLine,
-                                ...(item.isMe ? styles.extensionChildLineMe : {}),
-                              }}
-                            >
-                              {messageAvatar}
-                              <div style={{
-                                ...styles.extensionChildBody,
-                                ...(item.isMe ? styles.extensionChildBodyMe : {}),
-                              }}>
-                                {messageHeader}
-                                {messageContentLine}
-                                {fileSendStatus}
-                                {topicBadge}
-                              </div>
-                            </div>
-                          </div>
-                        })()}
-                      </div>
-                    </div>
-                  </li>
-                </Fragment>
-              })}
+              {renderedMessageRows}
             </ul>}
             <div ref={newerSentinelRef} style={styles.sentinel} />
             <div ref={endAccessoryRef} data-arkme-conversation-end-accessory aria-hidden={activeSelectMode !== undefined || undefined}

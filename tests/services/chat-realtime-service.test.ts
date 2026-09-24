@@ -416,7 +416,8 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
-  it('bounds native notification delivery at three while preserving ordered Browser fallbacks', async () => {
+  it.each(['normal', 'held', 'disposed', 'account-changed'] as const)('bounds native notifications without blocking session updates: %s', async scenario => {
+    const held = scenario !== 'normal'
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -476,6 +477,8 @@ describe('ChatRealtimeService', () => {
         status: 1, sequence: index + 1,
       })),
     ]))
+    let releaseNative!: () => void
+    const nativeHold = new Promise<void>(resolve => { releaseNative = resolve })
     let active = 0
     let maxActive = 0
     let releaseScheduled = false
@@ -489,6 +492,7 @@ describe('ChatRealtimeService', () => {
         nativeBodies.set(payload.idempotencyKey, payload.presentation.body)
         active += 1
         maxActive = Math.max(maxActive, active)
+        if (held) await nativeHold
         await new Promise<void>(resolve => {
           pendingResolvers.push(() => {
             active -= 1
@@ -553,15 +557,34 @@ describe('ChatRealtimeService', () => {
       },
     ])
 
-    await expect(service.refreshChatSessionProjectionBatch(pending)).resolves.toEqual([])
+    const work = service.refreshChatSessionProjectionBatch(pending)
+    try {
+      if (held) {
+        await vi.waitFor(() => expect(startedKeys).toHaveLength(3))
+        await vi.waitFor(() => expect(events.filter(event => event.type === 'sessions-delta')
+          .flatMap(event => (event as any).updates)).toHaveLength(chatSessionCount))
+        if (scenario === 'disposed') service.dispose()
+        if (scenario === 'account-changed') service.resetAttentionSummary()
+      }
+    } finally { releaseNative(); await work }
+    expect(await work).toEqual([])
+    if (scenario === 'disposed' || scenario === 'account-changed') {
+      expect(startedKeys).toHaveLength(3)
+      expect(events.filter(event => event.type === 'message-notification')).toEqual([])
+      service.dispose(); runtime.dispose(); return
+    }
 
     expect(maxActive).toBe(3)
     expect(active).toBe(0)
-    expect(startedKeys).toEqual(Array.from({ length: notificationCount }, (_, index) => `event-${String(index)}`))
-    expect(events.filter(event => event.type === 'message-notification').map(event => event.notification?.eventUid))
+    expect([...startedKeys].sort()).toEqual(Array.from({ length: notificationCount }, (_, index) => `event-${String(index)}`).sort())
+    for (let sessionIndex = 0; sessionIndex < bundles.length; sessionIndex++) {
+      expect(startedKeys.filter(key => Math.floor(Number(key.slice(6)) / notificationsPerSession) === sessionIndex))
+        .toEqual(Array.from({ length: notificationsPerSession }, (_, index) => `event-${sessionIndex * notificationsPerSession + index}`))
+    }
+    expect(events.filter(event => event.type === 'message-notification').map(event => event.notification?.eventUid).sort())
       .toEqual(Array.from({ length: notificationCount }, (_, index) => index)
         .filter(index => index % 4 === 1 && index !== 5)
-        .map(index => `event-${String(index)}`))
+        .map(index => `event-${String(index)}`).sort())
     expect(nativeBodies.get('event-1')).toBe('[图片]消息 0-1😠')
     expect(events.find(event => event.notification?.eventUid === 'event-1')?.notification?.body)
       .toBe(nativeBodies.get('event-1'))
@@ -814,4 +837,45 @@ describe('directory invalidation ownership', () => {
     expect(JSON.stringify(browser.mock.calls)).not.toContain('host-only-session')
     service.dispose(); runtime.dispose()
   })
+})
+
+it('starts tails alongside one display batch and delivers fast sessions while a slow tail is pending', async () => {
+  const session = {userId:42,accessToken:'access',refreshToken:'refresh'}
+  const runtime = new ServiceRuntime(config, {read:async()=>session,write:async()=>{},delete:async()=>{}}, {} as StateStore)
+  const source = new SourceService(runtime, new ProfileService(runtime), {
+    async summary() { return {recordCount:0,wordsCount:0,totalSec:0} }, recordItem() { return undefined },
+  })
+  let releaseDisplay!: () => void, releaseSlow!: () => void
+  const display = new Promise<void>(resolve => { releaseDisplay = resolve })
+  const slow = new Promise<void>(resolve => { releaseSlow = resolve })
+  const started: string[] = [], delivered: string[] = []
+  let active = 0, maxActive = 0
+  const post = vi.spyOn(runtime, 'authenticatedChatPost').mockImplementation(async (path, params: any) => {
+    if (path.endsWith('display-snapshots')) {
+      await display
+      return {items: ['slow','fast','third','fourth'].map(uid => ({session:{chat_session_uid:uid,session_kind:1}}))}
+    }
+    const uid = params.chat_session_uid
+    started.push(uid); active++; maxActive = Math.max(active,maxActive)
+    if (uid === 'slow') await slow
+    active--; return {items:[]}
+  })
+  vi.spyOn(source, 'chatSourceFromBundle').mockImplementation(async (bundle: any) => ({
+    sourceKey:bundle.session.chat_session_uid,sourceRef:'ref',kind:'private_chat',displayName:'test',
+  }))
+  const service = new ChatRealtimeService(runtime, source, {chatTimelineItems:async()=>[]})
+  vi.spyOn(service,'refreshAttentionSummary').mockResolvedValue()
+  service.subscribeChatRealtime(event => {
+    if (event.type === 'sessions-delta') delivered.push(...event.updates.map(update=>update.sourceKey))
+  })
+  const work = service.refreshChatSessionProjectionBatch(['slow','fast','third','fourth'].map(uid=>[uid,{latestSequence:1,notificationHints:[]}]))
+  await vi.waitFor(()=>expect(started).toEqual(['slow','fast','third']))
+  expect(delivered).toEqual([])
+  releaseDisplay()
+  await vi.waitFor(()=>expect(delivered).toEqual(expect.arrayContaining(['fast','third','fourth'])))
+  expect(delivered).not.toContain('slow')
+  releaseSlow(); expect(await work).toEqual([])
+  expect(delivered).toHaveLength(4); expect(maxActive).toBeLessThanOrEqual(3)
+  expect(post.mock.calls.filter(([path])=>path.endsWith('display-snapshots'))).toHaveLength(1)
+  service.dispose(); runtime.dispose()
 })

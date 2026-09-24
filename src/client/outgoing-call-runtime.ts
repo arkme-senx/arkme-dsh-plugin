@@ -739,6 +739,8 @@ export class OutgoingCallRuntime {
   }
 
   private diag(label: string, detail: object): void {
+    if ((label === 'api_call_start' || label === 'api_call_success')
+      && 'operation' in detail && detail.operation === 'calls.outgoing.intent.claim') return
     const snapshot = {
       phase: this.snapshot.phase,
       visible: this.snapshot.visible,
