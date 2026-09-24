@@ -71,8 +71,8 @@
 .arkme-storage-composition li > :last-child { text-align: right; color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-token-detail-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .arkme-token-detail-toolbar strong { font-weight: 500; font-variant-numeric: tabular-nums; }
-.arkme-token-detail-toolbar select { color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 6px; font: inherit; padding: 5px 7px; max-width: 100%; }
-.arkme-token-detail-toolbar select:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }
+.arkme-token-detail-toolbar select, .arkme-points-toolbar select { color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 6px; font: inherit; padding: 5px 7px; max-width: 100%; }
+.arkme-token-detail-toolbar select:focus-visible, .arkme-points-toolbar select:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }
 .arkme-token-operations > li { border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); }
 .arkme-account-usage .arkme-token-operation { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 14px; padding: 12px 0; text-align: left; color: inherit; }
 .arkme-token-operation > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -125,7 +125,6 @@
 .arkme-usage-breakdown[data-usage-detail="points"] { margin-top: 8px; }
 .arkme-points-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
 .arkme-points-toolbar > span { color: var(--dsw-alias-label-secondary, #68707c); }
-.arkme-usage-breakdown[data-usage-detail="points"] input { max-width: 100%; padding: 5px 7px; font: inherit; color: inherit; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 6px; }
 .arkme-usage-breakdown[data-usage-detail="points"] summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; padding: 12px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .arkme-usage-breakdown[data-usage-detail="points"] summary::-webkit-details-marker { display: none; }
 .arkme-usage-breakdown[data-usage-detail="points"] summary > span:first-child { min-width: 0; }
@@ -138,4 +137,4 @@
 .arkme-points-call { margin-bottom: 12px; padding-left: 12px; border-left: 2px solid var(--dsw-alias-border-l2, #e1e3e6); overflow-wrap: anywhere; }
 .arkme-points-call small { display: block; margin-top: 4px; color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-points-funding { color: var(--dsw-alias-label-secondary, #68707c); }
-.arkme-usage-breakdown[data-usage-detail="points"] input:focus-visible, .arkme-usage-breakdown[data-usage-detail="points"] summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }
+.arkme-usage-breakdown[data-usage-detail="points"] summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }

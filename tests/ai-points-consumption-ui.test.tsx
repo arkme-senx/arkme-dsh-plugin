@@ -12,8 +12,59 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   mocks.call.mockReset().mockImplementation(async (_op, params) => ({ accountScope: params.expectedAccountScope, unit: 'ai_points', month: params.month, chargedPoints: '0.0000001', items: [row], nextBeforeId: '' }))
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers() })
 const render = async (scope = 'prod:1') => { await act(async () => root.render(<ArkmePointsConsumption scope={scope} revision={0} />)) }
+const chooseMonth = async (value: string) => {
+  await act(async () => {
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="消费月份"]')!
+    select.value = value
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+it('uses the billing month across a year boundary and expands history without changing the query', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-12-31T16:01:00Z'))
+  await render()
+  const select = host.querySelector<HTMLSelectElement>('select[aria-label="消费月份"]')!
+  expect(host.querySelector('input[type="month"]')).toBeNull()
+  expect(select.value).toBe('2027-01')
+  expect(select.selectedOptions[0]?.textContent).toBe('2027年1月')
+  expect(Array.from(select.options).filter(option => option.value !== 'earlier').every(option => option.value <= '2027-01')).toBe(true)
+  await chooseMonth('2026-12')
+  expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({ expectedAccountScope: 'prod:1', month: '2026-12' })
+  const calls = mocks.call.mock.calls.length
+  const previousEarliest = select.options[select.options.length - 2]!.value
+  await chooseMonth('earlier')
+  expect(select.value).toBe('2026-12')
+  expect(mocks.call).toHaveBeenCalledTimes(calls)
+  const earlierMonth = select.options[select.options.length - 2]!.value
+  expect(earlierMonth < previousEarliest).toBe(true)
+  await chooseMonth(earlierMonth)
+  expect(mocks.call.mock.calls.at(-1)?.[1].month).toBe(earlierMonth)
+})
+
+it('discards delayed results when a different month is chosen and starts without the old cursor', async () => {
+  await render()
+  const options = host.querySelector<HTMLSelectElement>('select')!.options
+  const firstMonth = options[1]!.value, secondMonth = options[2]!.value
+  let release!: (value: unknown) => void
+  let signal!: AbortSignal
+  mocks.call.mockImplementationOnce((_op, _params, requestSignal) => { signal = requestSignal; return new Promise(resolve => { release = resolve }) })
+  await chooseMonth(firstMonth)
+  expect(host.querySelectorAll('details')).toHaveLength(0)
+  expect(host.querySelector('[role="status"]')).not.toBeNull()
+  mocks.call.mockImplementationOnce(async (_op, params) => ({ accountScope: 'prod:1', unit: 'ai_points', month: params.month, chargedPoints: '0', items: [], nextBeforeId: '' }))
+  await chooseMonth(secondMonth)
+  expect(signal.aborted).toBe(true)
+  expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({ expectedAccountScope: 'prod:1', month: secondMonth })
+  await act(async () => release({ accountScope: 'prod:1', unit: 'ai_points', month: firstMonth, chargedPoints: '1', items: [row], nextBeforeId: '10' }))
+  expect(host.querySelector<HTMLSelectElement>('select')!.value).toBe(secondMonth)
+  expect(host.textContent).toContain('暂无积分消费')
+  expect(host.querySelectorAll('details')).toHaveLength(0)
+  expect(host.textContent).not.toContain('加载更多')
+})
+
 it('shows a non-zero tiny charge without exposing Token diagnostics or exact precision', async () => {
   await render()
   expect(host.textContent).toContain('< 0.01 积分')

@@ -9,6 +9,14 @@ type PageState = { key: string; status: 'loading' | 'ready' | 'error'; items: Ar
 export function ArkmePointsConsumption({ scope, revision }: { scope: string; revision: number }) {
   useArkmeLocale()
   const [month, setMonth] = useState(calendarMonth)
+  const [monthCount, setMonthCount] = useState(24)
+  const [year, currentMonth] = calendarMonth().split('-').map(Number)
+  const latestMonth = year! * 12 + currentMonth! - 1
+  // Grow the menu on demand; this is a display batch, not a history limit.
+  const months = Array.from({ length: Math.min(monthCount, latestMonth - 11) }, (_, offset) => {
+    const index = latestMonth - offset
+    return `${String(Math.floor(index / 12)).padStart(4, '0')}-${String(index % 12 + 1).padStart(2, '0')}`
+  })
   const [retry, setRetry] = useState(0)
   const [state, setState] = useState<PageState>()
   const request = useRef<AbortController>()
@@ -39,7 +47,14 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
   const current = state?.key === key ? state : undefined
   return <div className="arkme-usage-breakdown" data-usage-detail="points">
     <div className="arkme-points-toolbar">
-      <input aria-label={tr('消费月份')} type="month" value={month} max={calendarMonth()} onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value) && event.target.value <= calendarMonth()) setMonth(event.target.value) }} />
+      <select aria-label={tr('消费月份')} value={month} onChange={event => {
+        const value = event.target.value
+        if (value === 'earlier') setMonthCount(count => count + 12)
+        else if (months.includes(value)) setMonth(value)
+      }}>
+        {months.map(value => <option key={value} value={value}>{new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${value}-01T00:00:00Z`))}</option>)}
+        {months.length < latestMonth - 11 && <option value="earlier">{tr('更早月份')}</option>}
+      </select>
       {current?.status === 'ready' && current.items.length > 0 && <span>{tr('该月消费')} <strong>{formatAiPoints(current.total)}</strong> {tr('积分')}</span>}
     </div>
     {(!current || current.status === 'loading') && <p role="status">{tr('读取中…')}</p>}
