@@ -116,6 +116,8 @@ AI 来信暂时无法加载|AI letters are temporarily unavailable
 正在加载录音记录…|Loading recordings…
 录音记录加载失败|Could not load recordings
 暂无录音记录|No recordings yet
+绑定手机号后可使用聊天、世界、联系人和通话|Link a phone number to use chats, World, contacts and calls.
+去绑定|Link phone number
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens
