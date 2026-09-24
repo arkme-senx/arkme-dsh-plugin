@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ArkmeCalendarBucketDay, ArkmeRecordingCalendarMonth, ArkmeTimelineItem } from '../types.js'
 import { isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
 import { ArkmeDayTimeline } from './ArkmeDayTimeline.js'
+import { openReactionHistory } from './ArkmeReactionNotification.js'
 import { ArkmeCalendarMonthView, ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
@@ -103,6 +104,10 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
     <div className="arkme-personal-day-body" key={query.bucketDate}>
       <ArkmeDayTimeline key={revision} query={query} reader={reader} generateRecap={generateDayRecap} onClose={onClose} onRefresh={refreshMonth} onDetailChange={() => setRichDetail(undefined)}
         onQueryChange={next => { setRichDetail(undefined); setQuery(next) }}
+        onOpenReactionSource={(message, expression) => {
+          onClose()
+          openReactionHistory(message, expression)
+        }}
         onOpenSource={ref => {
           const target = reader.resolveTarget(ref)
           if (!target) return

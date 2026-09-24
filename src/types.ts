@@ -1328,6 +1328,7 @@ export interface ArkmeProviderCapabilities {
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
     directMessageAdmission?: true
+    reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -3825,6 +3826,7 @@ export type ArkmePluginOperation =
   | 'chat.member.private.open'
   | 'source.send-rich'
   | 'favorite-stickers.list'
+  | 'reactions'
   | 'favorite-stickers.add'
   | 'favorite-stickers.send'
   | 'favorite-stickers.manage'

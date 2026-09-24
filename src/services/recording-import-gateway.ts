@@ -1,5 +1,12 @@
 import OSS from 'ali-oss'
 import {
+  isRetryableRecordingUploadError,
+  RECORDING_UPLOAD_REQUEST_TIMEOUT,
+  RECORDING_UPLOAD_RETRY_DELAYS,
+  throwIfRecordingUploadAborted,
+  waitForRecordingUploadRetry,
+} from './recording-import-upload-retry.js'
+import {
   RecordingImportContractError,
   type RecordingImportJob,
   type RecordingImportOwnerProgress,
@@ -68,7 +75,8 @@ const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'enhancement_transcript',
 ])
 
-type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => AudioOssClient
+// @types/ali-oss predates the SDK's retryMax option.
+type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0] & { retryMax: number }) => AudioOssClient
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -570,6 +578,9 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       accessKeyId: credentials.accessKeyId,
       accessKeySecret: credentials.accessKeySecret,
       stsToken: credentials.stsToken,
+      timeout: RECORDING_UPLOAD_REQUEST_TIMEOUT,
+      // The Host owns the retry budget and backoff; avoid nested SDK retries.
+      retryMax: 0,
       refreshSTSTokenInterval: 5 * 60 * 1000,
       refreshSTSToken: async () => {
         await this.requireJobSession(job)
@@ -594,17 +605,46 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     signal?.addEventListener('abort', abort, { once: true })
     try {
       const objectPath = `pc_upload/${String(job.userId)}/${job.sessionId}/${remoteFileName(job)}`
-      const upload = client.multipartUpload(objectPath, job.sourceHandle, {
-        parallel: 1,
-        partSize: 5 * 1024 * 1024,
-        checkpoint: job.uploadCheckpoint,
-        mime: job.mimeType,
-        progress: async (percentage, checkpoint) => {
-          if (signal?.aborted === true) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
-          const bounded = Math.min(1, Math.max(0, percentage))
-          await onProgress(Math.round(job.fileSize * bounded), checkpoint)
-        },
-      })
+      let latestCheckpoint = job.uploadCheckpoint
+      const upload = (async () => {
+        for (let attempt = 0; ; attempt += 1) {
+          throwIfRecordingUploadAborted(signal)
+          if (attempt > 0) await this.requireJobSession(job)
+          // Authentication may yield while cancellation is in progress.
+          throwIfRecordingUploadAborted(signal)
+          let progressFailed = false
+          try {
+            await client.multipartUpload(objectPath, job.sourceHandle, {
+              parallel: 1,
+              partSize: 5 * 1024 * 1024,
+              checkpoint: latestCheckpoint,
+              mime: job.mimeType,
+              progress: async (percentage, checkpoint) => {
+                try {
+                  if (signal?.aborted === true) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+                  const bounded = Math.min(1, Math.max(0, percentage))
+                  await onProgress(Math.round(job.fileSize * bounded), checkpoint)
+                  if (checkpoint !== undefined) latestCheckpoint = checkpoint
+                } catch (error) {
+                  progressFailed = true
+                  throw error
+                }
+              },
+            })
+            return
+          } catch (error) {
+            const delay = RECORDING_UPLOAD_RETRY_DELAYS[attempt]
+            if (signal?.aborted === true || progressFailed || !isRetryableRecordingUploadError(error)) throw error
+            if (delay === undefined) {
+              // SDK socket errors carry `code` but no `retryable`; normalize
+              // them so the coordinator retains the manual retry affordance.
+              throw new ArkmePluginError('recording-import-upload-failed',
+                error instanceof Error ? error.message : '录音上传失败', true, 503, { cause: error })
+            }
+            await waitForRecordingUploadRetry(delay, signal)
+          }
+        }
+      })()
       await (signal === undefined ? upload : Promise.race([upload, aborted]))
     } finally {
       signal?.removeEventListener('abort', abort)
