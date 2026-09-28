@@ -1809,7 +1809,7 @@ export class RecordService {
       extensionParentRecordUid: parentRecordUid,
       extensionParent: {
         itemUid: parentRecordUid,
-        senderName: stringValue(
+        senderName: selfRoleSnapshotFromCloud(previewRecord.self_role_snapshot)?.name || stringValue(
           previewRecord.nickname ?? previewRecord.nick_name
             ?? preview.nickname ?? preview.nick_name,
         ).trim() || '我',

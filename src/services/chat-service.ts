@@ -3310,7 +3310,7 @@ export class ChatService {
       displayItems: hydration.displayItemsByRecordUid.get(parent.recordUid) ?? [],
       mediaUnavailable: hydration.unavailableRecordUids.has(parent.recordUid),
     })
-    return { itemUid: parent.recordUid, senderName: item.senderName, title: item.title,
+    return { itemUid: parent.recordUid, senderName: item.selfRole?.name ?? item.senderName, title: item.title,
       textContent: item.textContent, textFormat: item.textFormat ?? 'plain', sendAtMillis: item.sendAtMillis,
       ...(owner === 0 ? {} : { recordOwnerUserId: owner }),
       ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }) }

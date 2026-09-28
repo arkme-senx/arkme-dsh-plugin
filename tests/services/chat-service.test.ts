@@ -2599,7 +2599,7 @@ describe('ChatService', () => {
         edges: [], tree: { record_uid: 'moved', children: [] }, records: [parent] })) }
     const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef })) }
     const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
-    const record = { recordTimelineItemFromRaw: vi.fn(() => ({ itemUid: 'original', senderName: '作者', title: '',
+    const record = { recordTimelineItemFromRaw: vi.fn(() => ({ itemUid: 'original', senderName: '作者', selfRole: { roleId: 'parent-role', name: '角色作者' }, title: '',
       textContent: '未分类中的原消息', sendAtMillis: 1000, contentBlocks: [] })) }
     const privacy = { lockedRecordUids: vi.fn(async () => new Set()) }
     const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record as never,
@@ -2608,7 +2608,7 @@ describe('ChatService', () => {
     const detail = await chat.sourceMessageExtensionContext('source', ref)
     const preview = await chat.sourceMessageExtensionParent('source', ref)
     expect(detail).toMatchObject({ parentRecordUid: 'moved', extensionCount: 0, extensions: [],
-      extensionParent: { itemUid: 'original', textContent: '未分类中的原消息', sendAtMillis: 1000, recordOwnerUserId: 42 } })
+      extensionParent: { itemUid: 'original', senderName: '角色作者', textContent: '未分类中的原消息', sendAtMillis: 1000, recordOwnerUserId: 42 } })
     expect(preview.extensionParent).toEqual(detail.extensionParent)
     expect(await chat.relatedQuickNoteLocator('source', ref)).toMatchObject({ contextType: 'record', recordUid: 'moved', recordOwnerUserId: 42, chatSessionUid: '' })
     privacy.lockedRecordUids.mockResolvedValue(new Set(['original']))
