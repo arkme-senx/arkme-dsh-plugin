@@ -173,3 +173,42 @@ it('does not let a cancelled old pull release its replacement with the same stre
   expect(f.open).toHaveBeenCalledTimes(2)
   expect(f.open.mock.calls[1]![2].aborted).toBe(false)
 })
+
+it.each([1, 2, 4, 8])('shares one native history page for %i concurrent authorized observers', async observers => {
+  const snapshot = { type: 'snapshot', cursor: 10, records: [{ type: 'event', event: { seq: 10, type: 'turn/start' } }], hasMore: true }
+  const older = { records: Array.from({ length: 10 }, (_, seq) => ({ type: 'event', event: { seq, type: seq % 2 ? 'assistant/message' : 'turn/start' } })), hasMore: false }
+  const f = fixture([snapshot], { ok: true, value: older })
+  const results = await Promise.all(Array.from({ length: observers }, (_, i) => f.relay.request({ mode: 'pull', streamRef: `observer-${i}`, endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'mine' } } } } }, f.scope)))
+  console.log(JSON.stringify({ workload: 'native-follow-page', observers, nativePages: f.fetch.mock.calls.length, nativeStreams: f.open.mock.calls.length }))
+  expect(f.fetch).toHaveBeenCalledOnce()
+  expect(f.open).toHaveBeenCalledTimes(observers)
+  expect(results.every(value => JSON.stringify(value) === JSON.stringify(results[0]))).toBe(true)
+})
+
+it('separates page scopes and cursors, detaches a reader, and closes outstanding native reads', async () => {
+  const page = { records: [], hasMore: false }, f = fixture([], { ok: true, value: page })
+  const signals: AbortSignal[] = [], resolve: Array<() => void> = []
+  f.fetch.mockImplementation(async (request: Request) => {
+    signals.push(request.signal)
+    await new Promise<void>((yes, no) => { resolve.push(yes); request.signal.addEventListener('abort', () => no(request.signal.reason), { once: true }) })
+    return Response.json({ result: { ok: true, value: page } })
+  })
+  const body = (throughSeq = 20) => ({ mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: 'mine' }, throughSeq } } } })
+  const departing = new AbortController()
+  const first = f.relay.request(body(), { ...f.scope, signal: departing.signal }).catch(error => error)
+  const second = f.relay.request(body(), f.scope)
+  const otherAccount = f.relay.request(body(), { ...f.scope, accountId: 'other' })
+  const otherCursor = f.relay.request(body(21), f.scope)
+  await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledTimes(3))
+  departing.abort(new Error('departed'))
+  expect(await first).toMatchObject({ message: 'departed' })
+  expect(signals.every(signal => !signal.aborted)).toBe(true)
+  resolve.splice(0).forEach(yes => yes())
+  await Promise.all([second, otherAccount, otherCursor])
+  const fresh = f.relay.request(body(), f.scope).catch(error => error)
+  await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledTimes(4))
+  f.relay.close()
+  expect(await fresh).toMatchObject({ name: 'AbortError' })
+  expect(signals[3]!.aborted).toBe(true)
+  expect((f.relay as any).historyReads.flights.size).toBe(0)
+})

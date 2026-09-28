@@ -257,18 +257,20 @@ export class DshSessionChannelHost {
       return
     }
     const execution = this.options.epoch(request.runtimeRef, request.sessionRef)
-    if (execution === undefined || execution < 0 && request.body.mode !== 'pull' || this.pending.has(request.requestRef) || this.running.has(request.requestRef)) return
+    const queuedPrompt = request.body.mode === 'call' && request.body.endpoint === 'session/prompt'
+      && nativeRecord(nativeRecord(nativeRecord(request.body.payload).args).request).mode === 'queue'
+    if (execution === undefined || execution < 0 && request.body.mode !== 'pull' && !queuedPrompt || this.pending.has(request.requestRef) || this.running.has(request.requestRef)) return
     if (this.pending.size + this.running.size >= 128) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '会话请求积压超限')
     this.diagnostic('host_request_received', { request_ref: request.requestRef, operation: 'session.native', transport_seq: metadata.transportSequence })
     this.pending.set(request.requestRef, request)
-    if (request.body.mode === 'pull' && request.body.endpoint === 'session/follow') {
+    if (request.body.mode === 'pull' && request.body.endpoint === 'session/follow' || queuedPrompt) {
       this.recoverOpening(request.requestRef, request, request.body, request.expiresAt, () => { this.pending.delete(request.requestRef) })
     }
     this.tick()
   }
   private recoverOpening(id: string, address: Address, body: Json, expiresAt: number, failed: () => void): void {
     if (!this.options.recover || (this.options.epoch(address.runtimeRef, address.sessionRef) ?? 1) > 0) return
-    // Recover once for this actual read opening, not on the periodic producer
+    // Recover once for this actual opening, not on the periodic producer
     // tick. The local owner checks the peer and the original DSH writer fence.
     this.running.add(id)
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(Math.max(1, expiresAt - Date.now()))])
@@ -300,12 +302,12 @@ export class DshSessionChannelHost {
     for (const stream of this.streams.values()) if (Date.now() - stream.touched > 45_000 || this.options.epoch(stream.request.runtimeRef, stream.request.sessionRef) !== stream.epoch) stream.controller.abort()
     for (const [id, request] of this.pending) {
       if (request.expiresAt <= Date.now()) { this.pending.delete(id); continue }
+      if (this.running.has(id)) continue
       const epoch = this.options.epoch(request.runtimeRef, request.sessionRef)
       if (epoch === undefined || epoch <= 0) {
         if (epoch !== undefined && epoch < 0 && request.body.mode !== 'pull') this.pending.delete(id)
         continue
       }
-      if (this.running.has(id)) continue
       if (request.body.mode !== 'pull') this.pending.delete(id)
       this.running.add(id)
       void this.execute(request, epoch).catch(error => { if (!this.lifetime.signal.aborted) this.options.failed(error) }).finally(() => this.running.delete(id))
