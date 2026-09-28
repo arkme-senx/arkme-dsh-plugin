@@ -17,3 +17,7 @@
 .arkme-model-status, .arkme-model-error { padding: 8px 10px; font-size: 12px; }
 .arkme-model-error { color: var(--dsw-alias-state-error-primary, #b54841); }
 .arkme-model-error button { border: 0; color: inherit; background: transparent; text-decoration: underline; }
+
+.arkme-model-price { padding: 0 10px 8px; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8a8e96); }
+.arkme-model-price summary { cursor: pointer; }
+.arkme-model-price small { display: block; padding-top: 6px; line-height: 1.6; overflow-wrap: anywhere; }
