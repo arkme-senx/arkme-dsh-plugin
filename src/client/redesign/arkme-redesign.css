@@ -101,10 +101,16 @@
 .arkme-redesign-rail-footer > button:not([data-arkme-feedback]):hover, .arkme-redesign-rail-footer > button.is-active { background: #f1f2f5; }
 .arkme-redesign-rail-footer:empty { display: none; }
 .arkme-conversation-input-card { display: contents; }
-/* Keep the send action visible even inside a narrow conversation pane. The
-   complete keyboard shortcut remains available via the hint's title. */
-@container arkme-composer (max-width: 340px) {
-  .arkme-composer-shortcut-details { display: none; }
+.arkme-composer-send-shortcut-anchor { position: relative; display: inline-flex; align-items: center; flex: none; }
+.arkme-composer-send-shortcut-tooltip {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20;
+  width: max-content; max-width: min(240px, calc(100vw - 24px));
+  padding: 6px 9px; border-radius: 7px; background: #292b31; color: #fff;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .16); font-size: 11px; line-height: 16px;
+  white-space: normal; pointer-events: none; visibility: hidden; opacity: 0;
+}
+.arkme-composer-send-shortcut-anchor:is(:hover, :focus-within) > .arkme-composer-send-shortcut-tooltip {
+  visibility: visible; opacity: 1;
 }
 body:is([data-ds-skin='qq2006'], [data-arkme-skin='qq2006']) [data-arkme-owned='product-surface']
   .arkme-conversation-input-card.arkme-conversation-input-card.arkme-conversation-tools {

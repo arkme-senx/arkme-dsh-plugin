@@ -823,7 +823,8 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
     const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
     const captureContext = {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
@@ -842,6 +843,7 @@ describe('RecordService', () => {
       expect(body).toMatchObject({
         record_uid: recordUid,
         text_content: '#项目 浏览器采集验证',
+        sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
         record_duration_millis: 3_200,
         capture_context: {
           client_name: 'Google Chrome（DeepSeek Harness）', network_name: '网络已连接', electric: 100, charge: 1,
@@ -998,7 +1000,8 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
 
     await expect(service.createFileAssetsForConversation(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
@@ -1011,6 +1014,7 @@ describe('RecordService', () => {
       display_kind: 0,
       title: '',
       text_content: '图片正文',
+      sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
       content_payload: {
         payload_kind: 2,
         schema_version: 1,
@@ -1047,7 +1051,8 @@ describe('RecordService', () => {
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
     const service = new RecordService(runtime, {} as MediaService, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
     const childRecordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
 
     await expect(service.createExtensionForConversation(
@@ -1063,6 +1068,7 @@ describe('RecordService', () => {
       template_kind: 2,
       title: '',
       text_content: '附件延展',
+      sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
       content_payload: {
         payload_kind: 2,
         schema_version: 1,

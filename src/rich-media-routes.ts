@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import { arkmeCanInlineLocalFile, arkmeNormalizedFileMimeType, arkmePickedFileKind } from './file-transfer-contract.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import type { ArkmePluginResponse, ArkmeUploadedAsset } from './types.js'
+import { MAX_SELF_ROLE_AVATAR_BYTES } from './self-role-avatar-store.js'
 
 export interface ArkmeRichMediaRouteOptions {
   expectedPort: number
@@ -119,6 +120,44 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
       writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
     } finally {
       if (temporaryPath !== '') await unlink(temporaryPath).catch(() => undefined)
+    }
+  }
+}
+
+/** Local-only avatar save; unlike `/upload`, this never enters the cloud file API or staged-file cleanup. */
+export function createArkmeSelfRoleAvatarHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
+      assertLocalRequest(req, { ...options, allowNonLoopback: false })
+      const expectedUserId = clientExpectedUserId(req)
+      if (expectedUserId === undefined) throw new ArkmePluginError('self-role-account-invalid', '缺少角色所属账号', false, 400)
+      await assertRouteUser(service, expectedUserId)
+      const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase()
+      if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp') {
+        throw new ArkmePluginError('self-role-avatar-invalid', '仅支持 PNG、JPEG 或 WebP 头像', false, 415)
+      }
+      const plannedSize = Number(headerText(req, 'content-length'))
+      if (!Number.isSafeInteger(plannedSize) || plannedSize <= 0 || plannedSize > MAX_SELF_ROLE_AVATAR_BYTES) {
+        throw new ArkmePluginError('self-role-avatar-invalid', '头像为空或超过 8 MB', false, 413)
+      }
+      const chunks: Buffer[] = []
+      let received = 0
+      for await (const chunk of req) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        received += bytes.length
+        if (received > plannedSize || received > MAX_SELF_ROLE_AVATAR_BYTES) {
+          throw new ArkmePluginError('upload-size-mismatch', '头像大小与声明不一致', false, 400)
+        }
+        chunks.push(bytes)
+      }
+      if (received !== plannedSize) throw new ArkmePluginError('upload-size-mismatch', '头像上传不完整', false, 400)
+      await assertRouteUser(service, expectedUserId)
+      const avatarRef = await service.saveSelfRoleAvatar(expectedUserId, Buffer.concat(chunks), mimeType)
+      writeJson(res, 200, { ok: true, value: { avatarRef } })
+    } catch (error) {
+      const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('self-role-avatar-save-failed', '头像本地保存失败', true, 500, { cause: error })
+      writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
     }
   }
 }

@@ -33,18 +33,29 @@ describe('RecordingService', () => {
     const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
     let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
-    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }], failWrite: false }
+    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }], failWrite: false,
+      presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
+      presence: { state: 'fresh', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
     const calls: string[] = []
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       calls.push(path)
       if (state.failWrite && path.endsWith('/assign-asr-item-to-spk')) throw new Error('unknown write result')
+      if (state.presenceMissing && path.endsWith('/speaker-presence/list')) return new Response('', { status: 404 })
       let data: Record<string, unknown> = {}
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
+      if (path.endsWith('/speaker-presence/list')) data = state.presence
       if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
+      if (state.presenceMissing && path.endsWith('/get-calender-summary')) data = {
+        duration_ls: [0, 0, 0, 0, 0, 0, 1_000], un_click_session_ids_per_day: [[], [], [], [], [], [], []],
+      }
       if (path.endsWith('/one-day-trans')) data = {
         session_ls: [{ id: 'session', belong_usr: session.userId, start_at: 3600000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
         child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '内容' }] }],
+      }
+      if (state.presenceMissing && path.endsWith('/one-day-trans')) {
+        const request = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        if (request.start_at === state.recentDayStart && state.recentTranscript !== null) data = state.recentTranscript
       }
       return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
     }) as typeof fetch
@@ -66,6 +77,50 @@ describe('RecordingService', () => {
       restored.dispose()
       await fixture.runtime.writeSession({ userId: 43, accessToken: 'new', refreshToken: 'new' })
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('joins presence stats by an opaque speaker option key and excludes invalid rows', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const [speaker] = await fixture.service.recordingSpeakerOptions()
+      fixture.state.presence.items.push({ speaker_id: '', day_count: 0, last_seen_at: 0 })
+      const result = await fixture.service.recordingSpeakerPresence()
+      expect(result.state).toBe('fresh')
+      expect(result.scope).toBe('all-history')
+      expect(result.items).toEqual([{ optionKey: speaker!.optionKey, dayCount: 3, lastSeenAt: 1_780_000_000_000 }])
+      expect(JSON.stringify(result)).not.toContain('speaker_id')
+      expect(fixture.calls.some(path => path.endsWith('/speaker-presence/list'))).toBe(true)
+    } finally { await fixture.close() }
+  })
+
+  it('uses only the last seven days when the full-history route is absent', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      fixture.state.presenceMissing = true
+      fixture.state.recentDayStart = today.getTime()
+      fixture.state.recentTranscript = {
+        session_ls: [{ id: 'session', user_id: 42, start_at: today.getTime(), spk_ls: [
+          { num: 1, spk_id: 'speaker', inner_spk_id: 'inner-1', speaker_display_number: 12 },
+          { num: 2, spk_id: 'speaker', inner_spk_id: 'inner-2', speaker_display_number: 14 },
+        ] }],
+        child_ls: [{ session_id: 'session', start_at: 0, asr: [{ n: 1, s: 100, e: 200 }, { n: 2, s: 300, e: 500 }] }],
+      }
+      const result = await fixture.service.recordingSpeakerPresence()
+      expect(result).toMatchObject({ state: 'fresh', scope: 'recent-seven-days', items: [{ dayCount: 1, lastSeenAt: today.getTime() + 500 }] })
+      expect(fixture.calls.filter(path => path.endsWith('/one-day-trans'))).toHaveLength(1)
+      expect(fixture.calls.some(path => path.endsWith('/get-calender-summary'))).toBe(true)
+      const [speaker] = await fixture.service.recordingSpeakerOptions()
+      expect(await fixture.service.recordingSpeakerMembers(speaker!.speakerRef)).toEqual({
+        scope: 'recent-seven-days', dayCount: 1, lastSeenAt: today.getTime() + 500,
+        items: [
+          { token: '14', dayCount: 1, lastSeenAt: today.getTime() + 500 },
+          { token: '12', dayCount: 1, lastSeenAt: today.getTime() + 200 },
+        ],
+      })
+      expect(fixture.calls.filter(path => path.endsWith('/one-day-trans'))).toHaveLength(1)
     } finally { await fixture.close() }
   })
 
@@ -1542,6 +1597,7 @@ describe('RecordingService', () => {
     expect(options).toEqual([
       {
         optionKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        personKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小林', kind: 'speaker',
         isCurrentUser: false,
       },

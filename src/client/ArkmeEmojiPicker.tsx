@@ -83,7 +83,7 @@ export function resolveArkmeEmojiPanelGeometry({ caret, editor, panelWidth, pane
 
 const styles: Record<string, CSSProperties> = {
   host: { position: 'relative', flex: 'none' },
-  triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' },
+  triggerIcon: { width: 20, height: 20, display: 'block' },
   trigger: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 9,
     appearance: 'none', WebkitAppearance: 'none',

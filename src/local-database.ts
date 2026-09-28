@@ -1,5 +1,6 @@
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
 import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from './emoji-recent.js'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -19,6 +20,8 @@ import type {
   ArkmeRecordReeditDraft,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
+  ArkmeSelfRole,
+  ArkmeSelfRoleSnapshot,
   ArkmeSelfSummary,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
@@ -75,6 +78,50 @@ interface ProfileRow {
   phone_masked: string | null
   email_masked: string | null
   updated_at_millis: number
+}
+
+interface SelfRoleRow {
+  role_id: string
+  name: string
+  avatar_ref: string | null
+  created_at_millis: number
+  updated_at_millis: number
+}
+
+interface SelfRoleBindingRow {
+  role_id: string
+  role_name: string
+  avatar_ref: string | null
+}
+
+/** Read-only migration input; historical snapshots remain available after a role is deleted. */
+export interface ArkmeSelfRoleMigrationBinding {
+  recordUid: string
+  snapshot: ArkmeSelfRoleSnapshot
+  boundAtMillis: number
+}
+
+export interface ArkmeSelfRoleMigrationBatch {
+  items: ArkmeSelfRoleMigrationBinding[]
+  nextCursor?: string
+}
+
+function selfRoleFromRow(row: SelfRoleRow): ArkmeSelfRole {
+  return {
+    roleId: row.role_id,
+    name: row.name,
+    ...(row.avatar_ref === null ? {} : { avatarRef: row.avatar_ref }),
+    createdAtMillis: row.created_at_millis,
+    updatedAtMillis: row.updated_at_millis,
+  }
+}
+
+function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot {
+  return {
+    roleId: row.role_id,
+    name: row.role_name,
+    ...(row.avatar_ref === null ? {} : { avatarRef: row.avatar_ref }),
+  }
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
@@ -140,6 +187,24 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE INDEX IF NOT EXISTS record_cache_user_send
         ON record_cache (user_id, send_at_millis DESC, record_uid DESC);
+      CREATE TABLE IF NOT EXISTS self_role (
+        user_id INTEGER NOT NULL,
+        role_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        avatar_ref TEXT,
+        created_at_millis INTEGER NOT NULL,
+        updated_at_millis INTEGER NOT NULL,
+        PRIMARY KEY (user_id, role_id)
+      );
+      CREATE TABLE IF NOT EXISTS self_role_record (
+        user_id INTEGER NOT NULL,
+        record_uid TEXT NOT NULL,
+        role_id TEXT NOT NULL,
+        role_name TEXT NOT NULL,
+        avatar_ref TEXT,
+        bound_at_millis INTEGER NOT NULL,
+        PRIMARY KEY (user_id, record_uid)
+      );
       CREATE TABLE IF NOT EXISTS cache_meta (
         user_id INTEGER PRIMARY KEY,
         record_count INTEGER NOT NULL DEFAULT 0,
@@ -255,6 +320,178 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async clearRecordingSpeakerCache(scope: string, userId: number): Promise<void> {
     this.database.prepare('DELETE FROM recording_speaker_cache WHERE scope=? AND user_id=?').run(scope, userId)
+  }
+
+  async listSelfRoles(userId: number): Promise<ArkmeSelfRole[]> {
+    const rows = this.database.prepare(`
+      SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
+      FROM self_role WHERE user_id = ? ORDER BY created_at_millis, role_id
+    `).all(userId) as unknown as SelfRoleRow[]
+    return rows.map(selfRoleFromRow)
+  }
+
+  /** Historical uploaded avatars occur both on live roles and frozen message presentation. */
+  async legacySelfRoleAvatarRefs(userId: number): Promise<string[]> {
+    const rows = this.database.prepare(`
+      SELECT avatar_ref FROM self_role WHERE user_id = ? AND avatar_ref LIKE 'file_asset://%'
+      UNION
+      SELECT avatar_ref FROM self_role_record WHERE user_id = ? AND avatar_ref LIKE 'file_asset://%'
+    `).all(userId, userId) as unknown as Array<{ avatar_ref: string }>
+    return rows.map(row => row.avatar_ref).filter(ref => /^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(ref))
+  }
+
+  /** Replace only byte-equivalent avatar refs; names and historical role identities stay frozen. */
+  async replaceSelfRoleAvatarRef(userId: number, oldRef: string, newRef: string): Promise<number> {
+    if (!/^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(oldRef)
+      || !/^arkme-self-role-image-v1\.[0-9a-f-]{36}$/i.test(newRef)) return 0
+    let changed = 0
+    this.transaction(() => {
+      const now = Date.now()
+      const roles = this.database.prepare(`
+        UPDATE self_role
+        SET avatar_ref = ?, updated_at_millis = CASE WHEN updated_at_millis >= ? THEN updated_at_millis + 1 ELSE ? END
+        WHERE user_id = ? AND avatar_ref = ?
+      `).run(newRef, now, now, userId, oldRef)
+      const records = this.database.prepare(`
+        UPDATE self_role_record SET avatar_ref = ? WHERE user_id = ? AND avatar_ref = ?
+      `).run(newRef, userId, oldRef)
+      changed = Number(roles.changes) + Number(records.changes)
+    })
+    return changed
+  }
+
+  async createSelfRole(userId: number, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
+    const role: ArkmeSelfRole = {
+      roleId: randomUUID(), name, ...(avatarRef === undefined ? {} : { avatarRef }),
+      createdAtMillis: Date.now(), updatedAtMillis: Date.now(),
+    }
+    this.transaction(() => {
+      const count = this.database.prepare('SELECT count(*) AS count FROM self_role WHERE user_id = ?')
+        .get(userId) as { count: number }
+      if (count.count >= 20) throw new Error('self-role-limit')
+      this.database.prepare(`
+        INSERT INTO self_role (user_id, role_id, name, avatar_ref, created_at_millis, updated_at_millis)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(userId, role.roleId, name, avatarRef ?? null, role.createdAtMillis, role.updatedAtMillis)
+    })
+    return role
+  }
+
+  async updateSelfRole(userId: number, roleId: string, name: string, avatarRef?: string): Promise<ArkmeSelfRole | undefined> {
+    const row = this.database.prepare(`
+      SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
+      FROM self_role WHERE user_id = ? AND role_id = ?
+    `).get(userId, roleId) as SelfRoleRow | undefined
+    if (row === undefined) return undefined
+    const nextAvatarRef = avatarRef === undefined ? row.avatar_ref : avatarRef || null
+    const updatedAtMillis = Math.max(Date.now(), row.updated_at_millis + 1)
+    this.database.prepare(`
+      UPDATE self_role SET name = ?, avatar_ref = ?, updated_at_millis = ?
+      WHERE user_id = ? AND role_id = ?
+    `).run(name, nextAvatarRef, updatedAtMillis, userId, roleId)
+    this.secureDatabaseFiles()
+    return selfRoleFromRow({ ...row, name, avatar_ref: nextAvatarRef, updated_at_millis: updatedAtMillis })
+  }
+
+  async deleteSelfRole(userId: number, roleId: string): Promise<boolean> {
+    // The message snapshot intentionally remains after the role is deleted.
+    const result = this.database.prepare('DELETE FROM self_role WHERE user_id = ? AND role_id = ?').run(userId, roleId)
+    this.secureDatabaseFiles()
+    return Number(result.changes) > 0
+  }
+
+  async bindSelfRole(userId: number, recordUid: string, roleId: string): Promise<ArkmeSelfRoleSnapshot | undefined> {
+    let snapshot: ArkmeSelfRoleSnapshot | undefined
+    this.transaction(() => {
+      const role = this.database.prepare(`
+        SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
+        FROM self_role WHERE user_id = ? AND role_id = ?
+      `).get(userId, roleId) as SelfRoleRow | undefined
+      if (role === undefined) return
+      const existing = this.database.prepare(`
+        SELECT role_id, role_name, avatar_ref FROM self_role_record
+        WHERE user_id = ? AND record_uid = ?
+      `).get(userId, recordUid) as SelfRoleBindingRow | undefined
+      if (existing !== undefined) {
+        if (existing.role_id !== roleId) throw new Error('self-role-record-conflict')
+        snapshot = selfRoleSnapshotFromRow(existing)
+        return
+      }
+      snapshot = { roleId, name: role.name, ...(role.avatar_ref === null ? {} : { avatarRef: role.avatar_ref }) }
+      this.database.prepare(`
+        INSERT INTO self_role_record (user_id, record_uid, role_id, role_name, avatar_ref, bound_at_millis)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(userId, recordUid, roleId, role.name, role.avatar_ref, Date.now())
+    })
+    return snapshot
+  }
+
+  async unbindSelfRole(userId: number, recordUid: string, roleId: string): Promise<void> {
+    this.database.prepare('DELETE FROM self_role_record WHERE user_id = ? AND record_uid = ? AND role_id = ?')
+      .run(userId, recordUid, roleId)
+    this.secureDatabaseFiles()
+  }
+
+  async rebindSelfRole(userId: number, recordUid: string, newRecordUid: string): Promise<boolean> {
+    if (recordUid === newRecordUid) {
+      return this.database.prepare('SELECT 1 FROM self_role_record WHERE user_id = ? AND record_uid = ?')
+        .get(userId, recordUid) !== undefined
+    }
+    let rebound = false
+    this.transaction(() => {
+      const source = this.database.prepare(`
+        SELECT role_id, role_name, avatar_ref FROM self_role_record WHERE user_id = ? AND record_uid = ?
+      `).get(userId, recordUid) as SelfRoleBindingRow | undefined
+      const target = this.database.prepare(`
+        SELECT role_id, role_name, avatar_ref FROM self_role_record WHERE user_id = ? AND record_uid = ?
+      `).get(userId, newRecordUid) as SelfRoleBindingRow | undefined
+      if (source === undefined) { rebound = target !== undefined; return }
+      if (target !== undefined && (target.role_id !== source.role_id || target.role_name !== source.role_name || target.avatar_ref !== source.avatar_ref)) {
+        throw new Error('self-role-record-conflict')
+      }
+      if (target === undefined) {
+        this.database.prepare(`
+          INSERT INTO self_role_record (user_id, record_uid, role_id, role_name, avatar_ref, bound_at_millis)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(userId, newRecordUid, source.role_id, source.role_name, source.avatar_ref, Date.now())
+      }
+      this.database.prepare('DELETE FROM self_role_record WHERE user_id = ? AND record_uid = ?').run(userId, recordUid)
+      rebound = true
+    })
+    return rebound
+  }
+
+  async selfRoleSnapshots(userId: number, recordUids: readonly string[]): Promise<Map<string, ArkmeSelfRoleSnapshot>> {
+    const uniqueUids = [...new Set(recordUids.filter(Boolean))].slice(0, 200)
+    if (uniqueUids.length === 0) return new Map()
+    const placeholders = uniqueUids.map(() => '?').join(',')
+    const rows = this.database.prepare(`
+      SELECT record_uid, role_id, role_name, avatar_ref FROM self_role_record
+      WHERE user_id = ? AND record_uid IN (${placeholders})
+    `).all(userId, ...uniqueUids) as unknown as Array<SelfRoleBindingRow & { record_uid: string }>
+    return new Map(rows.map(row => [row.record_uid, selfRoleSnapshotFromRow(row)]))
+  }
+
+  /** Stable, account-scoped pages for a future idempotent cloud backfill. No local row is marked synced or removed. */
+  async selfRoleMigrationBatch(userId: number, afterRecordUid = '', limit = 200): Promise<ArkmeSelfRoleMigrationBatch> {
+    const pageSize = Math.min(200, Math.max(1, Math.trunc(limit) || 200))
+    const rows = this.database.prepare(`
+      SELECT record_uid, role_id, role_name, avatar_ref, bound_at_millis
+      FROM self_role_record WHERE user_id = ? AND record_uid > ?
+      ORDER BY record_uid LIMIT ?
+    `).all(userId, afterRecordUid, pageSize + 1) as unknown as Array<SelfRoleBindingRow & {
+      record_uid: string
+      bound_at_millis: number
+    }>
+    const page = rows.slice(0, pageSize)
+    return {
+      items: page.map(row => ({
+        recordUid: row.record_uid,
+        snapshot: selfRoleSnapshotFromRow(row),
+        boundAtMillis: row.bound_at_millis,
+      })),
+      ...(rows.length > pageSize && page.length > 0 ? { nextCursor: page[page.length - 1]!.record_uid } : {}),
+    }
   }
 
   async readDirectoryCache(userId: number): Promise<ArkmeSourceList | undefined> {

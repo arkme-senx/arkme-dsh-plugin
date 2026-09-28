@@ -138,6 +138,9 @@ describe('ChatService', () => {
       makeItem('bot-b', { sender_actor_kind: 2, sender_bot_uid: 'b', sender_user_id: 9002 }),
       makeItem('removed-bot', { sender_actor_kind: 2, sender_bot_uid: 'removed', sender_user_id: 9003, display_name_snapshot: '历史机器人' }),
       { ...makeItem('human', { sender_actor_kind: 1, sender_user_id: 7, sender_bot_uid: 'a', display_name_snapshot: '群内昵称' }),
+        record: { status: 1, payload: { text_content: '@助手甲 hi', mention_metadata: { bot_mentions: [
+          { bot_uid: 'a', start_index: 0, length: 4, display_name_snapshot: '助手甲' },
+        ] } } },
         extension_parent_preview: makeItem('parent-outside-page', { sender_actor_kind: 2, sender_bot_uid: 'b', sender_user_id: 9002 }) },
       makeItem('incomplete-bot', { sender_actor_kind: 2, sender_user_id: 42 }),
       ...['bot_outbound_253_legacy_outbound-a', 'bot_reply_253_legacy_source__grp_group',
@@ -171,6 +174,13 @@ describe('ChatService', () => {
         : (await chat.readSource('source', { cursor: path === 'tail' ? { afterSequence: 1 } : { beforeSequence: 1 } })).items
     expect(items.map(item => item.senderName)).toEqual(['助手甲', '助手乙', 'Bot', '群内昵称', 'Bot', '历史助手', '历史助手', '历史助手', '旧助手', '群内助手'])
     expect(items[0]).toMatchObject({ isMe: false, avatarRef: expect.stringMatching(/^arkme-bot-image-v1\./) })
+    const botKey = (botId: string) => `arkme-bot-directory-v1.${createHmac('sha256', 'fixture-signing-key')
+      .update(`arkme-bot-directory-v1:42:${botId}`).digest('base64url')}`
+    expect(items[0]?.senderBotDirectoryKey).toBe(botKey('a'))
+    expect(items[1]?.senderBotDirectoryKey).toBe(botKey('b'))
+    expect(items[3]?.senderBotDirectoryKey).toBeUndefined()
+    expect(items[3]?.mentions?.[0]).toMatchObject({ kind: 'bot', botDirectoryKey: botKey('a') })
+    expect(items[4]?.senderBotDirectoryKey).toBeUndefined()
     expect(await bot.openBotImageRef(items[0]!.avatarRef!, session.userId)).toMatchObject({ sourceUrl: 'https://images.test/a.png' })
     await expect(bot.openBotImageRef(items[0]!.avatarRef!, 99)).rejects.toThrow('Bot 头像引用无效或已过期')
     await expect(bot.openBotImageRef(items[0]!.avatarRef!, session.userId)).resolves.toMatchObject({ sourceUrl: 'https://images.test/a.png' })
@@ -689,8 +699,10 @@ describe('ChatService', () => {
         )
       }),
     }
+    const senderSnapshot = { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }
+    const profile = { recordSenderSnapshot: vi.fn(async () => senderSnapshot) }
     chat = new ChatService(
-      runtime as never, source as never, {} as never, {} as never, record as never,
+      runtime as never, source as never, profile as never, {} as never, record as never,
       {} as never, {} as never, aiPolish as never, realtime,
     )
 
@@ -735,6 +747,12 @@ describe('ChatService', () => {
         await expect(chat.relatedQuickNoteLocator(`wrong-${kind}`, result.messageActionRef ?? ''))
           .rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       }
+    }
+    const personalCreates = runtime.authenticatedPost.mock.calls.filter(([path]) =>
+      path === '/api/v1/records/create' || path === '/api/v1/topics/records/create')
+    expect(personalCreates).toHaveLength(4)
+    for (const [, body] of personalCreates) {
+      expect(body).toMatchObject({ sender_snapshot: senderSnapshot })
     }
   })
 
@@ -2506,6 +2524,64 @@ describe('ChatService', () => {
       path: '/api/v1/public-record/extend-list',
       body: { record_uid: 'public-parent-record-1', limit: 50, offset: 0 },
     }])
+  })
+
+  it.each(['send_to_self', 'topic'] as const)('loads %s note replies from the record-owned tree, not world comments', async kind => {
+    const ownerRef = kind === 'topic' ? 'topic-a' : 'self-a'
+    const authenticatedPost = vi.fn(async () => ({
+      record_uid: 'opened-note', root_record_uid: 'root-note',
+      tree: { record_uid: 'root-note', children: [
+        { record_uid: 'opened-note', children: [
+          { record_uid: 'reply-1', children: [{ record_uid: 'reply-2', children: [] }] },
+        ] },
+        { record_uid: 'other-note', children: [] },
+      ] },
+      edges: [
+        { parent_record_uid: 'opened-note', child_record_uid: 'reply-1', status: 1, create_at: 1_787_735_200_000 },
+        { parent_record_uid: 'reply-1', child_record_uid: 'reply-2', status: 1, create_at: 1_787_735_300_000 },
+      ],
+      records: [
+        { record_uid: 'reply-1', owner_user_id: 42, content_access_state: 1, status: 1,
+          nickname: '写作者', text_content: '第一条回复', send_at: 1_787_735_200_000 },
+        { record_uid: 'reply-2', content_access_state: 2, status: 1 },
+        { record_uid: 'other-note', content_access_state: 1, status: 1, text_content: '无关内容' },
+      ],
+    }))
+    const authenticatedWorldPost = vi.fn(async () => { throw new Error('personal replies must not use public comments') })
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      authenticatedPost, authenticatedWorldPost,
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef })) }
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({
+      displayItemsByRecordUid: new Map<string, unknown[]>(), unavailableRecordUids: new Set<string>(),
+    })) }
+    const record = { recordTimelineItemFromRaw: vi.fn((raw: { record_uid: string; nickname: string; text_content: string; send_at: number }) => ({
+      itemUid: raw.record_uid, senderName: raw.nickname, title: '', textContent: raw.text_content,
+      senderNameSnapshot: true, avatarRef: 'file_asset://historical_avatar_42',
+      sendAtMillis: raw.send_at, templateKind: 1, displayKind: 0, contentBlocks: [],
+    })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never,
+      record as never, {} as never, {} as never, {} as never, {} as never)
+
+    const result = await chat.sourceMessageExtensionContext('opaque-source', snapshotActionRef({
+      sourceKind: 'record', sourceOwnerRef: ownerRef, chatSessionUid: '', relationUid: '',
+      recordUid: 'opened-note',
+    }))
+    expect(authenticatedPost).toHaveBeenCalledWith('/api/v1/records/extensions/tree',
+      { record_uid: 'opened-note' }, expect.any(Object), undefined, { lane: 'interactive-read', bypassCache: true })
+    expect(authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ parentRecordUid: 'opened-note', extensionCount: 2,
+      extensions: [
+        { recordUid: 'reply-2', parentRecordUid: 'reply-1', level: 3, textContent: '该延展内容受隐私保护' },
+        { recordUid: 'reply-1', parentRecordUid: 'opened-note', level: 2, textContent: '第一条回复',
+          senderNameSnapshot: true, senderAvatarUrl: 'file_asset://historical_avatar_42' },
+      ],
+    })
+    expect(JSON.stringify(result)).not.toContain('无关内容')
+    expect(media.hydrateRecordMediaPage).toHaveBeenCalledOnce()
+    expect(record.recordTimelineItemFromRaw).toHaveBeenCalledOnce()
   })
 
   it('falls back to the copy-link source anchor when the resolve item does not expose a public record uid', async () => {

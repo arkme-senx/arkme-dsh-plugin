@@ -1607,6 +1607,13 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupBotAddResult>('group.bot.add', { sourceRef, botRef }, signal)
   }
 
+  async removeGroupBot(sourceRef: string, botRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotAddResult> {
+    if (sourceRef.trim() === '' || botRef.trim() === '') {
+      throw new TypeError('Arkme group source and Bot references must not be empty')
+    }
+    return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
+  }
+
   async readSource(
     sourceRef: string,
     options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},

@@ -325,6 +325,7 @@ export class RecordService {
       source: ArkmeSourceRefPayload, text: string, humans: ArkmeHumanMentionInput[], bots: ArkmeBotMentionInput[],
       session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',
     ) => Promise<ResolvedMentions>,
+    private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
   ) {
     this.submissions = new RecordReeditSubmissions({
       list: userId => this.runtime.stateStore.listRecordReeditSubmissions(userId),
@@ -1564,6 +1565,7 @@ export class RecordService {
       }
     }
     const hashTags = arkmeHashTagPayload(normalizedText)
+    const senderSnapshot = await this.currentSenderSnapshot?.(session)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/create',
       {
@@ -1572,6 +1574,7 @@ export class RecordService {
         display_kind: 0,
         title: '',
         text_content: normalizedText,
+        ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         content_payload: {
           payload_kind: 2,
           schema_version: 1,
@@ -1624,6 +1627,7 @@ export class RecordService {
       }
     }
     const hashTags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
+    const senderSnapshot = await this.currentSenderSnapshot?.(session)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/extensions/create',
       {
@@ -1632,6 +1636,7 @@ export class RecordService {
         template_kind: assets.length === 0 ? 1 : 2,
         title: '',
         text_content: normalizedText,
+        ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         content_payload: {
           payload_kind: assets.length === 0 ? 1 : 2,
           ...(textFormat === undefined ? {} : { text_format: textFormat }),
@@ -1693,6 +1698,7 @@ export class RecordService {
         ? undefined
         : arkmeRecordCaptureContextPayload(pending.captureContext)
       const hashTags = arkmeHashTagPayload(pending.textContent)
+      const senderSnapshot = await this.currentSenderSnapshot?.(session)
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create',
         {
@@ -1700,6 +1706,7 @@ export class RecordService {
           template_kind: 1,
           title: '',
           text_content: pending.textContent,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
           ...(Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0)) === 0
             ? {}
             : { record_duration_millis: Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0)) }),
@@ -1737,6 +1744,7 @@ export class RecordService {
       ...(item.hasManualEdit === undefined ? {} : { hasManualEdit: item.hasManualEdit }),
       senderName: item.senderName || '我',
       avatarSnapshot: true,
+      ...(item.senderNameSnapshot === undefined ? {} : { senderNameSnapshot: item.senderNameSnapshot }),
       ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
       isMe: true,
       sendAtMillis: item.sendAtMillis,

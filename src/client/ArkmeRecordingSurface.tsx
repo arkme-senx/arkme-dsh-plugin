@@ -12,6 +12,7 @@ import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
+import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import type {
   ArkmeRecordingCalendarDay,
   ArkmeRecordingCalendarMonth,
@@ -1042,6 +1043,8 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <ArkmeDirectRecordingButton onStart={() => { tour.finish(false); const now = new Date(); now.setHours(0, 0, 0, 0); setVisibleMonth(monthStart(now)); setSelectedDate(now) }} />
         <button data-arkme-feedback="recording-action" ref={mobileGuideTrigger} type="button" style={styles.mobileGuideButton} aria-haspopup="dialog" aria-expanded={mobileGuideOpen}
           onClick={() => { tour.finish(false); setMobileGuideOpen(true) }}><Microphone size={16} style={{ flexShrink: 0 }} aria-hidden />{tr("全天候录音")}</button>
+        <button data-arkme-feedback="recording-action" type="button" style={styles.mobileGuideButton}
+          onClick={() => { tour.finish(false); arkmeUi.showRecognizedSpeakers(selectedDate.getTime()) }}><UsersThree size={16} aria-hidden />{tr("已识别说话人")}<CaretRight size={12} aria-hidden /></button>
         <button data-arkme-feedback="recording-action" type="button" style={styles.mobileGuideButton}
           onClick={() => { tour.finish(false); arkmeUi.showVoiceprint() }}><Fingerprint size={16} aria-hidden />{tr("声纹管理")}<CaretRight size={12} aria-hidden /></button>
         <ArkmeRecordingImportTrigger fullWidth status={recordingImportStatus} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
