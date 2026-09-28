@@ -225,7 +225,7 @@ it.each(['missing', 'refused'])('recovers a cold canonical session after its %s 
 })
 
 
-it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address', 'wrong-session'])('does not recover a %s peer on observation', async state => {
+it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address', 'wrong-session'].flatMap(state => ['follow', 'prompt'].map(entry => [state, entry])))('does not recover a %s peer via %s', async (state, entry) => {
   const owner = { sessionId: 'cold', conversationRef: 'conversation', owner: 'old-process', epoch: 1, phase: 'active', target: null, transfer: null }
   const signal = new AbortController()
   if (state === 'cancelled') signal.abort()
@@ -240,7 +240,10 @@ it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address',
     instance: 'current', lifetime: new AbortController(), start: async () => {}, authorize: async () => {}, acquire,
     ownership: { address: () => 'canonical', read: () => owner, peer: () => ({ instance: 'old-process' }) }, coordinator: { requestPeer },
   })
-  const body = { mode: 'pull', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: state === 'wrong-session' ? 'other' : 'cold' } } } } }
+  const sessionId = state === 'wrong-session' ? 'other' : 'cold'
+  const body = entry === 'prompt'
+    ? { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId, mode: 'queue', requestId: 'once' } } } }
+    : { mode: 'pull', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId } } } } }
   const outcome = runtime.recoverChannel(state === 'wrong-address' ? 'foreign' : 'canonical', 'cold', body, signal.signal)
   if (['timeout', 'unknown', 'changed', 'cancelled'].includes(state)) await expect(outcome).rejects.toBeDefined()
   else await outcome
@@ -248,7 +251,7 @@ it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address',
   expect(requestPeer).toHaveBeenCalledTimes(['wrong-address', 'wrong-session', 'cancelled'].includes(state) ? 0 : 1)
 })
 
-it.each([['missing', 'native'], ['refused', 'native'], ['missing', 'typed'], ['refused', 'typed']])('uses real private discovery and fenced acquisition for a %s cold owner via %s', async (state, entry) => {
+it.each([['missing', 'native'], ['refused', 'native'], ['missing', 'typed'], ['refused', 'typed'], ['missing', 'prompt'], ['refused', 'prompt']])('uses real private discovery and fenced acquisition for a %s cold owner via %s', async (state, entry) => {
   const root = mkdtempSync(join(tmpdir(), 'arkme-cold-observer-')), scope = { accountId: '3016', environment: 'test' as const }
   const store = new LocalSessionOwnership(root, scope)
   const id = SessionId('cold'), initial = store.register(id, 'exited')
@@ -272,7 +275,8 @@ it.each([['missing', 'native'], ['refused', 'native'], ['missing', 'typed'], ['r
   })
   try {
     await coordinator.start()
-    await runtime.recoverChannel('canonical', 'cold', entry === 'typed' ? { operation: 'session.history', session_ref: 'cold' }
+    await runtime.recoverChannel('canonical', 'cold', entry === 'prompt' ? { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'cold', mode: 'queue', requestId: 'once' } } } }
+      : entry === 'typed' ? { operation: 'session.history', session_ref: 'cold' }
       : { mode: 'pull', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'cold' } } } } }, AbortSignal.timeout(2000))
     expect(store.read(id)).toMatchObject({ owner: 'current', epoch: 2, conversationRef: initial.conversationRef })
     expect(store.address(id)).toBe('canonical')

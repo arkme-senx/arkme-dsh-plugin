@@ -640,3 +640,33 @@ it('does not resume cloud leases from a late ready after the account consumer is
   receive({ kind: 'session.response', runtimeRef: 'canonical', sessionRef: 'cold', ready: true, epoch: 2 }, { senderRole: 'host' })
   expect(resume).not.toHaveBeenCalled()
 })
+
+
+it.each(['exited', 'live'] as const)('opens a queued prompt only after proving its %s writer can execute', async state => {
+  const listeners = new Set<(payload: any, metadata: any) => void>()
+  const transport = {
+    subscribeDisconnect: () => () => {},
+    subscribe: async ({ onEvent }: any) => { listeners.add(onEvent); return () => { listeners.delete(onEvent) } },
+    publish: async ({ payload, direction }: any) => { for (const receive of [...listeners]) receive(payload, { senderRole: direction === 'request' ? 'controller' : 'host' }); return { sequence: 1 } },
+  } as unknown as DshRemoteRealtimeTransport
+  let epoch = -1
+  const recover = vi.fn(async () => { if (state === 'exited') epoch = 2 })
+  const native = vi.fn(async () => ({ ok: true, value: { accepted: true } }))
+  const liveNative = vi.fn(async () => ({ ok: true, value: { accepted: true } }))
+  const options = { transport, target: { runtimeRef: 'successor', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 }, failed: vi.fn() }
+  const host = new DshSessionChannelHost({ ...options, epoch: () => epoch, recover, native })
+  const liveHost = new DshSessionChannelHost({ ...options, epoch: () => state === 'live' ? 1 : undefined, native: liveNative })
+  await host.start(); await liveHost.start()
+  const client = new DshSessionChannelClient(transport, async () => {}, vi.fn()), cancel = new AbortController()
+  const body = { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'cold', mode: 'queue', requestId: 'native-once', content: [{ type: 'text', text: 'hello' }] } } } }
+  try {
+    const result = client.request({ runtimeRef: 'canonical', sessionRef: 'cold' }, body, 'cold-prompt', cancel.signal).catch(error => error)
+    expect(await Promise.race([result, new Promise(resolve => setTimeout(() => resolve('stalled'), 500))])).toMatchObject({ ok: true, value: { accepted: true } })
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce())
+    expect(native).toHaveBeenCalledTimes(state === 'exited' ? 1 : 0)
+    expect(liveNative).toHaveBeenCalledTimes(state === 'live' ? 1 : 0)
+    if (state === 'exited') expect(native).toHaveBeenCalledWith('canonical', 'cold', body, expect.any(AbortSignal))
+    // A non-owner must not retain a write for execution after a later handoff.
+    expect((host as any).pending.size).toBe(0)
+  } finally { cancel.abort(); client.close(); host.close(); liveHost.close() }
+})

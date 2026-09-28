@@ -154,9 +154,10 @@ export default class LocalSessionRuntime {
     signal.throwIfAborted()
     if (!this.hasSession(runtimeRef, sessionRef)) return
     const history = body.operation === 'session.history' && body.session_ref === sessionRef
+    const args = nativeRecord(nativeRecord(body.payload ?? {}).args ?? {})
     const follow = body.mode === 'pull' && body.endpoint === 'session/follow'
-      && localCommandSession(nativeRecord(nativeRecord(body.payload).args)) === sessionRef
-    if (!history && !follow) return
+    const queuedPrompt = body.mode === 'call' && body.endpoint === 'session/prompt' && nativeRecord(args.request).mode === 'queue'
+    if (!history && !((follow || queuedPrompt) && localCommandSession(args) === sessionRef)) return
     const owner = this.ownership!.read(sessionRef)
     if (!owner || owner.owner === this.instance || owner.phase !== 'active') return
     if (this.ownership!.peer(owner.owner)) {
