@@ -1,3 +1,5 @@
+import { pointsUnits } from './ai-points.js'
+import { parseAiPointsAccount } from './services/ai-points-service.js'
 import type {
   ArkmeBillingOrderCreateInput,
   ArkmeBillingOrderSnapshot,
@@ -266,22 +268,16 @@ export class HttpArkmeBillingGateway implements ArkmeBillingGateway {
   async quota(signal?: AbortSignal): Promise<ArkmeQuotaSnapshot> {
     const data = objectValue(await this.post<Record<string, unknown>>(
       'intelligent',
-      '/api/v1/managed-ai/balance/query',
+      '/api/v1/managed-ai/points/query',
       {},
       'interactive-read',
       signal,
     ))
-    const currency = stringValue(data.currency).trim()
-    if (currency !== 'CNY') {
-      throw new ArkmePluginError('billing-contract-invalid', '余额接口币种无效', true, 502)
-    }
-    const availableNanoCny = nanoCny(data.available_nano_cny, 'available_nano_cny')
-    const totalNanoCny = nanoCny(data.total_nano_cny, 'total_nano_cny')
-    const reservedNanoCny = nanoCny(data.reserved_nano_cny, 'reserved_nano_cny')
-    if (BigInt(availableNanoCny) + BigInt(reservedNanoCny) !== BigInt(totalNanoCny)) {
-      throw new ArkmePluginError('billing-contract-invalid', '余额接口金额不一致', true, 502)
-    }
-    return { availableNanoCny, totalNanoCny, reservedNanoCny, currency }
+    const account = parseAiPointsAccount(data, '')
+    const availableNanoCny = pointsUnits(account.availablePoints)
+    const reservedNanoCny = pointsUnits(account.reservedPoints)
+    return { availableNanoCny: String(availableNanoCny), totalNanoCny: String(availableNanoCny + reservedNanoCny), reservedNanoCny: String(reservedNanoCny), currency: 'CNY' }
+
   }
 
   async products(signal?: AbortSignal): Promise<ArkmeBillingProductList> {
