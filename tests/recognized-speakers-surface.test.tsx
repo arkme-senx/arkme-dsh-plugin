@@ -163,4 +163,52 @@ describe('recording speaker directory', () => {
     } finally { await act(async () => { renderer.unmount() }) }
   })
 
+  it('cancels an in-flight statistics poll when manually refreshing and ignores its late failure', async () => {
+    vi.useFakeTimers()
+    let finishPoll!: (result: ArkmeRecordingSpeakerPresence) => void
+    let finishRefresh!: (result: ArkmeRecordingSpeakerPresence) => void
+    const loadPresence = vi.fn<(signal: AbortSignal) => Promise<ArkmeRecordingSpeakerPresence>>()
+      .mockResolvedValueOnce({ state: 'stale', scope: 'all-history', items: [], retryAfterMs: 5000 })
+      .mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve }))
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
+        loadMarked={async () => [marked('a1', '周鹏')]} loadPresence={loadPresence} loadUnmarked={async () => page([])} />); await flush() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      expect(loadPresence).toHaveBeenCalledTimes(2)
+      const pollSignal = loadPresence.mock.calls[1]![0]
+      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '刷新')!.props.onClick(); await flush() })
+      expect(pollSignal.aborted).toBe(true)
+      await act(async () => { finishRefresh({ state: 'fresh', scope: 'all-history', items: [{ optionKey: 'a1', dayCount: 3, lastSeenAt: 1780000000000 }] }); await flush() })
+      await act(async () => { finishPoll({ state: 'failed', scope: 'all-history', items: [] }); await flush() })
+      expect(text(renderer.root)).toContain('出现 3 天')
+      await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
+      expect(loadPresence).toHaveBeenCalledTimes(3)
+    } finally { if (renderer) await act(async () => { renderer.unmount() }); vi.useRealTimers() }
+  })
+
+  it('does not let an aborted pagination request unlock a newer refresh generation', async () => {
+    let finishOld!: (value: ArkmeDirectoryPage) => void
+    const loadUnmarked = vi.fn<(cursor: string, signal: AbortSignal) => Promise<ArkmeDirectoryPage>>()
+      .mockResolvedValueOnce(page([], 'old-next'))
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockResolvedValueOnce(page([], 'new-next'))
+      .mockImplementation(() => new Promise(() => {}))
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
+      loadMarked={async () => []} loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })} loadUnmarked={loadUnmarked} />); await flush() })
+    const more = () => renderer.root.findAllByType('button').find(button => ['加载更多未标记说话人', '正在加载…'].includes(text(button)))!
+    try {
+      await act(async () => { more().props.onClick(); await flush() })
+      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '刷新')!.props.onClick(); await flush() })
+      await act(async () => { more().props.onClick(); await flush() })
+      expect(loadUnmarked).toHaveBeenCalledTimes(4)
+      await act(async () => { finishOld(page([unmarked('old', '99')])); await flush() })
+      await act(async () => { more().props.onClick(); await flush() })
+      expect(loadUnmarked).toHaveBeenCalledTimes(4)
+      expect(text(renderer.root)).not.toContain('说话人 99')
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
 })

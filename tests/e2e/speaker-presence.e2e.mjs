@@ -63,6 +63,52 @@ describe('packed speaker presence with real Audio',()=>{
    await expect.poll(async()=>page.locator('body').innerText()).toContain('全部历史已转写片段中可核实的关联')
    await expect.poll(async()=>page.getByRole('region',{name:'已标记说话人详情'}).innerText()).toContain('说话人 12')
    await expect.poll(async()=>page.getByRole('region',{name:'已标记说话人详情'}).innerText()).toContain('出现 2 天')
+   // A real single-item cancellation must remove only its day, then the existing
+   // candidate UI must write the mark back through Host -> Audio -> Mongo.
+   const audioPost=async(path,body)=>{
+    const response=await fetch(audioOrigin+'/api/v1/audio/'+path,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)})
+    const result=await response.json();expect(result.code,JSON.stringify(result)).toBe(200);return result.data
+   }
+   const oldVersion=presence.version
+   const canceled=await audioPost('unassign-asr-item-spk',{expected_spk_id:'650000000000000000000003',child_id:'650000000000000000000002',item_index_ls:[1],transcript_source:'system'})
+   expect(canceled.modified_count).toBe(1)
+   try {
+    await expect.poll(async()=>{presence=await sdk.recordingSpeakerPresence();return presence.state==='fresh'?presence.items.find(s=>s.optionKey===speaker.optionKey)?.dayCount:undefined},{timeout:20000,interval:500}).toBe(1)
+    expect(await sdk.recordingSpeakerMembers(speaker.speakerRef,{expectedVersion:oldVersion})).toMatchObject({state:'stale',items:[]})
+    await page.getByRole('button',{name:'刷新',exact:true}).click()
+    await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText()).toContain('出现 1 天')
+    await expect.poll(async()=>page.getByRole('button',{name:/说话人 12.*未标记/}).count(),{timeout:15000}).toBe(1)
+    await page.getByRole('button',{name:/说话人 12.*未标记/}).click()
+    await page.getByRole('region',{name:'未标记说话人候选摘要'}).getByRole('button',{name:/选择说话人/}).click()
+    await page.getByRole('radio',{name:'统计验收人物',exact:true}).check()
+    await page.getByRole('button',{name:'确认标记全部片段',exact:true}).click()
+    await expect.poll(async()=>{presence=await sdk.recordingSpeakerPresence();return presence.state==='fresh'?presence.items.find(s=>s.optionKey===speaker.optionKey)?.dayCount:undefined},{timeout:20000,interval:500}).toBe(2)
+    await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText(),{timeout:20000}).toContain('出现 2 天')
+    await page.getByRole('button',{name:/统计验收人物.*已标记/}).click()
+    await expect.poll(async()=>page.getByRole('region',{name:'已标记说话人详情'}).innerText()).toContain('出现 2 天')
+    expect(calls.some(path=>path.endsWith('/unmarked-speakers/mark'))).toBe(true)
+   } catch(error) {
+    if(process.env.ARKME_E2E_SCREENSHOT) { await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT}); await writeFile(process.env.ARKME_E2E_SCREENSHOT+'.txt',await page.locator('body').innerText()) }
+    throw error
+   } finally {
+    // Idempotently restore the fixture even when the UI assertion fails.
+    await audioPost('assign-asr-item-to-spk',{spk_id:'650000000000000000000003',child_id:'650000000000000000000002',item_index_ls:[1],transcript_source:'system'})
+   }
+   // Existing Audio trash/restore commands drive the same UI read path.
+   // The unrelated Record service is not simulated as an Audio deletion owner.
+   const opAt=Date.now()
+   try {
+    await audioPost('change-session-record-delete-state',{session_id:'650000000000000000000001',record_uid:'speaker-presence-e2e-record',op_type:1,op_at:opAt})
+    expect(await sdk.recordingSpeakerPresence()).toMatchObject({state:'fresh',items:[]})
+    await page.getByRole('button',{name:'刷新',exact:true}).click()
+    await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText()).toContain('暂无可统计的录音片段')
+   } finally {
+    await audioPost('change-session-record-delete-state',{session_id:'650000000000000000000001',record_uid:'speaker-presence-e2e-record',op_type:2,op_at:opAt+1})
+   }
+   await page.getByRole('button',{name:'刷新',exact:true}).click()
+   await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText()).toContain('出现 2 天')
+   await page.getByRole('button',{name:/统计验收人物.*已标记/}).click()
+   await expect.poll(async()=>page.getByRole('region',{name:'已标记说话人详情'}).innerText()).toContain('出现 2 天')
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
   }finally{await browser?.close();await scaffold?.ctx.get('arkmeData')?.logout().catch(()=>{});await scaffold?.close();proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));await rm(root,{recursive:true,force:true})}
  },120000)

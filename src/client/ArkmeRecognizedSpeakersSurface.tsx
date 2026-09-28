@@ -205,7 +205,7 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
 
   useEffect(() => {
     const state = presence.result?.state
-    if (presence.error !== '' || (state !== 'building' && state !== 'stale' && state !== 'failed')) return
+    if (presence.loading || presence.error !== '' || (state !== 'building' && state !== 'stale' && state !== 'failed')) return
     const controller = new AbortController()
     const timer = setTimeout(() => {
       void loadPresence(controller.signal).then(result => {
@@ -215,7 +215,7 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
       })
     }, Math.max(5_000, presence.result?.retryAfterMs ?? 10_000))
     return () => { clearTimeout(timer); controller.abort() }
-  }, [accountKey, loadPresence, presence.error, presence.result])
+  }, [accountKey, refreshRevision, loadPresence, presence.loading, presence.error, presence.result])
 
   const refreshPresenceVersion = useCallback(() => { setPresence({ loading: false, result: { state: 'stale', scope: 'all-history', items: [], retryAfterMs: 1000 }, error: '' }) }, [])
 
@@ -232,7 +232,7 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
       setUnmarked(previous => ({ ...previous, loadingMore: false, items: [...new Map([...previous.items, ...page.items.filter((item): item is UnmarkedSpeaker => item.kind === 'unmarked-speaker')].map(item => [item.candidateRef, item])).values()], nextCursor: page.nextCursor ?? '', hasMore: page.hasMore, projectionState: page.projectionState ?? previous.projectionState, error: '' }))
     }).catch(error => {
       if (!controller.signal.aborted) setUnmarked(previous => ({ ...previous, loadingMore: false, error: failureMessage(error) }))
-    }).finally(() => { moreBusy.current = false })
+    }).finally(() => { if (moreController.current === controller) moreBusy.current = false })
   }, [loadUnmarked, refresh, unmarked.hasMore, unmarked.loading, unmarked.nextCursor])
 
   const rows = useMemo(() => identifiedSpeakerRows(marked.items, unmarked.items), [marked.items, unmarked.items])
