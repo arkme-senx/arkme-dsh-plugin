@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import type { ArkmePluginResponse, ArkmeSelfRole } from '../types.js'
-import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeSelfRoleMenu } from './ArkmeSelfRoleMenu.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatarCropDialog } from './ArkmeExtensionAvatarCropDialog.js'
 import { callArkme } from './api.js'
@@ -176,17 +176,31 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     <span style={styles.triggerName}>{activeName}</span>
     <svg aria-hidden width="9" height="6" viewBox="0 0 9 6" style={{ flex: 'none' }}><path d="m1 1 3.5 3.5L8 1" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
   </button>
+  const editRole = (role: ArkmeSelfRole) => {
+    setMenuOpen(false); setEditingRole(role); setName(role.name); setAvatarFile(undefined)
+    setRemoveAvatar(false); setFormError(''); setCreateOpen(true)
+  }
+  const deleteRole = (role: ArkmeSelfRole) => {
+    setMenuOpen(false)
+    void callArkme('self-roles.delete', { expectedUserId: userId, roleId: role.roleId }).then(() => {
+      if (scopeRef.current !== scope) return
+      setRoleState(current => current.scope === scope
+        ? { ...current, roles: current.roles.filter(item => item.roleId !== role.roleId) } : current)
+      setRefreshRevision(value => value + 1)
+    }).catch(error => {
+      if (scopeRef.current === scope) setRoleState(current => ({ ...current, error: error instanceof Error ? error.message : '删除失败' }))
+    })
+  }
   const menuActions = [
     { id: 'me', label: '我', icon: <ArkmeSelfRoleAvatar role={{ roleId: 'me', name: '我', ...(selfAvatarRef?.trim() ? { avatarRef: selfAvatarRef } : {}) }} size={20} />, onSelect: () => { setMenuOpen(false); onSelect(undefined) } },
-    { type: 'separator' as const, id: 'role-separator' },
     ...visibleState.roles.map(role => ({
       id: `role:${role.roleId}`, label: role.name, icon: <ArkmeSelfRoleAvatar role={role} size={20} />,
       onSelect: () => { setMenuOpen(false); onSelect(role) },
+      managementActions: [
+        { id: 'role-edit', label: '编辑', onSelect: () => editRole(role) },
+        { id: 'role-delete', label: '删除', danger: true, onSelect: () => deleteRole(role) },
+      ],
     })),
-    ...(selectedRole === undefined ? [] : [
-      { id: 'role-edit', label: '编辑当前角色', onSelect: () => { setMenuOpen(false); setEditingRole(selectedRole); setName(selectedRole.name); setAvatarFile(undefined); setRemoveAvatar(false); setFormError(''); setCreateOpen(true) } },
-      { id: 'role-delete', label: '删除当前角色', onSelect: () => { const role = selectedRole; setMenuOpen(false); void callArkme('self-roles.delete', {expectedUserId:userId,roleId:role.roleId}).then(() => { if(scopeRef.current !== scope)return; onSelect(undefined); setRefreshRevision(value=>value+1) }).catch(error=>{ if(scopeRef.current===scope)setRoleState(current=>({...current,error:error instanceof Error ? error.message : '删除失败'})) }) } },
-    ]),
     ...(visibleState.loading ? [{ type: 'label' as const, id: 'role-loading', text: '正在加载角色…' }] : []),
     ...(visibleState.error ? [
       { type: 'label' as const, id: 'role-error', text: `加载失败：${visibleState.error}` },
@@ -195,12 +209,10 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     { type: 'separator' as const, id: 'role-create-separator' },
     { id: 'role-create', label: '＋ 创建角色', disabled: visibleState.loading || visibleState.error !== '' || visibleState.roles.length >= MAX_ROLES,
       onSelect: () => { setMenuOpen(false); setEditingRole(undefined); setRemoveAvatar(false); setName(''); setAvatarFile(undefined); setFormError(''); setCreateOpen(true) } },
-    { type: 'label' as const, id: 'role-local-note', text: visibleState.roles.length >= MAX_ROLES
-      ? '最多 20 个角色 · 角色资料和头像会自动同步' : '角色资料和头像会自动同步' },
   ]
 
   return <>
-    <ArkmeActionMenu open={menuOpen} label="选择发言角色" side="top" align="end" selectedIds={[selectedId]}
+    <ArkmeSelfRoleMenu open={menuOpen} selectedIds={[selectedId]}
       anchor={trigger} onClose={() => setMenuOpen(false)} actions={menuActions} />
     {createOpen && <div style={styles.backdrop} onPointerDown={event => { if (event.target === event.currentTarget) closeCreate() }}>
       <section role="dialog" aria-modal="true" aria-label={editingRole ? "编辑发言角色" : "创建发言角色"} style={styles.dialog}
@@ -233,7 +245,6 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
             }
             setCropSource(file)
           }} />
-          <p style={styles.localNote}>角色资料和头像会同步到其他设备；离线修改会在联网后继续同步。</p>
           {formError && <p role="alert" style={styles.error}>{formError}</p>}
           <div style={styles.actions}>
             <button type="button" style={styles.cancel} disabled={saving} onClick={closeCreate}>取消</button>
@@ -273,7 +284,6 @@ const styles: Record<string, CSSProperties> = {
     border: '1px solid var(--dsw-alias-border-l1, #dfe3e9)', borderRadius: 8,
     background: 'var(--dsw-alias-bg-base, #fff)', color: 'var(--dsw-alias-label-primary, #252b36)',
     font: 'inherit', fontSize: 13 },
-  localNote: { margin: '16px 0 0', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 11, lineHeight: '17px' },
   error: { margin: '10px 0 0', color: '#b42318', fontSize: 11, lineHeight: '17px' },
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 },
   cancel: { height: 34, padding: '0 14px', border: '1px solid var(--dsw-alias-border-l1, #dfe3e9)', borderRadius: 8,

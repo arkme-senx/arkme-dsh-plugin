@@ -12,7 +12,7 @@ vi.mock('../src/client/ArkmeExtensionAvatarCropDialog.js', () => ({
     <button type="button" aria-label="确认测试裁剪" onClick={() => onConfirm(new File(['image'], 'role.png', { type: 'image/png' }))} />,
 }))
 
-import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
+import { ArkmeSelfRoleMenu } from '../src/client/ArkmeSelfRoleMenu.js'
 import { ArkmeSelfRolePicker } from '../src/client/ArkmeSelfRolePicker.js'
 
 const role: ArkmeSelfRole = {
@@ -21,13 +21,13 @@ const role: ArkmeSelfRole = {
 let renderer: ReactTestRenderer | undefined
 
 function menu() {
-  return renderer!.root.findByType(ArkmeActionMenu)
+  return renderer!.root.findByType(ArkmeSelfRoleMenu)
 }
 function trigger() {
   return renderer!.root.findByProps({ 'data-arkme-self-role-trigger': 'true' })
 }
 function action(id: string) {
-  return menu().props.actions.find((entry: { id: string }) => entry.id === id)
+  return menu().props.actions.flatMap((entry: { managementActions?: unknown[] }) => [entry, ...(entry.managementActions ?? [])]).find((entry: { id: string }) => entry.id === id)
 }
 
 beforeEach(() => { mocks.call.mockReset() })
@@ -45,9 +45,8 @@ describe('self role picker', () => {
     expect(trigger().props['data-arkme-self-role-id']).toBe('me')
     expect(trigger().findByProps({ 'data-avatar-ref': 'self-avatar' })).toBeDefined()
     await act(async () => { trigger().props.onClick() })
-    expect(menu().props.side).toBe('top')
     expect(menu().props.selectedIds).toEqual(['me'])
-    expect(menu().props.actions.some((entry: { text?: string }) => entry.text === '角色资料和头像会自动同步')).toBe(true)
+    expect(menu().props.actions.some((entry: { text?: string }) => entry.text === '角色资料和头像会自动同步')).toBe(false)
     await act(async () => { action('role:r1').onSelect() })
     expect(onSelect).toHaveBeenLastCalledWith(role)
     await act(async () => { renderer!.update(<ArkmeSelfRolePicker accountKey="test:42" userId={42} selectedRole={role} selfAvatarRef="self-avatar" onSelect={onSelect} />) })
@@ -62,7 +61,7 @@ describe('self role picker', () => {
     mocks.call.mockImplementation(async (operation: string) => operation === 'self-roles.list' ? [] : role)
     await act(async () => { renderer = create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} onSelect={onSelect} />) })
     await act(async () => { trigger().props.onClick(); action('role-create').onSelect() })
-    expect(JSON.stringify(renderer!.toJSON())).toContain('角色资料和头像会同步到其他设备；离线修改会在联网后继续同步。')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('角色资料和头像会同步到其他设备；离线修改会在联网后继续同步。')
     const name = renderer!.root.findByProps({ 'aria-label': '角色名称' })
     await act(async () => { name.props.onChange({ currentTarget: { value: '  理性我  ' } }) })
     await act(async () => { renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
