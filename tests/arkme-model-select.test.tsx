@@ -96,14 +96,29 @@ it('does not load unavailable sessions, honors locked state, and cancels quota w
   expect(signal.aborted).toBe(true); expect(listeners.size).toBe(0)
 })
 
-it('opens pricing details without selecting or sending a model request',async()=>{
+it('consolidates model prices into one keyboard-accessible disclosure without selecting a model',async()=>{
  const group=state.groups.find(group=>group.id==='arkme-managed')!
  group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分，已含服务费'
+ state = { ...state, groups: state.groups.map(provider => provider === group ? { ...group, models: [...group.models,
+   { id: 'flash', name: 'DeepSeek V4 Flash', description: '输入 0.32 积分，输出 1.28 积分' },
+ ] } : provider) }
  await render(); await click('DeepSeek-V4-Flash')
+ expect(host.querySelectorAll('details')).toHaveLength(1)
+ expect(host.querySelector('details')?.open).toBe(false)
  const summary=host.querySelector('details summary')!
  expect(summary.textContent).toBe('按用量扣积分 · 计费说明')
+ await act(async()=>{button('DeepSeek V4 Flash').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))})
+ expect(document.activeElement).toBe(summary)
  await act(async()=>{summary.dispatchEvent(new MouseEvent('click',{bubbles:true}))})
  expect(directory.select).not.toHaveBeenCalled()
  expect(host.querySelector('details')?.textContent).toContain('0.2075')
+ expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Pro')
+ expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Flash')
+ expect(host.querySelector('details')?.textContent).toContain('1.28')
  expect(host.querySelector('[role="menu"]')).not.toBeNull()
+})
+
+it('omits pricing when no managed model advertises it', async () => {
+ await render(); await click('DeepSeek-V4-Flash')
+ expect(host.querySelector('details')).toBeNull()
 })
