@@ -321,7 +321,12 @@ describe('Arko emoji input and send boundary', () => {
     arkmeComposerDraftStore.setText(draftKey, '前替换后')
     await mount()
     expect(editor()).not.toBeNull()
+    // This case exercises replacement and consecutive insertions. Keep the
+    // ProseMirror fallback aligned with the visible range; the separate pending
+    // selection cases cover native selectionchange arriving later.
+    act(() => documentEditor().commands.setTextSelection({ from: 2, to: 4 }))
     select(1, 3)
+    expect(document.getSelection()?.toString()).toBe('替换')
     await chooseEmoji()
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
@@ -349,6 +354,37 @@ describe('Arko emoji input and send boundary', () => {
     await chooseEmoji()
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
+  })
+
+  it.each(['cleared', 'collapsed'])('keeps the visible selection when pointerdown leaves it %s before mousedown', async kind => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(1, 3)
+    expect(document.getSelection()?.toString()).toBe('替换')
+    const trigger = button('选择表情')
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+      if (kind === 'cleared') document.getSelection()!.removeAllRanges()
+      else document.getSelection()!.collapse(document.createTreeWalker(editor(), NodeFilter.SHOW_TEXT).nextNode()!, 0)
+      trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+      trigger.click()
+    })
+    await click(document.querySelector(`[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="${emoji.id}"]`)!)
+    expect(serialized()).toBe(`前${emoji.token}后`)
+  })
+
+  it('uses a new caret position after returning to the editor from the picker', async () => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(1, 3)
+    await click(button('选择表情'))
+    await act(async () => {
+      editor().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+      documentEditor().commands.setTextSelection(5)
+    })
+    await click(button('选择表情'))
+    await click(document.querySelector(`[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="${emoji.id}"]`)!)
+    expect(serialized()).toBe(`前替换后${emoji.token}`)
   })
 
   it('discards a pending emoji selection after the draft changes', async () => {
