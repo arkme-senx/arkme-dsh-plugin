@@ -3,12 +3,14 @@ import {
   type ArkmeLinkMetadata,
 } from '../link-metadata.js'
 import { callArkme } from './api.js'
+import { isInternalShareHost } from '../share-link-preview.js'
 
 export interface ArkmeLinkMetadataResolver {
   resolve(url: string): Promise<ArkmeLinkMetadata | null>
 }
 
 export function arkmeShouldResolveLinkMetadata(url: string): boolean {
+  if (isInternalShareHost(url)) return false
   try {
     const hostname = new URL(url).hostname
     return hostname !== '' && !/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(hostname) && !hostname.includes(':')

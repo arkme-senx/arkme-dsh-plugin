@@ -169,6 +169,7 @@ function fakeService() {
     groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
+    removeGroupBot: vi.fn(async (sourceRef: string, botRef: string, options: unknown) => ({ sourceRef, botRef, options, installed: false })),
     generateGroupAiPolishRuleForSource: vi.fn(async () => ({ confirmationRef: 'confirm-1' })),
     prepareEnableGroupAiPolishRuleForSource: vi.fn(async () => ({ confirmationRef: 'confirm-2' })),
     listMyWorldFeed: vi.fn(async (input: unknown) => input),
@@ -409,6 +410,12 @@ describe('favorite sticker Host API dispatch', () => {
 })
 
 describe('link metadata Host API dispatch', () => {
+  it('dispatches bounded share preview without invoking message detail', async () => {
+    const service = { resolveSharePreview: vi.fn(async () => ({ kind: 'message', state: 'ready', author: '原作者' })) }
+    const controller = new AbortController()
+    await expect(dispatchArkmeHostOperation(service as never, 'share.preview', { url: 'https://jiwo.cc/s/Abcdef1234567890' }, undefined, undefined, undefined, undefined, controller.signal)).resolves.toMatchObject({ author: '原作者' })
+    expect(service.resolveSharePreview).toHaveBeenCalledWith('https://jiwo.cc/s/Abcdef1234567890', controller.signal)
+  })
   it('dispatches link title resolution through its dedicated infrastructure owner', async () => {
     const service = fakeService()
     const request = new AbortController()
@@ -709,12 +716,14 @@ describe('group member Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'group.bots', { sourceRef: 'group-ref', userId: 999 })
     await dispatchArkmeHostOperation(service as never, 'group.bot.add', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'group.bot.remove', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
     expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { query: '林', limit: 12.8 })
     expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { limit: 20, groupSourceRefs: ['peer-group-ref'] })
     expect(service.addGroupMembers).toHaveBeenCalledWith('group-ref', ['candidate-1'])
     expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
     expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')
     expect(service.addGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref')
+    expect(service.removeGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref', {})
   })
 })
 

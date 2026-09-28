@@ -221,6 +221,12 @@ export function arkmeMemberActionMenuRowCount(
   return menuRows(member, sourceKind) + (canRemove ? 1 : 0)
 }
 
+export function ArkmeMemberRecordCountLabel({ label, count }: { label: string; count?: number | undefined }) {
+  return <span style={{ display: 'flex', gap: 16, justifyContent: 'space-between' }}>
+    <span>{tr(label)}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{count ?? ''}</span>
+  </span>
+}
+
 export function ArkmeMemberActionMenu(props: {
   member: ArkmeConversationMemberItem
   sourceKind: ArkmeSourceItem['kind']
@@ -235,9 +241,8 @@ export function ArkmeMemberActionMenu(props: {
 }) {
   const ownerLabel = props.member.isSelf ? '看我的快记' : '看TA的快记'
   const mentionedLabel = props.member.isSelf ? '@我的快记' : '@TA的快记'
-  const countLabel = (label: string, count: number) => <span style={{ display: 'flex', gap: 16, justifyContent: 'space-between' }}>
-    <span>{label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{props.member.statsKnown === false ? '' : count}</span>
-  </span>
+  const countLabel = (label: string, count: number) => <ArkmeMemberRecordCountLabel
+    label={label} count={props.member.statsKnown === false ? undefined : count} />
   return <ArkmeActionMenu label={tr("{v0} 的成员操作", { v0: props.member.displayName })}
     hoverAnchor={props.hoverAnchor} align={props.hoverSide === 'left' ? 'end' : 'start'}
     autoFocus={props.hoverAnchor === undefined}
@@ -724,5 +729,137 @@ export function ArkmeMemberRecordsPanel(props: {
         </Fragment>)}
     </div>
   </aside>
+  </>
+}
+
+/** Bot history is scoped to the already loaded timeline until a Bot-specific page API exists. */
+export function ArkmeLoadedBotRecordsPanel(props: {
+  sourceRef: string
+  sourceIdentityKey?: string
+  botName: string
+  mode: ArkmeConversationMemberRecordMode
+  items: readonly ArkmeTimelineItem[]
+  onClose: () => void
+}) {
+  useArkmeLocale()
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const dismissRef = useRef<HTMLDivElement>(null)
+  const preferredWidthRef = useRef(readPreferredMemberRecordsWidth())
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number }>()
+  const [preferredWidth, setPreferredWidth] = useState(preferredWidthRef.current)
+  const [availableWidth, setAvailableWidth] = useState<number>()
+  const [resizeHovered, setResizeHovered] = useState(false)
+  const [resizing, setResizing] = useState(false)
+  const timeline = useMemo(() => arkmeMemberRecordTimeline(props.items), [props.items])
+  const title = props.mode === 'mentioned'
+    ? tr('@{v0}的消息', { v0: props.botName })
+    : tr('{v0}的消息', { v0: props.botName })
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [props.onClose])
+  useEffect(() => {
+    const host = dismissRef.current?.parentElement
+    if (!host) return
+    const measure = () => { setAvailableWidth(host.getBoundingClientRect().width) }
+    measure()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(host)
+      return () => { observer.disconnect() }
+    }
+    window.addEventListener('resize', measure)
+    return () => { window.removeEventListener('resize', measure) }
+  }, [])
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (body) body.scrollTop = body.scrollHeight
+  }, [props.mode, props.botName])
+  const effectiveWidth = availableWidth === undefined
+    ? preferredWidth
+    : clampArkmeMemberRecordsWidth(preferredWidth, availableWidth)
+  const allAvailable = availableWidth !== undefined && effectiveWidth >= availableWidth
+  const handleRight = allAvailable
+    ? Math.max(0, (availableWidth ?? 0) - ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH)
+    : effectiveWidth
+  const updateWidth = (width: number) => {
+    const next = availableWidth === undefined ? width : clampArkmeMemberRecordsWidth(width, availableWidth)
+    preferredWidthRef.current = next
+    setPreferredWidth(next)
+  }
+  const finishResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    dragRef.current = undefined
+    setResizing(false)
+    persistPreferredMemberRecordsWidth(preferredWidthRef.current)
+  }
+  return <>
+    <div ref={dismissRef} style={styles.drawerDismiss} data-arkme-bot-records-dismiss="true"
+      onPointerDown={props.onClose} />
+    <div role="separator" aria-label={tr('调整 Bot 消息侧栏宽度')} aria-orientation="vertical"
+      aria-valuenow={Math.round(effectiveWidth)} tabIndex={0}
+      data-arkme-bot-records-resize-handle="true" data-resizing={resizing ? 'true' : 'false'}
+      style={{ ...styles.drawerResizeHandle, right: handleRight }}
+      onPointerEnter={() => { setResizeHovered(true) }}
+      onPointerLeave={() => { if (!resizing) setResizeHovered(false) }}
+      onPointerDown={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: effectiveWidth }
+        preferredWidthRef.current = effectiveWidth
+        setResizing(true)
+      }}
+      onPointerMove={event => {
+        const drag = dragRef.current
+        if (!drag || drag.pointerId !== event.pointerId) return
+        event.preventDefault()
+        event.stopPropagation()
+        updateWidth(drag.startWidth + drag.startX - event.clientX)
+      }}
+      onPointerUp={finishResize} onPointerCancel={finishResize}
+      onKeyDown={event => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        event.stopPropagation()
+        updateWidth(preferredWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+        persistPreferredMemberRecordsWidth(preferredWidthRef.current)
+      }}
+    >
+      <span aria-hidden style={{ ...styles.drawerResizeIndicator,
+        ...(allAvailable ? { left: 0 } : { right: 0 }), opacity: resizeHovered || resizing ? 1 : 0 }} />
+    </div>
+    <aside style={{ ...styles.drawer, width: effectiveWidth }} role="dialog" aria-modal="true" aria-label={title}
+      data-arkme-bot-records-panel="true" data-mode={props.mode} data-width={Math.round(effectiveWidth)}>
+      <ArkmeRightPanelHeader title={title} subtitle={tr('仅当前已加载消息')}
+        onClose={props.onClose} closeLabel={tr('关闭 Bot 消息')} />
+      <div ref={bodyRef} style={styles.drawerBody}>
+        {timeline.length === 0 && <div style={styles.state}>{tr('当前已加载消息中暂无匹配内容')}</div>}
+        {timeline.map(entry => entry.kind === 'time'
+          ? <div key={entry.key} style={styles.recordTime} data-arkme-record-time={entry.timestamp}>{entry.label}</div>
+          : <article key={entry.key}
+            style={{ ...styles.recordRow, justifyContent: entry.item.isMe ? 'flex-end' : 'flex-start' }}
+            data-arkme-bot-record-id={entry.item.itemUid}>
+            {!entry.item.isMe && <ArkmeUserAvatar senderKind={entry.item.senderKind}
+              {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}
+              size={36} label={tr('{v0} 的头像', { v0: entry.item.senderName })} />}
+            <div style={{ ...styles.recordMain, alignItems: entry.item.isMe ? 'flex-end' : 'flex-start' }}>
+              <div style={styles.recordName}>{entry.item.senderName}</div>
+              <div style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
+                <ArkmeMessageContent item={entry.item} sourceRef={props.sourceRef}
+                  {...(props.sourceIdentityKey === undefined ? {} : { sourceIdentityKey: props.sourceIdentityKey })}
+                  highlightMentions />
+              </div>
+            </div>
+            {entry.item.isMe && <ArkmeUserAvatar senderKind={entry.item.senderKind}
+              {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}
+              size={36} label={tr('{v0} 的头像', { v0: entry.item.senderName })} />}
+          </article>)}
+      </div>
+    </aside>
   </>
 }

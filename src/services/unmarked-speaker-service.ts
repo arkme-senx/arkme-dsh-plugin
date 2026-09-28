@@ -151,7 +151,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
   }
 
   async list(
-    options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     const limit = options.countOnly === true ? 0 : boundedLimit(options.limit)
@@ -163,7 +163,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       options.signal,
       {
         lane: 'interactive-read', key: `unmarked-speakers:list:${String(limit)}:${upstreamCursor}`,
-        cacheMs: 10_000, failureCooldownMs: 2_000,
+        cacheMs: 10_000, failureCooldownMs: 2_000, bypassCache: options.refresh === true,
       },
     )
     const crossDayCount = boundedInteger(data.cross_day_count)

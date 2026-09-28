@@ -65,7 +65,10 @@ export function ArkmeTextLink({ href, text, linkLabelMode = 'resolved', fallback
   }, [href, metadataResolver, shouldResolve])
 
   const resolved = linkLabelMode === 'resolved' && title !== ''
-  const fallback = shouldResolve && !resolved
+  // A name already supplied by the caller does not require permission to fetch
+  // webpage metadata (for example, a World publication's known plugin name).
+  const fallback = linkLabelMode === 'resolved' && !resolved
+    && (shouldResolve || fallbackLabel !== ARKME_LINK_FALLBACK_LABEL)
   const label = resolved ? title : fallback ? fallbackLabel : text
   return <a
     href={href}

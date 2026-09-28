@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
 import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
 import { stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
@@ -87,6 +88,7 @@ import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './s
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { CommonGroupService } from './services/common-group-service.js'
+import { SharePreviewService } from './services/share-preview-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
 import {
   ArkmeLinkMetadataService,
@@ -127,6 +129,7 @@ import {
   type StateStore,
 } from './services/service.js'
 import { SourceService } from './services/source-service.js'
+import type { ArkmeLocalDatabase } from './local-database.js'
 import { UnmarkedSpeakerService } from './services/unmarked-speaker-service.js'
 import { WechatService } from './services/wechat-service.js'
 import { VoiceprintService } from './services/voiceprint-service.js'
@@ -218,6 +221,7 @@ import type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmeImageBytes,
+  ArkmeImageMediaType,
   ArkmeImageSearchItem,
   ArkmeImageSearchResult,
   ArkmeInterwovenBootstrap,
@@ -243,13 +247,15 @@ import type {
   ArkmeRecordSearchResult,
   ArkmeRecordingCalendarMonth, ArkmeRecordingDay, ArkmeRecordingPlayback,
   ArkmeRecordingProjectionKind, ArkmeRecordingSearchResult, ArkmeRecordingSection, ArkmeRecordingSpeakerMutationResult,
-  ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerRecommendation, ArkmeRecordingSummaryModelConfig, ArkmeRecordingSummaryModelRouteUpdate,
+  ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerRecommendation, ArkmeRecordingSummaryModelConfig, ArkmeRecordingSummaryModelRouteUpdate,
   ArkmeRecordingTranscriptSection, ArkmeRecordingVersion,
   ArkmeRelatedRecordingEligibility, ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteList, ArkmeRichSendInput, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeMessageSnapshotDetail, ArkmeBotMentionInput, ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
+  ArkmeSelfRole,
+  ArkmeSelfRoleSnapshot,
   ArkmeSelfSummary,
   ArkmeSourceDirectory,
   ArkmeSourceDirectoryPinResult,
@@ -328,6 +334,7 @@ export class ArkmeService {
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
   private readonly media: MediaService
+  private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
   private readonly archives: ArchiveService
@@ -388,6 +395,7 @@ export class ArkmeService {
     this.arrangement = new ArrangementService(this.runtime)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
+    this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
       forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
     }, {
@@ -403,6 +411,7 @@ export class ArkmeService {
       this.profile,
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
       { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
+      this.selfRoleAvatars,
     )
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
@@ -421,7 +430,7 @@ export class ArkmeService {
     }, async () => { await this.realtime.invalidateRecordProjection() },
     async (source, text, humans, bots, session, textFormat) => await this.chat.resolveMentions(
       source, text, text, humans, bots, session, undefined, textFormat,
-    ))
+    ), async session => await this.profile.recordSenderSnapshot(session))
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
@@ -437,6 +446,7 @@ export class ArkmeService {
             await this.realtime.invalidateRecordProjection()
           }
         },
+        async session => await this.profile.recordSenderSnapshot(session),
       ),
       this.bot,
       new LocalMessageActionCapabilityCodec(async () => await this.runtime.stateStore.uniqueCode()),
@@ -1008,6 +1018,9 @@ export class ArkmeService {
   ): Promise<ArkmeLinkMetadata | null> {
     return await this.linkMetadata.resolve(url, options)
   }
+  async resolveSharePreview(url: string, signal?: AbortSignal): Promise<import('./share-link-preview.js').ShareLinkPreview | null> {
+    return await new SharePreviewService(this.runtime).resolve(url, signal)
+  }
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
   /** @internal Team presentation adapter; public identity remains owned by Backend. */
   async publicAvatarPresentationsByArkmeIds(
@@ -1056,6 +1069,8 @@ export class ArkmeService {
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
   async recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> { return await this.recording.recordingSpeakerOptions(signal) }
+  async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> { return await this.recording.recordingSpeakerPresence(signal) }
+  async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerMembers(speakerRef, signal) }
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> { return await this.recording.recordingSpeakerRecommendation(itemRef, signal) }
   async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
@@ -1626,8 +1641,212 @@ export class ArkmeService {
   async memberEventProfile(sourceRef: string, eventId: string, signal?: AbortSignal) { return await this.chat.memberEvents.memberProfile(sourceRef, eventId, signal) }
   async memberEventPrivateChat(sourceRef: string, eventId: string, signal?: AbortSignal) { return await this.chat.memberEvents.openPrivateChat(sourceRef, eventId, signal) }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> { return await this.chat.readSource(sourceRef, options) }
-  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> { return await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options) }
+  private selfRoleStorage(): Pick<ArkmeLocalDatabase,
+    'listSelfRoles' | 'createSelfRole' | 'updateSelfRole' | 'deleteSelfRole' | 'bindSelfRole' | 'unbindSelfRole' | 'rebindSelfRole' | 'selfRoleSnapshots'> {
+    const storage = this.stateStore as StateStore & Partial<ArkmeLocalDatabase>
+    if (typeof storage.listSelfRoles !== 'function' || typeof storage.createSelfRole !== 'function'
+      || typeof storage.updateSelfRole !== 'function' || typeof storage.deleteSelfRole !== 'function'
+      || typeof storage.bindSelfRole !== 'function' || typeof storage.unbindSelfRole !== 'function'
+      || typeof storage.rebindSelfRole !== 'function' || typeof storage.selfRoleSnapshots !== 'function') {
+      throw new ArkmePluginError('self-role-storage-unavailable', '当前环境不支持本地角色', false, 501)
+    }
+    return storage as Pick<ArkmeLocalDatabase,
+      'listSelfRoles' | 'createSelfRole' | 'updateSelfRole' | 'deleteSelfRole' | 'bindSelfRole' | 'unbindSelfRole' | 'rebindSelfRole' | 'selfRoleSnapshots'>
+  }
+
+  private async selfRoleUserId(expectedUserId: number): Promise<number> {
+    if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0) {
+      throw new ArkmePluginError('self-role-account-invalid', '角色所属账号无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) {
+      throw new ArkmePluginError('self-role-account-changed', '账号已切换，请重试', false, 409)
+    }
+    return session.userId
+  }
+
+  private selfRoleName(name: string): string {
+    const normalized = name.trim()
+    if (normalized === '' || Array.from(normalized).length > 20 || /[\x00-\x1f\x7f]/.test(normalized)) {
+      throw new ArkmePluginError('self-role-name-invalid', '角色名称须为 1–20 个字符', false, 400)
+    }
+    return normalized
+  }
+
+  private async selfRoleAvatarRef(userId: number, avatarRef: string | undefined): Promise<string | undefined> {
+    if (avatarRef === undefined) return undefined
+    const normalized = avatarRef.trim()
+    if (normalized.startsWith('arkme-self-role-image-v1.')) {
+      if (!await this.selfRoleAvatars.exists(userId, normalized)) {
+        throw new ArkmePluginError('self-role-avatar-invalid', '请选择此账号已保存的头像图片', false, 400)
+      }
+      return normalized
+    }
+    // Legacy cloud refs remain readable from existing rows, but no new role write may add one.
+    if (normalized !== '') throw new ArkmePluginError('self-role-avatar-invalid', '请选择此设备已保存的角色头像', false, 400)
+    return ''
+  }
+
+  async saveSelfRoleAvatar(expectedUserId: number, data: Uint8Array, mediaType: ArkmeImageMediaType): Promise<string> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    const ref = await this.selfRoleAvatars.save(userId, data, mediaType)
+    await this.selfRoleUserId(userId)
+    return ref
+  }
+
+  private async migrateLegacySelfRoleAvatars(userId: number): Promise<void> {
+    const storage = this.stateStore as StateStore & Partial<ArkmeLocalDatabase>
+    if (typeof storage.legacySelfRoleAvatarRefs !== 'function' || typeof storage.replaceSelfRoleAvatarRef !== 'function') return
+    await this.selfRoleAvatars.runLegacyMigration(userId, async () => {
+      const refs = await storage.legacySelfRoleAvatarRefs!(userId)
+      for (const ref of refs) {
+        if (this.selfRoleAvatars.migrationRetryAfter(userId, ref) > Date.now()) continue
+        try {
+          await this.selfRoleUserId(userId)
+          const image = await this.media.readImage(ref)
+          await this.selfRoleUserId(userId)
+          const localRef = await this.selfRoleAvatars.save(userId, image.data, image.mediaType)
+          await this.selfRoleUserId(userId)
+          await storage.replaceSelfRoleAvatarRef!(userId, ref, localRef)
+          this.selfRoleAvatars.clearMigrationDelay(userId, ref)
+        } catch {
+          // A temporarily unavailable cloud asset must not block the role list or erase its original ref.
+          this.selfRoleAvatars.deferMigration(userId, ref, Date.now() + 5 * 60_000)
+        }
+      }
+    })
+  }
+
+  private async migrateLegacySelfRoleAvatarsWithoutBlocking(userId: number): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      // An unreachable old file asset must not make opening the composer or timeline wait for network timeout.
+      await Promise.race([
+        this.migrateLegacySelfRoleAvatars(userId).catch(() => undefined),
+        new Promise<void>(resolve => { timeout = setTimeout(resolve, 150) }),
+      ])
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+    }
+  }
+
+  private selfRoleUid(value: string, label: string): string {
+    const normalized = value.trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
+      throw new ArkmePluginError('self-role-uid-invalid', `${label}无效`, false, 400)
+    }
+    return normalized
+  }
+
+  async listSelfRoles(expectedUserId: number): Promise<ArkmeSelfRole[]> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    await this.migrateLegacySelfRoleAvatarsWithoutBlocking(userId)
+    const roles = await this.selfRoleStorage().listSelfRoles(userId)
+    await this.selfRoleUserId(userId)
+    return roles
+  }
+
+  async createSelfRole(expectedUserId: number, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    try {
+      const verifiedAvatarRef = await this.selfRoleAvatarRef(userId, avatarRef)
+      await this.selfRoleUserId(userId)
+      return await this.selfRoleStorage().createSelfRole(userId, this.selfRoleName(name), verifiedAvatarRef || undefined)
+    } catch (error) {
+      if ((error as Error).message === 'self-role-limit') {
+        throw new ArkmePluginError('self-role-limit', '最多可创建 20 个角色', false, 409)
+      }
+      throw error
+    }
+  }
+
+  async updateSelfRole(expectedUserId: number, roleId: string, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    const verifiedAvatarRef = await this.selfRoleAvatarRef(userId, avatarRef)
+    await this.selfRoleUserId(userId)
+    const updated = await this.selfRoleStorage().updateSelfRole(
+      userId, this.selfRoleUid(roleId, '角色标识'), this.selfRoleName(name), verifiedAvatarRef,
+    )
+    if (updated === undefined) throw new ArkmePluginError('self-role-missing', '角色不存在', false, 404)
+    return updated
+  }
+
+  async deleteSelfRole(expectedUserId: number, roleId: string): Promise<{ ok: true }> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    const deleted = await this.selfRoleStorage().deleteSelfRole(userId, this.selfRoleUid(roleId, '角色标识'))
+    if (!deleted) throw new ArkmePluginError('self-role-missing', '角色不存在', false, 404)
+    return { ok: true }
+  }
+
+  async bindSelfRole(expectedUserId: number, sourceRef: string, recordUid: string, roleId: string): Promise<ArkmeSelfRoleSnapshot> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    const source = await this.source.openSourceRef(sourceRef, userId)
+    if (source.kind !== 'send_to_self' && source.kind !== 'default_category' && source.kind !== 'topic') {
+      throw new ArkmePluginError('self-role-source-invalid', '只能在发给自己选择角色', false, 400)
+    }
+    await this.selfRoleUserId(expectedUserId)
+    try {
+      const snapshot = await this.selfRoleStorage().bindSelfRole(
+        userId, this.selfRoleUid(recordUid, '消息标识'), this.selfRoleUid(roleId, '角色标识'),
+      )
+      if (snapshot === undefined) throw new ArkmePluginError('self-role-missing', '角色不存在', false, 404)
+      return snapshot
+    } catch (error) {
+      if ((error as Error).message === 'self-role-record-conflict') {
+        throw new ArkmePluginError('self-role-record-conflict', '这条消息已绑定另一个角色', false, 409)
+      }
+      throw error
+    }
+  }
+
+  async unbindSelfRole(expectedUserId: number, recordUid: string, roleId: string): Promise<{ ok: true }> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    await this.selfRoleStorage().unbindSelfRole(
+      userId, this.selfRoleUid(recordUid, '消息标识'), this.selfRoleUid(roleId, '角色标识'),
+    )
+    return { ok: true }
+  }
+
+  async rebindSelfRole(expectedUserId: number, recordUid: string, newRecordUid: string): Promise<{ ok: true }> {
+    const userId = await this.selfRoleUserId(expectedUserId)
+    try {
+      const rebound = await this.selfRoleStorage().rebindSelfRole(
+        userId, this.selfRoleUid(recordUid, '消息标识'), this.selfRoleUid(newRecordUid, '消息标识'),
+      )
+      if (!rebound) throw new ArkmePluginError('self-role-binding-missing', '消息角色记录不存在', false, 404)
+      return { ok: true }
+    } catch (error) {
+      if ((error as Error).message === 'self-role-record-conflict') {
+        throw new ArkmePluginError('self-role-record-conflict', '目标消息已绑定另一个角色', false, 409)
+      }
+      throw error
+    }
+  }
+
+  private async withSelfRoleSnapshots<T extends ArkmeTimelinePage | ArkmeTimelineAroundPage>(page: T, userId: number): Promise<T> {
+    if (page.source.kind !== 'send_to_self' && page.source.kind !== 'default_category' && page.source.kind !== 'topic') return page
+    const storage = this.stateStore as StateStore & Partial<ArkmeLocalDatabase>
+    if (typeof storage.selfRoleSnapshots !== 'function') return page
+    const current = await this.runtime.requireSession()
+    if (current.userId !== userId) throw new ArkmePluginError('self-role-account-changed', '账号已切换，请重试', false, 409)
+    await this.migrateLegacySelfRoleAvatarsWithoutBlocking(userId)
+    const snapshots = await storage.selfRoleSnapshots(userId, page.items.filter(item => item.isMe).map(item => item.itemUid))
+    await this.selfRoleUserId(userId)
+    if (snapshots.size === 0) return page
+    return { ...page, items: page.items.map(item => {
+      const snapshot = item.isMe ? snapshots.get(item.itemUid) : undefined
+      return snapshot === undefined ? item : { ...item, selfRole: snapshot }
+    }) } as T
+  }
+
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> {
+    const session = await this.runtime.requireSession()
+    return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
+  }
+  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
+    const session = await this.runtime.requireSession()
+    return await this.withSelfRoleSnapshots(await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options), session.userId)
+  }
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
   }
@@ -1673,7 +1892,24 @@ export class ArkmeService {
   async copyMessageActionsLink(conversationRef: string, actionRefs: readonly string[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResult> { return await this.messageActions.copyLink(conversationRef, actionRefs, options.signal) }
   async resolveMessageCopyLink(sid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResolveResult> { return await this.chat.resolveMessageCopyLink(sid, options) }
   async extendMessageCopyLink(sid: string, itemIndex: number, textContent: string, recordUid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkExtendResult> { return await this.chat.extendMessageCopyLink(sid, itemIndex, textContent, recordUid, options) }
-  async sourceMessageExtensionContext(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) { return await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options) }
+  async sourceMessageExtensionContext(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) {
+    const session = await this.runtime.requireSession()
+    const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options)
+    await this.selfRoleUserId(session.userId)
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'send_to_self' && source.kind !== 'default_category' && source.kind !== 'topic') return context
+    const storage = this.stateStore as StateStore & Partial<ArkmeLocalDatabase>
+    if (typeof storage.selfRoleSnapshots !== 'function') return context
+    await this.migrateLegacySelfRoleAvatarsWithoutBlocking(session.userId)
+    const recordUids = context.extensions.filter(item => item.sourceKind === 'record_extension').map(item => item.recordUid)
+    const snapshots = await storage.selfRoleSnapshots(session.userId, recordUids)
+    await this.selfRoleUserId(session.userId)
+    if (snapshots.size === 0) return context
+    return { ...context, extensions: context.extensions.map(item => {
+      const selfRole = item.sourceKind === 'record_extension' ? snapshots.get(item.recordUid) : undefined
+      return selfRole === undefined ? item : { ...item, selfRole }
+    }) }
+  }
   async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {}) { if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403); const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal) { return await this.chat.ownLongArticle(itemUid, expectedUserId, signal) }

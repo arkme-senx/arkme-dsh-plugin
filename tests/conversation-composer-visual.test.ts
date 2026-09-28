@@ -62,8 +62,10 @@ describe('conversation composer redesign styles', () => {
     expect(resize).toContain('border-color: var(--dsw-alias-state-success-primary) !important')
   })
 
-  it('compacts shortcut details based on the actual composer width, not the window width', async () => {
+  it('shows the full shortcut only while hovering or focusing the send button', async () => {
     const css = await readFile(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
-    expect(css).toMatch(/@container arkme-composer \(max-width: 340px\)\s*\{\s*\.arkme-composer-shortcut-details\s*\{ display: none; \}/)
+    expect(css).toContain('.arkme-composer-send-shortcut-anchor:is(:hover, :focus-within) > .arkme-composer-send-shortcut-tooltip')
+    expect(css).toContain('visibility: visible; opacity: 1;')
+    expect(css).not.toContain('.arkme-composer-shortcut-details')
   })
 })
