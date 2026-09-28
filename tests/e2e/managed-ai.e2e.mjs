@@ -69,7 +69,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       const models = await scaffold.ctx.get('llm').listModels('arkme-managed')
       const live = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
       expect(models.map(model => model.id)).toEqual(live ? ['arkme-flash-e2e', 'deepseek-v4-flash'] : ['arkme-flash-e2e', 'deepseek-v4-flash', 'bailian-v41-e2e'])
-      for (const model of models) expect(model.description).toMatch(/^每 1,000 Token：输入 .+ 积分，缓存输入 .+ 积分，输出 .+ 积分。已含服务费，实际按用量扣分。$/)
+      for (const model of models) expect(model.description).toMatch(/^每 1,000 Token：输入 .+ 积分，缓存输入 .+ 积分，输出 .+ 积分。$/)
       const saved = await scaffold.ctx.get('llm').resolveModelInfo('arkme-managed', 'deepseek-v4-flash')
       expect(saved.id).toBe('deepseek-v4-flash')
       expect(saved.description).toBe(models[0].description)

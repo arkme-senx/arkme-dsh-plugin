@@ -164,9 +164,7 @@ describe('Arkme managed model adapter', () => {
   it('advertises the point quote from the selected offering without recomputing money or matching names',async()=>{
     const adapter=createManagedAiLlmAdapter({intelligentBaseUrl:'https://intelligent.test',credentialOwner:{resolveManagedAccessCredential:async()=>new SecretValue('access')},resolveAnonymousUserId:()=> '11111111-1111-4111-8111-111111111111' as never,fetchImpl:async()=>managedCatalogResponse([{...MANAGED_CATALOG_ITEMS[0],point_pricing:{cache_hit_input_per_thousand:'0.00415',cache_miss_input_per_thousand:'0.2075',output_per_thousand:'0.83'}}])})
     const models=await adapter.listModels('arkme-managed')
-    expect(models[0]?.description).toContain('输入 0.2075 积分')
-    expect(models[0]?.description).toContain('输出 0.83 积分')
-    expect(models[0]?.description).toContain('已含服务费')
+    expect(models[0]?.description).toBe('每 1,000 Token：输入 0.2075 积分，缓存输入 0.00415 积分，输出 0.83 积分。')
   })
   it('advertises every active backend catalog model without automatic retries', async () => {
     const catalogFetch = vi.fn(async () => managedCatalogResponse())
