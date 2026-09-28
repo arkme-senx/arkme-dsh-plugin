@@ -33,12 +33,13 @@ export interface LiveEventBatch {
   replayed: boolean
 }
 
-/** One consumer forms batches when it can send; producer callbacks never wait on ACKs. */
+/** Per-session order is serial; independent sessions may progress behind a slow ACK. */
 export class DshLiveEventBatcher {
   private readonly sessions = new Map<string, PendingSession>()
   private bufferedBytes = 0
   private bufferedEntries = 0
-  private flight: Promise<void> | undefined
+  private readonly flights = new Set<Promise<void>>()
+  private readonly publishing = new Set<string>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private timerDueAt = Infinity
   private closed = false
@@ -83,8 +84,11 @@ export class DshLiveEventBatcher {
   }
 
   private schedule(): void {
-    if (this.closed || this.flight !== undefined || this.sessions.size === 0) return
-    const due = Math.min(...[...this.sessions.values()].map(state => Math.max(state.readyAt, state.retryAt)))
+    // ponytail: two concurrent sessions bound pressure; increase only with ACK/load evidence.
+    if (this.closed || this.flights.size >= 2) return
+    const waiting = [...this.sessions.values()].filter(state => !this.publishing.has(state.sessionRef))
+    if (waiting.length === 0) return
+    const due = Math.min(...waiting.map(state => Math.max(state.readyAt, state.retryAt)))
     if (this.timer !== undefined && this.timerDueAt <= due) return
     this.timerDueAt = due
     const delay = Math.max(0, due - this.now())
@@ -94,17 +98,22 @@ export class DshLiveEventBatcher {
   }
 
   private async drain(): Promise<void> {
-    if (this.flight !== undefined) return this.flight
-    const flight = this.consume()
-    this.flight = flight
-    try { await flight }
-    finally { if (this.flight === flight) this.flight = undefined; this.schedule() }
+    while (!this.closed && this.flights.size < 2) {
+      const state = [...this.sessions.values()].find(item => !this.publishing.has(item.sessionRef)
+        && Math.max(item.readyAt, item.retryAt) <= this.now())
+      if (state === undefined) break
+      this.publishing.add(state.sessionRef)
+      const flight = this.consume(state).finally(() => {
+        this.publishing.delete(state.sessionRef)
+        this.flights.delete(flight)
+        this.schedule()
+      })
+      this.flights.add(flight)
+    }
+    await Promise.all(this.flights)
   }
 
-  private async consume(): Promise<void> {
-    while (!this.closed) {
-      const state = [...this.sessions.values()].find(item => Math.max(item.readyAt, item.retryAt) <= this.now())
-      if (state === undefined) return
+  private async consume(state: PendingSession): Promise<void> {
       try {
         let source = state.entries
         let upper = state.through
@@ -156,7 +165,6 @@ export class DshLiveEventBatcher {
         state.retryAt = this.now() + 2_000
         try { this.options.onError(error) } catch { /* diagnostic only */ }
       }
-    }
   }
 
   async flush(): Promise<void> {
@@ -164,7 +172,9 @@ export class DshLiveEventBatcher {
     for (const state of this.sessions.values()) state.readyAt = 0
     if (this.timer !== undefined) clearTimeout(this.timer)
     this.timer = undefined
-    await this.drain()
+    do { await this.drain() }
+    while (!this.closed && (this.flights.size > 0 || [...this.sessions.values()]
+      .some(state => Math.max(state.readyAt, state.retryAt) <= this.now())))
   }
 
   close(): void {

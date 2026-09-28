@@ -840,6 +840,37 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
+  it('uploads only the changed session and still performs periodic full repair during continuous metadata traffic', async () => {
+    let now = 2000
+    const { host, adapter, controlCalls } = await fixture({ now: () => now })
+    const baseInventory = await adapter.sessionInventory()
+    const inventory = vi.spyOn(adapter, 'sessionInventory').mockResolvedValue([
+      ...baseInventory, { ...baseInventory[0]!, sessionId: 'session-02' },
+    ])
+    const internal = host as unknown as {
+      backgroundProjectionFlight?: Promise<void>
+      syncProjectionSnapshotSafely(force?: boolean, refs?: readonly string[]): Promise<void>
+      historySyncError?: DshRemoteError; historySyncErrorSessionRef?: string
+    }
+    try {
+      await host.start(); await internal.backgroundProjectionFlight
+      controlCalls.splice(0); inventory.mockClear()
+      internal.historySyncError = new DshRemoteError('REMOTE_NOT_FOUND', 'unrelated session needs history repair')
+      internal.historySyncErrorSessionRef = 'session-02'
+      for (now = 12000; now <= 32000; now += 10000) {
+        await internal.syncProjectionSnapshotSafely(true, ['session-01'])
+      }
+      expect(inventory).toHaveBeenCalledTimes(3)
+      expect(controlCalls.map(call => call.name)).toEqual(['sessions', 'sessions', 'sessions'])
+      expect(controlCalls.every(call => JSON.stringify(call.value).includes('session-02'))).toBe(false)
+      expect(internal.historySyncErrorSessionRef).toBe('session-02')
+      controlCalls.splice(0)
+      await internal.syncProjectionSnapshotSafely()
+      expect(controlCalls.map(call => call.name)).toEqual(['workspaces', 'sessions', 'complete'])
+      expect((controlCalls.find(call => call.name === 'sessions')!.value.items as unknown[])).toHaveLength(2)
+    } finally { await host.stop() }
+  })
+
   it('keeps authoritative periodic uploads but only pushes changed catalog content', async () => {
     let now = 2000
     const { host, realtime, adapter, controlCalls } = await fixture({ now: () => now,

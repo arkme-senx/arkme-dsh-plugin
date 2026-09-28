@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { Inbox } from 'dsh-agent-legacy-test'
 import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'

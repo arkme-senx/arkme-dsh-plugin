@@ -432,18 +432,39 @@ export class DshApiProxyAdapter {
 
   async sessions(input: {
     sessionId?: string
+    sessionIds?: readonly string[]
     workspaceId?: string
     limit?: number
     cursor?: string
     workspaceInventory?: DshRemoteWorkspaceInventory
+    sessionInventory?: readonly DshRemoteSessionSummary[]
     includeUngrouped?: boolean
   } = {}): Promise<{
     items: DshRemoteSessionSummary[]
     nextCursor?: string
   }> {
+    // Caller-scoped snapshot: paging a single observation must not enumerate
+    // and sort the native catalog again for every 50-row page.
+    let all = input.sessionInventory ?? await this.sessionInventory(input.workspaceInventory)
+    const selected = input.sessionIds === undefined ? undefined : new Set(input.sessionIds)
+    if (input.sessionId !== undefined || selected || input.workspaceId !== undefined || !input.includeUngrouped) {
+      all = all.filter(item => (input.sessionId === undefined || item.sessionId === input.sessionId)
+        && (selected === undefined || selected.has(item.sessionId))
+        && (input.includeUngrouped || item.workspaceId !== '')
+        && (input.workspaceId === undefined || item.workspaceId === input.workspaceId))
+    }
+    const offset = readOffset(input.cursor)
+    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
+    return pageByBytes({
+      all, offset, limit: pageLimit(input.limit),
+      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
+    })
+  }
+
+  async sessionInventory(inventory?: DshRemoteWorkspaceInventory): Promise<DshRemoteSessionSummary[]> {
     const list = this.api.sessions?.list
     if (typeof list !== 'function') this.unsupported('session.list')
-    const workspaceInventory = input.workspaceInventory ?? await this.workspaceInventory()
+    const workspaceInventory = inventory ?? await this.workspaceInventory()
     const workspaces = workspaceInventory.items
     const archived = new Set(workspaceInventory.archivedSessionIds)
     const workspaceBySession = new Map<string, string>()
@@ -451,12 +472,10 @@ export class DshApiProxyAdapter {
       for (const sessionId of workspace.sessionIds) workspaceBySession.set(sessionId, workspace.workspaceId)
     }
     const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('remote-sessions'), payload: {} }))
-    const all = value.items.flatMap<DshRemoteSessionSummary>(item => {
-      if (input.sessionId !== undefined && item.sessionId !== input.sessionId) return []
+    return value.items.map<DshRemoteSessionSummary>(item => {
       const workspaceId = workspaceBySession.get(item.sessionId) ?? ''
-      if ((!input.includeUngrouped && workspaceId === '') || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
       const titleValue = item.projections?.values.title
-      return [{
+      return {
         sessionId: item.sessionId,
         workspaceId,
         ...(typeof titleValue === 'string' && titleValue.trim() !== '' ? { title: titleValue.trim().slice(0, 200) } : {}),
@@ -472,14 +491,8 @@ export class DshApiProxyAdapter {
         ...(item.projections !== undefined && Object.hasOwn(item.projections.values, 'goal')
           ? { goal: item.projections.values.goal }
           : {}),
-      }]
+      }
     }).sort((left, right) => right.updatedAt - left.updatedAt)
-    const offset = readOffset(input.cursor)
-    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
-    return pageByBytes({
-      all, offset, limit: pageLimit(input.limit),
-      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
-    })
   }
 
   async history(input: { sessionId: string; beforeSeq?: number; limit?: number }): Promise<{
@@ -827,6 +840,7 @@ export class DshApiProxyAdapter {
 
   async snapshot(input: { limit?: number; cursor?: string } = {}): Promise<DshRemoteSnapshot> {
     const workspaceInventory = await this.workspaceInventory()
+    const sessionInventory = await this.sessionInventory(workspaceInventory)
     const workspaces = workspaceInventory.items
     const sessions: DshRemoteSessionSummary[] = []
     let cursor: string | undefined
@@ -834,6 +848,7 @@ export class DshApiProxyAdapter {
       const page = await this.sessions({
         limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         workspaceInventory,
+        sessionInventory,
         ...(cursor === undefined ? {} : { cursor }),
       })
       sessions.push(...page.items)

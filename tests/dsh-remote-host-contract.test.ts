@@ -900,7 +900,7 @@ it.each([false, true])('does not hold live batches behind a 4 second metadata AC
     }
     expect(metadataCompleted).toBe(false)
     expect(sessions).toHaveBeenCalledOnce()
-    expect(directory.mock.calls).toEqual([[true], [true], [true]])
+    expect(directory.mock.calls).toEqual([[true, 'session-01'], [true, 'session-01'], [true, 'session-01']])
     await vi.advanceTimersByTimeAsync(4_000)
     await metadata
     expect(published.mock.calls.filter(([value]) => value.operation === 'session.history')).toHaveLength(3)

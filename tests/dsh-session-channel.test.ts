@@ -4,6 +4,22 @@ import { DshSessionChannelClient, DshSessionChannelHost } from '../src/dsh-remot
 import type { DshRemoteRealtimeTransport, DshRemoteTrustedEventMetadata } from '../src/dsh-remote/types.js'
 import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from '../src/dsh-remote/transport-fragment.js'
 
+it('retains unrelated execution notices when publishing a partial directory observation', async () => {
+  const frames: any[] = []
+  const transport = { publish: async ({ payload }: any) => { frames.push(payload); return { sequence: 1 } } } as unknown as DshRemoteRealtimeTransport
+  const host = new DshSessionChannelHost({ transport, target: { runtimeRef: 'runtime', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 },
+    epoch: () => 1, native: vi.fn(), failed: vi.fn() })
+  try {
+    await host.directoryChanged(['a', 'b'], 'full')
+    frames.splice(0)
+    await host.directoryChanged(['a'], 'only-a', undefined, true)
+    await host.directoryChanged(['b'], 'only-b', undefined, true)
+    expect(frames.filter(frame => frame.ready)).toHaveLength(0)
+    await host.directoryChanged(['a', 'b'], 'full-again')
+    expect(frames.filter(frame => frame.ready)).toHaveLength(0)
+  } finally { host.close() }
+})
+
 it('reassembles five interleaved startup replies on the one account channel', async () => {
   let receive: any
   const transport = { subscribeDisconnect: () => () => {},

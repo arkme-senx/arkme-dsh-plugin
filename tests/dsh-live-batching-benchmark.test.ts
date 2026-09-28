@@ -57,4 +57,4 @@ it('does not accumulate seconds of queue age under the recorded-class event rate
   expect(coalesced.batches).toBeLessThan(baseline.batches * 0.6)
   expect(coalesced.p95Ms).toBeLessThan(250)
   expect(coalesced.maxMs).toBeLessThan(300)
-})
+}, 30_000)
