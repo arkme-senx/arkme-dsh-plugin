@@ -18,12 +18,13 @@ function fixture(){
  const post=vi.fn(async(path:string,body:Record<string,unknown>)=>{
   if(path.endsWith('/self-roles/list'))return {items:[...roles.values()],next_cursor:''}
   if(path.endsWith('/self-roles/apply')){
-   const old=roles.get(String(body.role_id)),version=Number(body.expected_version)
-   if(old && old.version!==version){
-    if(old.version===version+1 && old.name===body.name && old.deleted===body.deleted)return old
-    throw new Error('self role version conflict')
+   const old=roles.get(String(body.role_id))
+   const role={...body,version:(old?.version??0)+1,deleted:Number(body.deleted_at)>0,update_at:1} as unknown as CloudSelfRole
+   if(old){
+    if(old.name_at>role.name_at){role.name=old.name;role.name_at=old.name_at}
+    if(old.avatar_at>role.avatar_at){role.avatar_file_asset_uid=old.avatar_file_asset_uid;role.avatar_at=old.avatar_at}
+    role.deleted_at=Math.max(old.deleted_at,role.deleted_at);role.deleted=role.deleted_at>0
    }
-   const role={...body,version:version+1,update_at:1} as unknown as CloudSelfRole
    roles.set(role.role_id,role)
    if(loseResponse){loseResponse=false;throw new Error('response lost')}
    return role
@@ -65,16 +66,17 @@ it('account change during upload leaves the role unacknowledged and never applie
  const role=await db.createSelfRole(7,'角色','arkme-self-role-image-v1.abcdefgh')
  const f=fixture();f.media.uploadLocalFile.mockImplementationOnce(async()=>{f.setUser(8);return {fileAssetUid:'avatar-asset-1'}})
  await expect(f.owner.refresh()).rejects.toMatchObject({code:'self-role-account-changed'})
- expect(f.post).not.toHaveBeenCalled();expect(db.selfRoleSync.state(7,role.roleId)?.syncState).toBe('pending')
+ expect(f.post).not.toHaveBeenCalled();expect(db.selfRoleSync.next(7,role.roleId)).toBeDefined()
  expect(await db.listSelfRoles(8)).toEqual([])
 })
-it('one directory conflict does not prevent other roles or immutable messages recovering',async()=>{
+it('a newer remote attribute is adopted automatically while frozen messages stay unchanged',async()=>{
  const a=await db.createSelfRole(7,'本地');const b=await db.createSelfRole(7,'另一角色')
- const f=fixture();f.roles.set(a.roleId,{role_id:a.roleId,name:'远端',version:3,deleted:false,update_at:1})
- await f.owner.refresh()
- expect(db.selfRoleSync.state(7,a.roleId)?.syncState).toBe('conflict')
- expect(f.roles.get(b.roleId)?.name).toBe('另一角色')
+ const f=fixture();f.roles.set(a.roleId,{role_id:a.roleId,name:'远端',name_at:Date.now()+1000,avatar_at:1,deleted_at:0,version:3,deleted:false,update_at:1})
  await db.bindSelfRole(7,'frozen-message',a.roleId)
+ await f.owner.refresh()
+ expect((await db.listSelfRoles(7)).find(r=>r.roleId===a.roleId)?.name).toBe('远端')
+ expect(db.selfRoleSync.next(7,a.roleId)).toBeUndefined()
+ expect(f.roles.get(b.roleId)?.name).toBe('另一角色')
  expect(await f.owner.prepare(f.session(),'frozen-message')).toEqual({role_id:a.roleId,name:'本地'})
 })
 
@@ -94,4 +96,15 @@ it('concurrent frozen sends share one avatar upload after the role is deleted',a
  const f=fixture()
  const results=await Promise.all([f.owner.prepare(f.session(),'queued-a'),f.owner.prepare(f.session(),'queued-b')])
  expect(results[0]).toEqual(results[1]);expect(f.media.uploadLocalFile).toHaveBeenCalledTimes(1)
+})
+
+it('a failed role cannot block a different role or ordinary content',async()=>{
+ const a=await db.createSelfRole(7,'离线头像','arkme-self-role-image-v1.abcdefgh')
+ const b=await db.createSelfRole(7,'另一个角色')
+ const f=fixture();f.media.uploadLocalFile.mockRejectedValue(new Error('offline upload'))
+ await expect(f.owner.refresh()).rejects.toThrow('offline upload')
+ expect(db.selfRoleSync.next(7,a.roleId)).toBeDefined()
+ expect(db.selfRoleSync.next(7,b.roleId)).toBeUndefined()
+ expect(f.roles.get(b.roleId)?.name).toBe('另一个角色')
+ await expect(f.records.createPersonalRecord('/api/v1/records/create',{record_uid:'normal',text_content:'普通正文'})).resolves.toBeDefined()
 })

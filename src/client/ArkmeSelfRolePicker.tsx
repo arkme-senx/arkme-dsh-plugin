@@ -138,11 +138,11 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setSaving(true)
     setFormError('')
     try {
-      const avatarRef = avatarFile === undefined ? (removeAvatar ? '' : editingRole?.avatarRef) : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
+      const avatarRef = avatarFile === undefined ? (removeAvatar ? '' : undefined) : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
       const created = await callArkme<ArkmeSelfRole>(editingRole === undefined ? 'self-roles.create' : 'self-roles.update', {
         ...(editingRole === undefined ? {} : { roleId: editingRole.roleId }),
-        expectedUserId: userId, name: roleName, ...(avatarRef === undefined ? {} : { avatarRef }),
+        expectedUserId: userId, ...(editingRole?.name === roleName ? {} : {name: roleName}), ...(avatarRef === undefined ? {} : { avatarRef }),
       }, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
       setRoleState(current => current.scope === submittingScope
@@ -180,10 +180,9 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     { id: 'me', label: '我', icon: <ArkmeSelfRoleAvatar role={{ roleId: 'me', name: '我', ...(selfAvatarRef?.trim() ? { avatarRef: selfAvatarRef } : {}) }} size={20} />, onSelect: () => { setMenuOpen(false); onSelect(undefined) } },
     { type: 'separator' as const, id: 'role-separator' },
     ...visibleState.roles.map(role => ({
-      id: `role:${role.roleId}`, label: `${role.name}${role.syncState === 'pending' ? ' · 待同步' : role.syncState === 'conflict' ? ' · 同步冲突' : ''}`, icon: <ArkmeSelfRoleAvatar role={role} size={20} />,
+      id: `role:${role.roleId}`, label: role.name, icon: <ArkmeSelfRoleAvatar role={role} size={20} />,
       onSelect: () => { setMenuOpen(false); onSelect(role) },
     })),
-    ...visibleState.roles.filter(role => role.syncState === 'conflict').map(role => ({ id: `resolve:${role.roleId}`, label: `使用云端的「${role.name}」`, onSelect: () => { void callArkme('self-roles.resolve', { expectedUserId: userId, roleId: role.roleId }).then(() => setRefreshRevision(value => value + 1)).catch(error => setRoleState(current => ({ ...current, error: error instanceof Error ? error.message : '处理冲突失败' }))) } })),
     ...(selectedRole === undefined ? [] : [
       { id: 'role-edit', label: '编辑当前角色', onSelect: () => { setMenuOpen(false); setEditingRole(selectedRole); setName(selectedRole.name); setAvatarFile(undefined); setRemoveAvatar(false); setFormError(''); setCreateOpen(true) } },
       { id: 'role-delete', label: '删除当前角色', onSelect: () => { const role = selectedRole; setMenuOpen(false); void callArkme('self-roles.delete', {expectedUserId:userId,roleId:role.roleId}).then(() => { if(scopeRef.current !== scope)return; onSelect(undefined); setRefreshRevision(value=>value+1) }).catch(error=>{ if(scopeRef.current===scope)setRoleState(current=>({...current,error:error instanceof Error ? error.message : '删除失败'})) }) } },

@@ -15,7 +15,7 @@ assert.equal((await sdk.listSelfRoles(7))[0]?.roleId,'role-1')
 await sdk.createSelfRole(7,'Consumer 角色')
 await sdk.updateSelfRole(7,'role-1','新名字','')
 await sdk.bindSelfRole(7,'opaque-source','record-1','role-1')
-await sdk.resolveSelfRoleConflict(7,'role-1')
+
 await sdk.deleteSelfRole(7,'role-1')
 assert(calls.filter(r=>r.operation.startsWith('self-roles.')).every(r=>r.params.expectedUserId===7))
 const old=createArkmeSdk({fetchImpl:async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}),{headers:{'content-type':'application/json'}})})

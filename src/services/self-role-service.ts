@@ -41,23 +41,21 @@ export class SelfRoleService {
   }
   private async flush(session:ArkmeSessionCredentials,roleId?:string):Promise<void>{
     const local=this.local;if(!local)return
-    for(let i=0;i<200;i++){
-      await this.assertAccount(session)
-      const op=local.selfRoleSync.next(session.userId,roleId);if(!op)return
-      try {
-        const snapshot=op.deleted ? {role_id:op.roleId,name:op.name,...(op.avatarRef?.startsWith('file_asset://') ? {avatar_file_asset_uid:op.avatarRef.slice('file_asset://'.length)} : {})} : await this.cloudSnapshot(session,op)
-        const role=await this.runtime.authenticatedPost<CloudSelfRole>('/api/v1/self-roles/apply',{...snapshot,expected_version:op.expectedVersion,deleted:op.deleted},session)
-        await this.assertAccount(session);local.selfRoleSync.acknowledge(session.userId,role)
-      } catch(error){
-        if(error instanceof Error && /self role (version conflict|deleted|invalid)|invalid self role/.test(error.message)) {
-          local.selfRoleSync.conflict(session.userId,op.roleId,'角色已在另一端修改或删除，请重新确认')
-          if (roleId === undefined) continue
-          return // The directory conflict cannot invalidate a frozen message snapshot.
-        }
-        throw error
+    let failure:unknown
+    for(const id of roleId===undefined?local.selfRoleSync.dirtyRoleIds(session.userId):[roleId]) {
+      for(let i=0;i<200;i++){
+        await this.assertAccount(session)
+        const op=local.selfRoleSync.next(session.userId,id);if(!op)break
+        try {
+          const snapshot=op.deletedAt>0 ? {role_id:op.roleId,name:op.name,...(op.avatarRef?.startsWith('file_asset://') ? {avatar_file_asset_uid:op.avatarRef.slice('file_asset://'.length)} : {})} : await this.cloudSnapshot(session,op)
+          const role=await this.runtime.authenticatedPost<CloudSelfRole>('/api/v1/self-roles/apply',{...snapshot,name_at:op.nameAt,avatar_at:op.avatarAt,deleted_at:op.deletedAt},session)
+          await this.assertAccount(session);local.selfRoleSync.acknowledge(session.userId,role)
+        }catch(error){failure??=error;break}
       }
     }
+    if(failure)throw failure
   }
+
   async prepare(session:ArkmeSessionCredentials,recordUid:string):Promise<CloudSelfRoleSnapshot|undefined>{
     const local=this.local;if(!local)return undefined
     const snapshot=(await local.selfRoleSnapshots(session.userId,[recordUid])).get(recordUid)
@@ -77,15 +75,6 @@ export class SelfRoleService {
     const previous=this.active.get(userId)??Promise.resolve()
     const next=previous.catch(()=>undefined).then(work);this.active.set(userId,next)
     try{await next}finally{if(this.active.get(userId)===next)this.active.delete(userId)}
-  }
-  async acceptRemote(userId:number,roleId:string):Promise<void>{
-    const session=await this.runtime.requireSession();if(session.userId!==userId)throw new ArkmePluginError('self-role-account-changed','账号已切换',false,409)
-    await this.exclusive(userId,async()=>{let after='';do{
-      const page=await this.runtime.authenticatedPost<{items:CloudSelfRole[];next_cursor:string}>('/api/v1/self-roles/list',{after,limit:100},session)
-      await this.assertAccount(session)
-      const role=page.items.find(r=>r.role_id===roleId);if(role){this.local?.selfRoleSync.acceptRemote(userId,role);return}
-      after=page.next_cursor
-    }while(after);throw new ArkmePluginError('self-role-missing','云端角色不存在',false,404)})
   }
   async refresh():Promise<void>{
     if(!this.local||this.closed)return

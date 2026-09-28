@@ -3,69 +3,49 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ArkmeSelfRoleSnapshot } from './types.js'
 
 export interface CloudSelfRoleSnapshot { role_id: string; name: string; avatar_file_asset_uid?: string }
-export interface CloudSelfRole extends CloudSelfRoleSnapshot { version: number; deleted: boolean; update_at: number }
-export interface SelfRoleWrite extends ArkmeSelfRoleSnapshot { expectedVersion: number; deleted: boolean }
-interface Row { role_id: string; name: string; avatar_ref: string | null; deleted: number; cloud_version: number; cloud_payload: string | null; pending_payload: string | null; sync_error: string | null }
-const desired = (row: Row): SelfRoleWrite => ({ roleId: row.role_id, name: row.name, ...(row.avatar_ref ? { avatarRef: row.avatar_ref } : {}), deleted: row.deleted === 1, expectedVersion: row.cloud_version })
-const content = (w: SelfRoleWrite): string => JSON.stringify([w.roleId, w.name, w.avatarRef ?? '', w.deleted])
-const fromCloud = (r: CloudSelfRole): SelfRoleWrite => ({ roleId: r.role_id, name: r.name, ...(r.avatar_file_asset_uid ? { avatarRef: `file_asset://${r.avatar_file_asset_uid}` } : {}), expectedVersion: r.version, deleted: r.deleted })
+export interface CloudSelfRole extends CloudSelfRoleSnapshot { name_at: number; avatar_at: number; deleted_at: number; version: number; deleted: boolean; update_at: number }
+export interface SelfRoleWrite extends ArkmeSelfRoleSnapshot { nameAt: number; avatarAt: number; deletedAt: number }
+interface Row { role_id: string; name: string; avatar_ref: string | null; name_at: number; avatar_at: number; deleted_at: number; cloud_payload: string | null }
+const desired = (r: Row): SelfRoleWrite => ({roleId:r.role_id,name:r.name,...(r.avatar_ref ? {avatarRef:r.avatar_ref}:{}),nameAt:r.name_at,avatarAt:r.avatar_at,deletedAt:r.deleted_at})
+const content = (w: SelfRoleWrite): string => JSON.stringify([w.roleId,w.name,w.avatarRef??'',w.nameAt,w.avatarAt,w.deletedAt])
+const fromCloud = (r: CloudSelfRole): SelfRoleWrite => ({roleId:r.role_id,name:r.name,...(r.avatar_file_asset_uid ? {avatarRef:`file_asset://${r.avatar_file_asset_uid}`} : {}),nameAt:r.name_at,avatarAt:r.avatar_at,deletedAt:r.deleted_at})
+const newer = (time: number,value:string,oldTime:number,oldValue:string) => time > oldTime || (time === oldTime && Buffer.compare(Buffer.from(value),Buffer.from(oldValue)) > 0)
 
-/** Durable role operations belong to the role directory, never record_cache's message queue. */
+/** Attribute timestamps make retries idempotent; no persisted request or conflict state. */
 export class SelfRoleSyncStore {
   constructor(private readonly db: DatabaseSync, private readonly transaction: (action: () => void) => void) {
-    const columns = new Set((db.prepare('PRAGMA table_info(self_role)').all() as Array<{ name: string }>).map(r => r.name))
-    for (const [name, type] of Object.entries({ deleted: 'INTEGER NOT NULL DEFAULT 0', cloud_version: 'INTEGER NOT NULL DEFAULT 0', cloud_payload: 'TEXT', pending_payload: 'TEXT', sync_error: 'TEXT' })) {
+    const columns = new Set((db.prepare('PRAGMA table_info(self_role)').all() as Array<{name:string}>).map(r=>r.name))
+    for (const [name,type] of Object.entries({deleted:'INTEGER NOT NULL DEFAULT 0',name_at:'INTEGER NOT NULL DEFAULT 0',avatar_at:'INTEGER NOT NULL DEFAULT 0',deleted_at:'INTEGER NOT NULL DEFAULT 0',cloud_payload:'TEXT'})) {
       if (!columns.has(name)) db.exec(`ALTER TABLE self_role ADD COLUMN ${name} ${type}`)
     }
-    const bindings = new Set((db.prepare('PRAGMA table_info(self_role_record)').all() as Array<{ name: string }>).map(r => r.name))
+    // Existing local-only roles become ordinary unsent attribute edits.
+    db.exec('UPDATE self_role SET name_at=updated_at_millis,avatar_at=updated_at_millis WHERE name_at=0')
+    const bindings = new Set((db.prepare('PRAGMA table_info(self_role_record)').all() as Array<{name:string}>).map(r=>r.name))
     if (!bindings.has('cloud_ack')) db.exec('ALTER TABLE self_role_record ADD COLUMN cloud_ack INTEGER NOT NULL DEFAULT 0')
-    db.exec(`CREATE TABLE IF NOT EXISTS self_role_avatar_asset (user_id INTEGER NOT NULL, local_ref TEXT NOT NULL, asset_uid TEXT NOT NULL DEFAULT '', completion_json TEXT, PRIMARY KEY(user_id,local_ref))`)
+    db.exec("CREATE TABLE IF NOT EXISTS self_role_avatar_asset (user_id INTEGER NOT NULL,local_ref TEXT NOT NULL,asset_uid TEXT NOT NULL DEFAULT '',completion_json TEXT,PRIMARY KEY(user_id,local_ref))")
   }
-
-  state(userId: number,roleId: string): {syncState: 'pending'|'synced'|'conflict';syncError?: string} | undefined {
-    const row=this.db.prepare('SELECT * FROM self_role WHERE user_id=? AND role_id=?').get(userId,roleId) as unknown as Row
-    if(!row)return undefined
-    return row.sync_error ? {syncState:'conflict',syncError:row.sync_error} : {syncState:row.pending_payload !== null || row.cloud_payload !== content(desired(row)) ? 'pending':'synced'}
+  dirtyRoleIds(userId:number):string[] {
+    return (this.db.prepare('SELECT * FROM self_role WHERE user_id=? ORDER BY role_id').all(userId) as unknown as Row[]).filter(r=>r.cloud_payload!==content(desired(r))).map(r=>r.role_id)
   }
-  acceptRemote(userId:number,role:CloudSelfRole):void {
-    this.transaction(()=>{
-      this.db.prepare('UPDATE self_role SET name=?,avatar_ref=?,deleted=?,pending_payload=NULL,sync_error=NULL,cloud_version=?,cloud_payload=?,updated_at_millis=? WHERE user_id=? AND role_id=?').run(role.name,role.avatar_file_asset_uid ? `file_asset://${role.avatar_file_asset_uid}` : null,Number(role.deleted),role.version,content(fromCloud(role)),role.update_at,userId,role.role_id)
-    })
-  }
-
-  next(userId: number, roleId?: string): SelfRoleWrite | undefined {
-    const rows = this.db.prepare(`SELECT * FROM self_role WHERE user_id=? ${roleId === undefined ? '' : 'AND role_id=?'} ORDER BY role_id`).all(...(roleId === undefined ? [userId] : [userId, roleId])) as unknown as Row[]
-    for (const row of rows) {
-      if (row.sync_error) continue
-      const operation = row.pending_payload === null ? desired(row) : JSON.parse(row.pending_payload) as SelfRoleWrite
-      if (row.pending_payload === null && row.cloud_payload === content(operation)) continue
-      if (row.pending_payload === null) this.db.prepare('UPDATE self_role SET pending_payload=? WHERE user_id=? AND role_id=?').run(JSON.stringify(operation),userId,row.role_id)
-      return operation
-    }
+  next(userId:number,roleId?:string):SelfRoleWrite|undefined {
+    const rows=this.db.prepare(`SELECT * FROM self_role WHERE user_id=? ${roleId===undefined?'':'AND role_id=?'} ORDER BY role_id`).all(...(roleId===undefined?[userId]:[userId,roleId])) as unknown as Row[]
+    for(const row of rows){const op=desired(row);if(row.cloud_payload!==content(op))return op}
     return undefined
   }
-
-  acknowledge(userId: number, role: CloudSelfRole): void {
-    this.transaction(() => {
-      if (role.deleted) this.db.prepare('UPDATE self_role SET name=?,avatar_ref=? WHERE user_id=? AND role_id=? AND deleted=1').run(role.name,role.avatar_file_asset_uid ? `file_asset://${role.avatar_file_asset_uid}` : null,userId,role.role_id)
-      this.db.prepare('UPDATE self_role SET cloud_version=?,cloud_payload=?,pending_payload=NULL,sync_error=NULL WHERE user_id=? AND role_id=?').run(role.version, content(fromCloud(role)), userId, role.role_id)
+  acknowledge(userId:number,role:CloudSelfRole):void {this.merge(userId,role)}
+  merge(userId:number,role:CloudSelfRole):void {
+    this.transaction(()=>{
+      const row=this.db.prepare('SELECT * FROM self_role WHERE user_id=? AND role_id=?').get(userId,role.role_id) as unknown as Row|undefined
+      const cloud=fromCloud(role)
+      const local=row?desired(row):cloud
+      const nameWins=newer(cloud.nameAt,cloud.name,local.nameAt,local.name)
+      const avatarWins=newer(cloud.avatarAt,cloud.avatarRef??'',local.avatarAt,local.avatarRef??'') || (cloud.deletedAt>0 && cloud.avatarAt===local.avatarAt && !!local.avatarRef && !local.avatarRef.startsWith('file_asset://'))
+      const name=nameWins?cloud.name:local.name,avatar=avatarWins?cloud.avatarRef:local.avatarRef
+      const nameAt=Math.max(cloud.nameAt,local.nameAt),avatarAt=Math.max(cloud.avatarAt,local.avatarAt),deletedAt=Math.max(cloud.deletedAt,local.deletedAt)
+      this.db.prepare(`INSERT INTO self_role(user_id,role_id,name,avatar_ref,created_at_millis,updated_at_millis,deleted,name_at,avatar_at,deleted_at,cloud_payload)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,role_id) DO UPDATE SET name=excluded.name,avatar_ref=excluded.avatar_ref,updated_at_millis=excluded.updated_at_millis,deleted=excluded.deleted,name_at=excluded.name_at,avatar_at=excluded.avatar_at,deleted_at=excluded.deleted_at,cloud_payload=excluded.cloud_payload`)
+        .run(userId,role.role_id,name,avatar??null,role.update_at,Math.max(nameAt,avatarAt,deletedAt),Number(deletedAt>0),nameAt,avatarAt,deletedAt,content(cloud))
     })
-  }
-
-  merge(userId: number, role: CloudSelfRole): void {
-    this.transaction(() => {
-      const local = this.db.prepare('SELECT * FROM self_role WHERE user_id=? AND role_id=?').get(userId,role.role_id) as unknown as Row | undefined
-      if (local && (local.pending_payload !== null || local.cloud_payload !== content(desired(local)))) return
-      if (local && local.cloud_version >= role.version) return
-      this.db.prepare(`INSERT INTO self_role(user_id,role_id,name,avatar_ref,created_at_millis,updated_at_millis,deleted,cloud_version,cloud_payload)
-        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,role_id) DO UPDATE SET name=excluded.name,avatar_ref=excluded.avatar_ref,updated_at_millis=excluded.updated_at_millis,deleted=excluded.deleted,cloud_version=excluded.cloud_version,cloud_payload=excluded.cloud_payload`)
-        .run(userId,role.role_id,role.name,role.avatar_file_asset_uid ? `file_asset://${role.avatar_file_asset_uid}` : null,role.update_at,role.update_at,Number(role.deleted),role.version,content(fromCloud(role)))
-    })
-  }
-
-  conflict(userId: number,roleId: string,message: string): void {
-    // A rejected profile edit cannot block a newer local deletion.
-    this.db.prepare('UPDATE self_role SET pending_payload=CASE WHEN deleted=1 THEN NULL ELSE pending_payload END, sync_error=CASE WHEN deleted=1 THEN NULL ELSE ? END WHERE user_id=? AND role_id=?').run(message,userId,roleId)
   }
   asset(userId: number,ref: string): string | undefined { return (this.db.prepare('SELECT asset_uid FROM self_role_avatar_asset WHERE user_id=? AND local_ref=?').get(userId,ref) as {asset_uid:string}|undefined)?.asset_uid }
   pendingAvatarCompletion(userId: number,ref: string): ArkmeUploadCompletion | undefined {

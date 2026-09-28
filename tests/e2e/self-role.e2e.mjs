@@ -117,7 +117,7 @@ describe('private roles through the packed plugin and real Record API',()=>{
    const after=(await upstream('/api/v1/records/detail',{record_uid:oldUid})).record_core
    expect(after.version).toBe(before.version);expect(after.text_content).toBe(before.text_content)
    const cloudRole=(await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)
-   await upstream('/api/v1/self-roles/apply',{role_id:role.roleId,name:'另一端删除前改名',expected_version:cloudRole.version,deleted:false})
+   await upstream('/api/v1/self-roles/apply',{role_id:role.roleId,name:'另一端删除前改名',name_at:cloudRole.name_at+1,avatar_at:cloudRole.avatar_at,deleted_at:0})
    await sdk.deleteSelfRole(10001,role.roleId)
    await expect.poll(async()=> (await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)?.deleted,{timeout:40000}).toBe(true)
    expect((await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)?.name).toBe('另一端删除前改名')

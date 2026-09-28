@@ -758,7 +758,7 @@ export class ArkmeSdk {
     await this.requireSelfRoles(signal)
     return await this.call('self-roles.create', { expectedUserId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
   }
-  async updateSelfRole(expectedUserId: number, roleId: string, name: string, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
+  async updateSelfRole(expectedUserId: number, roleId: string, name: string | undefined, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
     await this.requireSelfRoles(signal)
     return await this.call('self-roles.update', { expectedUserId, roleId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
   }
@@ -766,10 +766,7 @@ export class ArkmeSdk {
     await this.requireSelfRoles(signal)
     return await this.call('self-roles.delete', { expectedUserId, roleId }, signal)
   }
-  async resolveSelfRoleConflict(expectedUserId: number, roleId: string, signal?: AbortSignal): Promise<{ok:true}> {
-    await this.requireSelfRoles(signal)
-    return await this.call('self-roles.resolve', { expectedUserId, roleId }, signal)
-  }
+
   async bindSelfRole(expectedUserId: number, sourceRef: string, recordUid: string, roleId: string, signal?: AbortSignal): Promise<ArkmeSelfRoleSnapshot> {
     await this.requireSelfRoles(signal)
     return await this.call('self-roles.bind', { expectedUserId, sourceRef, recordUid, roleId }, signal)

@@ -1590,14 +1590,13 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'assistantMsgId', 0),
       stringParam(params, 'runUid'),
     )
-    case 'self-roles.resolve': return await service.resolveSelfRoleConflict(numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'))
     case 'self-roles.list': return await service.listSelfRoles(numberParam(params, 'expectedUserId', 0))
     case 'self-roles.create': return await service.createSelfRole(
       numberParam(params, 'expectedUserId', 0), stringParam(params, 'name'),
       params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
     )
     case 'self-roles.update': return await service.updateSelfRole(
-      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), stringParam(params, 'name'),
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), params.name === undefined ? undefined : stringParam(params, 'name'),
       params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
     )
     case 'self-roles.delete': return await service.deleteSelfRole(

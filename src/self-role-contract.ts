@@ -4,8 +4,7 @@ export interface ArkmeSelfRolePort {
  selfTarget(signal?:AbortSignal):Promise<ArkmeSourceItem>
  listSelfRoles(expectedUserId:number):Promise<ArkmeSelfRole[]>
  createSelfRole(expectedUserId:number,name:string,avatarRef?:string):Promise<ArkmeSelfRole>
- updateSelfRole(expectedUserId:number,roleId:string,name:string,avatarRef?:string):Promise<ArkmeSelfRole>
+ updateSelfRole(expectedUserId:number,roleId:string,name:string|undefined,avatarRef?:string):Promise<ArkmeSelfRole>
  deleteSelfRole(expectedUserId:number,roleId:string):Promise<{ok:true}>
- resolveSelfRoleConflict(expectedUserId:number,roleId:string):Promise<{ok:true}>
  bindSelfRole(expectedUserId:number,sourceRef:string,recordUid:string,roleId:string):Promise<ArkmeSelfRoleSnapshot>
 }

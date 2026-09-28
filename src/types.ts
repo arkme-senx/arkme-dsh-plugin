@@ -442,8 +442,6 @@ export interface ArkmeSelfRecordItem {
 
 /** A local presentation identity for speaking to yourself. The account remains the author. */
 export interface ArkmeSelfRole {
-  syncState?: 'pending' | 'synced' | 'conflict'
-  syncError?: string
   roleId: string
   name: string
   avatarRef?: string
@@ -3722,7 +3720,6 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
-  | 'self-roles.resolve'
   | 'self-roles.list'
   | 'self-roles.create'
   | 'self-roles.update'

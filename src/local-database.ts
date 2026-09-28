@@ -330,7 +330,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
       FROM self_role WHERE user_id = ? AND deleted=0 ORDER BY created_at_millis, role_id
     `).all(userId) as unknown as SelfRoleRow[]
-    return rows.map(row => ({ ...selfRoleFromRow(row), ...this.selfRoleSync.state(userId,row.role_id) }))
+    return rows.map(selfRoleFromRow)
   }
 
   async createSelfRole(userId: number, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
@@ -343,32 +343,33 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         .get(userId) as { count: number }
       if (count.count >= 20) throw new Error('self-role-limit')
       this.database.prepare(`
-        INSERT INTO self_role (user_id, role_id, name, avatar_ref, created_at_millis, updated_at_millis)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(userId, role.roleId, name, avatarRef ?? null, role.createdAtMillis, role.updatedAtMillis)
+        INSERT INTO self_role (user_id, role_id, name, avatar_ref, created_at_millis, updated_at_millis, name_at, avatar_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(userId, role.roleId, name, avatarRef ?? null, role.createdAtMillis, role.updatedAtMillis, role.updatedAtMillis, role.updatedAtMillis)
     })
     return role
   }
 
-  async updateSelfRole(userId: number, roleId: string, name: string, avatarRef?: string): Promise<ArkmeSelfRole | undefined> {
+  async updateSelfRole(userId: number, roleId: string, name: string | undefined, avatarRef?: string): Promise<ArkmeSelfRole | undefined> {
     const row = this.database.prepare(`
       SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
       FROM self_role WHERE user_id = ? AND role_id = ? AND deleted=0
     `).get(userId, roleId) as SelfRoleRow | undefined
     if (row === undefined) return undefined
+    const nextName = name ?? row.name
     const nextAvatarRef = avatarRef === undefined ? row.avatar_ref : avatarRef || null
     const updatedAtMillis = Math.max(Date.now(), row.updated_at_millis + 1)
     this.database.prepare(`
-      UPDATE self_role SET name = ?, avatar_ref = ?, updated_at_millis = ?
+      UPDATE self_role SET name_at=CASE WHEN name != ? THEN ? ELSE name_at END, avatar_at=CASE WHEN COALESCE(avatar_ref,'') != ? THEN ? ELSE avatar_at END, name = ?, avatar_ref = ?, updated_at_millis = ?
       WHERE user_id = ? AND role_id = ?
-    `).run(name, nextAvatarRef, updatedAtMillis, userId, roleId)
+    `).run(nextName,updatedAtMillis,nextAvatarRef??'',updatedAtMillis,nextName, nextAvatarRef, updatedAtMillis, userId, roleId)
     this.secureDatabaseFiles()
-    return selfRoleFromRow({ ...row, name, avatar_ref: nextAvatarRef, updated_at_millis: updatedAtMillis })
+    return selfRoleFromRow({ ...row, name: nextName, avatar_ref: nextAvatarRef, updated_at_millis: updatedAtMillis })
   }
 
   async deleteSelfRole(userId: number, roleId: string): Promise<boolean> {
     // The message snapshot intentionally remains after the role is deleted.
-    const result = this.database.prepare('UPDATE self_role SET deleted=1, pending_payload=CASE WHEN sync_error IS NOT NULL THEN NULL ELSE pending_payload END, sync_error=NULL WHERE user_id = ? AND role_id = ? AND deleted=0').run(userId, roleId)
+    const result = this.database.prepare('UPDATE self_role SET deleted=1, deleted_at=MAX(?,updated_at_millis+1),updated_at_millis=MAX(?,updated_at_millis+1) WHERE user_id = ? AND role_id = ? AND deleted=0').run(Date.now(),Date.now(),userId,roleId)
     this.secureDatabaseFiles()
     return Number(result.changes) > 0
   }

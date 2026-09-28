@@ -1,21 +1,23 @@
 # 私有角色跨端合同
 
-角色数据仍由一个 Host 业务 owner 承接：`SelfRoleService` 管同步/头像依赖，`ArkmeService` 管当前账号和公开命令，`SelfRoleSyncStore` 管 SQLite 的冻结请求与回执。现有正文发送 owner 只请求消息自己的冻结快照；不复制正文队列。
+角色数据仍由一个 Host 业务 owner 承接：`SelfRoleService` 管同步/头像依赖，`ArkmeService` 管当前账号和公开命令，`SelfRoleSyncStore` 管 SQLite 的属性时间与云端确认。现有正文发送 owner 只请求消息自己的冻结快照；不复制正文队列。
 
 ## 消费面
 
 | 消费面 | 入口 | 验证 |
 | --- | --- | --- |
-| UI | 发给自己/个人主题/延展的角色选择器；创建、修改头像和名称、删除、显示待同步/冲突、显式采用云端版本 | picker/Host 测试及官方 DSH 中安装 tgz 后实际页面 |
+| UI | 发给自己/个人主题/延展的角色选择器；创建、修改头像和名称、删除；后台自动同步，不显示待同步/冲突或人工选择 | picker/Host 测试及官方 DSH 中安装 tgz 后实际页面 |
 | Tools | `arkme_self_roles_list`、`arkme_self_roles_write`；创建快记工具支持 role_id | 经正式工具注册、会话授权链，在官方 DSH 实际会话调用 |
-| SDK | 公开 `@senguoyun/dsh-arkme/sdk`，selfRoles 能力发现，list/create/update/delete/bind/resolve | 仓外 Consumer 严格 TS 编译、运行与旧能力拒绝；真实 Host 调用 |
+| SDK | 公开 `@senguoyun/dsh-arkme/sdk`，selfRoles 能力发现，list/create/update/delete/bind | 仓外 Consumer 严格 TS 编译、运行与旧能力拒绝；真实 Host 调用 |
 | Host | 统一 expectedUserId、来源限制、冻结快照与错误语义 | owner 失败恢复、账号切换、旧请求隔离测试 |
 
 不向 Tools/SDK/浏览器暴露 Host 凭据。头像使用既有文件 owner；签名 URL 不进入角色持久化数据。角色只是显示身份，真实作者和权限不变，私聊/群聊不接受角色绑定。受保护延展不会被本地角色覆盖。
 
 ## 本地数据与离线恢复
 
-扩展既有 self_role / self_role_record，不新建消息队列。角色行保存 cloud_version、cloud_payload、pending_payload、sync_error 与墓碑；pending_payload 在网络前冻结，响应丢失重放同一操作，后来本机编辑保持待同步。资料冲突通过显式接受云端版本处理；删除仅改生命周期，保留服务端最新名称头像，不与改名竞争版本。删除可替代已被明确拒绝的资料操作，未知结果仍先重放确认。
+扩展既有 self_role / self_role_record，不新建消息队列。目录行只保存本地属性、name_at/avatar_at/deleted_at 和最后 cloud_payload；没有冻结 pending 请求、sync_error 或人工 resolve API。名称和头像各按毫秒时间合并；同毫秒取 UTF-8 字节序较大的值，三端规则一致。删除只产生 deleted_at，墓碑不被资料编辑复活；迟到资料按各属性自己的时间合并。编辑入口省略未修改属性，避免旧编辑框回写他端更新。
+
+时间在本地修改时产生，取 max(当前毫秒, 已观察角色各属性最大时间 + 1)，上传、重试和丢回包不改业务时间。设备时钟偏差可能影响未互相观察的两次修改顺序，本方案提供确定收敛，不宣称还原真实墙钟先后，也不增加校时状态机。上传回执只改变头像存储引用，不是一次用户换头像。单个角色失败保留本地事实并继续其他角色；下次同步重试。
 
 绑定以 cloud_ack 区分本机冻结事实与已确认云端事实；已确认绑定不能取消或换到另一个记录 UID。旧本机绑定按 keyset 分页补齐云端元数据，不创建新正文。单个绑定冲突不阻断其他绑定。云端快照进入缓存，重启离线仍能显示。
 

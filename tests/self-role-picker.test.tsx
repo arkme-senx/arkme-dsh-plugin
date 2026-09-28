@@ -82,6 +82,18 @@ describe('self role picker', () => {
     expect(mocks.call).toHaveBeenCalledWith('self-roles.update',{expectedUserId:42,roleId:'r1',name:'新名字',avatarRef:''},expect.any(AbortSignal))
   })
 
+  it('submits only the field changed in the editor and exposes no sync decisions', async () => {
+    mocks.call.mockImplementation(async (operation: string) => operation === 'self-roles.list' ? [role] : {...role, name: '只改名称'})
+    await act(async () => { renderer = create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} selectedRole={role} onSelect={vi.fn()} />) })
+    expect(menu().props.actions.some((entry: { label?: string }) => /待同步|同步冲突|云端版本/.test(entry.label ?? ''))).toBe(false)
+    await act(async () => { trigger().props.onClick(); action('role-edit').onSelect() })
+    await act(async () => { renderer!.root.findByProps({'aria-label':'角色名称'}).props.onChange({currentTarget:{value:'只改名称'}}) })
+    await act(async () => { renderer!.root.findByType('form').props.onSubmit({preventDefault(){}}) })
+    const call = mocks.call.mock.calls.find(([operation]) => operation === 'self-roles.update')!
+    expect(call[1].name).toBe('只改名称')
+    expect(call[1].avatarRef).toBeUndefined()
+  })
+
   it('stores a cropped avatar locally before creating the role', async () => {
     const onSelect = vi.fn()
     mocks.call.mockImplementation(async (operation: string) => operation === 'self-roles.list' ? [] : role)

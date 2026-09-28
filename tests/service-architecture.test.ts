@@ -89,7 +89,7 @@ const expectedPublicMethods = [
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
   'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
-  'resolveSelfRoleConflict', 'saveSelfRoleAvatar', 'listSelfRoles', 'createSelfRole', 'updateSelfRole', 'deleteSelfRole',
+  'saveSelfRoleAvatar', 'listSelfRoles', 'createSelfRole', 'updateSelfRole', 'deleteSelfRole',
   'bindSelfRole', 'unbindSelfRole', 'rebindSelfRole',
   'retryPending', 'extensionPost',
 ].sort()

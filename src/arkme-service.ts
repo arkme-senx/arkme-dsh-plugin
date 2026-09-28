@@ -1726,12 +1726,6 @@ export class ArkmeService {
     return normalized
   }
 
-  async resolveSelfRoleConflict(expectedUserId: number, roleId: string): Promise<{ ok: true }> {
-    const userId = await this.selfRoleUserId(expectedUserId)
-    await this.selfRoles.acceptRemote(userId, this.selfRoleUid(roleId, '角色标识'))
-    return { ok: true }
-  }
-
   async listSelfRoles(expectedUserId: number): Promise<ArkmeSelfRole[]> {
     const userId = await this.selfRoleUserId(expectedUserId)
     void this.selfRoles.refresh().catch(() => undefined)
@@ -1756,12 +1750,12 @@ export class ArkmeService {
     }
   }
 
-  async updateSelfRole(expectedUserId: number, roleId: string, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
+  async updateSelfRole(expectedUserId: number, roleId: string, name: string | undefined, avatarRef?: string): Promise<ArkmeSelfRole> {
     const userId = await this.selfRoleUserId(expectedUserId)
     const verifiedAvatarRef = await this.selfRoleAvatarRef(userId, avatarRef)
     await this.selfRoleUserId(userId)
     const updated = await this.selfRoleStorage().updateSelfRole(
-      userId, this.selfRoleUid(roleId, '角色标识'), this.selfRoleName(name), verifiedAvatarRef,
+      userId, this.selfRoleUid(roleId, '角色标识'), name === undefined ? undefined : this.selfRoleName(name), verifiedAvatarRef,
     )
     if (updated === undefined) throw new ArkmePluginError('self-role-missing', '角色不存在', false, 404)
     void this.selfRoles.refresh().catch(() => undefined)
