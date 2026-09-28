@@ -47,8 +47,9 @@ describe('packed speaker presence with real Audio',()=>{
    const candidates=await sdk.recordingSpeakerCandidates();const speaker=candidates.find(s=>s.label==='统计验收人物');expect(speaker).toBeDefined()
    let presence
    await expect.poll(async()=>{presence=await sdk.recordingSpeakerPresence();return presence.state},{timeout:15000,interval:250}).toBe('fresh')
-   expect(presence.items.find(s=>s.optionKey===speaker.optionKey)?.dayCount).toBe(2)
-   const detail=await sdk.recordingSpeakerMembers(speaker.speakerRef,{expectedVersion:presence.version});expect(detail).toMatchObject({state:'fresh',dayCount:2,items:[{token:'12',dayCount:2}]})
+   const lastSpeechEnd=1720086410000 // Fixed fixture: session start + second segment end, not its start.
+   expect(presence.items.find(s=>s.optionKey===speaker.optionKey)).toMatchObject({dayCount:2,lastSeenAt:lastSpeechEnd})
+   const detail=await sdk.recordingSpeakerMembers(speaker.speakerRef,{expectedVersion:presence.version});expect(detail).toMatchObject({state:'fresh',dayCount:2,lastSeenAt:lastSpeechEnd,items:[{token:'12',dayCount:2,lastSeenAt:lastSpeechEnd}]})
    expect(JSON.stringify(detail)).not.toContain('650000000000000000000004')
    expect(calls.some(path=>path.endsWith('/one-day-trans')||path.endsWith('/get-calender-summary'))).toBe(false)
    handle=await scaffold.ctx.agents.create({sessionId:`speaker-presence-${randomUUID()}`,meta:{cwd:scaffold.workspaceCwd},agentOptions:{provider:'deepseek-official',model:'deepseek-v4-flash'}})
@@ -74,6 +75,7 @@ describe('packed speaker presence with real Audio',()=>{
    expect(canceled.modified_count).toBe(1)
    try {
     await expect.poll(async()=>{presence=await sdk.recordingSpeakerPresence();return presence.state==='fresh'?presence.items.find(s=>s.optionKey===speaker.optionKey)?.dayCount:undefined},{timeout:20000,interval:500}).toBe(1)
+    expect(presence.items.find(s=>s.optionKey===speaker.optionKey)?.lastSeenAt).toBe(1720000010000)
     expect(await sdk.recordingSpeakerMembers(speaker.speakerRef,{expectedVersion:oldVersion})).toMatchObject({state:'stale',items:[]})
     await page.getByRole('button',{name:'刷新',exact:true}).click()
     await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText()).toContain('出现 1 天')
@@ -83,6 +85,7 @@ describe('packed speaker presence with real Audio',()=>{
     await page.getByRole('radio',{name:'统计验收人物',exact:true}).check()
     await page.getByRole('button',{name:'确认标记全部片段',exact:true}).click()
     await expect.poll(async()=>{presence=await sdk.recordingSpeakerPresence();return presence.state==='fresh'?presence.items.find(s=>s.optionKey===speaker.optionKey)?.dayCount:undefined},{timeout:20000,interval:500}).toBe(2)
+    expect(presence.items.find(s=>s.optionKey===speaker.optionKey)?.lastSeenAt).toBe(lastSpeechEnd)
     await expect.poll(async()=>page.getByRole('button',{name:/统计验收人物.*已标记/}).innerText(),{timeout:20000}).toContain('出现 2 天')
     await page.getByRole('button',{name:/统计验收人物.*已标记/}).click()
     await expect.poll(async()=>page.getByRole('region',{name:'已标记说话人详情'}).innerText()).toContain('出现 2 天')
