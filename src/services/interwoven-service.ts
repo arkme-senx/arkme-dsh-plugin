@@ -1,7 +1,7 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import type { ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention } from '../types.js'
+import type { ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeInterwovenReadReceipt, ArkmeInterwovenReadReceiptList } from '../types.js'
 import { ProfileService } from './profile-service.js'
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
@@ -11,6 +11,9 @@ interface ArkmeInterwovenMomentReference {
   userId: number
   sourceOwnerRef: string
   sourceChatSessionUid: string
+  legacyGroupUid?: string
+  receiptSequence?: number
+  receiptRecordUid?: string
   recordOwnerUserId: number
   recordUid: string
   relationUid: string
@@ -250,6 +253,7 @@ export class InterwovenService {
       summary: string
       degraded: boolean
       sourceChatSessionUid: string
+      legacyGroupUid?: string
       recordOwnerUserId: number
       recordUid: string
       relationUid: string
@@ -301,6 +305,7 @@ export class InterwovenService {
           summary: stringValue(renderPayload.content ?? item.summary).trim().slice(0, 1000),
           degraded: booleanValue(item.is_degraded),
           sourceChatSessionUid,
+          ...(stringValue(jumpTarget.subject_uid).trim() === '' ? {} : { legacyGroupUid: stringValue(jumpTarget.subject_uid).trim() }),
           recordOwnerUserId,
           recordUid,
           relationUid,
@@ -331,6 +336,7 @@ export class InterwovenService {
         userId: session.userId,
         sourceOwnerRef: source.ownerRef,
         sourceChatSessionUid: descriptor.sourceChatSessionUid,
+        ...(descriptor.legacyGroupUid === undefined ? {} : { legacyGroupUid: descriptor.legacyGroupUid }),
         recordOwnerUserId: descriptor.recordOwnerUserId,
         recordUid: descriptor.recordUid,
         relationUid: descriptor.relationUid,
@@ -372,6 +378,162 @@ export class InterwovenService {
       moments,
       preparedAtMillis,
       ...(partial ? { message: '部分交织瞬间暂时不可用，可稍后重试' } : {}),
+    }
+  }
+
+  async interwovenReadReceipts(sourceRef: string, momentRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeInterwovenReadReceiptList> {
+    const epoch = this.interactionEpoch
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' || momentRefs.length < 1 || momentRefs.length > 20
+      || momentRefs.some(ref => typeof ref !== 'string' || !ref.trim() || ref.length > 4096)
+      || new Set(momentRefs).size !== momentRefs.length) {
+      throw new ArkmePluginError('interwoven-param-invalid', '群互动已读查询参数无效', false, 400)
+    }
+    // Validate every signed, account/private-conversation-bound reference before any receipt reads.
+    const references = await Promise.all(momentRefs.map(ref => this.openInterwovenMomentRef(ref, session.userId, source.ownerRef)))
+    const peerId = await this.assertInterwovenOperationAllowed(source, session, signal)
+    await this.resolveReceiptBridgeReferences(sourceRef, source.ownerRef, references, signal)
+    const groupReads = new Map<string, Promise<Record<string, unknown>>>()
+    const read = (path: string, body: Record<string, unknown>) => this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      path, body, session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    const groupDetail = (uid: string) => {
+      let pending = groupReads.get(uid)
+      if (!pending) {
+        pending = read('/api/v1/chats/detail', { chat_session_uid: uid })
+        groupReads.set(uid, pending)
+      }
+      return pending
+    }
+    const items: ArkmeInterwovenReadReceipt[] = new Array(references.length)
+    let next = 0
+    const worker = async () => {
+      while (next < references.length) {
+        signal?.throwIfAborted()
+        const index = next++
+        const ref = references[index]!
+        const reader = ref.senderUserId === session.userId ? 'peer' : 'self'
+        const unknown: ArkmeInterwovenReadReceipt = { momentId: ref.momentId, reader, status: 'unknown' }
+        items[index] = unknown
+        const groupUid = ref.sourceChatSessionUid || ref.legacyGroupUid || ''
+        if (!groupUid || (reader === 'self' && ref.senderUserId !== peerId)) continue
+        try {
+          const group = await groupDetail(groupUid)
+          const groupSession = objectValue(group.session)
+          if (groupSession.chat_session_uid !== groupUid || groupSession.session_kind !== 2 || groupSession.status !== 1) continue
+          let sequence = ref.sequence || ref.receiptSequence || 0
+          const receiptRecordUid = ref.receiptRecordUid || ref.recordUid
+          if (sequence <= 0) {
+            // A Chat->Subject projection UID is not a canonical record UID.
+            if (ref.recordUid.startsWith('chat_legacy_receive_')) continue
+            // Legacy World rows have a group subject UID, not a Chat sequence.
+            // Resolve by exact group + owner + record, never by group name/summary/time.
+            const around = await read('/api/v1/chat/timeline/around', {
+              chat_session_uid: groupUid, record_uid: ref.recordUid, record_owner_user_id: ref.recordOwnerUserId,
+              before_limit: 1, after_limit: 1,
+            })
+            if (around.chat_session_uid !== groupUid) continue
+            const candidates = [...listValue(around.items), around.anchor].map(objectValue)
+              .filter(item => {
+                const relation = objectValue(item.relation ?? item)
+                return relation.chat_session_uid === groupUid && relation.record_uid === ref.recordUid
+                  && relation.record_owner_user_id === ref.recordOwnerUserId && relation.sender_user_id === ref.senderUserId
+                  && Number.isSafeInteger(relation.seq) && numberValue(relation.seq) > 0
+                  && objectValue(item.record).status === 1
+              })
+            const sequences = new Set(candidates.map(item => numberValue(objectValue(item.relation ?? item).seq)))
+            if (sequences.size !== 1) continue
+            sequence = [...sequences][0]!
+            ref.receiptSequence = sequence
+          }
+          if (reader === 'self') {
+            const cursor = objectValue(group.current_cursor)
+            const snapshot = objectValue(group.unread_snapshot)
+            if (cursor.user_id !== session.userId || cursor.chat_session_uid !== groupUid || cursor.status !== 1) continue
+            const readSeq = snapshot.read_seq ?? cursor.read_seq
+            const lastSeq = snapshot.session_last_seq ?? groupSession.last_seq
+            if (typeof readSeq !== 'number' || !Number.isSafeInteger(readSeq) || readSeq < 0
+              || typeof lastSeq !== 'number' || !Number.isSafeInteger(lastSeq) || lastSeq < sequence) continue
+            // Cursor read_at is not this individual message's read time.
+            items[index] = { ...unknown, status: readSeq >= sequence ? 'read' : 'unread' }
+          } else {
+            const detail = await read('/api/v1/chats/read-receipts/detail', {
+              chat_session_uid: groupUid, record_uid: receiptRecordUid, seq: sequence,
+            })
+            if (detail.chat_session_uid !== groupUid || detail.record_uid !== receiptRecordUid || detail.seq !== sequence
+              || !Array.isArray(detail.items)) continue
+            const peers = detail.items.map(objectValue).filter(member => member.user_id === peerId)
+            if (peers.length !== 1) continue
+            const peer = peers[0]!
+            if ((peer.read_status !== 'read' && peer.read_status !== 'unread')
+              || typeof peer.read_at !== 'number' || !Number.isSafeInteger(peer.read_at) || peer.read_at < 0
+              || (peer.read_status === 'unread' && peer.read_at !== 0)) continue
+            items[index] = { ...unknown, status: peer.read_status,
+              ...(peer.read_status === 'read' && peer.read_at > 0 ? { readAtMillis: peer.read_at } : {}) }
+          }
+        } catch {
+          // Unavailable/withdrawn original, expired access or missing member is unknown, never unread.
+          signal?.throwIfAborted()
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, references.length) }, worker))
+    await this.assertInteractionAccount(session.userId, epoch, signal)
+    return { items }
+  }
+
+  private async resolveReceiptBridgeReferences(
+    sourceRef: string, privateUid: string, references: ArkmeInterwovenMomentReference[], signal?: AbortSignal,
+  ): Promise<void> {
+    const pending = references.filter(ref => !ref.sequence && !ref.receiptSequence
+      && /^chat_legacy_receive_[a-f0-9]{32}$/.test(ref.recordUid))
+    if (!pending.length) return
+    const matches = new Map<ArkmeInterwovenMomentReference, { recordUid: string; sequence: number } | null>()
+    let cursor: string | undefined
+    let expectedVersion: string | undefined
+    try {
+      // Bound compatibility work to 150 recent interactions; never scan full group history.
+      for (let page = 0; page < 3; page++) {
+        const { data, userId } = await this.readPrivateInteractions('occurrences/query', {
+          sourceRef, limit: 50, ...(cursor === undefined ? {} : { cursor }),
+          ...(expectedVersion === undefined ? {} : { expectedVersion }),
+          ...(signal === undefined ? {} : { signal }),
+        })
+        const coverage = this.interactionCoverage(data)
+        if (expectedVersion && coverage.version !== expectedVersion) return
+        expectedVersion = coverage.version
+        if (!Array.isArray(data.items) || data.items.length > 50 || typeof data.has_more !== 'boolean') return
+        for (const raw of data.items) {
+          const item = objectValue(raw)
+          if (this.interactionCount(item.seq) === 0) return
+          const groupUid = stringValue(item.source_chat_session_uid).trim()
+          const relationUid = stringValue(item.rel_uid).trim()
+          const recordUid = stringValue(item.record_uid).trim()
+          if (!relationUid || !recordUid || item.private_chat_session_uid !== privateUid) continue
+          // Exact parity with Subject buildLegacyReceiveRecordEdgeUID(group, relation).
+          // This is an immutable identity mapping, never a text/time/name heuristic.
+          const alias = `chat_legacy_receive_${createHash('sha256').update(`${groupUid}:${relationUid}`).digest('hex').slice(0, 32)}`
+          for (const ref of pending) {
+            if (ref.recordUid !== alias || (ref.sourceChatSessionUid || ref.legacyGroupUid) !== groupUid
+              || ref.recordOwnerUserId !== item.record_owner_user_id || ref.senderUserId !== item.sender_user_id
+              || item.sender_is_me !== (ref.senderUserId === userId)) continue
+            const next = { recordUid, sequence: item.seq as number }
+            const previous = matches.get(ref)
+            matches.set(ref, previous === null || (previous && (previous.recordUid !== recordUid || previous.sequence !== next.sequence)) ? null : next)
+          }
+        }
+        if (!data.has_more || pending.every(ref => matches.has(ref))) break
+        if (typeof data.next_cursor !== 'string' || !data.next_cursor || data.next_cursor.length > 2048) return
+        cursor = data.next_cursor
+      }
+      for (const [ref, match] of matches) if (match) {
+        ref.receiptRecordUid = match.recordUid
+        ref.receiptSequence = match.sequence
+      }
+    } catch {
+      signal?.throwIfAborted()
+      // Missing/incomplete bridge coverage remains unknown, never an inferred unread.
     }
   }
 
@@ -472,7 +634,7 @@ export class InterwovenService {
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<number> {
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
     }
@@ -485,7 +647,7 @@ export class InterwovenService {
     if (!booleanValue(gate.able)) {
       throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开放', false, 403)
     }
-    await this.assertHumanPrivateSource(source, session, signal)
+    return await this.assertHumanPrivateSource(source, session, signal)
   }
 
   private async assertHumanPrivateSource(

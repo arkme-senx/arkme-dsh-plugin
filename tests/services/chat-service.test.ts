@@ -2588,6 +2588,35 @@ describe('ChatService', () => {
     expect(record.recordTimelineItemFromRaw).toHaveBeenCalledOnce()
   })
 
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('hydrates the same cross-topic source and related locator from %s', async kind => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const ownerRef = kind === 'topic' ? 'topic-new' : 'self'
+    const parent = { record_uid: 'original', owner_user_id: 42, status: 1, content_access_state: 1,
+      nickname: '作者', text_content: '未分类中的原消息', send_at: 1000 }
+    const runtime = { requireSession: vi.fn(async () => session),
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      authenticatedPost: vi.fn(async () => ({ record_uid: 'moved', parent_record_uid: 'original', root_record_uid: 'original',
+        edges: [], tree: { record_uid: 'moved', children: [] }, records: [parent] })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef })) }
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
+    const record = { recordTimelineItemFromRaw: vi.fn(() => ({ itemUid: 'original', senderName: '作者', title: '',
+      textContent: '未分类中的原消息', sendAtMillis: 1000, contentBlocks: [] })) }
+    const privacy = { lockedRecordUids: vi.fn(async () => new Set()) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record as never,
+      {} as never, {} as never, {} as never, {} as never, privacy as never)
+    const ref = snapshotActionRef({ sourceKind: 'record', sourceOwnerRef: ownerRef, recordUid: 'moved', chatSessionUid: '', relationUid: '' })
+    const detail = await chat.sourceMessageExtensionContext('source', ref)
+    const preview = await chat.sourceMessageExtensionParent('source', ref)
+    expect(detail).toMatchObject({ parentRecordUid: 'moved', extensionCount: 0, extensions: [],
+      extensionParent: { itemUid: 'original', textContent: '未分类中的原消息', sendAtMillis: 1000, recordOwnerUserId: 42 } })
+    expect(preview.extensionParent).toEqual(detail.extensionParent)
+    expect(await chat.relatedQuickNoteLocator('source', ref)).toMatchObject({ contextType: 'record', recordUid: 'moved', recordOwnerUserId: 42, chatSessionUid: '' })
+    privacy.lockedRecordUids.mockResolvedValue(new Set(['original']))
+    const locked = await chat.sourceMessageExtensionParent('source', ref)
+    expect(locked.extensionParent?.textContent).toBe('该延展源暂不可用')
+    expect(JSON.stringify(locked)).not.toContain('未分类中的原消息')
+  })
+
   it('falls back to the copy-link source anchor when the resolve item does not expose a public record uid', async () => {
     const worldPostBodies: Record<string, unknown>[] = []
     const runtime = {

@@ -23,6 +23,28 @@ function integer(value: unknown): number {
 
 interface TreeNode { recordUid: string; children: TreeNode[] }
 
+/** The tree can be centered on the child while its parent lives outside the topic. */
+export function projectOwnedRecordParent(response: unknown, openedRecordUid: string): OwnedRecordExtensionNode | undefined {
+  const data = object(response)
+  if (openedRecordUid === '' || text(data.record_uid) !== openedRecordUid || text(data.root_record_uid) === '') {
+    throw new Error('记录延展树与当前快记不匹配')
+  }
+  let parentUid = text(data.parent_record_uid)
+  if (data.parent_record_uid === undefined) {
+    const edge = (Array.isArray(data.edges) ? data.edges : []).map(object).find(edge =>
+      text(edge.child_record_uid) === openedRecordUid && (edge.status === undefined || integer(edge.status) === 1))
+    parentUid = text(edge?.parent_record_uid)
+  }
+  if (parentUid === '' || parentUid === openedRecordUid) return undefined
+  const record = (Array.isArray(data.records) ? data.records : []).map(object)
+    .find(record => text(record.record_uid) === parentUid)
+  return {
+    recordUid: parentUid, parentRecordUid: '', level: 0, record: record ?? {}, createdAtMillis: 0,
+    protectedContent: record === undefined || integer(record.content_access_state) !== 1
+      || (record.status !== undefined && integer(record.status) !== 1),
+  }
+}
+
 function parseNode(value: unknown, visiting: Set<string>, budget: { remaining: number }): TreeNode | undefined {
   const raw = object(value)
   const recordUid = text(raw.record_uid)

@@ -175,6 +175,39 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('uses current account avatars in %s when this device has no role binding', async kind => {
+    const selected = { ...sendToSelf, kind }
+    activeSource = selected
+    arkmeUi.selectSource(selected)
+    const profileRead = deferred<unknown>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'user.profile') return profileRead.promise
+      return baseCall(operation, params, signal)
+    })
+    const base: ArkmeTimelineItem = { itemUid: 'self-with-old-avatar', senderName: '我', isMe: true,
+      sendAtMillis: 40, textContent: '本我', status: 1, avatarSnapshot: true, avatarRef: 'unavailable-old-avatar' }
+    timeline = [
+      base,
+      { ...base, itemUid: 'other-device-role', avatarRef: 'arkme-self-role-image-v1.other-device' },
+      { itemUid: 'self-without-snapshot', senderName: '我', isMe: true, sendAtMillis: 42, textContent: '无头像字段', status: 1 },
+      { ...base, itemUid: 'local-role', selfRole: { roleId: 'role-local', name: '理性我', avatarRef: 'local-role-avatar' } },
+    ]
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => profileRead.resolve({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: 'current-account-avatar', arkmeId: 'doge', accountType: 1,
+      createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+    }, revision: 1, cachedAtMillis: 48 }))
+    for (const item of timeline) {
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
+      expect(row.findByType(MessageAvatar).props.avatarRef)
+        .toBe(item.selfRole === undefined ? 'current-account-avatar' : 'local-role-avatar')
+    }
+    // Rendering does not rewrite the record snapshots needed by future role migration.
+    expect(timeline[0]?.avatarRef).toBe('unavailable-old-avatar')
+    expect(timeline[1]?.avatarRef).toBe('arkme-self-role-image-v1.other-device')
+  })
+
   it.each(['private_chat', 'group_chat', 'send_to_self', 'topic'] as const)('supplies the real visible message date to the %s calendar', async kind => {
     const selected: ArkmeSourceItem = kind === 'private_chat' ? target : kind === 'group_chat' ? group
       : kind === 'send_to_self' ? sendToSelf : { ...sendToSelf, kind: 'topic', sourceRef: 'reading-topic', sourceKey: 'topic:reading' }
@@ -7926,6 +7959,13 @@ describe('conversation send directory projection', () => {
     })
     expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(topic.sourceRef)
     expect(detailContent()).toBe('topic-extension-note')
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '关闭详情' }).props.onClick())
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-extension-parent-preview': 'other-topic-source' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(sendToSelf.sourceRef)
+    expect(detailContent()).toBe('other-topic-source')
   })
 
   it('projects a detail-drawer extension into the current conversation and retains it through the immediate refresh', async () => {
