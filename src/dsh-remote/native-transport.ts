@@ -2,6 +2,7 @@ import { readFiveTurns, type NativeHistoryPage } from './native-history.js'
 import { randomUUID } from 'node:crypto'
 import type { DshConnectionLike, DshGatewayLike } from './gateway-api.js'
 import { DshRemoteError } from './errors.js'
+import { SharedReadGroup } from '../shared-read-group.js'
 
 type RecordValue = Record<string, unknown>
 export function nativeRecord(value: unknown): RecordValue {
@@ -32,9 +33,10 @@ type Lease = {
 export class DshNativeTransport {
   private readonly streams = new Map<string, Lease>()
   private readonly opening = new Set<string>()
+  private readonly historyReads = new SharedReadGroup<NativeHistoryPage>()
   constructor(private readonly gateway: Pick<DshGatewayLike, 'wireStream'>, private readonly connection: DshConnectionLike) {}
 
-  close(): void { for (const id of this.streams.keys()) this.release(id) }
+  close(): void { this.historyReads.clear(); for (const id of this.streams.keys()) this.release(id) }
 
   private release(id: string, expected?: Lease): void {
     const lease = this.streams.get(id)
@@ -145,10 +147,16 @@ export class DshNativeTransport {
     return envelope.result
   }
 
-  private async historyPage(request: RecordValue, signal: AbortSignal): Promise<NativeHistoryPage> {
-    const result = nativeRecord(await this.call('session/page', { args: { request: { ...request, maxMessages: 10 } } }, signal))
-    if (result.ok !== true) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '源实例历史读取失败')
-    return result.value as NativeHistoryPage
+  private historyPage(request: RecordValue, scope: Scope): Promise<NativeHistoryPage> {
+    const page = { ...request, maxMessages: 10 }
+    // Join only concurrent authorized reads at the same account/address/cursors.
+    // Completed pages are not cached; each follow keeps its own stream lifetime.
+    return this.historyReads.run(JSON.stringify([scope.accountId, page]), async signal => {
+      const result = nativeRecord(await this.call('session/page', { args: { request: page } }, signal))
+      signal.throwIfAborted()
+      if (result.ok !== true) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '源实例历史读取失败')
+      return result.value as NativeHistoryPage
+    }, scope.signal)
   }
 
   async request(body: RecordValue, scope: Scope): Promise<unknown> {
@@ -172,8 +180,8 @@ export class DshNativeTransport {
       if (endpoint === 'session/canOpenWorkspacePath') return { ok: true, value: false }
       if (endpoint === 'session/page') {
         const request = nativeRecord(nativeRecord(body.payload).args).request as RecordValue
-        const page = await this.historyPage(request, scope.signal)
-        return { ok: true, value: await readFiveTurns(page, beforeSeq => this.historyPage({ ...request, beforeSeq }, scope.signal)) }
+        const page = await this.historyPage(request, scope)
+        return { ok: true, value: await readFiveTurns(page, beforeSeq => this.historyPage({ ...request, beforeSeq }, scope)) }
       }
       const result = nativeRecord(await this.call(endpoint, body.payload, scope.signal))
       if (result.ok === true && endpoint === 'settings/describe') result.value = { ...nativeRecord(result.value), writable: false, hasDocument: false }
@@ -230,7 +238,7 @@ export class DshNativeTransport {
         if (value !== undefined) {
         if (lease.historyRequest && nativeRecord(value).type === 'snapshot') {
           const snapshot = nativeRecord(value)
-          const page = await readFiveTurns(snapshot as NativeHistoryPage, beforeSeq => this.historyPage({ ...lease!.historyRequest, throughSeq: snapshot.cursor, beforeSeq }, scope.signal))
+          const page = await readFiveTurns(snapshot as NativeHistoryPage, beforeSeq => this.historyPage({ ...lease!.historyRequest, throughSeq: snapshot.cursor, beforeSeq }, scope))
           const after = lease.afterSeq
           const records = after !== undefined && after <= Number(snapshot.cursor) && (page.records[0]?.event.seq ?? 0) <= after + 1
             ? page.records.filter(record => record.event.seq > after) : page.records
