@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const expectedPublicMethods = [
   'reactions',
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
-  'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
+  'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -95,7 +95,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'reaction-service.ts',
-  'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
+  'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
   'archive-service.ts',
   'chat-policy.ts',
   'direct-message-admission-service.ts',
