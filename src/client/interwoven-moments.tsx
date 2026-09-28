@@ -15,6 +15,7 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
+import { ArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
@@ -213,6 +214,7 @@ export function ArkmeInterwovenMentionCard({
     >
       <OpaqueAvatar {...(moment.senderAvatarRef === undefined ? {} : { avatarRef: moment.senderAvatarRef })} />
       <span style={styles.cardText}>{accessible}</span>
+      <ArkmeInterwovenReadReceipt moment={moment} />
       <svg viewBox="0 0 16 16" style={styles.chevron} aria-hidden>
         <path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>

@@ -21,7 +21,7 @@ import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { MemberEventService } from './member-event-service.js'
 import { postChatMessageCreation } from './direct-message-admission-service.js'
 import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
-import { projectOwnedRecordExtensions } from '../record-extension-tree.js'
+import { projectOwnedRecordExtensions, projectOwnedRecordParent } from '../record-extension-tree.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeConversationMemberJoinEvent,
@@ -86,6 +86,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelineItem,
+  ArkmeTimelineExtensionParent,
   ArkmeTimelineMentionTarget,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
@@ -3291,11 +3292,49 @@ export class ChatService {
   }
 
   /** Personal and topic notes share the record-owned tree, including replies outside the original topic. */
+  private async ownedRecordParentFromTree(
+    data: unknown, recordUid: string, session: ArkmeSessionCredentials, signal?: AbortSignal,
+  ): Promise<ArkmeTimelineExtensionParent | undefined> {
+    const parent = projectOwnedRecordParent(data, recordUid)
+    if (parent === undefined) return undefined
+    const owner = recordOwnerId(parent.record.owner_user_id)
+    if (parent.protectedContent || (owner !== 0 && owner !== session.userId)
+      || arkmePrivacyLockedRecord(parent.record)
+      || (this.privacy !== undefined && (await this.privacy.lockedRecordUids(session, signal)).has(parent.recordUid))) {
+      return { itemUid: parent.recordUid, senderName: '', title: '', textContent: '该延展源暂不可用' }
+    }
+    const hydration = await this.media.hydrateRecordMediaPage([parent.record], session, signal)
+    const item = this.record.recordTimelineItemFromRaw(parent.record, session.userId, {
+      displayItems: hydration.displayItemsByRecordUid.get(parent.recordUid) ?? [],
+      mediaUnavailable: hydration.unavailableRecordUids.has(parent.recordUid),
+    })
+    return { itemUid: parent.recordUid, senderName: item.senderName, title: item.title,
+      textContent: item.textContent, textFormat: item.textFormat ?? 'plain', sendAtMillis: item.sendAtMillis,
+      ...(owner === 0 ? {} : { recordOwnerUserId: owner }),
+      ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }) }
+  }
+
+  /** Lightweight visible-row enrichment; never reads an entire topic before showing it. */
+  async sourceMessageExtensionParent(sourceRef: string, actionRef: string, options: { signal?: AbortSignal } = {}) {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const reference = await this.openMessageActionRef(actionRef, session.userId, source)
+    if (reference.sourceKind !== 'record' || !['send_to_self', 'default_category', 'topic'].includes(source.kind)) {
+      throw new ArkmePluginError('record-extension-source-invalid', '当前来源不支持读取个人延展源', false, 403)
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/extensions/tree', { record_uid: reference.recordUid }, session, options.signal,
+      { lane: 'background-read', key: `record-extension-parent:${reference.recordUid}`, cacheMs: 5_000, failureCooldownMs: 2_000 },
+    )
+    const extensionParent = await this.ownedRecordParentFromTree(data, reference.recordUid, session, options.signal)
+    return { recordUid: reference.recordUid, ...(extensionParent === undefined ? {} : { extensionParent }) }
+  }
+
   private async loadOwnedRecordExtensions(
     recordUid: string,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<ArkmeMessageCopyLinkRecordContext | undefined> {
+  ): Promise<(ArkmeMessageCopyLinkRecordContext & { extensionParent?: ArkmeTimelineExtensionParent }) | undefined> {
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/extensions/tree',
       { record_uid: recordUid },
@@ -3304,7 +3343,8 @@ export class ChatService {
       { lane: 'interactive-read', bypassCache: true },
     )
     const nodes = projectOwnedRecordExtensions(data, recordUid)
-    if (nodes.length === 0) return undefined
+    const extensionParent = await this.ownedRecordParentFromTree(data, recordUid, session, signal)
+    if (nodes.length === 0) return extensionParent === undefined ? undefined : { extensionCount: 0, extensions: [], extensionParent }
     const readable = nodes.filter(node => !node.protectedContent)
     const hydration = await this.media.hydrateRecordMediaPage(readable.map(node => node.record), session, signal)
     const extensions: ArkmeMessageCopyLinkExtensionItem[] = nodes.map(node => {
@@ -3356,7 +3396,7 @@ export class ChatService {
       }
     })
     extensions.sort((left, right) => right.sendAtMillis - left.sendAtMillis)
-    return { extensionCount: extensions.length, extensions }
+    return { extensionCount: extensions.length, extensions, ...(extensionParent === undefined ? {} : { extensionParent }) }
   }
 
   async recordEditHistoryTarget(sourceRef: string, messageActionRef: string): Promise<RecordEditHistoryTarget> {
@@ -3419,6 +3459,8 @@ export class ChatService {
       parentRecordUid: reference.recordUid,
       extensionCount: recordContext?.extensionCount ?? 0,
       extensions: recordContext?.extensions ?? [],
+      ...(recordContext !== undefined && 'extensionParent' in recordContext
+        ? { extensionParent: recordContext.extensionParent as ArkmeTimelineExtensionParent } : {}),
     }
   }
 

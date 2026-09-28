@@ -106,6 +106,7 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    interwovenReadReceipts: vi.fn(async () => ({ items: [] })),
     relatedQuickNotesFromMessage: vi.fn(async (sourceRef: string, messageActionRef: string) => ({ sourceRef, messageActionRef })),
     relatedQuickNotesFromMoment: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     relatedQuickNoteDetail: vi.fn(async (sourceRef: string, relatedRef: string) => ({ sourceRef, relatedRef })),
@@ -127,6 +128,7 @@ function fakeService() {
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
     sourceMessageExtensionContext: vi.fn(async (sourceRef: string, messageActionRef: string, options: unknown) => ({ sourceRef, messageActionRef, options })),
+    sourceMessageExtensionParent: vi.fn(async (sourceRef: string, messageActionRef: string, options: unknown) => ({ sourceRef, messageActionRef, options })),
     extendSourceMessage: vi.fn(async (sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: unknown, options: unknown) => ({ sourceRef, messageActionRef, textContent, recordUid, fileRefs, options })),
     sharedRecordingDetail: vi.fn(async (detailRef: string, options: unknown) => ({ detailRef, options })),
     forwardSourceMessages: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
@@ -1008,6 +1010,10 @@ describe('message action Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'source.message-extension.context', {
       sourceRef: 'source-ref', messageActionRef: 'action-1', sid: 'must-not-forward',
     })
+    const parentReadController = new AbortController()
+    await dispatchArkmeHostOperation(service as never, 'source.message-extension.parent', {
+      sourceRef: 'source-ref', messageActionRef: 'action-1', recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, parentReadController.signal)
     await dispatchArkmeHostOperation(service as never, 'source.message-extension.extend', {
       sourceRef: 'source-ref', messageActionRef: 'action-1', textContent: ' 附件延展 ', recordUid: 'record-2',
       relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
@@ -1026,6 +1032,7 @@ describe('message action Host API dispatch', () => {
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
     expect(service.sourceMessageExtensionContext).toHaveBeenCalledWith('source-ref', 'action-1', expect.any(Object))
+    expect(service.sourceMessageExtensionParent).toHaveBeenCalledWith('source-ref', 'action-1', { signal: parentReadController.signal })
     expect(service.extendSourceMessage).toHaveBeenCalledWith(
       'source-ref', 'action-1', ' 附件延展 ', 'record-2', ['file-1', 'file-2'], {
         title: '', textContent: ' 附件延展 ', displayKind: 0, assets: [],
@@ -1318,6 +1325,14 @@ describe('outgoing call Host API dispatch', () => {
 
     expect(service.interwovenMoments).toHaveBeenCalledWith('source-ref')
     expect(service.interwovenMomentDetail).toHaveBeenCalledWith('source-ref', 'moment-ref')
+    const controller = new AbortController()
+    await dispatchArkmeHostOperation(service as never, 'source.interwoven-read-receipts', {
+      sourceRef: 'source-ref', momentRefs: ['moment-ref'], recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(service.interwovenReadReceipts).toHaveBeenCalledWith('source-ref', ['moment-ref'], controller.signal)
+    await expect(dispatchArkmeHostOperation(service as never, 'source.interwoven-read-receipts', {
+      sourceRef: 'source-ref', momentRefs: ['moment-ref', 1],
+    })).rejects.toMatchObject({ code: 'interwoven-param-invalid' })
   })
 
   it('dispatches record calendar operations without forwarding raw scope fields', async () => {

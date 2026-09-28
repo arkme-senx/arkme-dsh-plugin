@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { projectOwnedRecordExtensions } from '../src/record-extension-tree.js'
+import { projectOwnedRecordExtensions, projectOwnedRecordParent } from '../src/record-extension-tree.js'
 
 describe('owned record extension tree', () => {
+  it('finds an uncategorized parent even when the returned tree is centered on a moved child without edges', () => {
+    const response = { record_uid: 'child', root_record_uid: 'parent', parent_record_uid: 'parent',
+      tree: { record_uid: 'child', children: [] }, edges: [],
+      records: [{ record_uid: 'child', content_access_state: 1, status: 1 },
+        { record_uid: 'parent', content_access_state: 1, status: 1, text_content: 'Original' }] }
+    expect(projectOwnedRecordExtensions(response, 'child')).toEqual([])
+    expect(projectOwnedRecordParent(response, 'child')).toMatchObject({ recordUid: 'parent', protectedContent: false })
+    expect(() => projectOwnedRecordParent(response, 'wrong')).toThrow('不匹配')
+  })
+
+  it.each([undefined, { record_uid: 'parent', content_access_state: 2, status: 1 },
+    { record_uid: 'parent', content_access_state: 1, status: 2 }])('does not expose missing, locked or deleted parents', record => {
+    expect(projectOwnedRecordParent({ record_uid: 'child', root_record_uid: 'parent', parent_record_uid: 'parent',
+      records: record === undefined ? [] : [record] }, 'child')).toMatchObject({ recordUid: 'parent', protectedContent: true })
+  })
+
+  it('never treats the root or a deleted edge as the immediate source', () => {
+    expect(projectOwnedRecordParent({ record_uid: 'child', root_record_uid: 'root', parent_record_uid: '',
+      edges: [{ parent_record_uid: 'stale', child_record_uid: 'child', status: 1 }] }, 'child')).toBeUndefined()
+    expect(projectOwnedRecordParent({ record_uid: 'child', root_record_uid: 'root',
+      edges: [{ parent_record_uid: 'deleted', child_record_uid: 'child', status: 2 }] }, 'child')).toBeUndefined()
+  })
   it('shows only descendants of the opened note, including nested replies outside its topic', () => {
     const nodes = projectOwnedRecordExtensions({
       record_uid: 'child-a', root_record_uid: 'root',

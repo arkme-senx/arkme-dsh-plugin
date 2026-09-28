@@ -1,5 +1,10 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '群内原消息的已读状态暂不可用': 'Read status of the original group message is unavailable',
+  '对方已阅读群内原消息': 'They have read the original group message',
+  '对方尚未阅读群内原消息': 'They have not read the original group message',
+  '你已阅读群内原消息': 'You have read the original group message',
+  '你尚未阅读群内原消息': 'You have not read the original group message',
   '绑定邮箱': 'Bind email',
   '请输入邮箱地址': 'Enter your email address',
   '请输入有效的邮箱地址': 'Enter a valid email address',
