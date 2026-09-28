@@ -55,6 +55,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
     private readonly onForwarded?: (target: ArkmeSourceRefPayload, sequence?: number) => void | Promise<void>,
+    private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
   ) {}
 
   async requireSession(): Promise<ArkmeSessionCredentials> { return await this.runtime.requireSession() }
@@ -116,17 +117,20 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   async forwardToRecord(input: Parameters<MessageActionGateway['forwardToRecord']>[0]): Promise<ArkmeSourceSendResult> {
     const contentPayload = this.recordForwardPayload(input.references, input.requestId, input.sendAtMillis)
     const title = input.references.length === 1 ? '转发快记' : `转发 ${String(input.references.length)} 条快记`
+    const senderSnapshot = await this.currentSenderSnapshot?.(input.session)
     const data = input.target.kind === 'topic'
       ? await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/topics/records/create', {
           topic_uid: input.target.ownerRef, record_uid: input.recordUid, template_kind: 1, title: '',
           text_content: title, content_payload: contentPayload, send_at: input.sendAtMillis,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         }, input.session, input.signal,
       )
       : await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create', {
           record_uid: input.recordUid, template_kind: 1, title: '', text_content: title,
           content_payload: contentPayload, send_at: input.sendAtMillis,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         }, input.session, input.signal,
       )
     this.confirmRecordReceipt(data, input.target, input.recordUid)
@@ -141,8 +145,10 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   async createRecordTargetComment(input: Parameters<MessageActionGateway['createRecordTargetComment']>[0]): Promise<void> {
+    const senderSnapshot = await this.currentSenderSnapshot?.(input.session)
     const body = {
       record_uid: input.recordUid, template_kind: 1, title: '', text_content: input.textContent, send_at: input.sendAtMillis,
+      ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
     }
     const data = input.target.kind === 'topic'
       ? await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/records/create', { ...body, topic_uid: input.target.ownerRef }, input.session, input.signal)

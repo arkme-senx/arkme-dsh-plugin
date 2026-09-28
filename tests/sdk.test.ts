@@ -938,6 +938,7 @@ describe('Arkme SDK', () => {
         if (request.operation === 'group.members.add') return success({ sourceRef: 'group-ref', mode: 'direct_add', items: [], addedCount: 0, invitedCount: 0, failedCount: 0 })
         if (request.operation === 'group.bots') return success({ groupSourceRef: 'group-ref', displayName: '群聊', canAddBots: true, items: [] })
         if (request.operation === 'group.bot.add') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: true })
+        if (request.operation === 'group.bot.remove') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: false })
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -946,12 +947,14 @@ describe('Arkme SDK', () => {
     await expect(sdk.addGroupMembers('group-ref', [' candidate-ref '])).resolves.toMatchObject({ sourceRef: 'group-ref' })
     await expect(sdk.listGroupBots('group-ref')).resolves.toMatchObject({ canAddBots: true })
     await expect(sdk.addGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: true })
+    await expect(sdk.removeGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: false })
     expect(calls).toEqual([
       { operation: 'group.member-candidates', params: { sourceRef: 'group-ref', query: '林', limit: 10 } },
       { operation: 'group.invite-preview', params: { sourceRef: 'group-ref' } },
       { operation: 'group.members.add', params: { sourceRef: 'group-ref', candidateRefs: ['candidate-ref'] } },
       { operation: 'group.bots', params: { sourceRef: 'group-ref' } },
       { operation: 'group.bot.add', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
+      { operation: 'group.bot.remove', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
     ])
   })
 

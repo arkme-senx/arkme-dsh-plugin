@@ -471,7 +471,17 @@ describe('Arkme rich content presentation', () => {
     })
   })
 
-  it('renders copied quick links and normal urls as Flutter-style inline link previews', () => {
+  it('keeps historical link-label prose visible outside the link alongside its preview', () => {
+    const href = 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx'
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'historical-link', senderName: '我', isMe: true, sendAtMillis: 1, status: 1, title: '',
+      textFormat: 'markdown', textContent: `[${href} 后面的普通文字](${href})`,
+    }} />)
+    expect(html).toContain('data-arkme-share-preview="message"')
+    expect(html).toContain('<span data-arkme-share-trailing-text="true"> 后面的普通文字</span>')
+  })
+
+  it('renders copied quick links as inline labels and keeps normal urls inline', () => {
     const sid = 'U2HQgn1RhPJZaFmx'
     expect(arkmeMessageCopyLinkSidFromUrl(`https://jiwo.cc/s/${sid}`, 'https://jiwo.cc')).toBe(sid)
     const copyLinkHtml = renderToStaticMarkup(<ArkmeMessageContent
@@ -482,9 +492,10 @@ describe('Arkme rich content presentation', () => {
       shareWebsite="https://jiwo.cc"
       onMessageCopyLinkOpen={() => undefined}
     />)
-    expect(copyLinkHtml).toContain('data-arkme-inline-link="message-copy-link"')
-    expect(copyLinkHtml).toContain('data-arkme-link-label="true">快记分享链接</span>')
+    expect(copyLinkHtml).toContain('data-arkme-share-preview="message"')
     expect(copyLinkHtml).toContain('快记分享链接')
+    expect(copyLinkHtml).not.toContain('正在读取分享预览')
+    expect(copyLinkHtml).not.toContain('data-arkme-share-preview-list')
     expect(copyLinkHtml).not.toContain(`https://jiwo.cc/s/${sid}</p>`)
 
     const webLinkHtml = renderToStaticMarkup(<ArkmeMessageContent

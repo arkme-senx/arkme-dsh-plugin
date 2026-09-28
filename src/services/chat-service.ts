@@ -14,12 +14,14 @@ import { patchChatPolicy } from './chat-policy.js'
 import { readTopicMetadata } from './topic-metadata.js'
 import { readTopicRecordPage } from './topic-record-page.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
+import { arkmeBotDirectoryKey } from '../bot-directory-key.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { MemberEventService } from './member-event-service.js'
 import { postChatMessageCreation } from './direct-message-admission-service.js'
 import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
+import { projectOwnedRecordExtensions } from '../record-extension-tree.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeConversationMemberJoinEvent,
@@ -3288,6 +3290,75 @@ export class ChatService {
     return extensionCount <= 0 ? undefined : { extensionCount, extensions }
   }
 
+  /** Personal and topic notes share the record-owned tree, including replies outside the original topic. */
+  private async loadOwnedRecordExtensions(
+    recordUid: string,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageCopyLinkRecordContext | undefined> {
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/extensions/tree',
+      { record_uid: recordUid },
+      session,
+      signal,
+      { lane: 'interactive-read', bypassCache: true },
+    )
+    const nodes = projectOwnedRecordExtensions(data, recordUid)
+    if (nodes.length === 0) return undefined
+    const readable = nodes.filter(node => !node.protectedContent)
+    const hydration = await this.media.hydrateRecordMediaPage(readable.map(node => node.record), session, signal)
+    const extensions: ArkmeMessageCopyLinkExtensionItem[] = nodes.map(node => {
+      if (node.protectedContent) return {
+        recordUid: node.recordUid,
+        parentRecordUid: node.parentRecordUid,
+        level: node.level,
+        sourceKind: 'record_extension',
+        senderDisplayName: '已保护',
+        title: '',
+        textContent: '该延展内容受隐私保护',
+        sendAtMillis: node.createdAtMillis,
+        templateKind: 1,
+        displayKind: 0,
+        officialMark: 0,
+        mediaItems: [],
+      }
+      const recordUid = node.recordUid
+      const item = this.record.recordTimelineItemFromRaw(node.record, session.userId, {
+        displayItems: hydration.displayItemsByRecordUid.get(recordUid) ?? [],
+        mediaUnavailable: hydration.unavailableRecordUids.has(recordUid),
+      })
+      const contentBlocks = item.contentBlocks ?? []
+      const record = objectValue(node.record)
+      const recordOwnerUserId = recordOwnerId(record.owner_user_id ?? record.creator_user_id)
+      return {
+        recordUid,
+        parentRecordUid: node.parentRecordUid,
+        ...(recordOwnerUserId === 0 ? {} : { recordOwnerUserId }),
+        level: node.level,
+        sourceKind: 'record_extension',
+        senderDisplayName: item.senderName,
+        ...(item.senderNameSnapshot === true ? { senderNameSnapshot: true } : {}),
+        ...(item.avatarRef === undefined ? {} : { senderAvatarUrl: item.avatarRef }),
+        title: item.title,
+        textContent: item.textContent || (item.title.trim() === '' && contentBlocks.length === 0 ? '该延展内容暂不可用' : ''),
+        textFormat: item.textFormat ?? 'plain',
+        sendAtMillis: item.sendAtMillis > 0 ? item.sendAtMillis : node.createdAtMillis,
+        templateKind: item.templateKind ?? 1,
+        displayKind: item.displayKind ?? 0,
+        officialMark: 0,
+        mediaItems: contentBlocks.map(block => ({
+          fileKind: block.kind === 'image' ? 1 : block.kind === 'audio' ? 2 : block.kind === 'video' ? 3 : 4,
+          fileName: block.fileName,
+          size: block.size,
+        })),
+        contentBlocks,
+        ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
+      }
+    })
+    extensions.sort((left, right) => right.sendAtMillis - left.sendAtMillis)
+    return { extensionCount: extensions.length, extensions }
+  }
+
   async recordEditHistoryTarget(sourceRef: string, messageActionRef: string): Promise<RecordEditHistoryTarget> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
@@ -3343,9 +3414,7 @@ export class ChatService {
     const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const recordContext = source.kind === 'private_chat' || source.kind === 'group_chat'
       ? await this.loadChatMessageExtensions(reference, session, options.signal)
-      : await this.loadMessageCopyLinkPublicExtensions(
-        [reference.recordUid], session, options.signal, { strict: true },
-      )
+      : await this.loadOwnedRecordExtensions(reference.recordUid, session, options.signal)
     return {
       parentRecordUid: reference.recordUid,
       extensionCount: recordContext?.extensionCount ?? 0,
@@ -3382,9 +3451,7 @@ export class ChatService {
     if (requestedParentRecordUid !== '' && requestedParentRecordUid !== rootReference.recordUid) {
       const rootContext = source.kind === 'private_chat' || source.kind === 'group_chat'
         ? await this.loadChatMessageExtensions(rootReference, session, options.signal)
-        : await this.loadMessageCopyLinkPublicExtensions(
-          [rootReference.recordUid], session, options.signal, { strict: true },
-        )
+        : await this.loadOwnedRecordExtensions(rootReference.recordUid, session, options.signal)
       const target = rootContext?.extensions.find(extension => extension.recordUid === requestedParentRecordUid)
       if (target === undefined) {
         throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409)
@@ -3491,6 +3558,7 @@ export class ChatService {
       const profileSnapshot = await this.profile.refreshProfile()
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
+      const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
       const sendAtMillis = Date.now()
       const hashTags = options.textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
       const contentPayload = options.textFormat === undefined && assets.length === 0 && hashTags.length === 0 && !(options.humanMentions?.length || options.botMentions?.length) ? undefined : {
@@ -3521,6 +3589,7 @@ export class ChatService {
           template_kind: assets.length === 0 ? 1 : 2,
           title: '',
           text_content: normalizedText,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
           ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
           send_at: sendAtMillis,
         },
@@ -3923,6 +3992,7 @@ export class ChatService {
         }
       }
       if (targetSource.kind === 'topic') {
+        const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/records/create',
           {
@@ -3931,6 +4001,7 @@ export class ChatService {
             template_kind: 1,
             title: '',
             text_content: title,
+            ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
             content_payload: contentPayload,
             send_at: Date.now(),
           },
@@ -3940,6 +4011,7 @@ export class ChatService {
         await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
       }
+      const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create',
         {
@@ -3947,6 +4019,7 @@ export class ChatService {
           template_kind: 1,
           title: '',
           text_content: title,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
           content_payload: contentPayload,
           send_at: Date.now(),
         },
@@ -4011,6 +4084,7 @@ export class ChatService {
       }
       if (source.kind === 'topic') {
         const sendAtMillis = Date.now()
+        const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
         const captureContext = options.captureContext === undefined
           ? undefined
           : arkmeRecordCaptureContextPayload(options.captureContext)
@@ -4018,6 +4092,7 @@ export class ChatService {
           '/api/v1/topics/records/create',
           {
             topic_uid: source.ownerRef, record_uid: recordUid, template_kind: 1, title: '', text_content: text,
+            ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
             ...(Math.max(0, Math.trunc(options.recordDurationMillis ?? 0)) === 0
               ? {}
               : { record_duration_millis: Math.max(0, Math.trunc(options.recordDurationMillis ?? 0)) }),
@@ -4561,12 +4636,15 @@ export class ChatService {
         mentionPayload,
       )
       const sendAtMillis = options.sendAtMillis ?? Date.now()
+      const senderSnapshot = source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic'
+        ? await this.profile.recordSenderSnapshot?.(session) : undefined
       const commonBody = {
         record_uid: recordUid,
         template_kind: templateKind,
         display_kind: displayKind,
         title,
         text_content: textContent,
+        ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         ...(recordDurationMillis === 0 ? {} : { record_duration_millis: recordDurationMillis }),
         ...(captureContext === undefined || Object.keys(captureContext).length === 0 ? {} : { capture_context: captureContext }),
         ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
@@ -5152,7 +5230,8 @@ export class ChatService {
       const displayName = stringValue(mention.display_name_snapshot ?? mention.displayNameSnapshot).trim()
       const botRef = stringValue(mention.bot_uid ?? mention.botUid).trim()
       if (startIndex < 0 || length < 2 || displayName === '' || botRef === '') continue
-      targets.push({ kind: 'bot', startIndex, length, displayName, botRef })
+      targets.push({ kind: 'bot', startIndex, length, displayName, botRef,
+        botDirectoryKey: arkmeBotDirectoryKey(viewerUserId, botRef, await this.runtime.stateStore.uniqueCode()) })
     }
     targets.sort((left, right) => left.startIndex - right.startIndex)
     return targets.length === 0 ? undefined : targets
@@ -5247,7 +5326,10 @@ export class ChatService {
           senderName,
           ...(agentSource === undefined ? {} : { agentSource }),
           ...(isBot ? { senderKind: 'bot' as const } : {}),
-        ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId)
+          ...(isBot && timelineSenderBotUid(relation) ? {
+            senderBotDirectoryKey: arkmeBotDirectoryKey(session.userId, timelineSenderBotUid(relation), signingKey),
+          } : {}),
+          ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId)
             : senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, senderUserId) } : {}),
           isMe,
           ...(callRecord === undefined ? {} : { callRecord }),
@@ -6187,6 +6269,9 @@ export class ChatService {
         ...(!isBot && senderUserId > 0 ? { memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, senderUserId) } : {}),
         senderName,
         ...(isBot ? { senderKind: 'bot' as const } : {}),
+        ...(isBot && timelineSenderBotUid(relation) ? {
+          senderBotDirectoryKey: arkmeBotDirectoryKey(session.userId, timelineSenderBotUid(relation), signingKey),
+        } : {}),
         ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId) : {}),
         ...(agentSource === undefined ? {} : { agentSource }),
         isMe,

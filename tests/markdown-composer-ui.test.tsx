@@ -66,6 +66,39 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
 describe('Markdown composer DOM interaction', () => {
+  it('stores and renders text after a pasted link outside the anchor, including after draft restoration', async () => {
+    const url = 'https://example.com/share'
+    paste(url)
+    type('   后续普通说明')
+    expect(editor().view.dom.querySelector('a')?.textContent).toBe(url)
+    expect(snapshot.text).toBe(url + '   后续普通说明')
+    expect(snapshot.markdown?.source).toBe(`[${url}](${url})   后续普通说明`)
+    const saved = snapshot
+    act(() => root.unmount())
+    root = createRoot(host)
+    await act(async () => root.render(<Harness />))
+    expect(snapshot.markdown?.source).toBe(saved.markdown?.source)
+    expect(editor().view.dom.querySelector('a')?.textContent).toBe(url)
+    const message = document.createElement('div')
+    const messageRoot = createRoot(message)
+    try {
+      await act(async () => messageRoot.render(<ArkmeMarkdownBody text={snapshot.markdown!.source}
+        renderLink={() => <a href={url}>快记分享链接</a>} />))
+      expect(message.textContent).toContain('快记分享链接   后续普通说明')
+      expect(message.querySelector('a')?.textContent).toBe('快记分享链接')
+    } finally { act(() => messageRoot.unmount()) }
+    expect(sent).toBe(0)
+  })
+
+  it('ends a pasted link before Shift+Enter and does not send the draft', () => {
+    paste('https://example.com/share')
+    key({ key: 'Enter', shiftKey: true })
+    type('下一行说明')
+    expect(editor().view.dom.querySelector('a')?.textContent).toBe('https://example.com/share')
+    expect(editor().isActive('link')).toBe(false)
+    expect(sent).toBe(0)
+  })
+
   it('continues typing after an externally inserted reply mention', () => {
     act(() => { handle.current!.focus(); handle.current!.setSelectionRange(0, 0) })
     act(() => { draftStore.insertMention(draftKey, 'reply-member', '群昵称', 0) })

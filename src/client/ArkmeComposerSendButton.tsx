@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent } from 'react'
+import { useId, type CSSProperties, type MouseEvent } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
 
 const SEND_BACKGROUND = '#09B83E'
@@ -31,14 +31,16 @@ export function ArkmeComposerSendIcon() {
   </svg>
 }
 
-export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick, style }: {
+export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick, style, shortcutHint }: {
   style?: CSSProperties
   ariaLabel: string
   disabled: boolean
   onClick: () => void
+  shortcutHint?: string
 }) {
+  const shortcutId = useId()
   const buttonDisabled = disabled === true
-  return <button
+  const button = <button
     type="button"
     data-arkme-hover="none"
     style={{
@@ -48,6 +50,7 @@ export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick, style }:
     }}
     disabled={buttonDisabled}
     aria-label={ariaLabel}
+    {...(shortcutHint === undefined ? {} : { 'aria-describedby': shortcutId })}
     onMouseDown={(event: MouseEvent<HTMLButtonElement>) => { event.preventDefault() }}
     onMouseEnter={event => {
       if (!event.currentTarget.disabled) {
@@ -61,4 +64,9 @@ export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick, style }:
   >
     <ArkmeComposerSendIcon />
   </button>
+  if (shortcutHint === undefined) return button
+  return <span className="arkme-composer-send-shortcut-anchor" data-arkme-send-shortcut-anchor="true">
+    {button}
+    <span id={shortcutId} role="tooltip" className="arkme-composer-send-shortcut-tooltip">{shortcutHint}</span>
+  </span>
 }

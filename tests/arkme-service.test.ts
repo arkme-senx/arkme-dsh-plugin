@@ -4522,7 +4522,15 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     let attempts = 0
     const bodies: Record<string, unknown>[] = []
-    const service = new ArkmeService(config, sessions, state, async (_input, init) => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const path = new URL(String(input)).pathname
+      // Profile reads are not create attempts and must not consume the simulated
+      // first write failure used to verify durable outbox retry behavior.
+      if (path === '/api/v1/auth/get-user-info') {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '发送者' } })
+      }
+      if (path === '/api/v1/auth/get-public-users-by-ids') return json({ code: 200, data: { items: [] } })
+      expect(path).toBe('/api/v1/records/create')
       state.events.push('remote-create')
       attempts += 1
       bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
@@ -4545,6 +4553,8 @@ describe('ArkmeService', () => {
     expect(bodies).toHaveLength(2)
     expect(bodies[0]?.record_uid).toBe(recordUid)
     expect(bodies[1]?.record_uid).toBe(recordUid)
+    expect(bodies[0]?.sender_snapshot).toEqual({ nickname: '发送者' })
+    expect(bodies[1]?.sender_snapshot).toEqual(bodies[0]?.sender_snapshot)
     expect(await service.pendingWrites()).toEqual([])
   })
 

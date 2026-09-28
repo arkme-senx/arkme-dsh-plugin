@@ -66,7 +66,7 @@ describe('Arkme product navigation', () => {
       for (const activate of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(),
         () => arkmeUi.showRecordings(), () => arkmeUi.showWorld(),
         () => arkmeUi.showCalendar(),
-        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showContactAdd()]) {
+        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showRecognizedSpeakers(), () => arkmeUi.showContactAdd()]) {
         act(activate)
         expect(mode()).toBe('fallback')
         act(() => arkmeUi.showConversations())

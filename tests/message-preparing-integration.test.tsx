@@ -185,7 +185,10 @@ describe('preparing production wiring', () => {
     expect(normalSend.indexOf('if (sameTargetComposer()) messagePreparing.stop()')).toBeGreaterThan(emptyGuard)
     expect(sidebar).toContain('<ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />')
     const atomicEdits = sidebar.slice(sidebar.indexOf('const insertMemberMentionAt'), sidebar.indexOf('const updateComposerRichTrigger'))
-    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(5)
+    // Member, emoji, Bot-avatar, @all, Bot candidate, and hashtag edits.
+    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(6)
+    const botAvatarEdit = atomicEdits.slice(atomicEdits.indexOf('const insertBotMention'), atomicEdits.indexOf('const insertMentionCandidate'))
+    expect(botAvatarEdit).toContain('focusEditedComposer(cursor)')
     const deletionStart = sidebar.indexOf('const caret = arkmeComposerDraftStore.deleteMentionAtSelection')
     const deletion = sidebar.slice(deletionStart, sidebar.indexOf('if (event.key === \'Enter\' && !event.shiftKey', deletionStart))
     expect(deletion.includes('focusEditedComposer(caret)')).toBe(true)

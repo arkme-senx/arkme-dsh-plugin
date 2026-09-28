@@ -30,15 +30,59 @@ export function arkmePasteMarkdown(editor: Editor, source: string): void {
     return
   }
   const document = editor.schema.nodeFromJSON(editor.markdown!.parse(arkmeMarkdownEditorSource(text, Boolean(editor.schema.nodes.image))))
+  // A pasted, explicitly formatted link may intentionally have a spaced title.
+  const hasLinks = document.rangeHasMark(0, document.content.size, editor.schema.marks.link!)
   if (document.childCount === 1 && document.firstChild!.type.name === 'paragraph') {
-    editor.chain().command(({ tr }) => { closeHistory(tr).setMeta('uiEvent', 'paste'); return true })
+    editor.chain().command(({ tr }) => { closeHistory(tr).setMeta('uiEvent', 'paste').setMeta('arkmePasteHasLinks', hasLinks); return true })
       .insertContent(document.firstChild!.toJSON().content ?? []).run()
     return
   }
   const paragraphs = document.content.content.every(node => node.type.name === 'paragraph')
   const slice = paragraphs ? Slice.maxOpen(document.content) : new Slice(document.content, 0, 0)
-  editor.view.dispatch(closeHistory(editor.state.tr).replaceSelection(slice).setMeta('uiEvent', 'paste'))
+  editor.view.dispatch(closeHistory(editor.state.tr).replaceSelection(slice).setMeta('uiEvent', 'paste').setMeta('arkmePasteHasLinks', hasLinks))
 }
+
+/** End inherited link formatting at whitespace appended to a link, without rewriting existing labels. */
+const LinkContinuationBoundary = Extension.create({
+  name: 'arkmeLinkContinuationBoundary',
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: new PluginKey('arkmeLinkContinuationBoundary'),
+      appendTransaction(transactions, oldState, newState) {
+        if (!transactions.some(transaction => transaction.docChanged)
+          || transactions.some(transaction => transaction.getMeta('preventUpdate') !== undefined
+            || transaction.getMeta('arkmePasteHasLinks') === true)) return
+        const from = oldState.doc.content.findDiffStart(newState.doc.content)
+        const end = oldState.doc.content.findDiffEnd(newState.doc.content)
+        // Only newly inserted text at a link's right edge; not edits inside labels,
+        // replacement selections, draft restoration, or document-wide normalization.
+        if (from === null || end === null || end.a > from || end.b <= end.a) return
+        const before = oldState.doc.resolve(from)
+        const link = before.nodeBefore?.marks.find(mark => mark.type.name === 'link')
+        if (!link || before.nodeAfter?.marks.some(mark => mark.eq(link))) return
+        const to = from + end.b - end.a
+        const start = newState.doc.resolve(from)
+        if (!start.sameParent(newState.doc.resolve(to))) return
+        let separator: number | undefined
+        const tr = newState.tr
+        newState.doc.nodesBetween(from, to, (node, position) => {
+          if (!node.isText || !node.marks.some(mark => mark.eq(link))) return
+          const left = Math.max(from, position)
+          const right = Math.min(to, position + node.nodeSize)
+          if (separator === undefined) {
+            const match = /\s/u.exec(node.text!.slice(left - position, right - position))
+            if (match) separator = left + match.index
+          }
+          if (separator !== undefined) tr.removeMark(Math.max(left, separator), right, link)
+        })
+        if (separator === undefined || !tr.docChanged) return
+        if (newState.selection.empty && newState.selection.from >= separator && newState.selection.from <= to) tr.removeStoredMark(link.type)
+        // ProseMirror appends this to the same history event, including native/IME edits.
+        return tr.setMeta('preventAutolink', true)
+      },
+    })]
+  },
+})
 
 const Mention = Node.create({
   name: 'arkmeMention', group: 'inline', inline: true, atom: true, selectable: false,
@@ -212,7 +256,7 @@ export function arkmeMarkdownExtensions(options: { articleImages?: boolean } = {
   return [
     (options.articleImages ? ArticleStarterKit : QuickNoteStarterKit).configure({ underline: false, trailingNode: false, link: { openOnClick: false, autolink: true, markdownLinks: true } }),
     TableKit.configure({ table: { resizable: false } }), TaskList, QuickNoteTaskItem.configure({ nested: true }),
-    Mention, Emoji, Entities, HashTags, Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
+    Mention, Emoji, Entities, HashTags, LinkContinuationBoundary, Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
     ...(options.articleImages ? [ArticleImage] : []),
   ]
 }

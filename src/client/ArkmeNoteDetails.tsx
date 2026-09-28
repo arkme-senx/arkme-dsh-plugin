@@ -26,11 +26,17 @@ import type {
   ArkmeSourceMessageExtendResult,
   ArkmeSourceMessageExtensionContext,
   ArkmeSourceKind,
+  ArkmeSelfRole,
+  ArkmeSelfRoleSnapshot,
   ArkmeTimelineItem,
   ArkmeTimelineMentionTarget,
+  ArkmeUserProfile,
 } from '../types.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
+import { arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 import { ArkmeForwardArticleContent, ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import {
@@ -107,8 +113,9 @@ const styles: Record<string, CSSProperties> = {
   mentionSuggestionName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: '17px', fontWeight: 500 },
   mentionSuggestionSecondary: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary, fontSize: 11, lineHeight: '15px' },
   mentionSuggestionsEmpty: { padding: '8px 10px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
-  extensionParent: { margin: '12px 0 16px', paddingLeft: 10, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: arkmeTheme.border,
-    color: arkmeTheme.tertiary, fontSize: 13, lineHeight: '20px', overflow: 'hidden' },
+  extensionParent: { display: 'flex', alignItems: 'center', gap: 6, width: '100%', margin: '0 0 16px', padding: '4px 0 4px 10px',
+    boxSizing: 'border-box', border: 0, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: arkmeTheme.border,
+    background: 'transparent', textAlign: 'left', color: arkmeTheme.tertiary, font: 'inherit', fontSize: 13, lineHeight: '20px', cursor: 'pointer' },
   extensionParentText: { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', overflowWrap: 'anywhere' },
   extensionContext: { marginTop: 28 },
   extensionContextTitle: { marginBottom: 18, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
@@ -231,13 +238,22 @@ function DetailMentionSuggestions({ candidates, activeIndex, onActiveIndexChange
   </div>
 }
 
-function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, messageActionRef, parentRecordUid, targetKey, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
+interface DetailSelfRoleSelection {
+  accountKey: string
+  userId: number
+  selectedRole?: ArkmeSelfRole | undefined
+  selfAvatarRef?: string | undefined
+  onSelect(role?: ArkmeSelfRole): void
+}
+
+function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, messageActionRef, parentRecordUid, targetKey, selfRoleSelection, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
   sourceRef: string
   sourceKind?: ArkmeSourceKind | undefined
   conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   messageActionRef: string
   parentRecordUid?: string | undefined
   targetKey: string
+  selfRoleSelection?: DetailSelfRoleSelection | undefined
   onSent: (result: ArkmeSourceMessageExtendResult) => void
   onError: (message: string) => void
   messageCreationBlocked: boolean
@@ -477,7 +493,8 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
     const botMentions = detailBotMentionInputs(serializedDraft.mentions)
     const fileRefs = attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
     if (messageCreationBlocked || sending || preparing || (normalizedText === '' && fileRefs.length === 0)) return
-    const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs, serializedDraft.textFormat ?? 'plain', humanMentions, botMentions])
+    const roleAtSendStart = selfRoleSelection?.selectedRole
+    const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs, serializedDraft.textFormat ?? 'plain', humanMentions, botMentions, roleAtSendStart?.roleId ?? 'me'])
     const recordUid = submissionRef.current?.fingerprint === fingerprint
       ? submissionRef.current.recordUid
       : crypto.randomUUID()
@@ -489,18 +506,52 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
     const controller = new AbortController()
     sendAbortRef.current = controller
     setSending(true)
-    const request = callArkme('source.message-extension.extend', {
-      sourceRef,
-      messageActionRef,
-      textContent: serializedDraft.text,
-      ...(serializedDraft.textFormat === undefined ? {} : { textFormat: serializedDraft.textFormat }),
-      ...(humanMentions.length === 0 ? {} : { humanMentions }),
-      ...(botMentions.length === 0 ? {} : { botMentions }),
-      recordUid,
-      relationUid,
-      ...(parentRecordUid === undefined ? {} : { parentRecordUid }),
-      fileRefs,
-    }, controller.signal)
+    const request = (async (): Promise<ArkmeSourceMessageExtendResult> => {
+      let roleSnapshot: ArkmeSelfRoleSnapshot | undefined
+      let providerWriteStarted = false
+      try {
+        if (roleAtSendStart !== undefined && selfRoleSelection !== undefined) {
+          // Bind before the cloud write, so a bind failure never sends a message under the wrong identity.
+          roleSnapshot = await callArkme<ArkmeSelfRoleSnapshot>('self-roles.bind', {
+            expectedUserId: selfRoleSelection.userId,
+            sourceRef,
+            recordUid,
+            roleId: roleAtSendStart.roleId,
+          }, controller.signal)
+          if (generationRef.current !== generation || controller.signal.aborted) throw new Error('延展已取消')
+        }
+        providerWriteStarted = true
+        const sent = await callArkme<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
+          sourceRef,
+          messageActionRef,
+          textContent: serializedDraft.text,
+          ...(serializedDraft.textFormat === undefined ? {} : { textFormat: serializedDraft.textFormat }),
+          ...(humanMentions.length === 0 ? {} : { humanMentions }),
+          ...(botMentions.length === 0 ? {} : { botMentions }),
+          recordUid,
+          relationUid,
+          ...(parentRecordUid === undefined ? {} : { parentRecordUid }),
+          fileRefs,
+        }, controller.signal)
+        if (roleSnapshot !== undefined && selfRoleSelection !== undefined && sent.recordUid !== recordUid) {
+          try {
+            await callArkme('self-roles.rebind', {
+              expectedUserId: selfRoleSelection.userId, recordUid, newRecordUid: sent.recordUid,
+            }, controller.signal)
+          } catch (caught) {
+            onError(`延展已发送，但角色展示暂未保存：${caught instanceof Error ? caught.message : '请刷新后重试'}`)
+          }
+        }
+        return roleSnapshot === undefined ? sent : { ...sent, extension: { ...sent.extension, selfRole: roleSnapshot } }
+      } catch (caught) {
+        if (roleSnapshot !== undefined && !providerWriteStarted && selfRoleSelection !== undefined) {
+          await callArkme('self-roles.unbind', {
+            expectedUserId: selfRoleSelection.userId, recordUid, roleId: roleAtSendStart!.roleId,
+          }).catch(() => undefined)
+        }
+        throw caught
+      }
+    })()
     sendPromiseRef.current = request
     try {
       const result = await request as ArkmeSourceMessageExtendResult
@@ -609,9 +660,18 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
               if (canSend) void send()
             }
           }} />
+        {selfRoleSelection !== undefined && <ArkmeSelfRolePicker
+          accountKey={selfRoleSelection.accountKey}
+          userId={selfRoleSelection.userId}
+          selectedRole={selfRoleSelection.selectedRole}
+          {...(selfRoleSelection.selfAvatarRef === undefined ? {} : { selfAvatarRef: selfRoleSelection.selfAvatarRef })}
+          onSelect={selfRoleSelection.onSelect}
+          disabled={disabled}
+        />}
         <ArkmeComposerSendButton
           ariaLabel={tr("发送延展")}
           disabled={disabled || !canSend}
+          shortcutHint={tr("Enter发送 / Shift+Enter换行")}
           onClick={() => { void send() }}
         />
       </div>
@@ -649,11 +709,26 @@ function detailExtensionSenderName(item: ArkmeMessageCopyLinkExtensionItem): str
   return item.senderDisplayName.trim() || (item.sourceKind === 'agent_message' ? 'Agent' : '未知用户')
 }
 
-function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem): ArkmeTimelineItem {
-  const avatar = item.senderAvatarUrl?.trim() ?? ''
+function detailExtensionAuthor(item: ArkmeMessageCopyLinkExtensionItem, personalSource: boolean, profile?: ArkmeUserProfile): {
+  name: string; avatar: string; role?: ArkmeSelfRoleSnapshot
+} {
+  const role = personalSource && item.sourceKind === 'record_extension' ? item.selfRole : undefined
+  if (role !== undefined) return { name: role.name, avatar: role.avatarRef ?? '', role }
+  const ownRecord = personalSource && item.sourceKind === 'record_extension' && profile !== undefined
+    && (item.recordOwnerUserId === undefined || item.recordOwnerUserId === profile.userId)
+  const currentNameFallback = ownRecord && item.senderNameSnapshot !== true && item.senderDisplayName.trim() === '我'
+  const currentAvatarFallback = ownRecord && !item.senderAvatarUrl?.trim() && !!profile?.avatarRef.trim()
+  return {
+    name: currentNameFallback ? profile?.nickname.trim() || profile?.displayName.trim() || detailExtensionSenderName(item) : detailExtensionSenderName(item),
+    avatar: currentAvatarFallback ? profile?.avatarRef.trim() ?? '' : item.senderAvatarUrl?.trim() ?? '',
+  }
+}
+
+function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem, author: ReturnType<typeof detailExtensionAuthor>): ArkmeTimelineItem {
+  const avatar = author.avatar
   return {
     itemUid: item.recordUid,
-    senderName: detailExtensionSenderName(item),
+    senderName: author.name,
     isMe: false,
     sendAtMillis: item.sendAtMillis,
     title: item.title,
@@ -665,13 +740,16 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem): A
     displayKind: item.displayKind,
     ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
     ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
+    ...(author.role === undefined ? {} : { selfRole: author.role }),
     ...(avatar !== '' && !/^(https?:|data:|blob:)/iu.test(avatar) ? { avatarRef: avatar } : {}),
   }
 }
 
-function DetailExtensionAvatar({ item, size = 32 }: { item: ArkmeMessageCopyLinkExtensionItem; size?: number }) {
-  const name = detailExtensionSenderName(item)
-  const avatar = item.senderAvatarUrl?.trim() ?? ''
+function DetailExtensionAvatar({ author, size = 32 }: { author: ReturnType<typeof detailExtensionAuthor>; size?: number }) {
+  const { name, avatar, role } = author
+  if (role !== undefined) return <ArkmeUserAvatar
+    {...(role.avatarRef === undefined ? {} : { avatarRef: role.avatarRef })}
+    fallback={arkmeSelfRoleAvatarFallback(role)} size={size} label={tr("延展作者头像")} />
   if (/^(https?:|data:|blob:)/iu.test(avatar)) {
     return <span style={{ ...styles.extensionContextAvatarFallback, width: size, height: size }} aria-hidden>
       <img src={avatar} alt="" draggable={false} style={styles.extensionContextAvatarImage} />
@@ -706,18 +784,25 @@ function orderedDetailExtensions(
   return result
 }
 
-function DetailExtensionParent({ parent }: { parent: NonNullable<ArkmeTimelineItem['extensionParent']> }) {
+function DetailExtensionParent({ parent, onOpen }: {
+  parent: NonNullable<ArkmeTimelineItem['extensionParent']>
+  onOpen?: ((parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => void) | undefined
+}) {
   const text = parent.textContent.trim() || parent.title.trim()
   const attachmentText = (parent.contentBlocks ?? []).map(block => block.fileName.trim()).filter(Boolean).join('、')
-  const preview = text || attachmentText
-  if (preview === '') return null
-  return <div style={styles.extensionParent} data-arkme-detail-extension-parent={parent.itemUid}>
-    <span style={styles.extensionParentText}><ArkmeRichText text={preview} presentation="preview" highlightMentions /></span>
-  </div>
+  const preview = text || attachmentText || tr('查看原始快记')
+  return <button type="button" data-arkme-feedback="neutral" style={{ ...styles.extensionParent,
+    ...(onOpen === undefined ? { cursor: 'default' } : {}) }}
+    data-arkme-detail-extension-parent={parent.itemUid} disabled={onOpen === undefined}
+    aria-label={tr('查看延展源：{v0}', { v0: preview })} onClick={() => onOpen?.(parent)}>
+    <span style={{ flex: 1, minWidth: 0, ...styles.extensionParentText }}><ArkmeRichText text={preview} presentation="preview" highlightMentions /></span>
+    {onOpen !== undefined && <CaretRight size={13} aria-hidden style={{ flex: 'none' }} />}
+  </button>
 }
 
 function DetailExtensionContext({
   state, optimistic, selectedRecordUid, sourceRef, sourceIdentityKey, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
+  personalSource, currentSelfProfile,
 }: {
   state: ArkmeDetailExtensionLoadState
   optimistic: readonly ArkmeMessageCopyLinkExtensionItem[]
@@ -728,16 +813,22 @@ function DetailExtensionContext({
   onMessageCopyLinkOpen?: ((sid: string) => void) | undefined
   onMentionClick?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => void
   isMentionClickable?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => boolean
+  personalSource: boolean
+  currentSelfProfile?: ArkmeUserProfile
   onRetry: () => void
   onSelect: (item: ArkmeMessageCopyLinkExtensionItem) => void
 }) {
   const context = state.kind === 'success' ? state.context : undefined
   const byUid = new Map<string, ArkmeMessageCopyLinkExtensionItem>()
   for (const item of optimistic) byUid.set(item.recordUid, item)
-  for (const item of context?.extensions ?? []) byUid.set(item.recordUid, item)
+  for (const item of context?.extensions ?? []) {
+    const pending = byUid.get(item.recordUid)
+    byUid.set(item.recordUid, item.selfRole === undefined && pending?.selfRole !== undefined
+      ? { ...item, selfRole: pending.selfRole } : item)
+  }
   const extensions = [...byUid.values()]
   const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length)
-  if (state.kind === 'loading' && extensions.length === 0) return null
+  if ((state.kind === 'idle' || state.kind === 'loading') && extensions.length === 0) return null
   if (state.kind === 'error' && extensions.length === 0) {
     return <div style={styles.extensionContext}><div role="alert" style={styles.extensionContextStatus}>
       <span>{state.message}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr("重试")}</button>
@@ -747,7 +838,8 @@ function DetailExtensionContext({
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
     <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>
     <div style={styles.extensionContextList}>{orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
-      const timelineItem = detailExtensionTimelineItem(extension)
+      const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile)
+      const timelineItem = detailExtensionTimelineItem(extension, author)
       const selected = extension.recordUid === selectedRecordUid
       return <div key={extension.recordUid} style={{
         ...styles.extensionContextRow,
@@ -758,10 +850,10 @@ function DetailExtensionContext({
         data-arkme-note-extension-item={extension.recordUid}
         onClick={() => { onSelect(extension) }}
         onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(extension) } }}>
-        <DetailExtensionAvatar item={extension} size={nested ? 28 : 32} />
+        <DetailExtensionAvatar author={author} size={nested ? 28 : 32} />
         <div style={styles.extensionContextBody}>
           <div style={styles.extensionContextHead}>
-            <span style={styles.extensionContextName}>{detailExtensionSenderName(extension)}</span>
+            <span style={styles.extensionContextName}>{author.name}</span>
             <span style={styles.extensionContextTime}>{[dateLabel(extension.sendAtMillis), timeLabel(extension.sendAtMillis)].filter(Boolean).join(' ')}</span>
           </div>
           <ArkmeMessageContent
@@ -790,8 +882,8 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceBadge, sourceRef, sourceIdentityKey, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
-  onOpenPrivateChatMember, messageCreationBlocked = false, messageCreationRestriction = '',
+  item, sourceBadge, sourceRef, sourceIdentityKey, sourceKind, selfTopicPath, selfTopicSource, onOpenSelfTopic, onOpenExtensionParent, onBackToExtension, currentSelfProfile, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  onOpenPrivateChatMember, selfRoleSelection, messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
   sourceBadge?: ReactNode
   item: ArkmeTimelineItem
@@ -799,6 +891,13 @@ export function ArkmeTimelineDetailDrawer({
   sourceIdentityKey?: string | undefined
   canExtend?: boolean
   sourceKind?: ArkmeSourceKind | undefined
+  selfTopicPath?: string | undefined
+  selfTopicSource?: ArkmeSourceItem | undefined
+  onOpenSelfTopic?: ((source: ArkmeSourceItem) => void) | undefined
+  onOpenExtensionParent?: ((parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => void) | undefined
+  onBackToExtension?: (() => void) | undefined
+  currentSelfProfile?: ArkmeUserProfile | undefined
+  selfRoleSelection?: DetailSelfRoleSelection | undefined
   conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   showOriginal: boolean
   onClose: () => void
@@ -959,9 +1058,26 @@ export function ArkmeTimelineDetailDrawer({
   const textContent = showOriginal && item.aiPolish?.originalText !== undefined ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
+  const personalSource = sourceKind === 'send_to_self' || sourceKind === 'topic' || sourceKind === 'default_category'
+  const currentNameFallback = personalSource && item.isMe && item.avatarSnapshot === true
+    && item.senderNameSnapshot !== true && currentSelfProfile !== undefined
+  const currentAvatarFallback = personalSource && item.isMe && item.avatarSnapshot === true
+    && !item.avatarRef?.trim() && !!currentSelfProfile?.avatarRef.trim()
+  const selfRole = sourceKind === undefined ? undefined : arkmeSelfRoleForPresentation(item, sourceKind)
+  const authorName = selfRole?.name ?? (currentNameFallback
+    ? currentSelfProfile?.nickname.trim() || currentSelfProfile?.displayName.trim() || item.senderName
+    : arkmeTimelineDetailSenderText(item, conversationMembers))
+  const authorAvatarRef = selfRole === undefined
+    ? currentAvatarFallback ? currentSelfProfile?.avatarRef : item.avatarRef
+    : selfRole.avatarRef
+  const roleAvatarFallback = selfRole === undefined ? undefined : arkmeSelfRoleAvatarFallback(selfRole)
+  const topicTitle = selfTopicPath?.trim() || item.selfTopic?.title?.trim() || tr("未指定主题")
+  const canOpenTopic = selfTopicSource?.kind === 'topic' && onOpenSelfTopic !== undefined
+  const showTopicBadge = personalSource && (sourceKind !== 'topic' || selfTopicSource?.kind === 'topic')
   const extensionFooter = !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
     sourceKind={sourceKind}
+    {...(personalSource && selfRoleSelection !== undefined ? { selfRoleSelection } : {})}
     conversationMembers={conversationMembers}
     messageActionRef={messageActionRef}
     messageCreationBlocked={messageCreationBlocked}
@@ -1004,13 +1120,17 @@ export function ArkmeTimelineDetailDrawer({
   return <ArkmeDetailShell title={historyOpen ? tr("编辑记录") : tr("快记详情")} label={historyOpen ? tr("编辑记录") : tr("快记详情")}
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
     headerContent={historyOpen ? undefined : <div data-arkme-detail-author style={{ ...styles.row, alignItems: 'center', ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
-      <ArkmeUserAvatar senderKind={item.senderKind} {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label={tr("作者头像")} />
-      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={arkmeTimelineDetailSenderText(item, conversationMembers)} detail /> : arkmeTimelineDetailSenderText(item, conversationMembers)}</div>
+      <ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
+        {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
+        size={40} label={tr("作者头像")} />
+      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}</div>
         <div style={{ ...styles.time, marginTop: item.senderKind === 'bot' ? 2 : 4, ...(item.senderKind === 'bot' ? { fontSize: 12 } : {}) }}>{[dateLabel(item.sendAtMillis), timeLabel(item.sendAtMillis)].filter(Boolean).join(' ')}</div>
       </div>
     </div>}
-    {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' } : {})}>
+    {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
+      : onBackToExtension === undefined ? {} : { onBack: onBackToExtension, backLabel: tr('返回延展快记') })}>
     {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
+    {quickNoteDetailsSupported && item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} onOpen={onOpenExtensionParent} />}
     {canToggle && <button data-arkme-feedback="neutral" type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
     <div data-arkme-timeline-detail-rich-content>
       <ArkmeMessageContent
@@ -1025,6 +1145,14 @@ export function ArkmeTimelineDetailDrawer({
         isMentionClickable={mentionOpensMemberProfile}
       />
     </div>
+    {showTopicBadge && <button data-arkme-feedback="neutral" data-arkme-detail-self-topic type="button"
+      style={{ ...arkmeDetailSourceBadgeStyle, cursor: canOpenTopic ? 'pointer' : 'default' }}
+      aria-label={tr("来源：{v0}", { v0: topicTitle })} disabled={!canOpenTopic}
+      onClick={event => { event.stopPropagation(); if (selfTopicSource?.kind === 'topic') onOpenSelfTopic?.(selfTopicSource) }}>
+      <ArkmeTopicSourceIcon />
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topicTitle}</span>
+      {canOpenTopic && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
+    </button>}
     {sourceBadge}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
     {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
@@ -1033,7 +1161,6 @@ export function ArkmeTimelineDetailDrawer({
         if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop
         setEditHistoryTarget(historyTarget)
       }}>{tr("已编辑")}<CaretRight size={12} style={{ flex: 'none' }} aria-hidden /></button>}
-    {quickNoteDetailsSupported && item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
     {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
       onOpen={() => { navigateRelated('related-list') }}
@@ -1042,6 +1169,8 @@ export function ArkmeTimelineDetailDrawer({
     {quickNoteDetailsSupported && <DetailExtensionContext
       state={extensionState}
       optimistic={optimisticExtensions}
+      personalSource={personalSource}
+      {...(currentSelfProfile === undefined ? {} : { currentSelfProfile })}
       {...(selectedExtensionRecordUid === undefined ? {} : { selectedRecordUid: selectedExtensionRecordUid })}
       {...(sourceRef === undefined ? {} : { sourceRef })}
       {...(sourceIdentityKey === undefined ? {} : { sourceIdentityKey })}

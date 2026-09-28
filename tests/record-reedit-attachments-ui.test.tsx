@@ -189,17 +189,14 @@ describe('record re-edit attachment UI', () => {
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.timeline-around')).toBe(false)
   })
 
-  it('routes outer composer whitespace to the current handle and keeps the shortcut inside the toolbar', async () => {
+  it('routes outer composer whitespace to the current handle and keeps the shortcut on the send button', async () => {
     const focus = vi.spyOn(composerFocus, 'focusArkmeComposerFromClick').mockReturnValue(false)
     await mount()
     const outer = renderer!.root.findByProps({ className: 'arkme-conversation-composer' })
     const footers = outer.findAll(node => typeof node.type === 'string' && node.props['data-arkme-composer-footer'] !== undefined)
-    expect(footers.map(node => node.props['data-arkme-composer-footer'])).toEqual(['tools', 'hint'])
+    expect(footers.map(node => node.props['data-arkme-composer-footer'])).toEqual(['tools'])
     expect(footers[0]!.findByProps({ 'aria-label': '发送消息' })).toBeDefined()
-    expect(footers[0]!.findByProps({ 'data-arkme-composer-footer': 'hint' })).toBe(footers[1])
-    expect(footers[1]!.props.title).toBe('Enter发送 / Shift+Enter换行')
-    expect(footers[1]!.children[0]).toBe('Enter发送')
-    expect(footers[1]!.findByProps({ className: 'arkme-composer-shortcut-details' }).children.join('')).toEqual(' / Shift+Enter换行')
+    expect(footers[0]!.findByProps({ role: 'tooltip' }).children.join('')).toBe('Enter发送 / Shift+Enter换行')
     const event = { currentTarget: {}, target: {}, button: 0, defaultPrevented: false }
     act(() => outer.props.onClick(event))
     expect(focus).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false, focus: expect.any(Function) }), event)

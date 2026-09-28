@@ -6,6 +6,8 @@ import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { preserveTextTogglePosition } from './preserve-text-toggle-position.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
+import { ArkmeShareLinkPreview } from './ArkmeShareLinkPreview.js'
+import { parseShareLink } from '../share-link-preview.js'
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ArkmeFileIcon } from './ArkmeFileIcon.js'
@@ -143,6 +145,11 @@ function ArkmeMessageCopyLink({
   linkLabelMode: ArkmeLinkLabelMode
   onMessageCopyLinkOpen?: (sid: string) => void
 }) {
+  // Older editor versions could include prose after a pasted URL in its label.
+  // Keep that prose visible and outside the link when showing a preview label.
+  const labelText = text.trim()
+  const trailingText = linkLabelMode !== 'raw' && labelText.startsWith(href)
+    && /^\s/u.test(labelText.slice(href.length)) ? labelText.slice(href.length) : ''
   const open = () => {
     if (onMessageCopyLinkOpen !== undefined) {
       onMessageCopyLinkOpen(sid)
@@ -150,7 +157,7 @@ function ArkmeMessageCopyLink({
     }
     if (typeof window !== 'undefined') window.open(href, '_blank', 'noopener,noreferrer')
   }
-  return <span
+  return <><span
     role="link"
     tabIndex={0}
     style={styles.inlineLink}
@@ -170,7 +177,7 @@ function ArkmeMessageCopyLink({
   >
     <ArkmeLinkIcon />
     <span style={linkLabelMode === 'raw' ? styles.inlineRawLinkTitle : styles.inlineLinkTitle} data-arkme-link-label="true">{linkLabelMode === 'raw' ? text : '快记分享链接'}</span>
-  </span>
+  </span>{trailingText && <span data-arkme-share-trailing-text="true">{trailingText}</span>}</>
 }
 
 function ArkmeMessageRichText({
@@ -199,6 +206,8 @@ function ArkmeMessageRichText({
   isMentionClickable?: ArkmeMentionClickPredicate
 }) {
   const renderLink: ArkmeLinkRenderer = link => {
+    const target = linkLabelMode === 'resolved' ? parseShareLink(link.href) : undefined
+    if (target) return <ArkmeShareLinkPreview target={target} text={link.text} onMessageCopyLinkOpen={onMessageCopyLinkOpen} />
     const sid = arkmeMessageCopyLinkSidFromUrl(link.href, shareWebsite)
     if (sid === undefined) return undefined
     return <ArkmeMessageCopyLink
