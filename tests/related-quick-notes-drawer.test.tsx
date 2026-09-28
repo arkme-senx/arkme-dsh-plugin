@@ -104,7 +104,7 @@ describe('normal timeline related quick note drawer', () => {
     act(() => view.unmount())
   })
 
-  it('does not repeat the current topic below a note without a child topic', async () => {
+  it('keeps the owning topic in full detail even when the timeline hides its redundant badge', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
       : { total: 0, items: [] })
@@ -112,7 +112,8 @@ describe('normal timeline related quick note drawer', () => {
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer
       item={timelineItem} sourceRef="current-topic" sourceKind="topic" selfTopicPath="产品"
       showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
-    expect(view.root.findAllByProps({ 'data-arkme-detail-self-topic': true })).toHaveLength(0)
+    expect(view.root.findAllByProps({ 'data-arkme-detail-self-topic': true })).toHaveLength(1)
+    expect(JSON.stringify(view.toJSON())).toContain('产品')
     act(() => view.unmount())
   })
 
@@ -129,7 +130,7 @@ describe('normal timeline related quick note drawer', () => {
     act(() => view.unmount())
   })
 
-  it('uses current profile fallback without extra copy, but retains a recorded identity', async () => {
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('uses the current account avatar in %s while retaining the recorded nickname', async sourceKind => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
       : { total: 0, items: [] })
@@ -141,7 +142,7 @@ describe('normal timeline related quick note drawer', () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer
       item={{ ...timelineItem, isMe: true, senderName: '我', avatarSnapshot: true }}
-      currentSelfProfile={currentSelfProfile} sourceRef="source-a" sourceKind="send_to_self"
+      currentSelfProfile={currentSelfProfile} sourceRef="source-a" sourceKind={sourceKind}
       showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
     let header = view.root.findByProps({ 'data-arkme-detail-author': true })
     expect(JSON.stringify(view.toJSON())).toContain('现在的昵称')
@@ -149,12 +150,49 @@ describe('normal timeline related quick note drawer', () => {
     expect(header.findByType(ArkmeUserAvatar).props.avatarRef).toBe('current-avatar-ref')
     await act(async () => view.update(<ArkmeTimelineDetailDrawer
       item={{ ...timelineItem, isMe: true, avatarSnapshot: true, senderName: '当时的昵称', senderNameSnapshot: true, avatarRef: 'old-avatar-ref' }}
-      currentSelfProfile={currentSelfProfile} sourceRef="source-a" sourceKind="send_to_self"
+      currentSelfProfile={currentSelfProfile} sourceRef="source-a" sourceKind={sourceKind}
       showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />))
     header = view.root.findByProps({ 'data-arkme-detail-author': true })
     expect(JSON.stringify(view.toJSON())).toContain('当时的昵称')
     expect(JSON.stringify(view.toJSON())).not.toContain('当前资料')
-    expect(header.findByType(ArkmeUserAvatar).props.avatarRef).toBe('old-avatar-ref')
+    expect(header.findByType(ArkmeUserAvatar).props.avatarRef).toBe('current-avatar-ref')
+    act(() => view.unmount())
+  })
+
+  it('updates a self detail without snapshot flags when the current profile arrives', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
+      ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] } : { total: 0, items: [] })
+    const props = { item: { ...timelineItem, isMe: true, avatarRef: 'other-device-avatar' },
+      sourceRef: 'source-a', sourceKind: 'send_to_self' as const, showOriginal: false, onClose: () => {}, onToggleOriginal: () => {} }
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer {...props} />) })
+    const currentSelfProfile = { userId: 42, displayName: '当前账号', nickname: '当前账号', avatarRef: 'current-account-avatar',
+      arkmeId: 'sample', accountType: 1, createdAt: 1, bindings: { apple: false, wechat: false, google: false }, contact: {} }
+    await act(async () => view.update(<ArkmeTimelineDetailDrawer {...props} currentSelfProfile={currentSelfProfile} />))
+    expect(view.root.findByProps({ 'data-arkme-detail-author': true }).findByType(ArkmeUserAvatar).props.avatarRef).toBe('current-account-avatar')
+    act(() => view.unmount())
+  })
+
+  it.each([
+    { sourceKind: 'send_to_self', isMe: false },
+    { sourceKind: 'private_chat', isMe: true },
+    { sourceKind: 'group_chat', isMe: true },
+  ] as const)('does not replace avatars outside the own personal view: $sourceKind/$isMe', async ({ sourceKind, isMe }) => {
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
+      ? { parentRecordUid: 'record-source', extensionCount: 1, extensions: [{
+          recordUid: 'other-reply', recordOwnerUserId: 99, parentRecordUid: 'record-source', level: 2, sourceKind: 'record_extension',
+          senderDisplayName: '另一位作者', senderAvatarUrl: 'other-author-avatar', title: '', textContent: '补充内容', sendAtMillis: 1_710_000_060_000,
+          templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+        }] } : { total: 0, items: [] })
+    const currentSelfProfile = { userId: 42, displayName: '当前账号', nickname: '当前账号', avatarRef: 'current-account-avatar',
+      arkmeId: 'sample', accountType: 1, createdAt: 1, bindings: { apple: false, wechat: false, google: false }, contact: {} }
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer
+      item={{ ...timelineItem, isMe, avatarSnapshot: true, avatarRef: 'message-avatar' }}
+      currentSelfProfile={currentSelfProfile} sourceRef="source-a" sourceKind={sourceKind}
+      showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    expect(view.root.findByProps({ 'data-arkme-detail-author': true }).findByType(ArkmeUserAvatar).props.avatarRef).toBe('message-avatar')
+    expect(view.root.findByProps({ 'data-arkme-note-extension-item': 'other-reply' }).findByType(ArkmeUserAvatar).props.avatarRef).toBe('other-author-avatar')
     act(() => view.unmount())
   })
 
@@ -182,7 +220,7 @@ describe('normal timeline related quick note drawer', () => {
       const serialized = JSON.stringify(view.toJSON())
       expect(serialized).toContain(historical ? '当时的昵称' : '现在的昵称')
       expect(serialized).not.toContain('当前资料')
-      expect(row.findByType(ArkmeUserAvatar).props.avatarRef).toBe(historical ? 'old-avatar-ref' : 'current-avatar-ref')
+      expect(row.findByType(ArkmeUserAvatar).props.avatarRef).toBe('current-avatar-ref')
       act(() => view.unmount())
     }
   })
@@ -629,6 +667,63 @@ describe('normal timeline related quick note drawer', () => {
     expect(newer.findAll(node => node.children.includes('暂不支持的非文本内容'))).toHaveLength(0)
     const rows = renderer.root.findAll(node => typeof node.props['data-arkme-note-extension-item'] === 'string')
     expect(rows.map(row => row.props['data-arkme-note-extension-item'])).toEqual(['extension-newer', 'extension-older'])
+  })
+
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('hydrates a cross-topic source and related notes in %s details without relying on the list projection', async sourceKind => {
+    let finishContext!: (value: unknown) => void
+    let finishRelated!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return new Promise(resolve => { finishRelated = resolve })
+      if (operation === 'source.message-extension.context') return new Promise(resolve => { finishContext = resolve })
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    const onOpenParent = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeTimelineDetailDrawer
+      item={timelineItem} sourceRef="opaque-source" sourceKind={sourceKind} selfTopicPath="产品"
+      showOriginal={false} onClose={vi.fn()} onToggleOriginal={vi.fn()} onOpenExtensionParent={onOpenParent} />) })
+    expect(renderer.root.findAllByProps({ 'data-arkme-related-quick-notes-loading': true })).toHaveLength(1)
+    const parent = { itemUid: 'external-parent', senderName: '小林', title: '', textContent: '主题外的原始快记' }
+    await act(async () => {
+      finishContext({ parentRecordUid: timelineItem.itemUid, extensionCount: 0, extensions: [], extensionParent: parent })
+      finishRelated(relatedList)
+    })
+    const sourceButton = renderer.root.findByProps({ 'data-arkme-detail-extension-parent': 'external-parent' })
+    const tree = JSON.stringify(renderer.toJSON())
+    expect(tree.indexOf('data-arkme-detail-extension-parent')).toBeLessThan(tree.indexOf('data-arkme-timeline-detail-rich-content'))
+    expect(tree).toContain('相关快记')
+    expect(renderer.root.findAll(node => node.type === 'span' && node.children.join('') === '共 2 条')).toHaveLength(1)
+    expect(tree).toContain('产品')
+    expect(renderer.root.findAllByProps({ 'aria-label': '快记延展列表' })).toHaveLength(0)
+    await act(async () => sourceButton.props.onClick())
+    expect(onOpenParent).toHaveBeenCalledWith(parent)
+    act(() => renderer.unmount())
+  })
+
+  it('ignores delayed detail results from a previously opened note', async () => {
+    const pending: { action: string; operation: string; resolve: (value: unknown) => void }[] = []
+    mocks.callArkme.mockImplementation((operation: string, payload: { messageActionRef: string }) =>
+      new Promise(resolve => pending.push({ action: payload.messageActionRef, operation, resolve })))
+    const render = (action: string) => <ArkmeTimelineDetailDrawer
+      item={{ ...timelineItem, itemUid: action, messageActionRef: action }} sourceRef="topic" sourceKind="topic"
+      showOriginal={false} onClose={vi.fn()} onToggleOriginal={vi.fn()} />
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(render('old')) })
+    await act(async () => { renderer.update(render('current')) })
+    await act(async () => {
+      for (const task of pending.filter(task => task.action === 'current')) task.resolve(
+        task.operation === 'source.message-extension.context'
+          ? { parentRecordUid: 'current', extensions: [], extensionCount: 0 }
+          : { total: 0, items: [] })
+      for (const task of pending.filter(task => task.action === 'old')) task.resolve(
+        task.operation === 'source.message-extension.context'
+          ? { parentRecordUid: 'old', extensions: [], extensionCount: 0,
+            extensionParent: { itemUid: 'old-parent', title: '', senderName: '', textContent: '过期来源' } }
+          : relatedList)
+    })
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('过期来源')
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('相关快记')
+    act(() => renderer.unmount())
   })
 
   it('shows a clickable extension source above the current quick note content', async () => {

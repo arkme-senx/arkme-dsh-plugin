@@ -35,7 +35,7 @@ import type {
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
-import { arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
+import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 import { ArkmeForwardArticleContent, ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -717,10 +717,11 @@ function detailExtensionAuthor(item: ArkmeMessageCopyLinkExtensionItem, personal
   const ownRecord = personalSource && item.sourceKind === 'record_extension' && profile !== undefined
     && (item.recordOwnerUserId === undefined || item.recordOwnerUserId === profile.userId)
   const currentNameFallback = ownRecord && item.senderNameSnapshot !== true && item.senderDisplayName.trim() === '我'
-  const currentAvatarFallback = ownRecord && !item.senderAvatarUrl?.trim() && !!profile?.avatarRef.trim()
   return {
     name: currentNameFallback ? profile?.nickname.trim() || profile?.displayName.trim() || detailExtensionSenderName(item) : detailExtensionSenderName(item),
-    avatar: currentAvatarFallback ? profile?.avatarRef.trim() ?? '' : item.senderAvatarUrl?.trim() ?? '',
+    avatar: arkmePersonalAvatarRef({ isMe: ownRecord,
+      ...(item.senderAvatarUrl === undefined ? {} : { avatarRef: item.senderAvatarUrl }),
+    }, profile) ?? '',
   }
 }
 
@@ -933,6 +934,8 @@ export function ArkmeTimelineDetailDrawer({
   const historyTarget = `${normalizedSourceRef}:${item.itemUid}`
   const historyOpen = editHistoryTarget === historyTarget && messageActionRef !== ''
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
+  const extensionParent = extensionState.kind === 'success'
+    ? extensionState.context.extensionParent ?? item.extensionParent : item.extensionParent
   const loadRelated = useCallback(() => {
     listAbortRef.current?.abort()
     if (!quickNoteDetailsSupported || normalizedSourceRef === '' || messageActionRef === '') {
@@ -941,7 +944,7 @@ export function ArkmeTimelineDetailDrawer({
     }
     const controller = new AbortController()
     listAbortRef.current = controller
-    setRelatedState({ kind: 'loading' })
+    setRelatedState(current => current.kind === 'success' ? current : { kind: 'loading' })
     void callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-message', {
       sourceRef: normalizedSourceRef,
       messageActionRef,
@@ -1061,19 +1064,17 @@ export function ArkmeTimelineDetailDrawer({
   const personalSource = sourceKind === 'send_to_self' || sourceKind === 'topic' || sourceKind === 'default_category'
   const currentNameFallback = personalSource && item.isMe && item.avatarSnapshot === true
     && item.senderNameSnapshot !== true && currentSelfProfile !== undefined
-  const currentAvatarFallback = personalSource && item.isMe && item.avatarSnapshot === true
-    && !item.avatarRef?.trim() && !!currentSelfProfile?.avatarRef.trim()
   const selfRole = sourceKind === undefined ? undefined : arkmeSelfRoleForPresentation(item, sourceKind)
   const authorName = selfRole?.name ?? (currentNameFallback
     ? currentSelfProfile?.nickname.trim() || currentSelfProfile?.displayName.trim() || item.senderName
     : arkmeTimelineDetailSenderText(item, conversationMembers))
-  const authorAvatarRef = selfRole === undefined
-    ? currentAvatarFallback ? currentSelfProfile?.avatarRef : item.avatarRef
-    : selfRole.avatarRef
+  const authorAvatarRef = personalSource ? arkmePersonalAvatarRef(item, currentSelfProfile) : item.avatarRef
   const roleAvatarFallback = selfRole === undefined ? undefined : arkmeSelfRoleAvatarFallback(selfRole)
   const topicTitle = selfTopicPath?.trim() || item.selfTopic?.title?.trim() || tr("未指定主题")
   const canOpenTopic = selfTopicSource?.kind === 'topic' && onOpenSelfTopic !== undefined
-  const showTopicBadge = personalSource && (sourceKind !== 'topic' || selfTopicSource?.kind === 'topic')
+  // Only timeline bubbles omit a redundant current-topic badge. A standalone
+  // detail must retain its source identity regardless of the entry point.
+  const showTopicBadge = personalSource
   const extensionFooter = !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
     sourceKind={sourceKind}
@@ -1130,7 +1131,7 @@ export function ArkmeTimelineDetailDrawer({
     {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
       : onBackToExtension === undefined ? {} : { onBack: onBackToExtension, backLabel: tr('返回延展快记') })}>
     {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
-    {quickNoteDetailsSupported && item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} onOpen={onOpenExtensionParent} />}
+    {quickNoteDetailsSupported && extensionParent !== undefined && <DetailExtensionParent parent={extensionParent} onOpen={onOpenExtensionParent} />}
     {canToggle && <button data-arkme-feedback="neutral" type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
     <div data-arkme-timeline-detail-rich-content>
       <ArkmeMessageContent

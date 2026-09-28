@@ -1940,6 +1940,12 @@ export async function dispatchArkmeHostOperation(
       requiredInterwovenParam(params, 'sourceRef'),
       requiredInterwovenParam(params, 'momentRef'),
     )
+    case 'source.interwoven-read-receipts': {
+      if (!Array.isArray(params.momentRefs) || !params.momentRefs.every(ref => typeof ref === 'string')) {
+        throw new ArkmePluginError('interwoven-param-invalid', '群互动已读查询参数无效', false, 400)
+      }
+      return await service.interwovenReadReceipts(requiredInterwovenParam(params, 'sourceRef'), params.momentRefs, requestSignal)
+    }
     case 'source.related-quick-notes.from-message': return await service.relatedQuickNotesFromMessage(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
       requiredRelatedQuickNoteParam(params, 'messageActionRef', MAX_MESSAGE_ACTION_REF_CHARS),
@@ -2024,6 +2030,10 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'itemIndex', 0),
       stringParam(params, 'textContent'),
       stringParam(params, 'recordUid'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-extension.parent': return await service.sourceMessageExtensionParent(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(

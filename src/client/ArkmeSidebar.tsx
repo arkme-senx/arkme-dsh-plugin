@@ -22,7 +22,7 @@ import { useComposerPasteFocus } from './composer-paste-focus.js'
 import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
-import { arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
+import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { useSelfCalendarNavigation } from './use-self-calendar-navigation.js'
 import { ArkmeCalendarNavigationStatus } from './ArkmeCalendarNavigationStatus.js'
@@ -264,6 +264,7 @@ export {
 } from './mention-candidates.js'
 export type { ArkmeComposerMentionTrigger, ArkmeMentionCandidate } from './mention-candidates.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
+import { ArkmeInterwovenReadProvider } from './ArkmeInterwovenReadReceipt.js'
 import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './ArkmeMentionSuggestionRow.js'
 import {
   ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
@@ -292,6 +293,7 @@ import {
 } from './arkme-login-locales.js'
 
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
+import { usePersonalExtensionParents } from './use-personal-extension-parents.js'
 import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageReportDialog, arkmeCanReportTimelineMessage } from './ArkmeMessageReportDialog.js'
 import {
@@ -5554,12 +5556,19 @@ export function ArkmeSurface({
     }
   }
 
-  const detailItem = items.find(item => item.itemUid === detailItemUid)
+  const personalExtensionParents = usePersonalExtensionParents(
+    `${authenticatedAccountKey}:${conversationKey}:${sourceProjectionRevision}`,
+    activeConversation && source !== undefined && isArkmeSelfWorkspaceSource(source) ? source.sourceRef : undefined, items,
+  )
+  const detailRow = items.find(item => item.itemUid === detailItemUid)
+  const detailItem = detailRow === undefined ? undefined : personalExtensionParents.has(detailRow.itemUid)
+    ? { ...detailRow, extensionParent: personalExtensionParents.get(detailRow.itemUid)! } : detailRow
   const detailTopicPresentation = detailItem === undefined ? undefined
     : arkmeTimelineSelfTopicPresentation(detailItem, source, selfSources)
   const detailTopicPath = detailItem === undefined ? undefined
     : detailTopicPresentation?.displayLabel
-      ?? (source?.kind === 'send_to_self' ? detailItem.selfTopic?.title : undefined)
+      ?? detailItem.selfTopic?.title
+      ?? (source?.kind === 'topic' ? source.displayName : undefined)
   const openExtensionParentDetail = (parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => {
     if (source === undefined || detailItem === undefined || parent.itemUid === detailItem.itemUid) return
     const from: ArkmeDetailBackTarget = {
@@ -5579,7 +5588,7 @@ export function ArkmeSurface({
       const revision = arkmeUi.getSnapshot().conversationTarget?.revision
       if (revision !== undefined) pendingExtensionParentDetailRef.current = { revision, kind: 'push', from }
     }
-    if (source.kind !== 'topic') { navigate(source); return }
+    if (source.kind !== 'topic' && source.kind !== 'default_category') { navigate(source); return }
     const targetSource = aggregateSource ?? selfSources.find(candidate => candidate.kind === 'send_to_self')
     if (targetSource !== undefined) { navigate(targetSource); return }
     // A topic can be opened before its directory resolves. Ask the existing
@@ -5592,6 +5601,23 @@ export function ArkmeSurface({
     }, caught => {
       setMessageActionStatus(errorMessage(caught) || '暂时无法打开延展源')
     })
+  }
+  const openTimelineExtensionParent = (parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => {
+    if (source === undefined) return
+    if (!isArkmeSelfWorkspaceSource(source)) {
+      arkmeUi.showConversationTarget(source, parent.itemUid, parent.sendAtMillis ?? 0, parent.recordOwnerUserId)
+      return
+    }
+    const navigate = (target: ArkmeSourceItem) => arkmeUi.showConversationTarget(target, parent.itemUid,
+      parent.sendAtMillis ?? 0, parent.recordOwnerUserId, undefined, false, true)
+    if (items.some(item => item.itemUid === parent.itemUid)) {
+      navigate(source); return
+    }
+    const target = aggregateSource ?? selfSources.find(candidate => candidate.kind === 'send_to_self')
+    if (target !== undefined) { navigate(target); return }
+    void callArkme<ArkmeSourceItem>('sources.self-target', {}).then(target => {
+      if (arkmeUi.getSnapshot().selectedSource?.sourceRef === source.sourceRef) navigate(target)
+    }, caught => setMessageActionStatus(errorMessage(caught) || '暂时无法打开延展源'))
   }
   const detailSharedRecording = detailItem === undefined
     ? undefined
@@ -7710,7 +7736,7 @@ export function ArkmeSurface({
   // Draft updates must not rebuild every loaded message. Event handlers read the
   // latest committed actions; render dependencies below contain only timeline facts.
   const timelineActionValues = { activateSelfSource, openChatMessage, openMemberEventProfile, openMemberHover, openMemberMenu, openMemberProfile, openBotHover, openBotMenu, openBotProfile, openMentionMemberProfile, openMessageCopyLinkDetail, openMessageMenu, openMomentDetail, openNoteDetail, openRecordReedit, retryAiPolish, toggleSelectedMessage, updateComposerText,
-    refreshFiles: fileTasks.refresh, refreshReedits: reeditSubmissions.refresh }
+    openTimelineExtensionParent, refreshFiles: fileTasks.refresh, refreshReedits: reeditSubmissions.refresh }
   const timelineActions = useRef(timelineActionValues)
   useLayoutEffect(() => { timelineActions.current = timelineActionValues })
   const timelineReediting = activeRecordReeditComposer !== undefined
@@ -7771,7 +7797,8 @@ export function ArkmeSurface({
                       highlighted={highlightedTargetUid === row.id} />
                   </Fragment>
                 }
-                const item = row.item
+                const item = personalExtensionParents.has(row.item.itemUid)
+                  ? { ...row.item, extensionParent: personalExtensionParents.get(row.item.itemUid)! } : row.item
                 const selfTopicPresentation = arkmeTimelineSelfTopicPresentation(item, source, selfSources)
                 const selfWorkspace = isArkmeSelfWorkspaceSource(source)
                 // A self-role is only a presentation identity. Keep item.isMe as
@@ -7779,10 +7806,9 @@ export function ArkmeSurface({
                 const role = arkmeSelfRoleForPresentation(item, source.kind)
                 const presentationIsMe = item.isMe && role === undefined
                 const roleFallback = role === undefined ? undefined : arkmeSelfRoleAvatarFallback(role)
-                const avatarRef = role === undefined
-                  ? arkmeTimelineAvatarRef(item, selfWorkspace ? undefined : selfProfile)
-                    ?? (selfWorkspace && item.isMe && item.avatarSnapshot === true ? selfProfile?.avatarRef.trim() : undefined)
-                  : role.avatarRef
+                const avatarRef = selfWorkspace
+                  ? arkmePersonalAvatarRef(item, selfProfile)
+                  : arkmeTimelineAvatarRef(item, selfProfile)
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
@@ -8007,12 +8033,7 @@ export function ArkmeSurface({
                               parent={item.extensionParent}
                               isMe={presentationIsMe}
                               onSelect={() => {
-                                arkmeUi.showConversationTarget(
-                                  source,
-                                  item.extensionParent?.itemUid ?? '',
-                                  item.extensionParent?.sendAtMillis ?? 0,
-                                  item.extensionParent?.recordOwnerUserId,
-                                )
+                                if (item.extensionParent !== undefined) timelineActions.current.openTimelineExtensionParent(item.extensionParent)
                               }}
                             />
                             <div
@@ -8040,7 +8061,7 @@ export function ArkmeSurface({
                   </li>
                 </Fragment>
               })
-  }, [displayRows, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef,
+  }, [displayRows, personalExtensionParents, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
@@ -8554,6 +8575,8 @@ export function ArkmeSurface({
           </div> : <ArkmeWideConversation
             enabled={active && activeConversation && (source.kind === 'private_chat' || source.kind === 'group_chat')}
             scopeKey={conversationKey} viewportRef={bodyRef} controlsHidden={activeSelectMode !== undefined}>
+          <ArkmeInterwovenReadProvider sourceRef={source.sourceRef} scope={`${authenticatedAccountKey}:${conversationKey}`}
+            enabled={activeConversation && authenticated && source.kind === 'private_chat'}>
           <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
           <div className="arkme-conversation-body" data-arkme-width-viewport ref={bodyRef} style={{
             ...styles.body,
@@ -9096,6 +9119,7 @@ export function ArkmeSurface({
             ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[3]}</span></button>
           </div>}
           </div>
+        </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
         {forwardDialog}
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeActionMenu
@@ -9297,7 +9321,8 @@ export function ArkmeSurface({
           canExtend={!archiveReadOnly}
           sourceKind={source?.kind}
           {...(detailTopicPath === undefined ? {} : { selfTopicPath: detailTopicPath })}
-          {...(detailTopicPresentation === undefined ? {} : { selfTopicSource: detailTopicPresentation.topic })}
+          {...(detailTopicPresentation !== undefined ? { selfTopicSource: detailTopicPresentation.topic }
+            : source?.kind === 'topic' ? { selfTopicSource: source } : {})}
           onOpenSelfTopic={topic => { setDrawer(undefined); activateSelfSource(topic) }}
           onOpenExtensionParent={openExtensionParentDetail}
           {...(detailBackStack.length === 0 ? {} : { onBackToExtension: () => {
