@@ -230,6 +230,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_review_create',
       'arkme_recording_import',
       'arkme_recording_import_folder',
+      'arkme_speaker_presence',
       'arkme_wechat_conversations',
       'arkme_wechat_messages',
       'arkme_wechat_conversation_detail',

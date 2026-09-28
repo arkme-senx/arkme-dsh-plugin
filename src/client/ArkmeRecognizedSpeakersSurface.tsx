@@ -77,14 +77,14 @@ export interface ArkmeRecognizedSpeakersSurfaceProps {
   onBack(): void
   loadMarked?: (signal: AbortSignal) => Promise<ArkmeRecordingSpeakerCandidate[]>
   loadPresence?: (signal: AbortSignal) => Promise<ArkmeRecordingSpeakerPresence>
-  loadMarkedMembers?: (speakerRef: string, signal: AbortSignal) => Promise<ArkmeRecordingSpeakerMembers>
+  loadMarkedMembers?: (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => Promise<ArkmeRecordingSpeakerMembers>
   loadUnmarked?: (cursor: string, signal: AbortSignal) => Promise<ArkmeDirectoryPage>
 }
 
 const defaultLoadMarked = async (signal: AbortSignal) => await callArkme<ArkmeRecordingSpeakerCandidate[]>('recordings.speaker.options', {}, signal)
 const defaultLoadPresence = async (signal: AbortSignal) => await callArkme<ArkmeRecordingSpeakerPresence>('recordings.speaker.presence', {}, signal)
-const defaultLoadMarkedMembers = async (speakerRef: string, signal: AbortSignal) => await callArkme<ArkmeRecordingSpeakerMembers>(
-  'recordings.speaker.members', { speakerRef }, signal,
+const defaultLoadMarkedMembers = async (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => await callArkme<ArkmeRecordingSpeakerMembers>(
+  'recordings.speaker.members', { speakerRef, ...(expectedVersion === undefined ? {} : { expectedVersion }) }, signal,
 )
 const defaultLoadUnmarked = async (cursor: string, signal: AbortSignal) => await callArkme<ArkmeDirectoryPage>(
   'directory.list', { section: 'unmarked-speakers', limit: 50, ...(cursor === '' ? { refresh: true } : { cursor }) }, signal,
@@ -95,54 +95,62 @@ function failureMessage(error: unknown): string {
 }
 
 function markedPresenceLabel(stat: ArkmeRecordingSpeakerPresence['items'][number] | undefined, result: ArkmeRecordingSpeakerPresence | undefined, loading: boolean, error: string): string {
+  if (loading || result?.state === 'building') return tr('出现统计整理中')
+  if (error !== '' || result?.state === 'failed' || result === undefined) return tr('出现统计暂不可用')
+  if (result.state === 'stale') return tr('出现统计更新中')
   if (stat !== undefined) {
     const date = new Date(stat.lastSeenAt)
     if (!Number.isNaN(date.getTime())) {
       const two = (value: number) => String(value).padStart(2, '0')
       const recent = `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
-      return result?.scope === 'recent-seven-days'
-        ? tr('近 7 天出现 {v0} 天 · 最近 {v1}', { v0: stat.dayCount, v1: recent })
-        : tr('出现 {v0} 天 · 最近 {v1}', { v0: stat.dayCount, v1: recent })
+      return tr('出现 {v0} 天 · 最近 {v1}', { v0: stat.dayCount, v1: recent })
     }
   }
-  if (loading || result?.state === 'building') return tr('出现统计整理中')
-  if (error !== '' || result?.state === 'failed' || result === undefined) return tr('出现统计暂不可用')
-  if (result.state === 'stale') return tr('出现统计更新中')
-  if (result.scope === 'recent-seven-days') return tr('近 7 天未见已转写发声 · 全历史待接口')
   return tr('暂无可统计的录音片段')
 }
 
-function MarkedSpeakerDetail({ accountKey, speaker, loadMembers }: {
+function MarkedSpeakerDetail({ accountKey, speaker, loadMembers, version, onVersionChanged }: {
+  version?: string | undefined
+  onVersionChanged: () => void
   accountKey: string
   speaker: Extract<IdentifiedSpeakerRow, { kind: 'marked' }>
-  loadMembers: (speakerRef: string, signal: AbortSignal) => Promise<ArkmeRecordingSpeakerMembers>
+  loadMembers: (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => Promise<ArkmeRecordingSpeakerMembers>
 }) {
   const [state, setState] = useState<{ loading: boolean; result?: ArkmeRecordingSpeakerMembers; error: string }>({ loading: true, error: '' })
   useEffect(() => {
     const controller = new AbortController()
     setState({ loading: true, error: '' })
-    void loadMembers(speaker.speakerRef, controller.signal).then(result => {
-      if (!controller.signal.aborted) setState({ loading: false, result, error: '' })
-    }).catch(error => {
-      if (!controller.signal.aborted) setState({ loading: false, error: failureMessage(error) })
-    })
-    return () => { controller.abort() }
-  }, [accountKey, speaker.speakerRef, loadMembers])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = async () => {
+      try {
+        const result = await loadMembers(speaker.speakerRef, controller.signal, version)
+        if (controller.signal.aborted) return
+        setState({ loading: false, result, error: '' })
+        if (result.state === 'stale' && result.version !== undefined && result.version !== version) onVersionChanged()
+        if (result.state !== 'fresh') timer = setTimeout(() => { void load() }, Math.max(5_000, result.retryAfterMs ?? 10_000))
+      } catch (error) {
+        if (!controller.signal.aborted) setState({ loading: false, error: failureMessage(error) })
+      }
+    }
+    void load()
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [accountKey, speaker.speakerRef, loadMembers, version, onVersionChanged])
 
   return <section aria-label={tr('已标记说话人详情')}>
     <h2 style={styles.detailTitle}>{speaker.name}{speaker.isCurrentUser ? ` · ${tr('我')}` : ''}</h2>
     <p style={{ ...styles.meta, margin: 0 }}>{tr('查看已确认归属的原始识别身份')}</p>
     <h3 style={styles.detailSection}>{tr('对应的识别说话人')}</h3>
-    <p style={{ ...styles.meta, margin: '0 0 8px', whiteSpace: 'normal' }}>{tr('仅展示近 7 天已转写片段中可核实的关联；完整历史待接口。')}</p>
-    {state.loading ? <div role="status" style={styles.state}>{tr('正在查找关联说话人…')}</div>
-      : state.error !== '' ? <div role="alert" style={styles.error}>{state.error}</div>
+    <p style={{ ...styles.meta, margin: '0 0 8px', whiteSpace: 'normal' }}>{tr('展示全部历史已转写片段中可核实的关联。')}</p>
+    {state.loading || state.result?.state === 'building' ? <div role="status" style={styles.state}>{tr('正在查找关联说话人…')}</div>
+      : state.error !== '' || state.result?.state === 'failed' ? <div role="alert" style={styles.error}>{state.error || tr('出现统计暂不可用')}</div>
+        : state.result?.state === 'stale' ? <div role="status" style={styles.state}>{tr('出现统计更新中')}</div>
         : state.result?.items.length === 0 ? <div role="status" style={styles.state}>{state.result.dayCount > 0
-          ? tr('近 7 天有发声，但未找到稳定的原始识别身份。')
-          : tr('近 7 天未找到关联，不代表完整历史中没有。')}</div>
-          : <ul style={styles.list}>{state.result?.items.map((member, index) => <li key={`${member.token}:${index}`} style={styles.memberRow}>
+          ? tr('有发声，但未找到稳定的原始识别身份。')
+          : tr('暂无可核实的关联说话人。')}</div>
+          : <ul style={styles.list}>{state.result?.items.map(member => <li key={member.identityKey} style={styles.memberRow}>
             <UnmarkedSpeakerTokenAvatar token={member.token} size={36} label={tr('说话人 {v0}', { v0: member.token })} />
             <span style={styles.copy}><span style={styles.name}>{tr('说话人 {v0}', { v0: member.token })}</span>
-              <span style={styles.meta}>{tr('近 7 天出现 {v0} 天', { v0: member.dayCount })}</span></span>
+              <span style={styles.meta}>{tr('出现 {v0} 天', { v0: member.dayCount })}</span></span>
           </li>)}</ul>}
   </section>
 }
@@ -157,12 +165,21 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
   const [unmarked, setUnmarked] = useState<{ loading: boolean; loadingMore: boolean; items: UnmarkedSpeaker[]; nextCursor: string; hasMore: boolean; projectionState?: ArkmeDirectoryPage['projectionState']; error: string }>({ loading: true, loadingMore: false, items: [], nextCursor: '', hasMore: false, error: '' })
   const [selectedCandidate, setSelectedCandidate] = useState<string>()
   const [selectedMarked, setSelectedMarked] = useState<Extract<IdentifiedSpeakerRow, { kind: 'marked' }>>()
+  const lastAccountKey = useRef(accountKey)
   const moreController = useRef<AbortController>()
   const moreBusy = useRef(false)
   const refresh = useCallback(() => { moreController.current?.abort(); moreBusy.current = false; setSelectedMarked(undefined); setRefreshRevision(value => value + 1) }, [])
 
   useEffect(() => {
     const controller = new AbortController()
+    if (lastAccountKey.current !== accountKey) {
+      lastAccountKey.current = accountKey
+      setMarked({ loading: true, items: [], error: '' })
+      setPresence({ loading: true, error: '' })
+      setUnmarked({ loading: true, loadingMore: false, items: [], nextCursor: '', hasMore: false, error: '' })
+      setSelectedMarked(undefined)
+      setSelectedCandidate(undefined)
+    }
     setMarked(previous => ({ ...previous, loading: true, error: '' }))
     setPresence(previous => ({ ...previous, loading: true, error: '' }))
     setUnmarked(previous => ({ ...previous, loading: true, loadingMore: false, error: '' }))
@@ -188,7 +205,7 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
 
   useEffect(() => {
     const state = presence.result?.state
-    if (presence.error !== '' || (state !== 'building' && state !== 'stale')) return
+    if (presence.error !== '' || (state !== 'building' && state !== 'stale' && state !== 'failed')) return
     const controller = new AbortController()
     const timer = setTimeout(() => {
       void loadPresence(controller.signal).then(result => {
@@ -199,6 +216,8 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
     }, Math.max(5_000, presence.result?.retryAfterMs ?? 10_000))
     return () => { clearTimeout(timer); controller.abort() }
   }, [accountKey, loadPresence, presence.error, presence.result])
+
+  const refreshPresenceVersion = useCallback(() => { setPresence({ loading: false, result: { state: 'stale', scope: 'all-history', items: [], retryAfterMs: 1000 }, error: '' }) }, [])
 
   const loadMore = useCallback(() => {
     if (moreBusy.current || unmarked.loading || !unmarked.hasMore || unmarked.nextCursor === '') return
@@ -249,7 +268,6 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
       </div>
       <div className="arkme-recognized-speakers-grid" data-detail-open={selectedCandidate === undefined && selectedMarked === undefined ? 'false' : 'true'}>
         <div className="arkme-recognized-speakers-list">
-          {presence.result?.scope === 'recent-seven-days' && <p style={styles.note}>{tr('已标记项仅统计近 7 天已转写发声；全历史统计待接口。')}</p>}
           {marked.error !== '' && <div role="alert" style={styles.error}>{tr('已标记说话人读取失败：')} {marked.error}</div>}
           {unmarked.error !== '' && <div role="alert" style={styles.error}>{tr('未标记说话人读取失败：')} {unmarked.error}</div>}
           {unmarked.projectionState === 'building' && <div role="status" style={styles.state}>{tr('未标记说话人正在整理，结果可能不完整。')}</div>}
@@ -274,7 +292,7 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
         </div>}
         {selectedMarked !== undefined && <div style={styles.detail}>
           <button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => { setSelectedMarked(undefined) }}>{tr('‹ 返回列表')}</button>
-          <MarkedSpeakerDetail key={`${accountKey}:${selectedMarked.speakerRef}`} accountKey={accountKey} speaker={selectedMarked} loadMembers={loadMarkedMembers} />
+          <MarkedSpeakerDetail key={`${accountKey}:${selectedMarked.speakerRef}`} accountKey={accountKey} speaker={selectedMarked} loadMembers={loadMarkedMembers} version={presence.result?.version} onVersionChanged={refreshPresenceVersion} />
         </div>}
       </div>
     </div>

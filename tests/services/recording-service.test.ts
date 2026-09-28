@@ -34,8 +34,8 @@ describe('RecordingService', () => {
     let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
     const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }], failWrite: false,
-      presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
-      presence: { state: 'fresh', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
+      members: {} as Record<string, unknown>, presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
+      presence: { state: 'fresh', version: 'v1', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
     const calls: string[] = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
@@ -45,6 +45,7 @@ describe('RecordingService', () => {
       let data: Record<string, unknown> = {}
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
       if (path.endsWith('/speaker-presence/list')) data = state.presence
+      if (path.endsWith('/speaker-presence/detail')) data = state.members
       if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
       if (state.presenceMissing && path.endsWith('/get-calender-summary')) data = {
         duration_ls: [0, 0, 0, 0, 0, 0, 1_000], un_click_session_ids_per_day: [[], [], [], [], [], [], []],
@@ -80,47 +81,69 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
-  it('joins presence stats by an opaque speaker option key and excludes invalid rows', async () => {
+  it('joins presence stats by an opaque speaker option key and rejects incomplete data', async () => {
     const fixture = await speakerCacheFixture()
     try {
       const [speaker] = await fixture.service.recordingSpeakerOptions()
-      fixture.state.presence.items.push({ speaker_id: '', day_count: 0, last_seen_at: 0 })
       const result = await fixture.service.recordingSpeakerPresence()
       expect(result.state).toBe('fresh')
       expect(result.scope).toBe('all-history')
       expect(result.items).toEqual([{ optionKey: speaker!.optionKey, dayCount: 3, lastSeenAt: 1_780_000_000_000 }])
       expect(JSON.stringify(result)).not.toContain('speaker_id')
       expect(fixture.calls.some(path => path.endsWith('/speaker-presence/list'))).toBe(true)
+      fixture.state.presence.items.push({ speaker_id: '', day_count: 0, last_seen_at: 0 })
+      await expect(fixture.service.recordingSpeakerPresence()).rejects.toThrow('响应无效')
     } finally { await fixture.close() }
   })
 
-  it('uses only the last seven days when the full-history route is absent', async () => {
+  it('reports a missing backend instead of scanning seven days', async () => {
     const fixture = await speakerCacheFixture()
     try {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
       fixture.state.presenceMissing = true
-      fixture.state.recentDayStart = today.getTime()
-      fixture.state.recentTranscript = {
-        session_ls: [{ id: 'session', user_id: 42, start_at: today.getTime(), spk_ls: [
-          { num: 1, spk_id: 'speaker', inner_spk_id: 'inner-1', speaker_display_number: 12 },
-          { num: 2, spk_id: 'speaker', inner_spk_id: 'inner-2', speaker_display_number: 14 },
-        ] }],
-        child_ls: [{ session_id: 'session', start_at: 0, asr: [{ n: 1, s: 100, e: 200 }, { n: 2, s: 300, e: 500 }] }],
-      }
-      const result = await fixture.service.recordingSpeakerPresence()
-      expect(result).toMatchObject({ state: 'fresh', scope: 'recent-seven-days', items: [{ dayCount: 1, lastSeenAt: today.getTime() + 500 }] })
-      expect(fixture.calls.filter(path => path.endsWith('/one-day-trans'))).toHaveLength(1)
-      expect(fixture.calls.some(path => path.endsWith('/get-calender-summary'))).toBe(true)
+      await expect(fixture.service.recordingSpeakerPresence()).rejects.toThrow()
+      expect(fixture.calls.some(path => path.endsWith('/one-day-trans') || path.endsWith('/get-calender-summary'))).toBe(false)
+    } finally { await fixture.close() }
+  })
+
+  it('reads full-history members with opaque identities and expected version', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
       const [speaker] = await fixture.service.recordingSpeakerOptions()
-      expect(await fixture.service.recordingSpeakerMembers(speaker!.speakerRef)).toEqual({
-        scope: 'recent-seven-days', dayCount: 1, lastSeenAt: today.getTime() + 500,
-        items: [
-          { token: '14', dayCount: 1, lastSeenAt: today.getTime() + 500 },
-          { token: '12', dayCount: 1, lastSeenAt: today.getTime() + 200 },
-        ],
-      })
-      expect(fixture.calls.filter(path => path.endsWith('/one-day-trans'))).toHaveLength(1)
+      fixture.state.members = { state: 'fresh', version: 'v1', items: [{ speaker_id: 'speaker', day_count: 2, last_seen_at: 1780000000000 }], members: [{ identity_key: 'inner:private-id', token: '12', day_count: 2, last_seen_at: 1780000000000 }] }
+      const result = await fixture.service.recordingSpeakerMembers(speaker!.speakerRef, undefined, 'v1')
+      expect(result).toMatchObject({ state: 'fresh', scope: 'all-history', version: 'v1', dayCount: 2, items: [{token:'12',dayCount:2}] })
+      expect(result.items[0]?.identityKey).toBeTruthy()
+      expect(JSON.stringify(result)).not.toContain('private-id')
+      const call = fixture.fetchImpl.mock.calls.find(([url]) => String(url).endsWith('/speaker-presence/detail'))
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({speaker_id:'speaker',expected_version:'v1'})
+      expect(fixture.calls.some(path => path.endsWith('/one-day-trans') || path.endsWith('/get-calender-summary'))).toBe(false)
+      await fixture.runtime.writeSession({userId:43,accessToken:'other',refreshToken:'other'})
+      await expect(fixture.service.recordingSpeakerMembers(speaker!.speakerRef)).rejects.toThrow()
+    } finally { await fixture.close() }
+  })
+
+  it('rejects malformed detail counts and never interprets invalid members as an empty result', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const [speaker] = await fixture.service.recordingSpeakerOptions()
+      for (const invalid of [
+        { items: [{ speaker_id: 'speaker', day_count: -1, last_seen_at: 1 }] },
+        { items: [], members: {} },
+        { items: [], members: [{ identity_key: 'inner:1', token: '1', day_count: 1, last_seen_at: 1 }] },
+      ]) {
+        fixture.state.members = { state: 'fresh', version: 'v1', ...invalid }
+        await expect(fixture.service.recordingSpeakerMembers(speaker!.speakerRef)).rejects.toThrow('响应无效')
+      }
+    } finally { await fixture.close() }
+  })
+
+  it('suppresses partial numbers for all non-fresh states', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      for (const state of ['building','stale','failed']) {
+        fixture.state.presence.state = state
+        expect((await fixture.service.recordingSpeakerPresence()).items).toEqual([])
+      }
     } finally { await fixture.close() }
   })
 

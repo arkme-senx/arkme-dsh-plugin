@@ -70,27 +70,27 @@ describe('recording speaker directory', () => {
     }
   })
 
-  it('opens a labeled person and shows only verified recent source voices', async () => {
+  it('opens a labeled person and shows only verified full-history source voices', async () => {
     const loadMarkedMembers = vi.fn(async () => ({
-      scope: 'recent-seven-days' as const, dayCount: 2, lastSeenAt: new Date(2026, 8, 21).getTime(),
+      state: 'fresh' as const, scope: 'all-history' as const, dayCount: 2, lastSeenAt: new Date(2026, 8, 21).getTime(),
       items: [
-        { token: '12', dayCount: 2, lastSeenAt: new Date(2026, 8, 21).getTime() },
-        { token: 'A', dayCount: 1, lastSeenAt: new Date(2026, 8, 20).getTime() },
+        { identityKey: 'original-12', token: '12', dayCount: 2, lastSeenAt: new Date(2026, 8, 21).getTime() },
+        { identityKey: 'original-a', token: 'A', dayCount: 1, lastSeenAt: new Date(2026, 8, 20).getTime() },
       ],
     }))
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
       loadMarked={async () => [marked('a1', '周鹏')]}
-      loadPresence={async () => ({ state: 'fresh', scope: 'recent-seven-days', items: [] })}
+      loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })}
       loadMarkedMembers={loadMarkedMembers} loadUnmarked={async () => page([])} />); await flush() })
     try {
       const speaker = renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })[0]!
       await act(async () => { speaker.props.onClick(); await flush() })
-      expect(loadMarkedMembers).toHaveBeenCalledWith('speaker-a1', expect.any(AbortSignal))
+      expect(loadMarkedMembers).toHaveBeenCalledWith('speaker-a1', expect.any(AbortSignal), undefined)
       expect(text(renderer.root)).toContain('对应的识别说话人')
       expect(text(renderer.root)).toContain('说话人 12')
       expect(text(renderer.root)).toContain('说话人 A')
-      expect(text(renderer.root)).toContain('完整历史待接口')
+      expect(text(renderer.root)).toContain('全部历史')
     } finally { await act(async () => { renderer.unmount() }) }
   })
 
@@ -106,16 +106,61 @@ describe('recording speaker directory', () => {
     } finally { await act(async () => { renderer.unmount() }) }
   })
 
-  it('labels a recent fallback clearly instead of presenting it as all-history', async () => {
+  it('does not display old counts as current while stale', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
-      loadMarked={async () => [marked('a1', '周鹏'), marked('a2', '李四')]}
-      loadPresence={async () => ({ state: 'fresh', scope: 'recent-seven-days', items: [{ optionKey: 'a1', dayCount: 2, lastSeenAt: new Date(2026, 8, 20, 16, 30).getTime() }] })}
+      loadMarked={async () => [marked('a1', '周鹏')]}
+      loadPresence={async () => ({ state: 'stale', scope: 'all-history', items: [{ optionKey: 'a1', dayCount: 99, lastSeenAt: 1780000000000 }], retryAfterMs: 60000 })}
       loadUnmarked={async () => page([])} />); await flush() })
     try {
-      expect(text(renderer.root)).toContain('近 7 天出现 2 天 · 最近')
-      expect(text(renderer.root)).toContain('近 7 天未见已转写发声 · 全历史待接口')
-      expect(text(renderer.root)).toContain('已标记项仅统计近 7 天已转写发声')
+      expect(text(renderer.root)).toContain('出现统计更新中')
+      expect(text(renderer.root)).not.toContain('出现 99 天')
     } finally { await act(async () => { renderer.unmount() }) }
   })
+  it('polls a changed detail version, adopts the refreshed list version and cancels on unmount', async () => {
+    vi.useFakeTimers()
+    const signals: AbortSignal[] = []
+    const loadPresence = vi.fn(async (): Promise<ArkmeRecordingSpeakerPresence> => ({ state: 'fresh', scope: 'all-history', version: 'v2', items: [] }))
+    loadPresence.mockResolvedValueOnce({ state: 'fresh', scope: 'all-history', version: 'v1', items: [] })
+    const loadMembers = vi.fn(async (_ref: string, signal: AbortSignal, version?: string) => {
+      signals.push(signal)
+      return { state: version === 'v2' ? 'fresh' as const : 'stale' as const, scope: 'all-history' as const, version: 'v2', dayCount: 0, lastSeenAt: 0, items: [], retryAfterMs: 1000 }
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
+        loadMarked={async () => [marked('a1', '周鹏')]} loadPresence={loadPresence}
+        loadMarkedMembers={loadMembers} loadUnmarked={async () => page([])} />); await flush() })
+      await act(async () => { renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })[0]!.props.onClick(); await flush() })
+      expect(text(renderer.root)).toContain('出现统计更新中')
+      expect(text(renderer.root)).not.toContain('出现 0 天')
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); await flush() })
+      expect(loadMembers).toHaveBeenLastCalledWith('speaker-a1', expect.any(AbortSignal), 'v2')
+      expect(text(renderer.root)).toContain('暂无可核实的关联说话人')
+      await act(async () => { renderer.unmount() })
+      const count = loadMembers.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(loadMembers).toHaveBeenCalledTimes(count)
+      expect(signals.every(signal => signal.aborted)).toBe(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('clears the previous account immediately and ignores its late list and detail responses', async () => {
+    let finish!: (value: { state: 'fresh'; scope: 'all-history'; dayCount: number; lastSeenAt: number; items: [] }) => void
+    let oldSignal!: AbortSignal
+    const members = vi.fn((_ref: string, signal: AbortSignal) => { oldSignal = signal; return new Promise<Parameters<typeof finish>[0]>(resolve => { finish = resolve }) })
+    const common = { onBack: () => {}, loadPresence: async (): Promise<ArkmeRecordingSpeakerPresence> => ({ state: 'fresh', scope: 'all-history', items: [] }), loadMarkedMembers: members, loadUnmarked: async () => page([]) }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface {...common} accountKey="prod:1" loadMarked={async () => [marked('a1', '旧账号人物')]} />); await flush() })
+    try {
+      await act(async () => { renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })[0]!.props.onClick(); await flush() })
+      await act(async () => { renderer.update(<ArkmeRecognizedSpeakersSurface {...common} accountKey="prod:2" loadMarked={() => new Promise(() => {})} />); await flush() })
+      expect(oldSignal.aborted).toBe(true)
+      expect(text(renderer.root)).not.toContain('旧账号人物')
+      await act(async () => { finish({ state: 'fresh', scope: 'all-history', dayCount: 3, lastSeenAt: 5, items: [] }); await flush() })
+      expect(text(renderer.root)).not.toContain('旧账号人物')
+      expect(text(renderer.root)).not.toContain('对应的识别说话人')
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
 })
