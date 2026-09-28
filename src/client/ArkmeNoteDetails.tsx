@@ -709,7 +709,10 @@ function detailExtensionSenderName(item: ArkmeMessageCopyLinkExtensionItem): str
   return item.senderDisplayName.trim() || (item.sourceKind === 'agent_message' ? 'Agent' : '未知用户')
 }
 
-function detailExtensionAuthor(item: ArkmeMessageCopyLinkExtensionItem, personalSource: boolean, profile?: ArkmeUserProfile): {
+function detailExtensionAuthor(
+  item: ArkmeMessageCopyLinkExtensionItem, personalSource: boolean, profile?: ArkmeUserProfile,
+  sourceKind?: ArkmeSourceKind, conversationMembers: readonly ArkmeConversationMemberItem[] = [],
+): {
   name: string; avatar: string; role?: ArkmeSelfRoleSnapshot
 } {
   const role = personalSource && item.sourceKind === 'record_extension' ? item.selfRole : undefined
@@ -717,16 +720,25 @@ function detailExtensionAuthor(item: ArkmeMessageCopyLinkExtensionItem, personal
   const ownRecord = personalSource && item.sourceKind === 'record_extension' && profile !== undefined
     && (item.recordOwnerUserId === undefined || item.recordOwnerUserId === profile.userId)
   const currentNameFallback = ownRecord && item.senderNameSnapshot !== true && item.senderDisplayName.trim() === '我'
+  const privateOwn = sourceKind === 'private_chat' && item.senderIsMe === true && profile !== undefined
+  const member = item.senderMemberRef === undefined ? undefined
+    : conversationMembers.find(candidate => candidate.memberRef === item.senderMemberRef)
+  const memberName = member?.displayName.trim()
   return {
-    name: currentNameFallback ? profile?.nickname.trim() || profile?.displayName.trim() || detailExtensionSenderName(item) : detailExtensionSenderName(item),
-    avatar: arkmePersonalAvatarRef({ isMe: ownRecord,
+    name: privateOwn || currentNameFallback
+      ? profile?.nickname.trim() || profile?.displayName.trim() || detailExtensionSenderName(item)
+      : memberName && memberName !== '群成员' ? memberName : detailExtensionSenderName(item),
+    avatar: privateOwn ? profile?.avatarRef.trim() || member?.avatarRef?.trim() || item.senderAvatarUrl || ''
+      : member?.avatarRef?.trim() || arkmePersonalAvatarRef({ isMe: ownRecord,
       ...(item.senderAvatarUrl === undefined ? {} : { avatarRef: item.senderAvatarUrl }),
-    }, profile) ?? '',
+    }, profile) || '',
   }
 }
 
 function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem, author: ReturnType<typeof detailExtensionAuthor>): ArkmeTimelineItem {
   const avatar = author.avatar
+  const mediaOnlyUnavailable = item.mediaUnavailable === true && item.mediaItems.length > 0
+    && item.title.trim() === '' && item.textContent.trim() === '' && (item.contentBlocks?.length ?? 0) === 0
   return {
     itemUid: item.recordUid,
     senderName: author.name,
@@ -740,7 +752,7 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem, au
     templateKind: item.templateKind,
     displayKind: item.displayKind,
     ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
-    ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
+    ...(mediaOnlyUnavailable ? { mediaUnavailable: true } : {}),
     ...(author.role === undefined ? {} : { selfRole: author.role }),
     ...(avatar !== '' && !/^(https?:|data:|blob:)/iu.test(avatar) ? { avatarRef: avatar } : {}),
   }
@@ -803,7 +815,7 @@ function DetailExtensionParent({ parent, onOpen }: {
 
 function DetailExtensionContext({
   state, optimistic, selectedRecordUid, sourceRef, sourceIdentityKey, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
-  personalSource, currentSelfProfile,
+  personalSource, currentSelfProfile, sourceKind, conversationMembers,
 }: {
   state: ArkmeDetailExtensionLoadState
   optimistic: readonly ArkmeMessageCopyLinkExtensionItem[]
@@ -816,6 +828,8 @@ function DetailExtensionContext({
   isMentionClickable?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => boolean
   personalSource: boolean
   currentSelfProfile?: ArkmeUserProfile
+  sourceKind?: ArkmeSourceKind | undefined
+  conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   onRetry: () => void
   onSelect: (item: ArkmeMessageCopyLinkExtensionItem) => void
 }) {
@@ -839,8 +853,10 @@ function DetailExtensionContext({
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
     <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>
     <div style={styles.extensionContextList}>{orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
-      const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile)
+      const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)
       const timelineItem = detailExtensionTimelineItem(extension, author)
+      const missingMedia = extension.mediaUnavailable === true && extension.mediaItems.length > 0
+        && (extension.title.trim() !== '' || extension.textContent.trim() !== '' || (extension.contentBlocks?.length ?? 0) > 0)
       const selected = extension.recordUid === selectedRecordUid
       return <div key={extension.recordUid} style={{
         ...styles.extensionContextRow,
@@ -868,6 +884,10 @@ function DetailExtensionContext({
             {...(onMentionClick === undefined ? {} : { onMentionClick })}
             {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
           />
+          {missingMedia && <span data-arkme-missing-extension-media style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+            marginTop: 5, color: arkmeTheme.tertiary, fontSize: 12 }}>
+            <FileTextIcon size={13} aria-hidden />{tr('附件暂不可用')}
+          </span>}
         </div>
       </div>
     })}</div>
@@ -945,10 +965,16 @@ export function ArkmeTimelineDetailDrawer({
     const controller = new AbortController()
     listAbortRef.current = controller
     setRelatedState(current => current.kind === 'success' ? current : { kind: 'loading' })
-    void callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-message', {
+    const readRelated = () => callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-message', {
       sourceRef: normalizedSourceRef,
       messageActionRef,
-    }, controller.signal).then(list => {
+    }, controller.signal)
+    void readRelated().then(async first => {
+      if (first.items.length > 0 || controller.signal.aborted) return first
+      // A successful empty recall can be transient. Recheck once without
+      // manufacturing related notes or keeping stale results indefinitely.
+      try { return await readRelated() } catch { return first }
+    }).then(list => {
       if (controller.signal.aborted || listAbortRef.current !== controller) return
       setRelatedState(list.items.length === 0 ? { kind: 'empty' } : { kind: 'success', list })
     }).catch(error => {
@@ -1062,10 +1088,12 @@ export function ArkmeTimelineDetailDrawer({
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
   const personalSource = sourceKind === 'send_to_self' || sourceKind === 'topic' || sourceKind === 'default_category'
+  const privateOwnCurrentName = sourceKind === 'private_chat' && item.isMe && item.senderKind !== 'bot'
+    && currentSelfProfile !== undefined
   const currentNameFallback = personalSource && item.isMe && item.avatarSnapshot === true
     && item.senderNameSnapshot !== true && currentSelfProfile !== undefined
   const selfRole = sourceKind === undefined ? undefined : arkmeSelfRoleForPresentation(item, sourceKind)
-  const authorName = selfRole?.name ?? (currentNameFallback
+  const authorName = selfRole?.name ?? (privateOwnCurrentName || currentNameFallback
     ? currentSelfProfile?.nickname.trim() || currentSelfProfile?.displayName.trim() || item.senderName
     : arkmeTimelineDetailSenderText(item, conversationMembers))
   const authorAvatarRef = personalSource ? arkmePersonalAvatarRef(item, currentSelfProfile) : item.avatarRef
@@ -1171,6 +1199,8 @@ export function ArkmeTimelineDetailDrawer({
       state={extensionState}
       optimistic={optimisticExtensions}
       personalSource={personalSource}
+      sourceKind={sourceKind}
+      conversationMembers={conversationMembers}
       {...(currentSelfProfile === undefined ? {} : { currentSelfProfile })}
       {...(selectedExtensionRecordUid === undefined ? {} : { selectedRecordUid: selectedExtensionRecordUid })}
       {...(sourceRef === undefined ? {} : { sourceRef })}

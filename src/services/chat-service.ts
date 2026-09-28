@@ -3277,11 +3277,24 @@ export class ChatService {
       const extension = chatExtensionTreeItemFromData(child, parentRecordUid)
       if (extension === undefined) continue
       const childItem = objectValue(objectValue(child).item)
+      const relation = objectValue(childItem.relation)
       const record = objectValue(childItem.record)
       const payload = objectValue(record.payload)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, chatSessionUid)
+      const senderUserId = integerLikeValue(relation.sender_user_id ?? relation.senderUserId)
+      const humanSender = senderUserId > 0 && !timelineSenderIsBot(relation)
+      const senderMemberRef = humanSender
+        ? await this.sealChatMemberRef(session.userId, chatSessionUid, senderUserId) : undefined
+      const currentAvatarRef = humanSender
+        ? await this.profile.sealProfileImageRef(session.userId, senderUserId).catch(() => undefined) : undefined
       projections.push({
-        extension: mentions === undefined ? extension : { ...extension, mentions },
+        extension: {
+          ...extension,
+          ...(mentions === undefined ? {} : { mentions }),
+          ...(senderMemberRef === undefined ? {} : { senderMemberRef }),
+          ...(humanSender ? { senderIsMe: senderUserId === session.userId } : {}),
+          ...(currentAvatarRef === undefined ? {} : { senderAvatarUrl: currentAvatarRef }),
+        },
         mediaRecord: chatExtensionMediaRecord(child, extension.recordUid),
       })
     }

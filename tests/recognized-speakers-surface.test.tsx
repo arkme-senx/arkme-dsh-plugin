@@ -4,6 +4,7 @@ import type { ArkmeDirectoryPage, ArkmeRecordingSpeakerCandidate, ArkmeRecording
 import { ArkmeRecognizedSpeakersSurface, identifiedSpeakerRows } from '../src/client/ArkmeRecognizedSpeakersSurface.js'
 import { UnmarkedSpeakerDetail } from '../src/client/redesign/contacts/UnmarkedSpeakerDetail.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { recognizedSpeakerTracker } from '../src/client/recognized-speaker-tracker.js'
 
 const marked = (optionKey: string, label: string, personKey?: string): ArkmeRecordingSpeakerCandidate => ({
   kind: 'speaker', optionKey, speakerRef: `speaker-${optionKey}`, label, isCurrentUser: false,
@@ -19,6 +20,101 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); aw
 const text = (node: ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : text(child)).join('')
 
 describe('recording speaker directory', () => {
+  it('pins my verified identity in both orders, preserves filters and acknowledges the loaded directory', async () => {
+    const loadMarked = async () => [marked('other', '经常的人'), { ...marked('self', '本人'), isCurrentUser: true }]
+    const candidate = { ...unmarked('u', '12'), identityKey: 'stable-u', appearanceDays: 100, latestAtMillis: 900 }
+    recognizedSpeakerTracker.observe('pin:1', await loadMarked(), [], true)
+    recognizedSpeakerTracker.observe('pin:1', await loadMarked(), [candidate])
+    expect(recognizedSpeakerTracker.get('pin:1').newCount).toBe(1)
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="pin:1" onBack={() => {}} loadMarked={loadMarked}
+      loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [{ optionKey: 'other', dayCount: 100, lastSeenAt: 1000 }, { optionKey: 'self', dayCount: 1, lastSeenAt: 10 }] })}
+      loadUnmarked={async () => page([candidate])} />); await flush() })
+    const rows = () => renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' }).map(text)
+    try {
+      expect(rows()[0]).toContain('本人 · 我')
+      expect(text(renderer.root)).not.toContain('还没有标记你的声音')
+      expect(recognizedSpeakerTracker.get('pin:1').newCount).toBe(0)
+      await act(async () => { renderer.root.findByType('select').props.onChange({ target: { value: 'recent' } }) })
+      expect(rows()[0]).toContain('本人 · 我')
+      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '未标记')!.props.onClick() })
+      expect(rows()).toHaveLength(1)
+      expect(rows()[0]).toContain('说话人 12')
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+  it('mixes marked and unmarked speakers, changes order without fetching again and keeps it across filters', async () => {
+    const loadMarked = vi.fn(async () => [marked('many', '经常的人'), marked('recent', '最近的人')])
+    const loadPresence = vi.fn(async (): Promise<ArkmeRecordingSpeakerPresence> => ({ state: 'fresh', scope: 'all-history', items: [
+      { optionKey: 'many', dayCount: 8, lastSeenAt: 100 }, { optionKey: 'recent', dayCount: 1, lastSeenAt: 300 },
+    ] }))
+    const loadUnmarked = vi.fn(async () => page([{ ...unmarked('u', '12'), appearanceDays: 8, latestAtMillis: 200 }]))
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="sort:1" onBack={() => {}} loadMarked={loadMarked} loadPresence={loadPresence} loadUnmarked={loadUnmarked} />); await flush() })
+    const rows = () => renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' }).map(text)
+    try {
+      expect(renderer.root.findByType('select').props.value).toBe('frequent')
+      expect(rows()[0]).toContain('说话人 12')
+      expect(rows()[1]).toContain('经常的人')
+      await act(async () => { renderer.root.findByType('select').props.onChange({ target: { value: 'recent' } }) })
+      expect(rows()[0]).toContain('最近的人')
+      expect(rows()[1]).toContain('说话人 12')
+      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '已标记')!.props.onClick() })
+      expect(rows()).toHaveLength(2)
+      expect(rows()[0]).toContain('最近的人')
+      await act(async () => { renderer.root.findByType('input').props.onChange({ target: { value: '经常' } }) })
+      expect(rows()).toHaveLength(1)
+      expect(renderer.root.findByType('select').props.value).toBe('recent')
+      expect(loadUnmarked).toHaveBeenCalledTimes(1)
+      expect(loadMarked).toHaveBeenCalledTimes(1)
+      expect(loadPresence).toHaveBeenCalledTimes(1)
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
+  it('brings a recent speaker from a later page to the top and explicitly labels partial loading', async () => {
+    let finish!: (value: ArkmeDirectoryPage) => void
+    const loadUnmarked = vi.fn(async (cursor: string) => cursor === ''
+      ? page([{ ...unmarked('old', '1'), appearanceDays: 5, latestAtMillis: 100 }], 'next')
+      : await new Promise<ArkmeDirectoryPage>(resolve => { finish = resolve }))
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="sort:2" onBack={() => {}} loadMarked={async () => []} loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })} loadUnmarked={loadUnmarked} />); await flush() })
+    try {
+      expect(text(renderer.root)).toContain('排序仍在更新')
+      await act(async () => { renderer.root.findByType('select').props.onChange({ target: { value: 'recent' } }) })
+      await act(async () => { finish(page([{ ...unmarked('new', '2'), appearanceDays: 1, latestAtMillis: 300 }])); await flush() })
+      expect(text(renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })[0]!)).toContain('说话人 2')
+      expect(text(renderer.root)).not.toContain('排序仍在更新')
+      expect(text(renderer.root)).not.toContain('列表尚未完整')
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
+  it('preserves loaded rows but never labels failed later pages as fully sorted', async () => {
+    const loadUnmarked = vi.fn(async (cursor: string) => {
+      if (cursor !== '') throw new Error('offline')
+      return page([unmarked('u', '12')], 'next')
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="sort:3" onBack={() => {}} loadMarked={async () => []} loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })} loadUnmarked={loadUnmarked} />); await flush() })
+    try {
+      expect(text(renderer.root)).toContain('说话人 12')
+      expect(text(renderer.root)).toContain('列表尚未完整')
+      expect(text(renderer.root)).toContain('offline')
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
+  it('limits rendering rather than searching or sorting to the first display page', async () => {
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="sort:4" onBack={() => {}}
+      loadMarked={async () => Array.from({ length: 105 }, (_, i) => marked(String(i), `人物 ${i}`))}
+      loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })} loadUnmarked={async () => page([])} />); await flush() })
+    try {
+      expect(renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })).toHaveLength(100)
+      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '显示更多说话人')!.props.onClick() })
+      expect(renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })).toHaveLength(105)
+      await act(async () => { renderer.root.findByType('input').props.onChange({ target: { value: '人物 104' } }) })
+      expect(renderer.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })).toHaveLength(1)
+    } finally { await act(async () => { renderer.unmount() }) }
+  })
+
   it('returns to the selected recording day after opening the speaker directory', () => {
     const selectedDay = new Date(2026, 8, 20).getTime()
     arkmeUi.showRecognizedSpeakers(selectedDay)
@@ -52,7 +148,6 @@ describe('recording speaker directory', () => {
       expect(text(renderer.root)).toContain('周鹏')
       expect(text(renderer.root)).toContain('出现 3 天 · 最近')
       expect(text(renderer.root)).toContain('说话人 12')
-      await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '加载更多未标记说话人')?.props.onClick(); await flush() })
       expect(loadUnmarked).toHaveBeenCalledWith('next', expect.any(AbortSignal))
       expect(text(renderer.root)).toContain('说话人 27')
       await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '已标记')?.props.onClick() })
@@ -64,7 +159,7 @@ describe('recording speaker directory', () => {
       await act(async () => { detail.props.onDirectoryRefresh(); await flush() })
       expect(loadMarked).toHaveBeenCalledTimes(2)
       expect(loadPresence).toHaveBeenCalledTimes(2)
-      expect(loadUnmarked).toHaveBeenCalledTimes(3)
+      expect(loadUnmarked).toHaveBeenCalledTimes(4)
     } finally {
       await act(async () => { renderer.unmount() })
     }
@@ -188,26 +283,24 @@ describe('recording speaker directory', () => {
     } finally { if (renderer) await act(async () => { renderer.unmount() }); vi.useRealTimers() }
   })
 
-  it('does not let an aborted pagination request unlock a newer refresh generation', async () => {
+  it('ignores a late metadata page from before refresh and automatically completes the new traversal', async () => {
     let finishOld!: (value: ArkmeDirectoryPage) => void
     const loadUnmarked = vi.fn<(cursor: string, signal: AbortSignal) => Promise<ArkmeDirectoryPage>>()
       .mockResolvedValueOnce(page([], 'old-next'))
       .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
-      .mockResolvedValueOnce(page([], 'new-next'))
-      .mockImplementation(() => new Promise(() => {}))
+      .mockResolvedValueOnce(page([unmarked('new', '1')]))
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeRecognizedSpeakersSurface accountKey="prod:1" onBack={() => {}}
       loadMarked={async () => []} loadPresence={async () => ({ state: 'fresh', scope: 'all-history', items: [] })} loadUnmarked={loadUnmarked} />); await flush() })
-    const more = () => renderer.root.findAllByType('button').find(button => ['加载更多未标记说话人', '正在加载…'].includes(text(button)))!
     try {
-      await act(async () => { more().props.onClick(); await flush() })
+      expect(loadUnmarked).toHaveBeenCalledTimes(2)
       await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === '刷新')!.props.onClick(); await flush() })
-      await act(async () => { more().props.onClick(); await flush() })
-      expect(loadUnmarked).toHaveBeenCalledTimes(4)
+      expect(loadUnmarked).toHaveBeenCalledTimes(3)
       await act(async () => { finishOld(page([unmarked('old', '99')])); await flush() })
-      await act(async () => { more().props.onClick(); await flush() })
-      expect(loadUnmarked).toHaveBeenCalledTimes(4)
+      expect(loadUnmarked).toHaveBeenCalledTimes(3)
       expect(text(renderer.root)).not.toContain('说话人 99')
+      expect(text(renderer.root)).toContain('说话人 1')
+      expect(text(renderer.root)).not.toContain('列表尚未完整')
     } finally { await act(async () => { renderer.unmount() }) }
   })
 

@@ -7968,6 +7968,32 @@ describe('conversation send directory projection', () => {
     expect(detailContent()).toBe('other-topic-source')
   })
 
+  it.each([
+    { conversation: target, label: '来源：Harness4' },
+    { conversation: group, label: '来源：群聊' },
+  ])('keeps the $conversation.kind source badge in a message detail and returns to that conversation', async ({ conversation, label }) => {
+    timeline = [{ itemUid: 'source-badge-message', senderName: '同事', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '需要查看出处', status: 1 }]
+    activeSource = conversation
+    arkmeChatDirectory.publish([target, group])
+    arkmeUi.selectSource(conversation)
+    vi.stubGlobal('HTMLElement', class {})
+    vi.stubGlobal('document', { activeElement: null, body: { style: { overflow: '' } },
+      addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve() })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    const trigger = {}
+    await act(async () => { bubble.props.onKeyDown({ key: 'Enter', target: trigger,
+      currentTarget: trigger, preventDefault: vi.fn() }) })
+    const detail = renderer!.root.findByProps({ 'data-arkme-note-detail': 'true' })
+    const badge = detail.findByProps({ 'data-arkme-detail-conversation-source': true })
+    expect(badge.props['aria-label']).toBe(label)
+    await act(async () => { badge.props.onClick({ stopPropagation: vi.fn() }) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(0)
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(conversation.sourceRef)
+  })
+
   it('projects a detail-drawer extension into the current conversation and retains it through the immediate refresh', async () => {
     timeline = [{
       itemUid: 'parent-record', messageActionRef: 'opaque-detail-extension-action',

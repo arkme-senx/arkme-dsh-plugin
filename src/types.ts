@@ -156,7 +156,7 @@ export type ArkmeDirectorySectionKind =
 export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
-  | { kind: 'unmarked-speaker'; candidateRef: string; speakerToken?: string; displayName: string; subtitle: string }
+  | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
 
@@ -2460,6 +2460,10 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
   recordUid: string
+  /** Opaque current-conversation member identity for chat reply presentation. */
+  senderMemberRef?: string
+  /** Whether this chat reply was sent by the signed-in viewer. */
+  senderIsMe?: boolean
   /** Locally frozen speaking role for an owned "send to self" extension. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Whether the author's display name came from the record's creation-time snapshot. */

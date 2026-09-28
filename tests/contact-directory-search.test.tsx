@@ -187,6 +187,8 @@ it.each([['repeated cursor', ['same', 'same'], 2], ['cursor cycle', ['a', 'b', '
   'stops a speaker %s through the real opaque cursor service', async (_name, nextCursors, expectedRequests) => {
     let requests = 0
     const service = new UnmarkedSpeakerService({
+      config: { environment: 'prod' },
+      stateStore: { uniqueCode: async () => 'stable-host-secret' },
       requireSession: async () => ({ userId: 7, accessToken: 'access', refreshToken: 'refresh' }),
       authenticatedAudioPost: async () => {
         requests += 1
