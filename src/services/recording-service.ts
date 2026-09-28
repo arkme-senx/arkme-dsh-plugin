@@ -1,7 +1,6 @@
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
-import { projectRecentSpeakerDetails, type RecentSpeakerPresenceDetail, type RecentSpeakerTranscriptDay } from '../recording-speaker-presence.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
@@ -212,14 +211,6 @@ export class RecordingService {
   private readonly recordingImportSource: RecordingImportSource
   private readonly recordingImportOwnerGateway: RecordingImportOwnerGateway
   private speakerCacheRevision = 0
-  private recentSpeakerDetailsCache?: {
-    ownerUserId: number
-    revision: number
-    firstDay: number
-    updatedAt: number
-    speakerIds: Set<string>
-    details: RecentSpeakerPresenceDetail[]
-  }
   private readonly unsubscribeSpeakerAccount: () => void
   private readonly forwardGateway: RecordingForwardGateway
 
@@ -405,20 +396,14 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const revision = this.speakerCacheRevision
-    let data: Record<string, unknown>
-    try {
-      data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/speaker-presence/list', {}, session, signal,
-      )
-    } catch (error) {
-      // Only a missing route means the old server needs a bounded fallback.
-      // Authentication, outage and malformed responses must remain visible errors.
-      if (!(error instanceof ArkmePluginError) || (error.upstreamStatus !== 404
-        && error.httpStatus !== 404 && error.code !== 'arkme-code-404')) throw error
-      return await this.recordingSpeakerPresenceRecent(session, revision, signal)
-    }
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/speaker-presence/list', {}, session, signal,
+    )
     const rawState = stringValue(data.state)
     if (rawState !== 'building' && rawState !== 'fresh' && rawState !== 'stale' && rawState !== 'failed') {
+      throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
+    }
+    if (!Array.isArray(data.items) || (rawState === 'fresh' && stringValue(data.version) === '')) {
       throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
     }
     const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
@@ -427,39 +412,24 @@ export class RecordingService {
       const speakerId = stringValue(item.speaker_id).trim()
       const dayCount = numberValue(item.day_count)
       const lastSeenAt = numberValue(item.last_seen_at)
-      if (speakerId === '' || !Number.isSafeInteger(dayCount) || dayCount <= 0 || !Number.isSafeInteger(lastSeenAt) || lastSeenAt <= 0) return []
+      if (speakerId === '' || !Number.isSafeInteger(dayCount) || dayCount <= 0 || !Number.isSafeInteger(lastSeenAt) || lastSeenAt <= 0) {
+        throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
+      }
       return [{ optionKey: this.recordingSpeakerOptionKey(speakerRefKey, session.userId, 'speaker', speakerId), dayCount, lastSeenAt }]
     })
     await this.assertSpeakerReadCurrent(session, revision, signal)
     return {
       state: rawState,
       scope: 'all-history',
-      items,
+      items: rawState === 'fresh' ? items : [],
+      ...(stringValue(data.version) === '' ? {} : { version: stringValue(data.version) }),
       ...(numberValue(data.updated_at) > 0 ? { updatedAt: numberValue(data.updated_at) } : {}),
       ...(numberValue(data.retry_after_ms) > 0 ? { retryAfterMs: numberValue(data.retry_after_ms) } : {}),
     }
   }
 
-  private async recordingSpeakerPresenceRecent(
-    session: ArkmeSessionCredentials,
-    revision: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingSpeakerPresence> {
-    const snapshot = await this.loadRecentSpeakerDetails(session, revision, signal)
-    const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
-    await this.assertSpeakerReadCurrent(session, revision, signal)
-    return {
-      state: 'fresh', scope: 'recent-seven-days',
-      items: snapshot.details.map(stat => ({
-        optionKey: this.recordingSpeakerOptionKey(speakerRefKey, session.userId, 'speaker', stat.speakerId),
-        dayCount: stat.dayCount, lastSeenAt: stat.lastSeenAt,
-      })),
-      updatedAt: snapshot.updatedAt,
-    }
-  }
-
-  /** Read a selected marked person's verifiable source voices, not a guessed all-history mapping. */
-  async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMembers> {
+  /** All-history source identities, authorized by the same account-bound speaker reference as the UI. */
+  async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const revision = this.speakerCacheRevision
@@ -467,79 +437,45 @@ export class RecordingService {
     if (reference.viewerUserId !== session.userId || reference.target.kind !== 'speaker') {
       throw new ArkmePluginError('recording-speaker-ref-account-mismatch', '说话人引用与当前账号不匹配', false, 403)
     }
-    const targetSpeakerId = reference.target.speakerId
-    const snapshot = await this.loadRecentSpeakerDetails(session, revision, signal)
-    if (!snapshot.speakerIds.has(targetSpeakerId)) {
-      throw new ArkmePluginError('recording-speaker-target-missing', '该说话人已不存在，请重新选择', false, 409)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/speaker-presence/detail', {
+        speaker_id: reference.target.speakerId,
+        ...(expectedVersion === undefined ? {} : { expected_version: expectedVersion }),
+      }, session, signal,
+    )
+    const state = stringValue(data.state)
+    if (!['building', 'fresh', 'stale', 'failed'].includes(state)) {
+      throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
     }
-    const detail = snapshot.details.find(item => item.speakerId === targetSpeakerId)
+    if (state === 'fresh' && (stringValue(data.version) === '' || !Array.isArray(data.items) || (data.members !== undefined && !Array.isArray(data.members)))) {
+      throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
+    }
+    const key = await this.recordingRefKey('arkme-recording-speaker-v1')
+    const targetSpeakerId = reference.target.speakerId
+    const stat = listValue(data.items).map(objectValue).find(item => item.speaker_id === targetSpeakerId)
+    if (state === 'fresh' && stat !== undefined && (!Number.isSafeInteger(stat.day_count) || numberValue(stat.day_count) <= 0 || !Number.isSafeInteger(stat.last_seen_at) || numberValue(stat.last_seen_at) <= 0)) {
+      throw new ArkmePluginError('recording-speaker-presence-invalid', '说话人出现统计响应无效', true, 502)
+    }
+    const items = state !== 'fresh' ? [] : listValue(data.members).map(raw => {
+      const item = objectValue(raw)
+      const identity = stringValue(item.identity_key)
+      const token = stringValue(item.token)
+      const dayCount = numberValue(item.day_count)
+      const lastSeenAt = numberValue(item.last_seen_at)
+      if (stat === undefined || dayCount > numberValue(stat.day_count) || lastSeenAt > numberValue(stat.last_seen_at) || identity === '' || token === '' || !Number.isSafeInteger(dayCount) || dayCount <= 0 || !Number.isSafeInteger(lastSeenAt) || lastSeenAt <= 0) {
+        throw new ArkmePluginError('recording-speaker-members-invalid', '关联说话人响应无效', true, 502)
+      }
+      return { identityKey: this.recordingSpeakerOptionKey(key, session.userId, 'speaker', `presence:${identity}`), token, dayCount, lastSeenAt }
+    })
     await this.assertSpeakerReadCurrent(session, revision, signal)
     return {
-      scope: 'recent-seven-days', dayCount: detail?.dayCount ?? 0, lastSeenAt: detail?.lastSeenAt ?? 0,
-      items: detail?.members.map(({ token, dayCount, lastSeenAt }) => ({ token, dayCount, lastSeenAt })) ?? [],
+      state: state as ArkmeRecordingSpeakerMembers['state'], scope: 'all-history',
+      dayCount: state === 'fresh' ? numberValue(stat?.day_count) : 0,
+      lastSeenAt: state === 'fresh' ? numberValue(stat?.last_seen_at) : 0,
+      items,
+      ...(stringValue(data.version) === '' ? {} : { version: stringValue(data.version) }),
+      ...(numberValue(data.retry_after_ms) > 0 ? { retryAfterMs: numberValue(data.retry_after_ms) } : {}),
     }
-  }
-
-  private async loadRecentSpeakerDetails(
-    session: ArkmeSessionCredentials,
-    revision: number,
-    signal?: AbortSignal,
-  ): Promise<{ speakerIds: Set<string>; details: RecentSpeakerPresenceDetail[]; updatedAt: number }> {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const firstDay = new Date(today)
-    firstDay.setDate(firstDay.getDate() - 6)
-    const cached = this.recentSpeakerDetailsCache
-    if (cached?.ownerUserId === session.userId && cached.revision === revision
-      && cached.firstDay === firstDay.getTime() && Date.now() - cached.updatedAt < 15_000) {
-      await this.assertSpeakerReadCurrent(session, revision, signal)
-      return { speakerIds: cached.speakerIds, details: cached.details, updatedAt: cached.updatedAt }
-    }
-    const afterLastDay = new Date(today)
-    afterLastDay.setDate(afterLastDay.getDate() + 1)
-    const [speakerData, calendar] = await Promise.all([
-      this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/get-speaker-ls', {}, session, signal),
-      this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/get-calender-summary', {
-        from_stamp: firstDay.getTime(), to_stamp: afterLastDay.getTime(),
-      }, session, signal),
-    ])
-    const durations = calendar.duration_ls
-    const unreviewed = calendar.un_click_session_ids_per_day
-    if (!Array.isArray(speakerData.spk_ls) || !Array.isArray(durations) || durations.length < 7
-      || !Array.isArray(unreviewed) || unreviewed.length < 7) {
-      throw new ArkmePluginError('recording-speaker-recent-invalid', '近 7 天录音统计响应无效', true, 502)
-    }
-    const days: number[] = []
-    const cursor = new Date(firstDay)
-    for (let index = 0; index < 7; index += 1) {
-      if (numberValue(durations[index]) > 0 || listValue(unreviewed[index]).length > 0) days.push(cursor.getTime())
-      cursor.setDate(cursor.getDate() + 1)
-    }
-    const transcripts: RecentSpeakerTranscriptDay[] = []
-    let nextDay = 0
-    const readDay = async () => {
-      while (nextDay < days.length) {
-        const dateStamp = days[nextDay++]!
-        signal?.throwIfAborted()
-        const day = new Date(dateStamp)
-        const response = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/one-day-trans', {
-          start_at: dateStamp, tz_offset: -day.getTimezoneOffset() * 60_000,
-        }, session, signal)
-        transcripts.push({ dateStamp, response })
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(2, days.length) }, readDay))
-    const details = projectRecentSpeakerDetails(speakerData.spk_ls, transcripts, session.userId)
-    const speakerIds = new Set(listValue(speakerData.spk_ls).map(raw => {
-      const speaker = objectValue(raw)
-      return stringValue(speaker.speaker_id ?? speaker.id ?? speaker.spk_id).trim()
-    }).filter(Boolean))
-    await this.assertSpeakerReadCurrent(session, revision, signal)
-    const updatedAt = Date.now()
-    this.recentSpeakerDetailsCache = {
-      ownerUserId: session.userId, revision, firstDay: firstDay.getTime(), updatedAt, speakerIds, details,
-    }
-    return { speakerIds, details, updatedAt }
   }
 
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> {

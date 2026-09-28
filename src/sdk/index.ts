@@ -1,3 +1,5 @@
+import type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
+export type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
 import type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery } from '../ai-points.js'
 export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, ArkmeAiPointsConsumption } from '../ai-points.js'
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
@@ -456,6 +458,27 @@ export class ArkmeSdk {
     // Storing it unbound and later calling this.fetchImpl(...) makes the SDK instance
     // the receiver and Chrome rejects the call with "Illegal invocation".
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+  }
+
+  /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */
+  async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
+    await this.requireSpeakerPresence(signal)
+    return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> {
+    await this.requireSpeakerPresence(signal)
+    return await this.call('recordings.speaker.presence', {}, signal)
+  }
+
+  async recordingSpeakerMembers(speakerRef: string, options: { expectedVersion?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordingSpeakerMembers> {
+    if (speakerRef.trim() === '') throw new TypeError('speakerRef is required')
+    await this.requireSpeakerPresence(options.signal)
+    return await this.call('recordings.speaker.members', { speakerRef, ...(options.expectedVersion === undefined ? {} : { expectedVersion: options.expectedVersion }) }, options.signal)
+  }
+
+  private async requireSpeakerPresence(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.speakerPresence !== true) throw new Error('当前 Provider 不支持全历史说话人统计')
   }
 
   async capabilities(signal?: AbortSignal): Promise<ArkmeProviderCapabilities> {

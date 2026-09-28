@@ -1366,6 +1366,7 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    speakerPresence?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -3060,19 +3061,21 @@ export interface ArkmeRecordingSpeakerCandidate {
 
 export interface ArkmeRecordingSpeakerPresence {
   state: 'building' | 'fresh' | 'stale' | 'failed'
-  /** Recent-only fallback is never presented as an all-history total. */
-  scope: 'all-history' | 'recent-seven-days'
+  scope: 'all-history'
+  version?: string
   items: Array<{ optionKey: string; dayCount: number; lastSeenAt: number }>
   updatedAt?: number
   retryAfterMs?: number
 }
 
 export interface ArkmeRecordingSpeakerMembers {
-  /** Existing day-transcript data only proves associations in this bounded window. */
-  scope: 'recent-seven-days'
+  state: ArkmeRecordingSpeakerPresence['state']
+  scope: 'all-history'
+  version?: string
+  retryAfterMs?: number
   dayCount: number
   lastSeenAt: number
-  items: Array<{ token: string; dayCount: number; lastSeenAt: number }>
+  items: Array<{ identityKey: string; token: string; dayCount: number; lastSeenAt: number }>
 }
 
 export interface ArkmeRecordingSpeakerRecommendation {
@@ -3715,6 +3718,9 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.presence'
+  | 'recordings.speaker.members'
   | 'self-roles.list'
   | 'self-roles.create'
   | 'self-roles.update'
@@ -4069,9 +4075,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
   | 'recordings.playback.open'
-  | 'recordings.speaker.options'
-  | 'recordings.speaker.presence'
-  | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
