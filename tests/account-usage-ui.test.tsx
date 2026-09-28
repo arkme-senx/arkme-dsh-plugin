@@ -54,7 +54,7 @@ describe('account points and independent usage', () => {
     expect(host.textContent).not.toContain('1 元 = 100 积分')
     expect(host.querySelector('[data-usage-kind="ai-points"] .arkme-usage-label')?.textContent).not.toContain('消费记录')
     expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-expanded')).toBe('false')
-    expect(host.textContent).toContain('暂占 250 积分')
+    expect(host.textContent).not.toMatch(/暂占|使用中/)
     expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
     expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')
     expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.textContent).toContain('暂未做限制')

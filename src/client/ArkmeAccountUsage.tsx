@@ -1,4 +1,4 @@
-import { formatAiPoints, pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
+import { formatAiPoints, type ArkmeAiPointsAccount } from '../ai-points.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -142,7 +142,6 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
       {points.status !== 'ready' ? <Pending status={points.status} onRetry={retry} /> : <>
         <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatAiPoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(points.value.grantedPoints), v1: formatAiPoints(points.value.purchasedPoints) })}</span></p>
         {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
-        {pointsUnits(points.value.reservedPoints) > 0n && <small>{tr('任务进行中暂占')} {formatAiPoints(points.value.reservedPoints)} {tr('积分，结束后返还未用部分')}</small>}
       </>}
       <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
       {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
