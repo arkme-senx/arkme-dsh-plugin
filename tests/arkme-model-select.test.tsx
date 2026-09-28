@@ -98,7 +98,7 @@ it('does not load unavailable sessions, honors locked state, and cancels quota w
 
 it('consolidates model prices into one keyboard-accessible disclosure without selecting a model',async()=>{
  const group=state.groups.find(group=>group.id==='arkme-managed')!
- group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分，已含服务费'
+ group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分。'
  state = { ...state, groups: state.groups.map(provider => provider === group ? { ...group, models: [...group.models,
    { id: 'flash', name: 'DeepSeek V4 Flash', description: '输入 0.32 积分，输出 1.28 积分' },
  ] } : provider) }
