@@ -43,3 +43,20 @@ it('merges clean cloud roles without clobbering offline edits and resolves confl
   expect((await db.listSelfRoles(1))[0]).toMatchObject({name:'另一设备',syncState:'synced'})
  }finally{db.close();await rm(dir,{recursive:true,force:true})}
 })
+
+it('deletion supersedes a rejected profile operation without user conflict resolution',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'role-delete-conflict-'));const db=new ArkmeLocalDatabase(dir,new ArkmeStateStore(dir))
+ try{
+  const cloud={role_id:randomUUID(),name:'云端',version:1,deleted:false,update_at:1}
+  db.selfRoleSync.merge(1,cloud)
+  await db.updateSelfRole(1,cloud.role_id,'离线改名')
+  db.selfRoleSync.next(1);db.selfRoleSync.conflict(1,cloud.role_id,'另一端已修改')
+  await db.deleteSelfRole(1,cloud.role_id)
+  expect(db.selfRoleSync.next(1)).toMatchObject({deleted:true})
+  db.selfRoleSync.conflict(1,cloud.role_id,'迟到的改名冲突')
+  expect(db.selfRoleSync.next(1)).toMatchObject({deleted:true})
+  db.selfRoleSync.acknowledge(1,{...cloud,name:'最新云端名称',version:3,deleted:true})
+  expect(db.selfRoleSync.next(1)).toBeUndefined()
+  expect(await db.listSelfRoles(1)).toEqual([])
+ }finally{db.close();await rm(dir,{recursive:true,force:true})}
+})

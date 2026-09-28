@@ -88,6 +88,7 @@ describe('local self speaking roles', () => {
       await expect(service.createSelfRole(43, '理性我')).rejects.toMatchObject({ code: 'self-role-account-changed' })
       await expect(service.createSelfRole(42, 'bad', 'data:image/png;base64,xxx')).rejects.toMatchObject({ code: 'self-role-avatar-invalid' })
       await expect(service.createSelfRole(42, 'x'.repeat(21))).rejects.toMatchObject({ code: 'self-role-name-invalid' })
+      await expect(service.createSelfRole(42, 'a\u0085b')).rejects.toMatchObject({ code: 'self-role-name-invalid' })
       const role = await dispatchArkmeHostOperation(service, 'self-roles.create', { expectedUserId: 42, name: '理性我' }) as { roleId: string }
       expect(await dispatchArkmeHostOperation(service, 'self-roles.list', { expectedUserId: 42 })).toMatchObject([{ roleId: role.roleId, name: '理性我' }])
       await expect(service.bindSelfRole(43, source.sourceRef, recordUid, role.roleId)).rejects.toMatchObject({ code: 'self-role-account-changed' })

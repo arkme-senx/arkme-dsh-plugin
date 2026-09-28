@@ -1683,7 +1683,7 @@ export class ArkmeService {
 
   private selfRoleName(name: string): string {
     const normalized = name.trim()
-    if (normalized === '' || Array.from(normalized).length > 20 || /[\x00-\x1f\x7f]/.test(normalized)) {
+    if (normalized === '' || Array.from(normalized).length > 20 || /[\x00-\x1f\x7f-\x9f]/.test(normalized)) {
       throw new ArkmePluginError('self-role-name-invalid', '角色名称须为 1–20 个字符', false, 400)
     }
     return normalized

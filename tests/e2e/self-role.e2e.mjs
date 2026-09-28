@@ -99,6 +99,15 @@ describe('private roles through the packed plugin and real Record API',()=>{
    await page.locator('[data-arkme-self-role-trigger]').click()
    await page.getByText('改名后的角色',{exact:false}).first().waitFor()
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
+   // Exercise the actual user path: picker -> create -> select -> composer -> Record.
+   await page.getByRole('menuitem',{name:'＋ 创建角色',exact:true}).click()
+   await page.getByRole('textbox',{name:'角色名称',exact:true}).fill('界面创建角色')
+   await page.getByRole('button',{name:'创建并选用',exact:true}).click()
+   await page.getByRole('dialog',{name:'创建发言角色'}).waitFor({state:'hidden'})
+   const uiRoleId=await page.locator('[data-arkme-self-role-trigger]').getAttribute('data-arkme-self-role-id')
+   await page.locator('.arkme-conversation-textarea[contenteditable="true"]').fill('界面端到端角色正文')
+   await page.getByRole('button',{name:/^(发送消息|Message)$/}).click()
+   await expect.poll(async()=> (await service.readSource(target.sourceRef)).items.find(item=>item.textContent==='界面端到端角色正文')?.selfRole?.roleId,{timeout:40000}).toBe(uiRoleId)
    // Existing content enters the same metadata recovery path without resending.
    const oldUid=randomUUID()
    await upstream('/api/v1/records/create',{record_uid:oldUid,template_kind:1,text_content:'旧客户端正文',title:'',send_at:Date.now()})
@@ -107,7 +116,11 @@ describe('private roles through the packed plugin and real Record API',()=>{
    await expect.poll(async()=> (await upstream('/api/v1/records/detail',{record_uid:oldUid})).record_core.self_role_snapshot?.role_id,{timeout:40000}).toBe(role.roleId)
    const after=(await upstream('/api/v1/records/detail',{record_uid:oldUid})).record_core
    expect(after.version).toBe(before.version);expect(after.text_content).toBe(before.text_content)
+   const cloudRole=(await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)
+   await upstream('/api/v1/self-roles/apply',{role_id:role.roleId,name:'另一端删除前改名',expected_version:cloudRole.version,deleted:false})
    await sdk.deleteSelfRole(10001,role.roleId)
+   await expect.poll(async()=> (await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)?.deleted,{timeout:40000}).toBe(true)
+   expect((await upstream('/api/v1/self-roles/list',{})).items.find(r=>r.role_id===role.roleId)?.name).toBe('另一端删除前改名')
    expect((await upstream('/api/v1/records/detail',{record_uid:recordUid})).record_core.self_role_snapshot.name).toBe('离线角色')
   }catch(error){failure=error;throw error}finally{
    await browser?.close()
@@ -115,5 +128,5 @@ describe('private roles through the packed plugin and real Record API',()=>{
    try{await scaffold?.close()}catch(error){if(!failure)throw error}
    proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));await rm(root,{recursive:true,force:true})
   }
- },180000)
+ },240000)
 })

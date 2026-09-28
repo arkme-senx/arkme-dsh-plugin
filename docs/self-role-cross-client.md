@@ -15,7 +15,7 @@
 
 ## 本地数据与离线恢复
 
-扩展既有 self_role / self_role_record，不新建消息队列。角色行保存 cloud_version、cloud_payload、pending_payload、sync_error 与墓碑；pending_payload 在网络前冻结，响应丢失重放同一操作，后来本机编辑保持待同步。显式接受云端版本才能清除冲突。
+扩展既有 self_role / self_role_record，不新建消息队列。角色行保存 cloud_version、cloud_payload、pending_payload、sync_error 与墓碑；pending_payload 在网络前冻结，响应丢失重放同一操作，后来本机编辑保持待同步。资料冲突通过显式接受云端版本处理；删除仅改生命周期，保留服务端最新名称头像，不与改名竞争版本。删除可替代已被明确拒绝的资料操作，未知结果仍先重放确认。
 
 绑定以 cloud_ack 区分本机冻结事实与已确认云端事实；已确认绑定不能取消或换到另一个记录 UID。旧本机绑定按 keyset 分页补齐云端元数据，不创建新正文。单个绑定冲突不阻断其他绑定。云端快照进入缓存，重启离线仍能显示。
 

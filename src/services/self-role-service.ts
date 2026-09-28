@@ -62,9 +62,15 @@ export class SelfRoleService {
     const local=this.local;if(!local)return undefined
     const snapshot=(await local.selfRoleSnapshots(session.userId,[recordUid])).get(recordUid)
     if(!snapshot)return undefined
-    await this.exclusive(session.userId,async()=>{await this.flush(session,snapshot.roleId)})
-    await this.assertAccount(session)
-    return await this.cloudSnapshot(session,snapshot)
+    let prepared: CloudSelfRoleSnapshot | undefined
+    await this.exclusive(session.userId,async()=>{
+      await this.flush(session,snapshot.roleId)
+      await this.assertAccount(session)
+      // Deleted roles no longer upload their directory avatar. Frozen messages
+      // still share its single upload receipt through this same account lane.
+      prepared = await this.cloudSnapshot(session,snapshot)
+    })
+    return prepared
   }
   acknowledge(session:ArkmeSessionCredentials,uid:string):void{this.local?.selfRoleSync.acknowledgeBinding(session.userId,uid)}
   private async exclusive(userId:number,work:()=>Promise<void>):Promise<void>{

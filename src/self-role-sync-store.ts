@@ -64,7 +64,8 @@ export class SelfRoleSyncStore {
   }
 
   conflict(userId: number,roleId: string,message: string): void {
-    this.db.prepare('UPDATE self_role SET sync_error=? WHERE user_id=? AND role_id=?').run(message,userId,roleId)
+    // A rejected profile edit cannot block a newer local deletion.
+    this.db.prepare('UPDATE self_role SET pending_payload=CASE WHEN deleted=1 THEN NULL ELSE pending_payload END, sync_error=CASE WHEN deleted=1 THEN NULL ELSE ? END WHERE user_id=? AND role_id=?').run(message,userId,roleId)
   }
   asset(userId: number,ref: string): string | undefined { return (this.db.prepare('SELECT asset_uid FROM self_role_avatar_asset WHERE user_id=? AND local_ref=?').get(userId,ref) as {asset_uid:string}|undefined)?.asset_uid }
   pendingAvatarCompletion(userId: number,ref: string): ArkmeUploadCompletion | undefined {

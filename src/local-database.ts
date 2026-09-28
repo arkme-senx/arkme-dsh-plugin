@@ -368,7 +368,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async deleteSelfRole(userId: number, roleId: string): Promise<boolean> {
     // The message snapshot intentionally remains after the role is deleted.
-    const result = this.database.prepare('UPDATE self_role SET deleted=1 WHERE user_id = ? AND role_id = ? AND deleted=0').run(userId, roleId)
+    const result = this.database.prepare('UPDATE self_role SET deleted=1, pending_payload=CASE WHEN sync_error IS NOT NULL THEN NULL ELSE pending_payload END, sync_error=NULL WHERE user_id = ? AND role_id = ? AND deleted=0').run(userId, roleId)
     this.secureDatabaseFiles()
     return Number(result.changes) > 0
   }

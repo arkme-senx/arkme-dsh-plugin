@@ -86,3 +86,12 @@ it('deleting a local role never depends on uploading its now-unused avatar',asyn
  expect(f.roles.get(role.roleId)?.deleted).toBe(true)
  expect(db.selfRoleSync.next(7)).toBeUndefined()
 })
+
+it('concurrent frozen sends share one avatar upload after the role is deleted',async()=>{
+ const role=await db.createSelfRole(7,'冻结角色','arkme-self-role-image-v1.abcdefgh')
+ await db.bindSelfRole(7,'queued-a',role.roleId);await db.bindSelfRole(7,'queued-b',role.roleId)
+ await db.deleteSelfRole(7,role.roleId)
+ const f=fixture()
+ const results=await Promise.all([f.owner.prepare(f.session(),'queued-a'),f.owner.prepare(f.session(),'queued-b')])
+ expect(results[0]).toEqual(results[1]);expect(f.media.uploadLocalFile).toHaveBeenCalledTimes(1)
+})
