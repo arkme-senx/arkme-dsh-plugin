@@ -923,6 +923,11 @@ export function ArkmeSourceSortControl({
   </div>
 }
 
+// ArkmeDirectoryWindow must decide visibility before row presentation allocates native formatters.
+function DeferredDirectoryRow({ render }: { render: () => ReactNode }) {
+  return <>{render()}</>
+}
+
 export function ArkmeNavigation({
   active = true, wide = true, compactDirectory = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
@@ -2171,6 +2176,7 @@ export function ArkmeNavigation({
               onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }} />
           }
 
+          return <DeferredDirectoryRow key={row.kind === 'source' ? arkmeSourceIdentityKey(row.source) : conversationBotVisibilityKey(row.bot)} render={() => {
           if (row.kind === 'bot') {
             const { bot } = row
             const removalPhase = removalFeedback.phases.get(`bot:${conversationBotVisibilityKey(bot)}`)
@@ -2277,6 +2283,7 @@ export function ArkmeNavigation({
             </span>
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </div>
+        }} />
         })}</ArkmeDirectoryWindow>
         {teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
         {privateInteractionDirectory.error && <button type="button" onClick={privateInteractionDirectory.retry}
