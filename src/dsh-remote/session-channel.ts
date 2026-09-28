@@ -1,15 +1,15 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { parseDshDirectoryDelta, type DshDirectoryDelta } from './account-session-directory.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import { DshRemoteError, asDshRemoteError } from './errors.js'
 import { nativeRecord } from './native-transport.js'
 import { parseDshRemoteRequest } from './protocol-v1.js'
 import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from './transport-fragment.js'
-import type { DshRemoteRealtimeTransport, DshRemoteRuntimeTarget, DshRemoteTrustedEventMetadata, DshRemoteRequest, DshRemoteResponse } from './types.js'
+import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES, type DshRemotePublishTiming, type DshRemoteRealtimeTransport, type DshRemoteRuntimeTarget, type DshRemoteTrustedEventMetadata, type DshRemoteRequest, type DshRemoteResponse } from './types.js'
 
 type Json = Record<string, unknown>
 type Address = { runtimeRef: string; sessionRef: string }
-type Request = Address & { kind: 'session.request'; requestRef: string; expiresAt: number; body: Json }
+type Request = Address & { kind: 'session.request'; requestRef: string; expiresAt: number; body: Json; sharedFollowResponses?: true }
 const validRef = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value)
 const key = (address: Address) => JSON.stringify([address.runtimeRef, address.sessionRef])
 
@@ -19,6 +19,11 @@ async function publish(transport: DshRemoteRealtimeTransport, target: DshRemoteR
   const id = randomUUID()
   const frames = dshRemoteOutboundPayloads(payload, id)
   const envelope = nativeRecord(payload.envelope ?? {})
+  // Typed mobile consumers advance the account cursor but need not assemble
+  // desktop-native replies. Older consumers ignore this optional routing hint.
+  if (payload.kind === 'session.response' && typeof payload.requestRef === 'string' && !payload.envelope && ('value' in payload || 'error' in payload)) {
+    for (const frame of frames) if (frame.fragmentIndex !== undefined) frame.value = { ...nativeRecord(frame.value), nativeResponse: true }
+  }
   // The existing reply fragments also identify their read. Peers retain the
   // pending request for failover, but need not repeat an in-flight large reply.
   const readResponse = frames.length > 1 && payload.kind === 'session.response' && envelope.kind === 'response' && envelope.operation === 'session.history' && validRef(readSessionRef)
@@ -60,6 +65,8 @@ async function publish(transport: DshRemoteRealtimeTransport, target: DshRemoteR
 export class DshSessionChannelHost {
   private readonly lifetime = new AbortController()
   private readonly streams = new Map<string, { request: Request; epoch: number; touched: number; controller: AbortController }>()
+  private readonly followReplies = new Map<string, { payload: Json; streamRefs: string[]; bytes: number; done: Promise<void>; resolve(): void; reject(error: unknown): void }>()
+  private followReplyBytes = 0
   private readonly pending = new Map<string, Request>()
   private readonly running = new Set<string>()
   private readonly commands = new Map<string, { runtimeRef: string; envelope: DshRemoteRequest;
@@ -122,7 +129,7 @@ export class DshSessionChannelHost {
     this.activated = true
     void this.publish({ kind: 'session.response', runtimeRef: this.options.target.runtimeRef, ready: true }, this.lifetime.signal).catch(error => { if (!this.lifetime.signal.aborted) this.options.failed(error) })
   }
-  async directoryChanged(sessionRefs: readonly string[] = [], projection?: string, directoryDelta?: DshDirectoryDelta): Promise<void> {
+  async directoryChanged(sessionRefs: readonly string[] = [], projection?: string, directoryDelta?: DshDirectoryDelta, partial = false): Promise<void> {
     if (this.options.target.hostLeaseGeneration <= 0) return
     const nextEpochs = new Map<string, number>()
     let changed = false
@@ -135,7 +142,7 @@ export class DshSessionChannelHost {
       changed = true
     }
     if (projection !== undefined && projection === this.directoryProjection && !changed &&
-        [...this.advertisedEpochs.keys()].every(id => nextEpochs.has(id))) return
+        (partial || [...this.advertisedEpochs.keys()].every(id => nextEpochs.has(id)))) return
     await this.publish({ kind: 'session.response', directoryChanged: true,
       ...(directoryDelta === undefined ? {} : { directoryDelta }) }, this.lifetime.signal)
     // The catalog is committed already. Readers can load/select it while
@@ -148,23 +155,26 @@ export class DshSessionChannelHost {
     // Commit notification state only after delivery. A failed invalidation must
     // remain eligible on the next ordinary authoritative sync.
     this.directoryProjection = projection
-    this.advertisedEpochs.clear()
+    if (!partial || this.advertisedEpochs.size + nextEpochs.size > 10_000) this.advertisedEpochs.clear()
     for (const [id, epoch] of nextEpochs) this.advertisedEpochs.set(id, epoch)
   }
-  async projection(envelope: Json): Promise<void> {
+  async projection(envelope: Json, onTiming?: (timing: DshRemotePublishTiming) => void): Promise<void> {
     if (!this.options.command || this.options.target.hostLeaseGeneration <= 0) return
     const body = nativeRecord(envelope.body ?? {})
     const runtimeRef = typeof body.session_ref === 'string'
       ? this.options.canonicalRuntime?.(body.session_ref) ?? this.options.target.runtimeRef : this.options.target.runtimeRef
-    await this.publish({ kind: 'session.response', runtimeRef, envelope }, this.lifetime.signal)
+    await this.publish({ kind: 'session.response', runtimeRef, envelope }, this.lifetime.signal, undefined, onTiming)
   }
   private diagnostic(event: string, fields: Json): void {
     try { this.options.onDiagnostic?.(event, { runtime_ref: this.options.target.runtimeRef, stage: 'sessions_v1', ...fields }) }
     catch { /* Diagnostics cannot affect delivery. */ }
   }
-  private publish(payload: Json, signal: AbortSignal, readSessionRef?: string): Promise<void> {
+  private publish(payload: Json, signal: AbortSignal, readSessionRef?: string, onTiming?: (timing: DshRemotePublishTiming) => void): Promise<void> {
     const envelope = nativeRecord(payload.envelope ?? {})
     return publish(this.options.transport, this.options.target, payload, signal, timing => {
+      // Stable publication has no extra Host lane; transport admission is
+      // included in the measured publish/ACK duration.
+      onTiming?.({ queueMs: 0, publishMs: timing.publish_ack_ms, completed: timing.completed })
       // Preserve one summary per typed delivery; high-frequency native carrier
       // frames only need an incident row when large, slow, or unsuccessful.
       if (envelope.operation === undefined && timing.fragment_count <= 2 && timing.publish_ack_ms < 5000 && timing.completed) return
@@ -304,9 +314,41 @@ export class DshSessionChannelHost {
   private async respond(request: Request, epoch: number, value: unknown, error?: unknown): Promise<void> {
     if (this.options.target.hostLeaseGeneration <= 0) return
     const remote = error === undefined ? undefined : asDshRemoteError(error)
-    await this.publish({ kind: 'session.response', runtimeRef: request.runtimeRef,
+    const payload = { kind: 'session.response', runtimeRef: request.runtimeRef,
       sessionRef: request.sessionRef, requestRef: request.requestRef, ...(request.body.mode === 'pull' ? { streamRef: request.body.streamRef } : {}),
-      epoch, ...(remote ? { error: { code: remote.code, message: remote.message, retryable: error instanceof DshRemoteError && remote.retryable } } : { value }) }, this.lifetime.signal)
+      epoch, ...(remote ? { error: { code: remote.code, message: remote.message, retryable: error instanceof DshRemoteError && remote.retryable } } : { value }) }
+    if (request.sharedFollowResponses && request.body.mode === 'pull' && request.body.endpoint === 'session/follow' && !remote) {
+      // Share bytes only, not native stream ownership. Exact same read result,
+      // address and epoch can serve opt-in readers in this microtask batch.
+      const encoded = JSON.stringify([request.runtimeRef, request.sessionRef, epoch, value])
+      const bytes = Buffer.byteLength(encoded)
+      const hash = createHash('sha256').update(encoded).digest('hex')
+      const existing = this.followReplies.get(hash)
+      if (existing && existing.streamRefs.length < 64 && !existing.streamRefs.includes(String(request.body.streamRef))) {
+        existing.streamRefs.push(String(request.body.streamRef)); return existing.done
+      }
+      if (!existing && this.followReplies.size < 64 && this.followReplyBytes + bytes <= DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES - 32 * 1024) {
+        const completion = Promise.withResolvers<void>()
+        const first = this.followReplies.size === 0
+        this.followReplies.set(hash, { payload, streamRefs: [String(request.body.streamRef)], bytes, done: completion.promise, resolve: completion.resolve, reject: completion.reject })
+        this.followReplyBytes += bytes
+        if (first) queueMicrotask(() => {
+          const replies = [...this.followReplies.values()]
+          this.followReplies.clear(); this.followReplyBytes = 0
+          for (const reply of replies) {
+            if (this.lifetime.signal.aborted) { reply.reject(this.lifetime.signal.reason); continue }
+            if (this.options.epoch(String(reply.payload.runtimeRef), String(reply.payload.sessionRef)) !== reply.payload.epoch) {
+              reply.reject(new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)); continue
+            }
+            const { streamRef: _stream, ...common } = reply.payload
+            const response = reply.streamRefs.length === 1 ? reply.payload : { ...common, streamRefs: reply.streamRefs }
+            void this.publish(response, this.lifetime.signal).then(reply.resolve, reply.reject)
+          }
+        })
+        return completion.promise
+      }
+    }
+    await this.publish(payload, this.lifetime.signal)
   }
   private async execute(request: Request, epoch: number): Promise<void> {
     const body = request.body
@@ -463,6 +505,12 @@ export class DshSessionChannelClient {
   private receive(value: Json): void {
     if (this.lifetime.signal.aborted) return
     if (value.kind !== 'session.response') return
+    if (value.streamRefs !== undefined) {
+      if (!Array.isArray(value.streamRefs) || value.streamRefs.length < 1 || value.streamRefs.length > 64
+        || !value.streamRefs.every(validRef) || new Set(value.streamRefs).size !== value.streamRefs.length) return
+      for (const streamRef of value.streamRefs) if (this.streams.has(streamRef)) this.receive({ ...value, streamRefs: undefined, streamRef })
+      return
+    }
     if (value.directoryChanged === true) {
       const delta = parseDshDirectoryDelta(value.directoryDelta)
       for (const changed of this.directoryListeners) changed(delta)
@@ -563,7 +611,8 @@ export class DshSessionChannelClient {
     const scoped = AbortSignal.any([signal, this.lifetime.signal])
     scoped.throwIfAborted(); await this.ready; scoped.throwIfAborted()
     const id = String(body.streamRef ?? '')
-    const request: Request = { kind: 'session.request', ...address, requestRef, expiresAt: Date.now() + 30_000, body }
+    const request: Request = { kind: 'session.request', ...address, requestRef, expiresAt: Date.now() + 30_000, body,
+      ...(body.mode === 'pull' && body.endpoint === 'session/follow' ? { sharedFollowResponses: true } : {}) }
     if (body.mode === 'close') {
       const stream = this.streams.get(id)
       if (stream && key(stream) !== key(address)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '会话订阅身份不匹配')
