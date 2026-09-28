@@ -226,7 +226,7 @@ describe('Realtime login-only remote transport wire', () => {
     expect(disconnected).toEqual([{ code: 'CONNECTION_REPLACED', retryable: false }])
   })
 
-  it('fails the physical connection when a logical subscription reports an unsolicited error', async () => {
+  it('keeps the physical connection when an unrelated logical subscription reports an error', async () => {
     const { socket, transport } = await connectedTransport()
     const disconnected: Array<{ code?: string; retryable?: boolean }> = []
     transport.subscribeDisconnect(error => {
@@ -238,8 +238,9 @@ describe('Realtime login-only remote transport wire', () => {
       code: 'REPLAY_GAP', message: 'live channel sequence gap detected', retryable: true,
     })
 
-    expect(socket.readyState).toBe(3)
-    expect(disconnected).toEqual([{ code: 'REPLAY_GAP', retryable: true }])
+    expect(socket.readyState).toBe(1)
+    expect(disconnected).toEqual([])
+    await transport.disconnect()
   })
 })
 
@@ -337,5 +338,108 @@ it('an already-aborted request never writes a frame or creates a response waiter
   controller.abort(new Error('scope ended'))
   await expect(transport.registerHost({ runtimeRef: target.runtimeRef, capabilities: ['session.list'], signal })).rejects.toThrow('scope ended')
   expect(socket.sent).toHaveLength(before)
+  await transport.disconnect()
+})
+
+
+it('receives session events from different Host leases on one account channel', async () => {
+  const { transport, socket, signal } = await connectedTransport(), receive = vi.fn()
+  const observer = { runtimeRef: 'sessions_v1', hostProfileRef: 'observer', hostClientRef: 'observer', hostLeaseGeneration: 0, sessionChannel: true }
+  try {
+    await transport.subscribe({ target: observer, onEvent: receive, signal })
+    let sequence = 0
+    for (const [runtime, epoch] of [['runtime-A', 3], ['runtime-B', 7]] as const) socket.serverFrame({
+      type: 'channel.event', namespace: 'dsh_remote', channel_ref: 'sessions_v1', seq: ++sequence,
+      event: { sender_role: 'host', runtime_ref: runtime, accepted_at: 1000, target_host_lease_generation: epoch, seq: sequence, payload: { sessionRef: 'same-session' } },
+    })
+    expect(receive).toHaveBeenCalledTimes(2)
+    expect(receive.mock.calls.map(call => call[1].runtimeRef)).toEqual(['runtime-A', 'runtime-B'])
+    await expect(transport.publish({ target: observer, commandId: 'send-without-owner', direction: 'request', payload: { sessionRef: 'same-session' }, signal })).resolves.toEqual({ sequence: 2 })
+  } finally { await transport.disconnect() }
+})
+
+
+it('updates a recovered service lease without replacing the account socket or subscriptions', async () => {
+  const { socket, transport, signal } = await connectedTransport()
+  const disconnected = vi.fn(), changed = vi.fn()
+  transport.subscribeDisconnect(disconnected); transport.subscribeHostLease(changed)
+  try {
+    await transport.subscribe({ target: preRegistrationTarget, onEvent: () => undefined, signal })
+    await transport.registerHost({ runtimeRef: target.runtimeRef, capabilities: ['session.list'], signal })
+    socket.serverFrame({ type: 'service.registered', request_id: 'lease-recovered-30', namespace: 'dsh_remote', service: 'host',
+      protocol: 'dsh.remote', protocol_major: 1, connection_generation: 11, service_lease_generation: 30 })
+    await transport.publish({ target, commandId: 'recovered-reply', direction: 'event', payload: {}, signal })
+    const frames = socket.sent.map(raw => JSON.parse(raw))
+    expect(frames.filter(frame => frame.type === 'channel.subscribe')).toHaveLength(1)
+    expect(frames.filter(frame => frame.type === 'connection.open')).toHaveLength(1)
+    expect(frames.find(frame => frame.command_id === 'recovered-reply').host_lease_generation).toBe(30)
+    expect(changed).toHaveBeenCalledWith(30)
+    expect(disconnected).not.toHaveBeenCalled()
+  } finally { await transport.disconnect() }
+})
+
+
+it('retries only a definitely rejected publish after lease recovery with the same command id', async () => {
+  const { socket, transport, signal } = await connectedTransport()
+  const disconnected = vi.fn(); transport.subscribeDisconnect(disconnected)
+  try {
+    await transport.registerHost({ runtimeRef: target.runtimeRef, capabilities: ['session.list'], signal })
+    const send = socket.send.bind(socket)
+    let rejected = false
+    socket.send = data => {
+      const frame = JSON.parse(data)
+      if (frame.type === 'channel.publish' && !rejected) {
+        rejected = true; socket.sent.push(data)
+        socket.serverFrame({ type: 'error', request_id: frame.request_id, code: 'HOST_GENERATION_STALE', message: 'expired', retryable: true })
+        setTimeout(() => socket.serverFrame({ type: 'service.registered', request_id: 'lease-recovered-30', namespace: 'dsh_remote', service: 'host',
+          protocol: 'dsh.remote', protocol_major: 1, connection_generation: 11, service_lease_generation: 30 }), 0)
+      } else send(data)
+    }
+    await expect(transport.publish({ target, commandId: 'stable-command', direction: 'event', payload: {}, signal })).resolves.toEqual({ sequence: 2 })
+    const publishes = socket.sent.map(raw => JSON.parse(raw)).filter(frame => frame.type === 'channel.publish')
+    expect(publishes.map(frame => frame.command_id)).toEqual(['stable-command', 'stable-command'])
+    expect(publishes.map(frame => frame.host_lease_generation)).toEqual([29, 30])
+    expect(disconnected).not.toHaveBeenCalled()
+  } finally { await transport.disconnect() }
+})
+
+it('multiplexes concurrent consumers on one account socket and only the owner closes it', async () => {
+  const socket = new FakeSocket(), factory = vi.fn(() => socket)
+  const transport = new ArkmeRemoteRealtimeTransport(factory)
+  const owner = new AbortController(), a = new AbortController(), b = new AbortController()
+  const waiting = [a, b].map(consumer => transport.whenConnected(consumer.signal))
+  const connected = transport.connect({ profileRef: target.hostProfileRef, clientRef: target.hostClientRef, signal: owner.signal })
+  await new Promise(resolve => setTimeout(resolve, 0)); setTimeout(() => socket.open(), 0); await connected; await Promise.all(waiting)
+  const first = vi.fn(), second = vi.fn()
+  const openingA = transport.subscribe({ target, signal: a.signal, onEvent: first })
+  const openingB = transport.subscribe({ target, signal: b.signal, onEvent: second })
+  a.abort()
+  await expect(openingA).rejects.toBeDefined(); const closeB = await openingB
+  socket.remoteEvent({ kind: 'event' })
+  expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce()
+  const runtimeConsumers = await Promise.all(['history', 'native', 'typed', 'directory'].map(name => transport.subscribe({
+    target: { ...target, runtimeRef: name }, signal: owner.signal, onEvent: vi.fn(),
+  })))
+  expect(factory).toHaveBeenCalledOnce()
+  expect(socket.sent.map(value => JSON.parse(value)).filter(value => value.type === 'channel.subscribe' && value.channel_ref === target.runtimeRef)).toHaveLength(1)
+  closeB(); runtimeConsumers.forEach(close => close())
+  expect(socket.readyState).toBe(1)
+  await transport.disconnect(); expect(socket.readyState).toBe(3)
+})
+
+it('replays a channel gap on the same socket before notifying consumers of data loss', async () => {
+  const { transport, socket, signal } = await connectedTransport()
+  const receive = vi.fn(), failure = vi.fn()
+  const targetSession = { ...target, sessionChannel: true }
+  await transport.subscribe({ target: targetSession, signal, onEvent: receive, onError: failure })
+  const frame = (seq: number) => socket.serverFrame({ type: 'channel.event', namespace: 'dsh_remote', channel_ref: 'sessions_v1', seq,
+    event: { channel_ref: 'sessions_v1', seq, runtime_ref: target.runtimeRef, sender_role: 'host', accepted_at: 1000, target_host_lease_generation: 1, payload: { seq } } })
+  frame(10); frame(12)
+  const unsubscribe = socket.sent.map(value => JSON.parse(value)).findLast(value => value.type === 'channel.unsubscribe')
+  socket.serverFrame({ type: 'channel.unsubscribed', request_id: unsubscribe.request_id, namespace: 'dsh_remote', channel_ref: 'sessions_v1' })
+  await vi.waitFor(() => expect(socket.sent.map(value => JSON.parse(value)).some(value => value.type === 'channel.subscribe' && value.after_seq === 10)).toBe(true))
+  frame(11); frame(12)
+  expect(receive.mock.calls.map(([value]) => value.seq)).toEqual([10, 11, 12])
+  expect(failure).not.toHaveBeenCalled(); expect(socket.readyState).toBe(1)
   await transport.disconnect()
 })

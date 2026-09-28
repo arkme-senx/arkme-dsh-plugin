@@ -29,7 +29,7 @@ function watchRevision(row: Record<string, unknown>): string {
   return JSON.stringify([cacheRevision(row), metadataRevision(row)])
 }
 type Cache = { store: Pick<DshNativeHistoryCache, 'snapshot' | 'page' | 'write'>; key(session: string): string }
-type Lease = { controller: AbortController; touched: number; busy: boolean; watch?: { runtime: string; session: string; revision: string; body: Record<string, unknown>; cache: Cache | undefined } }
+type Lease = { runtime: string; sessionRef: string | undefined; controller: AbortController; touched: number; busy: boolean; watch?: { runtime: string; session: string; revision: string; body: Record<string, unknown>; cache: Cache | undefined } }
 
 function nativeHistoryRecord(raw: unknown): NativeHistoryRecord {
   const validators = surface as unknown as { validateSurfaceMetadata?: (event: unknown) => void; validateSessionEventData?: (event: unknown, subject: string) => void }
@@ -50,7 +50,12 @@ export class DshCloudNativeTransport {
   private readonly streams = new Map<string, Lease>()
   constructor(private readonly request: DshRemoteHttpRequester, private readonly wait: (milliseconds: number, signal: AbortSignal) => Promise<void> = (milliseconds, signal) => delay(milliseconds, undefined, { signal })) {}
   has(id: string): boolean { return this.streams.has(id) }
-  release(id: string): void { this.streams.get(id)?.controller.abort(); this.streams.delete(id) }
+  release(id: string, reason?: unknown): void { this.streams.get(id)?.controller.abort(reason); this.streams.delete(id) }
+  resume(runtime: string, sessionRef: string): void {
+    for (const [id, lease] of this.streams) if (lease.runtime === runtime && (lease.sessionRef === undefined || lease.sessionRef === sessionRef)) {
+      this.release(id, new DshRemoteError('REMOTE_NOT_FOUND', '会话执行者已恢复，请重新订阅', true))
+    }
+  }
   close(): void { for (const id of this.streams.keys()) this.release(id) }
 
   private async metadata(runtime: string, session: string, signal: AbortSignal): Promise<Record<string, unknown>> {
@@ -129,7 +134,7 @@ export class DshCloudNativeTransport {
     return { page, complete: rawComplete }
   }
 
-  async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: Cache, refreshing?: Lease, verifiedMetadata?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: Cache, sessionRef?: string, refreshing?: Lease, verifiedMetadata?: Record<string, unknown>): Promise<Record<string, unknown>> {
     const mode = body.mode, endpoint = String(body.endpoint ?? '')
     for (const [key, lease] of this.streams) if (Date.now() - lease.touched > 45_000) this.release(key)
     if (mode === 'close') { this.release(id); return { done: true } }
@@ -144,10 +149,11 @@ export class DshCloudNativeTransport {
         scoped.throwIfAborted()
         if (lease.watch) {
           const current = await this.metadata(lease.watch.runtime, lease.watch.session, scoped)
-          if (watchRevision(current) !== lease.watch.revision) return await this.call(lease.watch.runtime, lease.watch.body, id, scoped, lease.watch.cache, lease, current)
+          if (watchRevision(current) !== lease.watch.revision) return await this.call(lease.watch.runtime, lease.watch.body, id, scoped, lease.watch.cache, lease.sessionRef, lease, current)
         }
         return { items: [] }
       }
+      catch (error) { signal.throwIfAborted(); if (lease.controller.signal.aborted) throw lease.controller.signal.reason; throw error }
       finally { lease.busy = false; lease.touched = Date.now() }
     }
     const args = object(object(body.payload).args)
@@ -215,7 +221,7 @@ export class DshCloudNativeTransport {
     if (!refreshing && this.streams.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '云端订阅数量超限')
     signal.throwIfAborted()
     refreshing?.controller.abort()
-    this.streams.set(id, { controller: new AbortController(), touched: Date.now(), busy: false, ...(watch ? { watch } : {}) })
+    this.streams.set(id, { runtime, sessionRef, controller: new AbortController(), touched: Date.now(), busy: false, ...(watch ? { watch } : {}) })
     return { items: [frame] }
   }
 }

@@ -34,7 +34,23 @@
       "types": "./lib/types/extensions/bundle-runtime.d.ts",
       "default": "./lib/bundle-runtime.js"
     },
-    "./package.json": "./package.json"
+    "./local-session-registry": {
+      "types": "./lib/types/local-session-registry.d.ts",
+      "default": "./lib/local-session-registry.js"
+    },
+    "./package.json": "./package.json",
+    "./local-session-gateway": {
+      "types": "./lib/types/local-session-gateway.d.ts",
+      "default": "./lib/local-session-gateway.js"
+    },
+    "./local-session-runtime": {
+      "types": "./lib/types/local-session-runtime.d.ts",
+      "default": "./lib/local-session-runtime.js"
+    },
+    "./local-session-store": {
+      "types": "./lib/types/local-session-store.d.ts",
+      "default": "./lib/local-session-store.js"
+    }
   },
   "files": [
     "lib",
@@ -84,7 +100,7 @@
     "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "bundle": "node scripts/clean-bundle.mjs && tsdown && node scripts/verify-executable-entrypoints.mjs",
+    "bundle": "node scripts/clean-bundle.mjs && tsdown && node scripts/build-local-session-profile.mjs && node scripts/verify-executable-entrypoints.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "pack:runtime": "node scripts/build-runtime-artifact.mjs",
@@ -96,6 +112,7 @@
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
     "@rc-component/tour": "2.4.0",
+    "@sentry/node": "10.73.0",
     "@tiptap/core": "^3.31.0",
     "@tiptap/extension-code-block": "^3.31.0",
     "@tiptap/extension-table": "^3.31.0",
@@ -120,7 +137,6 @@
     "unified": "^11.0.5",
     "ws": "8.18.3",
     "yaml": "2.9.0",
-    "@sentry/node": "10.73.0",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
@@ -148,7 +164,8 @@
     "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "~3.18.5",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
@@ -269,5 +286,10 @@
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-api-gateway": {
+      "optional": true
+    }
   }
 }
