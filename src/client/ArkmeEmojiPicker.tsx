@@ -263,6 +263,7 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   const hostRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stickerInputRef = useRef<HTMLInputElement>(null)
+  const pointerSelectionCaptured = useRef(false)
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'emoji' | 'favorite'>('emoji')
   const [stickers, setStickers] = useState<ArkmeFavoriteSticker[]>([])
@@ -599,8 +600,13 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
       aria-haspopup="dialog"
       aria-expanded={open}
       data-arkme-composer-tool="emoji"
-      onMouseDown={event => { onBeforeToggle?.(); event.preventDefault() }}
-      onClick={() => { setOpen(value => !value) }}
+      onPointerDown={() => { onBeforeToggle?.(); pointerSelectionCaptured.current = true }}
+      onMouseDown={event => {
+        if (!pointerSelectionCaptured.current) onBeforeToggle?.()
+        pointerSelectionCaptured.current = false
+        event.preventDefault()
+      }}
+      onClick={() => { pointerSelectionCaptured.current = false; setOpen(value => !value) }}
     ><span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span></ArkmeComposerToolButton>
     {open && (() => {
       const shell = <div
