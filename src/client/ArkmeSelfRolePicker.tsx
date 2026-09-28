@@ -52,9 +52,12 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   })
   const visibleState = roleState.scope === scope ? roleState : { scope, roles: [], loading: true, error: '' }
   const [refreshRevision, setRefreshRevision] = useState(0)
+  useEffect(() => { if (typeof window === 'undefined') return; const refresh = () => setRefreshRevision(value => value + 1); window.addEventListener('arkme-self-roles-changed', refresh); return () => window.removeEventListener('arkme-self-roles-changed', refresh) }, [])
   const [menuOpen, setMenuOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
+  const [editingRole, setEditingRole] = useState<ArkmeSelfRole>()
+  const [removeAvatar, setRemoveAvatar] = useState(false)
   const [avatarFile, setAvatarFile] = useState<File>()
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('')
   const [cropSource, setCropSource] = useState<File>()
@@ -67,6 +70,8 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setMenuOpen(false)
     setCreateOpen(false)
     setName('')
+    setEditingRole(undefined)
+    setRemoveAvatar(false)
     setAvatarFile(undefined)
     setCropSource(undefined)
     setSaving(false)
@@ -116,6 +121,8 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     if (saveControllerRef.current !== undefined) return
     setCreateOpen(false)
     setName('')
+    setEditingRole(undefined)
+    setRemoveAvatar(false)
     setAvatarFile(undefined)
     setCropSource(undefined)
     setFormError('')
@@ -124,16 +131,17 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     event.preventDefault()
     const roleName = name.trim()
     if (disabled || saveControllerRef.current !== undefined || visibleState.loading || visibleState.error !== ''
-      || visibleState.roles.length >= MAX_ROLES || !roleName || Array.from(roleName).length > MAX_NAME_LENGTH) return
+      || (editingRole === undefined && visibleState.roles.length >= MAX_ROLES) || !roleName || Array.from(roleName).length > MAX_NAME_LENGTH) return
     const controller = new AbortController()
     saveControllerRef.current = controller
     const submittingScope = scope
     setSaving(true)
     setFormError('')
     try {
-      const avatarRef = avatarFile === undefined ? undefined : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
+      const avatarRef = avatarFile === undefined ? (removeAvatar ? '' : editingRole?.avatarRef) : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
-      const created = await callArkme<ArkmeSelfRole>('self-roles.create', {
+      const created = await callArkme<ArkmeSelfRole>(editingRole === undefined ? 'self-roles.create' : 'self-roles.update', {
+        ...(editingRole === undefined ? {} : { roleId: editingRole.roleId }),
         expectedUserId: userId, name: roleName, ...(avatarRef === undefined ? {} : { avatarRef }),
       }, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
@@ -141,6 +149,8 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
         ? { ...current, roles: [...current.roles.filter(role => role.roleId !== created.roleId), created] } : current)
       setCreateOpen(false)
       setName('')
+    setEditingRole(undefined)
+    setRemoveAvatar(false)
       setAvatarFile(undefined)
       onSelect(created)
     } catch (caught) {
@@ -170,9 +180,14 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     { id: 'me', label: '我', icon: <ArkmeSelfRoleAvatar role={{ roleId: 'me', name: '我', ...(selfAvatarRef?.trim() ? { avatarRef: selfAvatarRef } : {}) }} size={20} />, onSelect: () => { setMenuOpen(false); onSelect(undefined) } },
     { type: 'separator' as const, id: 'role-separator' },
     ...visibleState.roles.map(role => ({
-      id: `role:${role.roleId}`, label: role.name, icon: <ArkmeSelfRoleAvatar role={role} size={20} />,
+      id: `role:${role.roleId}`, label: `${role.name}${role.syncState === 'pending' ? ' · 待同步' : role.syncState === 'conflict' ? ' · 同步冲突' : ''}`, icon: <ArkmeSelfRoleAvatar role={role} size={20} />,
       onSelect: () => { setMenuOpen(false); onSelect(role) },
     })),
+    ...visibleState.roles.filter(role => role.syncState === 'conflict').map(role => ({ id: `resolve:${role.roleId}`, label: `使用云端的「${role.name}」`, onSelect: () => { void callArkme('self-roles.resolve', { expectedUserId: userId, roleId: role.roleId }).then(() => setRefreshRevision(value => value + 1)).catch(error => setRoleState(current => ({ ...current, error: error instanceof Error ? error.message : '处理冲突失败' }))) } })),
+    ...(selectedRole === undefined ? [] : [
+      { id: 'role-edit', label: '编辑当前角色', onSelect: () => { setMenuOpen(false); setEditingRole(selectedRole); setName(selectedRole.name); setAvatarFile(undefined); setRemoveAvatar(false); setFormError(''); setCreateOpen(true) } },
+      { id: 'role-delete', label: '删除当前角色', onSelect: () => { const role = selectedRole; setMenuOpen(false); void callArkme('self-roles.delete', {expectedUserId:userId,roleId:role.roleId}).then(() => { if(scopeRef.current !== scope)return; onSelect(undefined); setRefreshRevision(value=>value+1) }).catch(error=>{ if(scopeRef.current===scope)setRoleState(current=>({...current,error:error instanceof Error ? error.message : '删除失败'})) }) } },
+    ]),
     ...(visibleState.loading ? [{ type: 'label' as const, id: 'role-loading', text: '正在加载角色…' }] : []),
     ...(visibleState.error ? [
       { type: 'label' as const, id: 'role-error', text: `加载失败：${visibleState.error}` },
@@ -180,18 +195,18 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     ] : []),
     { type: 'separator' as const, id: 'role-create-separator' },
     { id: 'role-create', label: '＋ 创建角色', disabled: visibleState.loading || visibleState.error !== '' || visibleState.roles.length >= MAX_ROLES,
-      onSelect: () => { setMenuOpen(false); setFormError(''); setCreateOpen(true) } },
+      onSelect: () => { setMenuOpen(false); setEditingRole(undefined); setRemoveAvatar(false); setName(''); setAvatarFile(undefined); setFormError(''); setCreateOpen(true) } },
     { type: 'label' as const, id: 'role-local-note', text: visibleState.roles.length >= MAX_ROLES
-      ? '最多 20 个角色 · 角色资料和头像仅保存在此设备' : '角色资料和头像仅保存在此设备' },
+      ? '最多 20 个角色 · 角色资料和头像会自动同步' : '角色资料和头像会自动同步' },
   ]
 
   return <>
     <ArkmeActionMenu open={menuOpen} label="选择发言角色" side="top" align="end" selectedIds={[selectedId]}
       anchor={trigger} onClose={() => setMenuOpen(false)} actions={menuActions} />
     {createOpen && <div style={styles.backdrop} onPointerDown={event => { if (event.target === event.currentTarget) closeCreate() }}>
-      <section role="dialog" aria-modal="true" aria-label="创建发言角色" style={styles.dialog}
+      <section role="dialog" aria-modal="true" aria-label={editingRole ? "编辑发言角色" : "创建发言角色"} style={styles.dialog}
         onKeyDown={event => { if (event.key === 'Escape' && !saving && cropSource === undefined) { event.stopPropagation(); closeCreate() } }}>
-        <h3 style={styles.title}>创建角色</h3>
+        <h3 style={styles.title}>{editingRole ? "编辑角色" : "创建角色"}</h3>
         <p style={styles.description}>给另一个“自己”取个名字，可选头像；留空时显示名称首字。</p>
         <form onSubmit={event => { void createRole(event) }}>
           <div style={styles.identityRow}>
@@ -199,7 +214,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
               style={styles.avatarButton} onClick={() => fileInputRef.current?.click()}>
               {avatarPreviewUrl
                 ? <img src={avatarPreviewUrl} alt="已选角色头像" style={styles.avatarPreview} />
-                : <ArkmeSelfRoleAvatar role={{ roleId: 'draft', name: name.trim() || '角' }} size={48} />}
+                : <ArkmeSelfRoleAvatar role={{ roleId: 'draft', name: name.trim() || '角', ...(!removeAvatar && editingRole?.avatarRef ? {avatarRef:editingRole.avatarRef} : {}) }} size={48} />}
               <span style={styles.avatarAdd}>＋</span>
             </button>
             <label style={styles.nameLabel}>角色名称
@@ -208,6 +223,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
                 onChange={event => { setName(Array.from(event.currentTarget.value).slice(0, MAX_NAME_LENGTH).join('')); setFormError('') }} />
             </label>
           </div>
+          {(avatarFile !== undefined || (!removeAvatar && editingRole?.avatarRef)) && <button type="button" disabled={saving} onClick={()=>{setAvatarFile(undefined);setRemoveAvatar(true)}}>移除头像</button>}
           <input ref={fileInputRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => {
             const file = event.currentTarget.files?.[0]
             event.currentTarget.value = ''
@@ -218,12 +234,12 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
             }
             setCropSource(file)
           }} />
-          <p style={styles.localNote}>角色资料、头像和发言归属仅保存在此设备。其他设备暂不会同步。</p>
+          <p style={styles.localNote}>角色资料和头像会同步到其他设备；离线修改会在联网后继续同步。</p>
           {formError && <p role="alert" style={styles.error}>{formError}</p>}
           <div style={styles.actions}>
             <button type="button" style={styles.cancel} disabled={saving} onClick={closeCreate}>取消</button>
-            <button type="submit" style={styles.submit} disabled={saving || !name.trim() || visibleState.roles.length >= MAX_ROLES}>
-              {saving ? '创建中…' : '创建并选用'}
+            <button type="submit" style={styles.submit} disabled={saving || !name.trim() || (editingRole === undefined && visibleState.roles.length >= MAX_ROLES)}>
+              {saving ? '保存中…' : editingRole ? '保存并选用' : '创建并选用'}
             </button>
           </div>
         </form>

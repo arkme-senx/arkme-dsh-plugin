@@ -13,6 +13,7 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
+import { arkmeSelfRoleAvatarFallback } from './self-role-presentation.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
@@ -649,13 +650,14 @@ function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem
 
 function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   const sourceLabel = arkmeCalendarRecordSourceLabel(item)
-  return <article style={styles.recordRow}>
-    <div style={styles.recordStack}>
-      <div style={styles.recordHeader}>
-        <h3 style={styles.recordTitle}>{tr("你")}</h3>
+  const role = !item.protected && (item.sourceKind === 'self' || item.sourceKind === 'topic') ? item.content?.selfRole : undefined
+  return <article data-arkme-calendar-role={role?.roleId} style={{ ...styles.recordRow, ...(role === undefined ? {} : { flexDirection: 'row-reverse', justifyContent: 'flex-end' }) }}>
+    <div style={{ ...styles.recordStack, ...(role === undefined ? {} : { alignItems: 'flex-start' }) }}>
+      <div style={{ ...styles.recordHeader, ...(role === undefined ? {} : { justifyContent: 'flex-start' }) }}>
+        <h3 style={styles.recordTitle}>{role?.name ?? tr("你")}</h3>
         <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
       </div>
-      <div style={{ ...styles.recordBubble, cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
+      <div style={{ ...styles.recordBubble, ...(role === undefined ? {} : { borderRadius: '5px 16px 16px 16px', background: arkmeTheme.subtle }), cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
         onKeyDown={event => {
           if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
           event.preventDefault(); onOpen()
@@ -674,7 +676,8 @@ function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCal
         />}
       </div>
     </div>
-    <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+    {role === undefined ? <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+      : <ArkmeUserAvatar {...(role.avatarRef ? { avatarRef: role.avatarRef } : {})} fallback={arkmeSelfRoleAvatarFallback(role)} size={30} label={`${role.name}的头像`} />}
   </article>
 }
 
@@ -941,7 +944,7 @@ export function ArkmeCalendarSurface({
           {detailItem.forwardRecords !== undefined
             ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem}
               onPrivateChatOpened={selectSource} onClose={() => setSelectedRecord(undefined)} />
-            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} key={detailItem.itemUid} item={detailItem} canExtend={false}
+            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} {...(detailItem.selfRole === undefined ? {} : selectedItem?.sourceKind === 'self' ? { sourceKind: 'send_to_self' as const } : selectedItem?.sourceKind === 'topic' ? { sourceKind: 'topic' as const } : {})} key={detailItem.itemUid} item={detailItem} canExtend={false}
               showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(value => !value)}
               onClose={() => setSelectedRecord(undefined)} />}
         </div>

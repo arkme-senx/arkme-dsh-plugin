@@ -29,7 +29,7 @@ describe('Record forwarding emoji boundaries', () => {
       openSourceRef: vi.fn(async () => ({ kind: 'default_category', ownerRef: 'default', userId: 42 })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'default', kind: 'default_category' })),
     }
-    const record = { list: vi.fn(async () => ({ items: [item], hasMore: false })), recordTimelineItem: (value: unknown) => value }
+    const record = { createPersonalRecord: runtime.authenticatedPost, list: vi.fn(async () => ({ items: [item], hasMore: false })), recordTimelineItem: (value: unknown) => value }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, record as never,
       {} as never, {} as never, {} as never, { invalidateRecordProjection: vi.fn() } as never)
     const page = await chat.readSource('default')

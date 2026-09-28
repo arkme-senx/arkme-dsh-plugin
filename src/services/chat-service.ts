@@ -1,3 +1,4 @@
+import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
 import { encodeMentionMetadata, type ResolvedMentions } from './mention-metadata-codec.js'
 import { recordManualEditFact } from '../record-edit-history.js'
@@ -883,6 +884,7 @@ function messageCopyLinkExtensionItemFromData(value: unknown): ArkmeMessageCopyL
   }
   return {
     recordUid,
+    ...(selfRoleSnapshotFromCloud(core.self_role_snapshot ?? data.self_role_snapshot) ? { selfRole: selfRoleSnapshotFromCloud(core.self_role_snapshot ?? data.self_role_snapshot)! } : {}),
     ...(firstTextValue(data, ['parent_record_uid', 'parentRecordUid']) === '' ? {} : {
       parentRecordUid: firstTextValue(data, ['parent_record_uid', 'parentRecordUid']),
     }),
@@ -3309,6 +3311,7 @@ export class ChatService {
     const hydration = await this.media.hydrateRecordMediaPage(readable.map(node => node.record), session, signal)
     const extensions: ArkmeMessageCopyLinkExtensionItem[] = nodes.map(node => {
       if (node.protectedContent) return {
+        protectedContent: true,
         recordUid: node.recordUid,
         parentRecordUid: node.parentRecordUid,
         level: node.level,
@@ -3580,7 +3583,7 @@ export class ChatService {
           })),
         }),
       }
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      const data = await this.record.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/topics/records/extensions/create',
         {
           topic_uid: source.ownerRef,
@@ -3993,7 +3996,7 @@ export class ChatService {
       }
       if (targetSource.kind === 'topic') {
         const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
-        const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        const data = await this.record.createPersonalRecord<Record<string, unknown>>(
           '/api/v1/topics/records/create',
           {
             topic_uid: targetSource.ownerRef,
@@ -4012,7 +4015,7 @@ export class ChatService {
         return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
       }
       const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      const data = await this.record.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/records/create',
         {
           record_uid: recordUid,
@@ -4088,7 +4091,7 @@ export class ChatService {
         const captureContext = options.captureContext === undefined
           ? undefined
           : arkmeRecordCaptureContextPayload(options.captureContext)
-        const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        const result = await this.record.createPersonalRecord<Record<string, unknown>>(
           '/api/v1/topics/records/create',
           {
             topic_uid: source.ownerRef, record_uid: recordUid, template_kind: 1, title: '', text_content: text,
@@ -4651,7 +4654,7 @@ export class ChatService {
         send_at: sendAtMillis,
       }
       if (source.kind === 'send_to_self' || source.kind === 'default_category') {
-        const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        const result = await this.record.createPersonalRecord<Record<string, unknown>>(
           '/api/v1/records/create', commonBody, session, options.signal, { trackWriteOutcome: true },
         )
         await this.record.syncCreatedRecordTags?.(
@@ -4679,7 +4682,7 @@ export class ChatService {
         })
       }
       if (source.kind === 'topic') {
-        const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        const result = await this.record.createPersonalRecord<Record<string, unknown>>(
           '/api/v1/topics/records/create', { topic_uid: source.ownerRef, ...commonBody }, session, options.signal,
           { trackWriteOutcome: true },
         )

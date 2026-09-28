@@ -1588,6 +1588,7 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'assistantMsgId', 0),
       stringParam(params, 'runUid'),
     )
+    case 'self-roles.resolve': return await service.resolveSelfRoleConflict(numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'))
     case 'self-roles.list': return await service.listSelfRoles(numberParam(params, 'expectedUserId', 0))
     case 'self-roles.create': return await service.createSelfRole(
       numberParam(params, 'expectedUserId', 0), stringParam(params, 'name'),
