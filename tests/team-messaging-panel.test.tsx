@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
+import { ArkmeAttachmentDraftTile } from '../src/client/ArkmeRichContent.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeReadReceiptPanel, ArkmeReadReceiptMember } from '../src/client/ArkmeReadReceiptPanel.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
@@ -12,9 +13,9 @@ import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
-const mocks = vi.hoisted(() => ({ call: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: vi.fn() }) }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload }) }))
 import { TeamMessagingPanel, TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
 
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
@@ -38,6 +39,54 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('uses the shared attachment tile preview and releases removed upload previews', async () => {
+    const createUrl = vi.fn(() => 'blob:team-upload')
+    const revokeUrl = vi.fn()
+    vi.stubGlobal('URL', class extends URL { static createObjectURL=createUrl; static revokeObjectURL=revokeUrl })
+    mocks.upload.mockResolvedValue({fileAssetUid:'asset',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10})
+    await mount()
+    const input = renderer!.root.findByProps({type:'file'})
+    await act(async () => {
+      input.props.onChange({target:{files:[new File(['image'], 'image.png', {type:'image/png'})],value:''}})
+      await tick()
+    })
+    expect(renderer!.root.findByType(ArkmeAttachmentDraftTile).props.previewUrl).toBe('blob:team-upload')
+    expect(createUrl).toHaveBeenCalledTimes(1)
+    expect(revokeUrl).not.toHaveBeenCalled()
+    await act(async () => { renderer!.root.findByType(ArkmeAttachmentDraftTile).props.onRemove(); await tick() })
+    expect(revokeUrl).toHaveBeenCalledExactlyOnceWith('blob:team-upload')
+  })
+
+  it('shows an accepted row immediately, permits the next draft and retains an acknowledged body through refresh failure', async () => {
+    let release!: (value: unknown) => void
+    let refreshFails = false
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') {
+        if (refreshFails) throw new Error('刷新失败')
+        return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      }
+      if (op === 'team.app.send') return new Promise(resolve => {release=resolve})
+      return {}
+    })
+    await mount(); await send()
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+    const editor = renderer!.root.findByType(ArkmeRichComposerInput)
+    expect(editor.props.disabled).toBe(false)
+    await act(async () => {editor.props.onTextChange('下一条'); await tick()})
+    refreshFails = true
+    await act(async () => {
+      release({message:{key:'sent',ref:'sent',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0}})
+      await tick()
+    })
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.state).toBe('published')
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+    expect(JSON.stringify(renderer!.toJSON())).toContain('刷新失败')
+    refreshFails = false
+    await act(async () => {invalidateTeamMessages('account');await tick()})
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+  })
 
   it('retains the live editor DOM and selection on background invalidation', async () => {
     const host = document.createElement('div'); document.body.append(host)
@@ -139,7 +188,7 @@ describe('Team send UI recovery', () => {
     await mount(); await send()
     const sends = mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')
     expect(sends[1]?.[1].clientUid).toBe(first[0]?.[1].clientUid)
-    await act(async () => { release({ message: { state: 'published' } }); await tick() })
+    await act(async () => { release({ message: { key:'sent',ref:'sent',seq:1,state:'published',sender:{nickname:'我'},own:true,media:[],version:0 } }); await tick() })
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
   })
   it('unlocks a definitive invalid request but retains a cancellable accepted operation', async () => {

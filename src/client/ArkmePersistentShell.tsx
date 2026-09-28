@@ -1,3 +1,4 @@
+import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
@@ -135,7 +136,7 @@ export function ArkmePersistentClientRuntime() {
     || (ui.mode === 'source' && ui.productMode !== 'contacts')
   )
 
-  useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
+  useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey); teamAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
   useEffect(() => {
     if (avatarScopeKey === undefined) return
     return arkmePresentationMaintenance.start()

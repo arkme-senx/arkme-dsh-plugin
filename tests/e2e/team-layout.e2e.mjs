@@ -196,12 +196,12 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const input=pane.getByRole('textbox',{name:'团队消息内容'})
     await input.fill('发送后，已有图片保持原位')
     const retainedText = await input.evaluateHandle(node => node.firstChild)
-    await expect.poll(()=>pane.locator('.team-avatar img').count()).toBe(3)
-    const avatars = await pane.locator('.team-avatar img').elementHandles()
-    await expect.poll(()=>pane.locator('.team-avatar img').evaluateAll(nodes=>nodes.every(node=>node.complete && node.naturalWidth>0))).toBe(true)
+    await expect.poll(()=>pane.locator('[data-arkme-avatar] img').count()).toBe(3)
+    const avatars = await pane.locator('[data-arkme-avatar] img').elementHandles()
+    await expect.poll(()=>pane.locator('[data-arkme-avatar] img').evaluateAll(nodes=>nodes.every(node=>node.complete && node.naturalWidth>0))).toBe(true)
     const avatarRequests = calls.filter(op=>op==='team.app.image').length
     await pane.evaluate(node=>{
-      const images=[...node.querySelectorAll('.team-avatar img')]
+      const images=[...node.querySelectorAll('[data-arkme-avatar] img')]
       const sources=images.map(image=>image.src)
       const check=()=>{window.teamFlashCheck.samples++; if(images.some((image,i)=>!image.isConnected || image.src!==sources[i] || !image.complete || !image.naturalWidth)) window.teamFlashCheck.flashes++}
       window.teamFlashCheck={samples:0,flashes:0,frame:0,observer:new MutationObserver(check)}
@@ -220,7 +220,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await pane.getByText('发送后，已有图片保持原位',{exact:true}).waitFor()
     await expect.poll(()=>input.textContent()).toBe('')
     await sentRefresh
-    await expect.poll(()=>pane.locator('.team-avatar img').count()).toBe(4)
+    await expect.poll(()=>pane.locator('[data-arkme-avatar] img').count()).toBe(4)
     for (let i=0;i<3;i++) {
       const refreshed = nextTimeline()
       await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
@@ -237,7 +237,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     })
     expect(flashCheck.samples).toBeGreaterThan(2)
     expect(flashCheck.flashes).toBe(0)
-    expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests+1)
+    expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
     await page.locator('[data-team-side="team"]').getByText('代表团队',{exact:true}).waitFor()
     await page.locator('[data-team-side="external"]').getByText('联系团队',{exact:true}).waitFor()

@@ -19,7 +19,7 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
   const bubble = useRef<HTMLDivElement>(null)
   const receiptButton = useRef<HTMLButtonElement>(null)
   const select = (action: () => void) => { setMenu(undefined); action() }
-  const published = message.state === 'published', available = published && message.contentStatus === 'available'
+  const published = message.state === 'published', available = (published || message.state === 'sending') && message.contentStatus === 'available'
   return <article data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther) }}>
     <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}) }}>
       <div style={layout.messageAvatar}>{avatar}</div>
