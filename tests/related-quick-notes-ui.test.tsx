@@ -72,7 +72,7 @@ describe('related quick note shared UI', () => {
       onOpen: vi.fn(),
       onRetry: vi.fn(),
     }))
-    expect(error).toContain('相关快记加载失败')
+    expect(error).toContain('网络不可用')
     expect(error).toContain('<button')
     expect(error).toContain('重试')
   })
