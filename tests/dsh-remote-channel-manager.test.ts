@@ -91,14 +91,11 @@ describe('account-scoped Runtime channel manager', () => {
     realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
     await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
     dispatch.mockResolvedValueOnce({ ...response('request-01'), status: 'duplicate', issued_at: 2_000 } as never)
-    realtime.failPublishCount = 1
     realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9, 2))
-    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(3) })
-    const [first, retried, publishRetry] = realtime.publishes
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(2) })
+    const [first, retried] = realtime.publishes
     expect(retried!.commandId).not.toBe(first!.commandId)
-    expect(publishRetry!.commandId).toBe(retried!.commandId)
-    expect(publishRetry!.payload).toEqual(retried!.payload)
-    expect(publishRetry!.payload).toMatchObject({ request_ref: 'request-01', status: 'duplicate' })
+    expect(retried!.payload).toMatchObject({ request_ref: 'request-01', status: 'duplicate' })
     expect(fatals).toEqual([])
     await manager.close()
   })
@@ -108,7 +105,7 @@ describe('account-scoped Runtime channel manager', () => {
     await manager.prepare()
     manager.activate(9)
     realtime.event({ ...response('request-01'), kind: 'request', body: { content: 'private prompt' } }, controllerMetadata(9))
-    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: true })) })
+    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: true, payload_bytes: expect.any(Number), fragment_count: 1, frame_ack_max_ms: expect.any(Number) })) })
     expect(diagnostics.mock.calls.map(([event]) => event)).toEqual(['host_request_received', 'host_request_processed', 'host_response_publish_finished'])
     for (const [, fields] of diagnostics.mock.calls) expect(fields).toMatchObject({ user_id: '42', runtime_ref: 'runtime-01', request_ref: 'request-01', operation: 'capabilities.get' })
     expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('private prompt')
@@ -261,18 +258,13 @@ describe('account-scoped Runtime channel manager', () => {
     expect(fatals).toEqual([])
   })
 
-  it('retries a retryable frame with the same idempotent command id', async () => {
-    vi.useFakeTimers()
+  it('leaves unknown publish outcomes to transport recovery instead of retrying a second layer', async () => {
     const { manager, realtime } = managerFixture()
     realtime.failPublishCount = 2
-    await manager.prepare()
-    await manager.activate(9)
-    const publish = manager.publishProjectionEvent({ kind: 'event' }, 'projection-01')
-    await vi.advanceTimersByTimeAsync(300)
-    await publish
-    expect(realtime.publishes).toHaveLength(3)
-    expect(new Set(realtime.publishes.map(item => item.commandId))).toEqual(new Set(['projection-01']))
-    vi.useRealTimers()
+    await manager.prepare(); manager.activate(9)
+    await expect(manager.publishProjectionEvent({ kind: 'event' }, 'projection-01')).rejects.toThrow('retry publish')
+    expect(realtime.publishes).toHaveLength(1)
+    await manager.close()
   })
 })
 
@@ -306,14 +298,14 @@ it('separates outbound queue time from ACK time and contains diagnostic failures
     })
     now = 80; gate.resolve()
     await Promise.all([first, second])
-    expect(timings).toEqual([
+    expect(timings).toMatchObject([
       { queueMs: 0, publishMs: 80, completed: true },
       { queueMs: 70, publishMs: 0, completed: true },
     ])
     vi.spyOn(realtime, 'publish').mockRejectedValueOnce(new DshRemoteError('REMOTE_INVALID_RESPONSE', 'invalid', false))
     const timing = vi.fn()
     await expect(manager.publishProjectionEvent({ kind: 'event' }, 'failed', timing)).rejects.toThrow('invalid')
-    expect(timing).toHaveBeenCalledWith({ queueMs: 0, publishMs: 0, completed: false })
+    expect(timing).toHaveBeenCalledWith(expect.objectContaining({ queueMs: 0, publishMs: 0, completed: false, fragmentCount: 1, payloadBytes: 16, frameAckMaxMs: 0 }))
   } finally { clock.mockRestore(); await manager.close() }
 })
 

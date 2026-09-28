@@ -90,3 +90,16 @@ describe('encrypted append-only remote command ledger', () => {
     ledger.close()
   })
 })
+
+
+it('shares a completed canonical request across two live instance ledgers', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme-shared-ledger-'))
+  const a = new DshRemoteCommandLedger(directory, Buffer.alloc(32, 1), { now: () => 1000 })
+  const b = new DshRemoteCommandLedger(directory, Buffer.alloc(32, 1), { now: () => 1000 })
+  try {
+    expect(a.begin(identity).duplicate).toBe(false)
+    expect(b.begin(identity)).toMatchObject({ duplicate: true, entry: { state: 'pending' } })
+    a.complete(identity, { accepted: true })
+    expect(b.begin(identity)).toMatchObject({ duplicate: true, entry: { state: 'completed', payload: { result: { accepted: true } } } })
+  } finally { a.close(); b.close() }
+})
