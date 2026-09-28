@@ -86,6 +86,11 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
+  it('does not turn a failed required hydration into a definitive empty result', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'missing-details' }] }, batchItems: [] })
+    await expect(test.service.list(locator)).rejects.toMatchObject({ code: 'related-invalid-response', retryable: false })
+  })
+
   it('keeps a synthetic record owner distinct from a human profile identity', async () => {
     const owner = '6690025278483443577'
     const test = fixture({
@@ -109,6 +114,20 @@ describe('RelatedQuickNoteService', () => {
     expect(result.items[0]?.textPreview).toBe('文'.repeat(1995))
   })
 
+  it('keeps identical UIDs isolated by owner, including the source and viewer privacy snapshot', async () => {
+    const test = fixture({ lockedRecordUids: ['same'], relatedResponse: { items: [
+      { record_uid: 'record-source', record_owner_user_id: 12, text_preview: 'source' },
+      { record_uid: 'record-source', record_owner_user_id: 13, text_preview: 'other source owner' },
+      { record_uid: 'same', record_owner_user_id: 42, text_preview: 'viewer locked' },
+      { record_uid: 'same', record_owner_user_id: 13, text_preview: 'owner 13' },
+      { record_uid: 'same', record_owner_user_id: 14, text_preview: 'owner 14' },
+      { record_uid: 'same', record_owner_user_id: 14, text_preview: 'duplicate' },
+    ] } })
+    const result = await test.service.list(locator)
+    expect(result.items.map(item => item.textPreview)).toEqual(['other source owner', 'owner 13', 'owner 14'])
+    expect(new Set(result.items.map(item => item.relatedRef)).size).toBe(3)
+  })
+
   it('projects the new response in source order without leaking routing fields', async () => {
     const test = fixture({
       lockedRecordUids: ['record-locked'],
@@ -126,7 +145,7 @@ describe('RelatedQuickNoteService', () => {
           },
           { record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'duplicate' },
           { record_uid: 'record-private', record_owner_user_id: 15, content_access_state: 2 },
-          { record_uid: 'record-locked', record_owner_user_id: 16, text_preview: 'locked' },
+          { record_uid: 'record-locked', record_owner_user_id: 42, text_preview: 'locked' },
         ],
       },
     })
