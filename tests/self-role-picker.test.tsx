@@ -70,15 +70,16 @@ describe('self role picker', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': '创建发言角色' })).toHaveLength(0)
   })
 
-  it('edits and clears an existing avatar without changing the role identity', async () => {
+  it('edits a name while retaining its avatar and exposes no remove control', async () => {
     const onSelect=vi.fn()
-    mocks.call.mockImplementation(async(operation:string)=>operation==='self-roles.list'?[role]:{...role,name:'新名字',avatarRef:''})
+    mocks.call.mockImplementation(async(operation:string)=>operation==='self-roles.list'?[role]:{...role,name:'新名字'})
     await act(async()=>{renderer=create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} selectedRole={role} onSelect={onSelect}/> )})
     await act(async()=>{trigger().props.onClick();action('role-edit').onSelect()})
     await act(async()=>{renderer!.root.findByProps({'aria-label':'角色名称'}).props.onChange({currentTarget:{value:'新名字'}})})
-    await act(async()=>{renderer!.root.findAllByType('button').find(button=>button.props.children==='移除头像')!.props.onClick()})
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('移除头像')
+    expect(renderer!.root.findByProps({ 'aria-label': '选择角色头像' }).findByProps({ 'data-avatar-ref': role.avatarRef })).toBeDefined()
     await act(async()=>{renderer!.root.findByType('form').props.onSubmit({preventDefault(){}})})
-    expect(mocks.call).toHaveBeenCalledWith('self-roles.update',{expectedUserId:42,roleId:'r1',name:'新名字',avatarRef:''},expect.any(AbortSignal))
+    expect(mocks.call).toHaveBeenCalledWith('self-roles.update',{expectedUserId:42,roleId:'r1',name:'新名字'},expect.any(AbortSignal))
   })
 
   it('submits only the field changed in the editor and exposes no sync decisions', async () => {
@@ -105,6 +106,7 @@ describe('self role picker', () => {
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '确认测试裁剪' }).props.onClick() })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '角色名称' }).props.onChange({ currentTarget: { value: '理性我' } }) })
     await act(async () => { renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('移除头像')
     expect(saveAvatar).toHaveBeenCalledWith('/arkme-self/api/self-role-avatar', expect.objectContaining({
       method: 'POST', headers: expect.objectContaining({ 'X-Arkme-Expected-User-Id': '42' }),
     }))

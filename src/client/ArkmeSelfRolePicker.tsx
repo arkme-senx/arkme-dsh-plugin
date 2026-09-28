@@ -57,7 +57,6 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
   const [editingRole, setEditingRole] = useState<ArkmeSelfRole>()
-  const [removeAvatar, setRemoveAvatar] = useState(false)
   const [avatarFile, setAvatarFile] = useState<File>()
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('')
   const [cropSource, setCropSource] = useState<File>()
@@ -71,7 +70,6 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setCreateOpen(false)
     setName('')
     setEditingRole(undefined)
-    setRemoveAvatar(false)
     setAvatarFile(undefined)
     setCropSource(undefined)
     setSaving(false)
@@ -122,7 +120,6 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setCreateOpen(false)
     setName('')
     setEditingRole(undefined)
-    setRemoveAvatar(false)
     setAvatarFile(undefined)
     setCropSource(undefined)
     setFormError('')
@@ -138,7 +135,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setSaving(true)
     setFormError('')
     try {
-      const avatarRef = avatarFile === undefined ? (removeAvatar ? '' : undefined) : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
+      const avatarRef = avatarFile === undefined ? undefined : await saveLocalRoleAvatar(avatarFile, userId, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
       const created = await callArkme<ArkmeSelfRole>(editingRole === undefined ? 'self-roles.create' : 'self-roles.update', {
         ...(editingRole === undefined ? {} : { roleId: editingRole.roleId }),
@@ -149,8 +146,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
         ? { ...current, roles: [...current.roles.filter(role => role.roleId !== created.roleId), created] } : current)
       setCreateOpen(false)
       setName('')
-    setEditingRole(undefined)
-    setRemoveAvatar(false)
+      setEditingRole(undefined)
       setAvatarFile(undefined)
       onSelect(created)
     } catch (caught) {
@@ -178,7 +174,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   </button>
   const editRole = (role: ArkmeSelfRole) => {
     setMenuOpen(false); setEditingRole(role); setName(role.name); setAvatarFile(undefined)
-    setRemoveAvatar(false); setFormError(''); setCreateOpen(true)
+    setFormError(''); setCreateOpen(true)
   }
   const deleteRole = (role: ArkmeSelfRole) => {
     setMenuOpen(false)
@@ -208,7 +204,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     ] : []),
     { type: 'separator' as const, id: 'role-create-separator' },
     { id: 'role-create', label: '＋ 创建角色', disabled: visibleState.loading || visibleState.error !== '' || visibleState.roles.length >= MAX_ROLES,
-      onSelect: () => { setMenuOpen(false); setEditingRole(undefined); setRemoveAvatar(false); setName(''); setAvatarFile(undefined); setFormError(''); setCreateOpen(true) } },
+      onSelect: () => { setMenuOpen(false); setEditingRole(undefined); setName(''); setAvatarFile(undefined); setFormError(''); setCreateOpen(true) } },
   ]
 
   return <>
@@ -225,7 +221,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
               style={styles.avatarButton} onClick={() => fileInputRef.current?.click()}>
               {avatarPreviewUrl
                 ? <img src={avatarPreviewUrl} alt="已选角色头像" style={styles.avatarPreview} />
-                : <ArkmeSelfRoleAvatar role={{ roleId: 'draft', name: name.trim() || '角', ...(!removeAvatar && editingRole?.avatarRef ? {avatarRef:editingRole.avatarRef} : {}) }} size={48} />}
+                : <ArkmeSelfRoleAvatar role={{ roleId: 'draft', name: name.trim() || '角', ...(editingRole?.avatarRef ? {avatarRef:editingRole.avatarRef} : {}) }} size={48} />}
               <span style={styles.avatarAdd}>＋</span>
             </button>
             <label style={styles.nameLabel}>角色名称
@@ -234,7 +230,6 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
                 onChange={event => { setName(Array.from(event.currentTarget.value).slice(0, MAX_NAME_LENGTH).join('')); setFormError('') }} />
             </label>
           </div>
-          {(avatarFile !== undefined || (!removeAvatar && editingRole?.avatarRef)) && <button type="button" disabled={saving} onClick={()=>{setAvatarFile(undefined);setRemoveAvatar(true)}}>移除头像</button>}
           <input ref={fileInputRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => {
             const file = event.currentTarget.files?.[0]
             event.currentTarget.value = ''
