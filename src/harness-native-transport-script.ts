@@ -438,8 +438,8 @@ function installNativeTransport(route: string): void {
                 const id = frame.event === 'api-session/added' ? args[0].sessionId : args[0]
                 if (id !== sessionRef) continue
                 args[0] = frame.event === 'api-session/added' ? encodeSummary(runtime, args[0]) : identity(runtime, args[0])
-                const id = frame.event === 'api-session/added' ? args[0].sessionId : args[0]
-                if (hiddenRemote.has(id)) continue
+                const encodedId = frame.event === 'api-session/added' ? args[0].sessionId : args[0]
+                if (hiddenRemote.has(encodedId)) continue
                 emit({ ...frame, args })
               } else {
                 if (frame.type === 'waterfall' && frame.agentId !== sessionRef) {
