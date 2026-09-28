@@ -1175,6 +1175,8 @@ export async function dispatchArkmeHostOperation(
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
+    case 'account.points.query': return await service.aiPointsAccount(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.points.consumption': return await service.aiPointsConsumption({ month: stringParam(params, 'month'), ...(typeof params.beforeId === 'string' && params.beforeId ? { beforeId: params.beforeId } : {}) }, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.storage': return await service.accountStorageUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.voice': return await service.accountVoiceUsage(stringParam(params, 'expectedAccountScope'))
@@ -1938,6 +1940,12 @@ export async function dispatchArkmeHostOperation(
       requiredInterwovenParam(params, 'sourceRef'),
       requiredInterwovenParam(params, 'momentRef'),
     )
+    case 'source.interwoven-read-receipts': {
+      if (!Array.isArray(params.momentRefs) || !params.momentRefs.every(ref => typeof ref === 'string')) {
+        throw new ArkmePluginError('interwoven-param-invalid', '群互动已读查询参数无效', false, 400)
+      }
+      return await service.interwovenReadReceipts(requiredInterwovenParam(params, 'sourceRef'), params.momentRefs, requestSignal)
+    }
     case 'source.related-quick-notes.from-message': return await service.relatedQuickNotesFromMessage(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
       requiredRelatedQuickNoteParam(params, 'messageActionRef', MAX_MESSAGE_ACTION_REF_CHARS),
@@ -2022,6 +2030,10 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'itemIndex', 0),
       stringParam(params, 'textContent'),
       stringParam(params, 'recordUid'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-extension.parent': return await service.sourceMessageExtensionParent(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(

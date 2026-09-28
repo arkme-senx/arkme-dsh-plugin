@@ -80,7 +80,7 @@ function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Respons
 }
 
 describe('Arkme managed model adapter', () => {
-  it('discovers V4.1 through the existing catalog while preserving historical IDs without price descriptions', async () => {
+  it('discovers V4.1 through the existing catalog while preserving historical IDs and the authoritative points quote', async () => {
     const official = {
       ...MANAGED_CATALOG_ITEMS[0], display_name: 'DeepSeek V4.1 Flash（官方）',
       pricing: { cache_hit_input_nano_per_token: '40', cache_miss_input_nano_per_token: '2000', output_nano_per_token: '8000' },
@@ -101,11 +101,11 @@ describe('Arkme managed model adapter', () => {
       const models = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
       expect(models.map(model => model.id)).toEqual(['deepseek-v4-flash', 'saved-vision-id', 'deepseek-v4-flash-bailian', 'deepseek-v4.1-flash-bailian'])
       for (const model of models) {
-        expect(model.description).toBeUndefined()
+        expect(model.description).toBe('计费信息暂时无法读取，实际按用量扣积分')
         const resolved = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, model.id)
         expect(resolved.id).toBe(model.id)
         expect(resolved.name).toBe(model.name)
-        expect(resolved.description).toBeUndefined()
+        expect(resolved.description).toBe(model.description)
       }
       const saved = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, 'saved-vision-id')
       expect(saved.reasoning?.efforts.map(effort => String(effort.id))).toEqual(['off', 'low', 'high', 'max'])
@@ -161,6 +161,13 @@ describe('Arkme managed model adapter', () => {
     ] })
   })
 
+  it('advertises the point quote from the selected offering without recomputing money or matching names',async()=>{
+    const adapter=createManagedAiLlmAdapter({intelligentBaseUrl:'https://intelligent.test',credentialOwner:{resolveManagedAccessCredential:async()=>new SecretValue('access')},resolveAnonymousUserId:()=> '11111111-1111-4111-8111-111111111111' as never,fetchImpl:async()=>managedCatalogResponse([{...MANAGED_CATALOG_ITEMS[0],point_pricing:{cache_hit_input_per_thousand:'0.00415',cache_miss_input_per_thousand:'0.2075',output_per_thousand:'0.83'}}])})
+    const models=await adapter.listModels('arkme-managed')
+    expect(models[0]?.description).toContain('输入 0.2075 积分')
+    expect(models[0]?.description).toContain('输出 0.83 积分')
+    expect(models[0]?.description).toContain('已含服务费')
+  })
   it('advertises every active backend catalog model without automatic retries', async () => {
     const catalogFetch = vi.fn(async () => managedCatalogResponse())
     const adapter = createManagedAiLlmAdapter({
@@ -182,24 +189,28 @@ describe('Arkme managed model adapter', () => {
         id: 'deepseek-v4-flash',
         name: 'DeepSeek V4 Flash',
         inputModalities: ['text'],
+        description: '计费信息暂时无法读取，实际按用量扣积分',
       },
       {
         provider: 'arkme-managed',
         id: 'qwen3.8-max',
         name: 'Qwen3.8 Max',
         inputModalities: ['text'],
+        description: '计费信息暂时无法读取，实际按用量扣积分',
       },
       {
         provider: 'arkme-managed',
         id: 'glm-5.2',
         name: 'GLM-5.2',
         inputModalities: ['text'],
+        description: '计费信息暂时无法读取，实际按用量扣积分',
       },
       {
         provider: 'arkme-managed',
         id: 'deepseek-v4-flash-bailian',
         name: 'DeepSeek V4 Flash（百炼）',
         inputModalities: ['text'],
+        description: '计费信息暂时无法读取，实际按用量扣积分',
       },
     ])
     await expect(adapter.resolveModel('arkme-managed', 'qwen3.8-max')).resolves.toMatchObject({
@@ -220,7 +231,7 @@ describe('Arkme managed model adapter', () => {
       mode: 'normal',
       maxRetries: 0,
     })
-    expect(catalogFetch).toHaveBeenCalledTimes(1)
+    expect(catalogFetch).toHaveBeenCalledTimes(2)
     expect(catalogFetch).toHaveBeenCalledWith(
       'https://intelligent.test/api/v1/managed-ai/models/query',
       expect.objectContaining({
@@ -2186,10 +2197,10 @@ describe('Arkme managed model adapter', () => {
 
       await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
         code: 'INSUFFICIENT_BALANCE',
-        message: 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试',
+        message: 'AI 额度不足，请充值后继续',
         failure: {
           code: 'INSUFFICIENT_BALANCE',
-          message: 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试',
+          message: 'AI 额度不足，请充值后继续',
           status: 402,
           requestId: 'mai_req_balance',
         },
@@ -2204,12 +2215,17 @@ describe('Arkme managed model adapter', () => {
     {
       code: 'QUOTA', status: 402,
       expectedCode: 'INSUFFICIENT_BALANCE',
-      expectedMessage: 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试',
+      expectedMessage: 'AI 额度不足，请充值后继续',
     },
     {
       code: 'AUTH', status: 401,
       expectedCode: 'AUTH',
       expectedMessage: '请先登录或重新登录 Arkme 后再使用托管模型',
+    },
+    {
+      code: 'REQUEST_IN_PROGRESS', status: 409,
+      expectedCode: 'REQUEST_IN_PROGRESS',
+      expectedMessage: '已有 AI 请求正在完成，请等待结果后重试',
     },
     {
       code: 'RATE_LIMIT', status: 429,
@@ -2439,7 +2455,25 @@ describe('Arkme managed model adapter', () => {
     })
   })
 
-  it('rejects a model absent from the latest managed catalog after one owner refresh', async () => {
+  it('restores a removed model after restart only from server-authorized operation metadata without re-listing it', async () => {
+    const lookups: unknown[] = []
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('account-bound-access') },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as { resolve_model?: string }
+        lookups.push(body)
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer account-bound-access')
+        return managedCatalogResponse(body.resolve_model === 'deepseek-v4-flash' ? [MANAGED_CATALOG_ITEMS[0]] : [MANAGED_CATALOG_ITEMS[1]])
+      },
+    })
+    const restored = await adapter.resolveModel(ARKME_MANAGED_PROVIDER, 'deepseek-v4-flash')
+    expect(restored.name).toBe('DeepSeek V4 Flash')
+    expect((await adapter.listModels(ARKME_MANAGED_PROVIDER)).map(item => item.id)).toEqual(['qwen3.8-max'])
+    expect(lookups).toEqual([{}, { resolve_model: 'deepseek-v4-flash' }])
+  })
+
+  it('rejects a model absent from the latest managed catalog after catalog and retained-operation lookups', async () => {
     let credentialReads = 0
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
@@ -2467,7 +2501,7 @@ describe('Arkme managed model adapter', () => {
     await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
       code: 'UNKNOWN_MODEL',
     })
-    expect(credentialReads).toBe(1)
+    expect(credentialReads).toBe(3)
   })
 
   it('cancels unknown-model discovery before reading credentials when the caller is already aborted', async () => {

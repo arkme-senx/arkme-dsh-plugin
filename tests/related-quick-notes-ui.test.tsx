@@ -55,12 +55,18 @@ describe('related quick note shared UI', () => {
     expect(markup).toContain('aria-label="查看 4 条相关快记"')
   })
 
-  it('hides non-result states and keeps failures as a compact retry row', () => {
-    for (const state of [{ kind: 'idle' }, { kind: 'loading' }, { kind: 'empty' }] as const) {
+  it('hides empty states while distinguishing loading and failure from missing data', () => {
+    for (const state of [{ kind: 'idle' }, { kind: 'empty' }] as const) {
       expect(renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
         state, onOpen: vi.fn(), onRetry: vi.fn(),
       }))).toBe('')
     }
+    const loading = renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
+      state: { kind: 'loading' }, onOpen: vi.fn(), onRetry: vi.fn(),
+    }))
+    expect(loading).toContain('正在加载相关快记…')
+    expect(loading).toContain('role="status"')
+    expect(loading).not.toContain('<button')
     const error = renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
       state: { kind: 'error', message: '网络不可用' },
       onOpen: vi.fn(),
