@@ -652,3 +652,21 @@ it('keeps a Bot opened before the Host directory snapshot in the same row-and-to
   expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Early Bot，2 条未读')).toBe(true)
   expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(2)
 })
+
+it('formats timestamps only for mounted directory rows, including an offscreen selection', async () => {
+  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
+  const rows = Array.from({ length: 1_000 }, (_, index) => ({
+    ...source, sourceRef: `large-${index}`, sourceKey: `large-key-${index}`,
+    displayName: `Large ${index}`, activeAtMillis: Date.now() - index * 1_000,
+  }))
+  const Original = Intl.DateTimeFormat
+  const format = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (...args) { return new Original(...args) })
+  await act(async () => { arkmeChatDirectory.publish(rows) })
+  expect(renderer!.root.findAllByProps({ 'data-arkme-directory-row': 'source' })).toHaveLength(20)
+  expect(format.mock.calls.length).toBeLessThan(100)
+  format.mockClear()
+  await act(async () => { arkmeUi.selectSource(rows[801]!) })
+  expect(renderer!.root.findAllByProps({ 'data-arkme-directory-row': 'source' })).toHaveLength(40)
+  expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(row => row.props['aria-label'] === 'Large 801')).toBe(true)
+  expect(format.mock.calls.length).toBeLessThan(200)
+})
