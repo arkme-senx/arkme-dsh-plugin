@@ -580,6 +580,7 @@ AI智能体|AI agent
 群聊名称|Group name
 最新|Latest
 部分历史附件暂不可用|Some earlier attachments are unavailable
+附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history
 重新加载历史附件|Reload earlier attachments

@@ -52,7 +52,8 @@ import { arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName } from '../topic-policy.js'
 import { ArkmeTopicReadOnlyNotice } from './ArkmeTopicReadOnlyNotice.js'
-import { ArkmeTopicSourceIcon } from './ArkmeDetailSourceBadgeVisuals.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { arkmeTopicPathNames } from './source-tree.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
@@ -5569,6 +5570,16 @@ export function ArkmeSurface({
     : detailTopicPresentation?.displayLabel
       ?? detailItem.selfTopic?.title
       ?? (source?.kind === 'topic' ? source.displayName : undefined)
+  const detailConversationBadge = source !== undefined && (source.kind === 'private_chat' || source.kind === 'group_chat')
+    ? <button data-arkme-feedback="neutral" data-arkme-detail-conversation-source type="button"
+      style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }}
+      aria-label={tr('来源：{v0}', { v0: source.displayName })}
+      onClick={event => { event.stopPropagation(); setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined }}>
+      <ArkmeDirectorySourceAvatar source={source} size={16} />
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{source.displayName}</span>
+      <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />
+    </button>
+    : undefined
   const openExtensionParentDetail = (parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => {
     if (source === undefined || detailItem === undefined || parent.itemUid === detailItem.itemUid) return
     const from: ArkmeDetailBackTarget = {
@@ -9287,6 +9298,7 @@ export function ArkmeSurface({
           {detailItem.forwardRecords !== undefined && <ForwardRecordsDetail
             key={detailItem.itemUid}
             item={detailItem}
+            sourceBadge={detailConversationBadge}
             onPrivateChatOpened={activateSource}
             onClose={() => { setDrawer(undefined) }}
           />}
@@ -9316,6 +9328,7 @@ export function ArkmeSurface({
         {activeConversation && drawer === 'detail' && detailItem !== undefined && detailItem.callRecord === undefined && detailItem.forwardRecords === undefined && detailSharedRecording === undefined && <ArkmeTimelineDetailDrawer
           key={`${authenticatedAccountKey ?? 'signed-out'}:${detailItem.itemUid}`}
           item={detailItem}
+          sourceBadge={detailConversationBadge}
           sourceRef={source?.sourceRef}
           sourceIdentityKey={conversationKey}
           canExtend={!archiveReadOnly}

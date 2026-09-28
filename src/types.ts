@@ -2460,6 +2460,10 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
   recordUid: string
+  /** Opaque current-conversation member identity for chat reply presentation. */
+  senderMemberRef?: string
+  /** Whether this chat reply was sent by the signed-in viewer. */
+  senderIsMe?: boolean
   /** Locally frozen speaking role for an owned "send to self" extension. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Whether the author's display name came from the record's creation-time snapshot. */
