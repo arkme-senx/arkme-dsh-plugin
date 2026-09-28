@@ -189,18 +189,22 @@ export class RelatedQuickNoteService {
   ): Promise<ArkmeRelatedQuickNoteList> {
     const session = await this.runtime.requireSession()
     const source = this.validLocator(locator, session.userId)
+    const body = {
+      record_uid: source.recordUid,
+      record_owner_user_id: source.recordOwnerUserId,
+      context_type: source.contextType,
+      ...(source.contextType === 'chat' ? { chat_session_uid: source.chatSessionUid } : {}),
+      limit: RELATED_QUICK_NOTE_LIMIT,
+    }
     const response = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/related/query',
-      {
-        record_uid: source.recordUid,
-        record_owner_user_id: source.recordOwnerUserId,
-        context_type: source.contextType,
-        ...(source.contextType === 'chat' ? { chat_session_uid: source.chatSessionUid } : {}),
-        limit: RELATED_QUICK_NOTE_LIMIT,
-      },
-      session,
-      signal,
+      '/api/v1/records/related/query', body, session, signal,
+      { lane: 'interactive-read', key: `related:${source.sourceRef}:${source.sourceOwnerRef}:${JSON.stringify(body)}`,
+        cacheMs: 0, failureCooldownMs: 1_000, cancelWhenUnobserved: true },
     )
+    const recallMode = response.recall_mode
+    if (!['embedding', 'search_fallback', 'unavailable'].includes(String(recallMode))) {
+      throw new ArkmePluginError('related-invalid-response', '相关快记响应无效', false, 502)
+    }
     const excluded = new Set([source.recordUid])
     const lockedRecordUids = await this.privacy.lockedRecordUids(session, signal)
     const directItems = listValue(response.items ?? response.records)
@@ -260,7 +264,11 @@ export class RelatedQuickNoteService {
         ...(descriptor.sourceLabel === undefined ? {} : { sourceLabel: descriptor.sourceLabel }),
       })
     }
-    return { items, total: items.length }
+    return { items, total: items.length,
+      recallMode: recallMode as ArkmeRelatedQuickNoteList['recallMode'],
+      retryable: response.retryable === true,
+      retryAfterMillis: Math.min(30_000, Math.max(1_000, numberValue(response.retry_after_ms) || 1_500)),
+    }
   }
 
   async detail(

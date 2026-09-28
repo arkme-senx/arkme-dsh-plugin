@@ -31,7 +31,7 @@ function fixture(options: {
     refreshToken: 'refresh',
   }
   const authenticatedPost = vi.fn(async (path: string) => {
-    if (path === '/api/v1/records/related/query') return options.relatedResponse
+    if (path === '/api/v1/records/related/query') return { recall_mode: 'embedding', retryable: false, ...options.relatedResponse }
     if (path === '/api/v1/records/detail') return options.detail ?? {}
     throw new Error(`unexpected record route: ${path}`)
   })
@@ -144,6 +144,7 @@ describe('RelatedQuickNoteService', () => {
       },
       expect.objectContaining({ userId: 42 }),
       undefined,
+      expect.objectContaining({ lane: 'interactive-read', cacheMs: 0, cancelWhenUnobserved: true }),
     )
     expect(test.authenticatedDataPost).not.toHaveBeenCalled()
     expect(result.items.map(item => item.textPreview)).toEqual(['问题不大', '没什么问题'])

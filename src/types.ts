@@ -1968,6 +1968,9 @@ export interface ArkmeRelatedQuickNoteItem {
 }
 
 export interface ArkmeRelatedQuickNoteList {
+  recallMode: 'embedding' | 'search_fallback' | 'unavailable'
+  retryable: boolean
+  retryAfterMillis: number
   items: ArkmeRelatedQuickNoteItem[]
   total: number
 }
