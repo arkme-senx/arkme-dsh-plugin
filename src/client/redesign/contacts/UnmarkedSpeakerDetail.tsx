@@ -387,7 +387,7 @@ export function UnmarkedSpeakerDetail({
   if (visibleView === 'success') {
     return <section className="arkme-unmarked-speaker-success" aria-label={tr("标记成功")}>
       <h2>{tr("标记成功")}</h2>
-      <p>{tr("说话人已标记，联系人目录正在刷新。")}</p>
+      <p>{tr("说话人已标记，列表正在刷新。")}</p>
     </section>
   }
 

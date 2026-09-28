@@ -13,6 +13,8 @@ import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js
 export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
+  ArkmeArrangementReorderInput,
+  ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
   ArkmeArrangementMutationIntent,
@@ -1239,12 +1241,13 @@ export class ArkmeSdk {
 
   /** Read the current account's Arrangement owner projection. */
   async arrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.call<ArkmeArrangementPage>('arrangements.list', {
       ...(options.status === undefined ? {} : { status: options.status }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
+      ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { boardVersion: options.boardVersion } : {}) } : {}),
     }, options.signal)
   }
 
@@ -1262,6 +1265,11 @@ export class ArkmeSdk {
   }
 
   /** Read one Arrangement through a Provider-issued, account-bound reference. */
+  async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
+    if (!input.arrangementRef.trim() || !input.boardVersion.trim() || !input.requestId.trim()) throw new TypeError('Arrangement reorder requires reference, version and request id')
+    return await this.call<ArkmeArrangementReorderResult>('arrangements.reorder', { ...input }, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
     return await this.call<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal)
@@ -1609,6 +1617,13 @@ export class ArkmeSdk {
       throw new TypeError('Arkme group source and Bot references must not be empty')
     }
     return await this.call<ArkmeGroupBotAddResult>('group.bot.add', { sourceRef, botRef }, signal)
+  }
+
+  async removeGroupBot(sourceRef: string, botRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotAddResult> {
+    if (sourceRef.trim() === '' || botRef.trim() === '') {
+      throw new TypeError('Arkme group source and Bot references must not be empty')
+    }
+    return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
   }
 
   async readSource(

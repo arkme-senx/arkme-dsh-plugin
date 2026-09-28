@@ -1,5 +1,80 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+个人世界|Personal world
+语音通话邀请|Voice call invitation
+视频通话邀请|Video call invitation
+公开快记|Public note
+AI 对话|AI conversation
+群聊 / 主题邀请|Group / topic invitation
+声纹录入邀请|Voiceprint invitation
+自动贴图邀请|Auto-sticker invitation
+市集扩展|Marketplace extension
+点击查看分享内容|Open shared content
+分享内容暂不可用|Shared content is unavailable
+分享已失效|Share link has expired
+分享内容审核中|Shared content is under review
+请打开链接确认访问权限|Open the link to check access
+预览暂时无法加载，可点击查看|Preview unavailable. Open to view.
+正在读取分享预览…|Loading share preview…
+另外 {count} 个链接|{count} more links
+{count} 条记录|{count} records
+今天已识别|Identified today
+当天已识别|Identified on this day
+今天到期|Due today
+当天到期|Due on this day
+正在加载当天安排…|Loading arrangements for this day…
+当天正在更新…|Updating…
+更新失败，已保留当前内容|Update failed. Current content has been kept.
+安排加载失败|Unable to load arrangements for this day
+暂无安排|No arrangements
+到期时间|Due time
+添加安排|Add arrangement
+输入安排内容|Arrangement content
+输入安排内容…|Enter arrangement content…
+待创建的安排内容|Draft arrangement content
+输入想做的事，完成后先保存，再由AI识别安排。|Describe what you want to do. Finish saves it first, then AI recognizes the arrangements.
+移除此条内容|Remove this entry
+最多输入10条，每条500字，总计2000字|Up to 10 entries, 500 characters each and 2,000 in total
+正在创建…|Creating…
+未能确认创建结果，输入已保留；重试不会重复创建。|Could not confirm creation. Your input is retained; retrying will not duplicate it.
+AI识别中…|AI recognition in progress…
+今天创建|Created today
+当天创建|Created on this day
+更新识别结果|Update recognition result
+安排已保存，未完成AI识别|Saved; AI recognition did not complete
+安排已保存，AI识别尚未结束，可稍后更新结果。|Saved. AI recognition is still running; you can update the result later.
+安排已保存，暂未获取识别结果，请稍后重试。|Saved. Recognition results are unavailable; try again later.
+安排已不可访问，请刷新确认。|Arrangement is unavailable. Refresh to check.
+待确认的内容|Content
+展开|Expand
+创建原文|Original source
+创建原文加载失败|Unable to load original source
+创建原文暂不可查看|Original source is currently unavailable
+暂无创建原文|No original source
+内容加载失败|Unable to load content
+暂无关联内容|No related content
+按空格开始排序，方向键移动，空格放置，Escape 取消。按 Enter 展开原文。|Press Space to pick up, arrow keys to move, Space to drop, or Escape to cancel. Press Enter to expand the source.
+已开始拖动安排|Arrangement picked up
+已更新安排插入位置|Arrangement insertion position updated
+当前位置不可放置|Cannot drop at this position
+拖动结束|Drag ended
+已取消拖动|Drag cancelled
+当前服务暂不支持手动排序|Manual sorting is unavailable for this service
+安排|Arrangements to confirm
+正在推进的事项|Work in progress
+每一步都算数|Every step counts
+已识别 · 待确认|Identified · Awaiting confirmation
+安排|Arrangements
+已识别|Identified
+跟进中|Following
+已完成|Completed
+返回日历|Back to calendar
+通知时间|Notification time
+未设置通知时间|No notification time set
+安排加载失败|Unable to load arrangements
+暂无安排，可将其他区块的安排拖到这里|No arrangements. Drag one here from another column.
+安排未能完成移动，已重新读取实际状态；请确认后重试。|The move could not be completed. Review the refreshed status and try again.
+部分安排暂未同步，请重试加载后再操作。|Some arrangements could not be refreshed. Retry loading before continuing.
 录音记录|Recording history
 最近录音记录|Recent recordings
 各设备同步的录音记录，按开始时间倒序|Synced recordings from your devices, newest start time first
@@ -592,6 +667,7 @@ AI润色已开启|AI polish enabled
 标签加载失败，|Failed to load tags.
 Enter发送|Enter to send
 / Shift+Enter换行|/ Shift+Enter for a new line
+Enter发送 / Shift+Enter换行|Enter to send / Shift+Enter for a new line
 指定主题|Choose topic
 删除|Delete
 发给自己|Saved notes
@@ -1102,6 +1178,15 @@ Arkme 市集|Arkme marketplace
 发送延展|Send reply
 延展作者头像|Reply author avatar
 快记延展列表|Note replies
+查看原始快记|View original note
+查看延展源：{v0}|View reply source: {v0}
+返回延展快记|Back to reply
+原延展暂时不可用|The previous reply is temporarily unavailable
+所在主题|Topic
+未指定主题|No topic
+延展回复|Replies
+暂无延展回复|No replies yet
+正在加载延展…|Loading replies…
 相关快记列表|Related notes list
 相关快记详情|Related note details
 录音片段详情|Recording segment details
@@ -1164,6 +1249,7 @@ ArkME 插件|Arkme extension
 消息头像|Message avatar
 原消息附件|Original attachments
 分享快记头像|Shared note avatar
+快记分享链接|Shared note link
 快记分享链接详情|Shared note link details
 分享快记链接|Share note link
 记录此刻想法|Capture a thought
@@ -1475,4 +1561,66 @@ Arkme 账号|Arkme account
 空间不足 10%|Less than 10% space left
 暂无可用额度|No allowance remaining
 余量较少|Running low
+已识别说话人|Recognized speakers
+查看录音中已标记和未标记的说话人|See labeled and unlabeled speakers from your recordings
+搜索说话人|Search speakers
+搜索已加载的说话人|Search loaded speakers
+已标记|Labeled
+未标记|Unlabeled
+录音中标记的人|Labeled in recordings
+出现 {v0} 天 · 最近 {v1}|Present on {v0} days · Last {v1}
+近 7 天出现 {v0} 天 · 最近 {v1}|Seen on {v0} of the last 7 days · Last {v1}
+近 7 天出现 {v0} 天|Seen on {v0} of the last 7 days
+已标记说话人详情|Labeled speaker details
+查看已确认归属的原始识别身份|View verified recognized voice identities
+对应的识别说话人|Recognized voices linked to this person
+仅展示近 7 天已转写片段中可核实的关联；完整历史待接口。|Only verified links in transcribed segments from the last 7 days are shown. Full history is pending.
+正在查找关联说话人…|Finding linked recognized voices…
+近 7 天有发声，但未找到稳定的原始识别身份。|Speech was found in the last 7 days, but no stable source voice identity was available.
+近 7 天未找到关联，不代表完整历史中没有。|No link was found in the last 7 days; this does not mean none exists in full history.
+近 7 天未见已转写发声 · 全历史待接口|No transcribed speech in the last 7 days · Full history pending
+已标记项仅统计近 7 天已转写发声；全历史统计待接口。|Labeled speakers currently show transcribed speech from the last 7 days only. Full-history stats are pending.
+出现统计整理中|Preparing presence stats
+出现统计更新中|Updating presence stats
+出现统计暂不可用|Presence stats unavailable
+暂无可统计的录音片段|No countable recording segments
+已标记说话人读取失败：|Could not load labeled speakers:
+未标记说话人读取失败：|Could not load unlabeled speakers:
+说话人列表暂时无法加载|Speaker list could not be loaded
+正在加载说话人…|Loading speakers…
+正在更新说话人…|Updating speakers…
+暂无已识别说话人|No recognized speakers yet
+没有匹配的说话人|No matching speakers
+加载更多未标记说话人|Load more unlabeled speakers
+搜索仅覆盖已加载的说话人，可继续加载更多。|Search covers loaded speakers only. Load more to continue searching.
+未标记说话人正在整理，结果可能不完整。|Unlabeled speakers are being prepared. Results may be incomplete.
+未标记说话人正在更新，结果可能不完整。|Unlabeled speakers are updating. Results may be incomplete.
+未标记说话人整理失败，请稍后刷新。|Could not prepare unlabeled speakers. Refresh later.
+暂无可显示的说话人|No speakers can be shown yet
+‹ 返回列表|‹ Back to list
+说话人已标记，列表正在刷新。|Speaker labeled. Refreshing the list…
+{v0} 的 Bot 操作|Bot actions for {v0}
+打开 {v0} 的 Bot 操作|Open Bot actions for {v0}
+正在加载 Bot 操作…|Loading Bot actions…
+查看 Bot 资料|View Bot profile
+与 Bot 对话|Chat with Bot
+该 Bot 暂不可用|This Bot is currently unavailable
+@TA 的消息|Messages mentioning this Bot
+TA 的消息|Messages from this Bot
+@{v0}的消息|Messages mentioning {v0}
+{v0}的消息|Messages from {v0}
+仅当前已加载消息|Currently loaded messages only
+调整 Bot 消息侧栏宽度|Resize Bot messages panel
+关闭 Bot 消息|Close Bot messages
+当前已加载消息中暂无匹配内容|No matching messages in the currently loaded range
+Bot 已移出群聊|Bot removed from the group
+{v0} 将从当前群聊移除，历史消息保留。|{v0} will be removed from this group. Message history will remain.
+暂无简介|No description yet
+{v0} 的 Bot 资料|Bot profile for {v0}
+查看 {v0} 的 Bot 资料|View Bot profile for {v0}
+通知型 Bot 暂不支持 @ 对话|Notification Bots do not support @ conversations yet
+{v0}人 · {v1} Bot|{v0} people · {v1} Bots
+{v0}人|{v0} people
+正在读取群 Bot…|Loading group Bots…
+Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

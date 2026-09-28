@@ -14,6 +14,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
+import { SelfRoleAvatarStore, MAX_SELF_ROLE_AVATAR_BYTES } from '../self-role-avatar-store.js'
 import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -290,6 +291,7 @@ export class MediaService {
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
     private readonly botImages?: ArkmeBotImageReader,
+    private readonly selfRoleAvatars?: SelfRoleAvatarStore,
   ) {}
 
   dispose(): void {
@@ -620,8 +622,10 @@ export class MediaService {
     const session = await this.runtime.requireSession()
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
     const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
+    const isSelfRoleImage = imageRef.trim().startsWith('arkme-self-role-image-v1.')
     const isAvatar = isProfileImage || isBotImage
-    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
+    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES
+      : isSelfRoleImage ? MAX_SELF_ROLE_AVATAR_BYTES : MAX_ARKME_IMAGE_BYTES
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
@@ -715,6 +719,10 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-self-role-image-v1.')) {
+      if (this.selfRoleAvatars === undefined) throw new ArkmePluginError('self-role-avatar-missing', '本地角色头像不可用', false, 404)
+      return await this.selfRoleAvatars.read(session.userId, imageRef.trim(), byteLimit)
+    }
     const snapshotAsset = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
     if (snapshotAsset !== null) {
       // Resolve the immutable historical asset with the existing authenticated file API.

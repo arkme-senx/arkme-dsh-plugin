@@ -36,7 +36,7 @@ import {
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler } from './rich-media-routes.js'
+import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -704,6 +704,7 @@ export function apply(ctx: Context, config: Config): void {
     maxUploadBytes: config.maxUploadBytes,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
+  const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)
   const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
   const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
@@ -900,6 +901,11 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/upload`,
     handler: uploadHandler,
   }), 'dsh-arkme: rich content upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/self-role-avatar`,
+    handler: selfRoleAvatarHandler,
+  }), 'dsh-arkme: local self-role avatar route')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')

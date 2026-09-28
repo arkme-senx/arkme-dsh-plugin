@@ -32,6 +32,7 @@ import type { SelfCalendarDateSelection } from './use-self-calendar-navigation.j
 import type { CalendarMonthSnapshot } from './calendar-month-cache.js'
 import { CALENDAR_MIN_HEIGHT, useCalendarPopoverLayout } from './use-calendar-popover-layout.js'
 import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -106,6 +107,7 @@ const styles: Record<string, CSSProperties> = {
   },
   blank: { height: 45 },
   dayButton: {
+    position: 'relative',
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
@@ -128,7 +130,6 @@ const styles: Record<string, CSSProperties> = {
   error: { color: colors.danger },
   loadingStatus: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary, fontSize: 12, lineHeight: '18px', padding: '12px 0' },
   initialLoading: { minHeight: '100%', boxSizing: 'border-box' },
-  topicBadge: { display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%', marginTop: 10, padding: '2px 6px', minHeight: 24, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 8, color: colors.tertiary, fontSize: 12, lineHeight: '18px' },
   recordsPanel: {
     position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
     display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
@@ -636,11 +637,11 @@ function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem
   if (isDshAgentInputCreationSource(item)) return null
   const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
-  return <button data-arkme-feedback="neutral" type="button" style={{ ...styles.topicBadge, background: 'transparent', cursor: item.source ? 'pointer' : 'default', textAlign: 'left' }}
+  return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
     aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}
     onClick={event => { event.stopPropagation(); if (item.source !== undefined) onSelect(item.source) }}>
     {item.source !== undefined && item.source.kind !== 'topic' ? <ArkmeDirectorySourceAvatar source={item.source} size={16} />
-      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <NotePencil size={14} aria-hidden />}
+      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <ArkmeTopicSourceIcon />}
     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
     {item.source !== undefined && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
   </button>
@@ -714,7 +715,6 @@ export function ArkmeCalendarCell({
     disabled={disabled}
     style={{
       ...styles.dayButton,
-      ...(hasRecordingIndex ? { position: 'relative' } : {}),
       ...(showCountLabel && count > 0 ? { background: colors.bubble } : {}),
       ...(today ? { borderColor: colors.selected } : {}),
       ...(disabled ? styles.dayDisabled : {}),

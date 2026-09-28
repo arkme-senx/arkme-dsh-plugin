@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
+import { currentProfileRecordSnapshot } from '../record-sender-snapshot.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeEnvironment,
@@ -349,6 +350,12 @@ export class ProfileService {
       return persisted
     }
     return await this.refreshProfileForSession(session)
+  }
+
+  /** Capture the author's presentation at creation time; never persist a mutable signed profile ref. */
+  async recordSenderSnapshot(session: ArkmeSessionCredentials): Promise<{ avatar?: string; nickname?: string } | undefined> {
+    const profile = (await this.profileForSession(session).catch(() => undefined))?.profile
+    return currentProfileRecordSnapshot(profile)
   }
 
   async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {

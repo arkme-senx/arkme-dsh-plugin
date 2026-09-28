@@ -1,3 +1,4 @@
+import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
@@ -922,11 +923,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         const url = new URL(origin)
         if (!['http:', 'https:'].includes(url.protocol) || url.host !== req.headers.host) throw new ArkmePluginError('origin-rejected', '截屏必须从当前 DSH 页面发起', false, 403)
       }
-      if (request.operation === 'link.metadata' && origin === undefined) {
+      if (['link.metadata', 'share.preview'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
+      }
+      if (request.operation.startsWith('self-roles.') && request.operation !== 'self-roles.list' && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '角色修改必须从当前 DSH 页面发起', false, 403)
       }
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
@@ -1035,6 +1039,7 @@ export async function dispatchArkmeHostOperation(
     case 'link.metadata': return await resolveArkmeLinkMetadata(
       service, stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
     )
+    case 'share.preview': return await service.resolveSharePreview(stringParam(params, 'url'), requestSignal)
     case 'source.link-metadata.resolve': {
       const url = stringParam(params, 'url')
       return await resolveArkmeLinkMetadata(
@@ -1444,6 +1449,10 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.speaker.cached-options': return await service.cachedRecordingSpeakerOptions(requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
+    case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
+    case 'recordings.speaker.members': return await service.recordingSpeakerMembers(
+      stringParam(params, 'speakerRef').trim(), requestSignal,
+    )
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
@@ -1581,6 +1590,28 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'assistantMsgId', 0),
       stringParam(params, 'runUid'),
     )
+    case 'self-roles.list': return await service.listSelfRoles(numberParam(params, 'expectedUserId', 0))
+    case 'self-roles.create': return await service.createSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'name'),
+      params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
+    )
+    case 'self-roles.update': return await service.updateSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), stringParam(params, 'name'),
+      params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
+    )
+    case 'self-roles.delete': return await service.deleteSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.bind': return await service.bindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'sourceRef'),
+      stringParam(params, 'recordUid'), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.unbind': return await service.unbindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'recordUid'), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.rebind': return await service.rebindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'recordUid'), stringParam(params, 'newRecordUid'),
+    )
     case 'records.cache': return await service.cachedSnapshot()
     case 'records.refresh': return await service.refreshSnapshot()
     case 'records.search': {
@@ -1640,11 +1671,38 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'arrangements.board-cache': {
+      let pages
+      if (Object.hasOwn(params, 'pages')) {
+        try { pages = parseArrangementBoardCachePages(params.pages) }
+        catch { throw new ArkmePluginError('invalid-params', '安排看板缓存格式无效', false, 400) }
+      }
+      return await service.arrangementBoardCache(stringParam(params, 'accountScope'), pages)
+    }
+    case 'arrangements.create': {
+      if (!Array.isArray(params.texts) || params.texts.some(text => typeof text !== 'string')) throw new ArkmePluginError('arrangement-create-invalid', '安排输入无效', false, 400)
+      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[] })
+    }
+    case 'arrangements.recognition': {
+      if (!Array.isArray(params.arrangementRefs) || params.arrangementRefs.some(ref => typeof ref !== 'string')) throw new ArkmePluginError('arrangement-read-invalid', '安排引用无效', false, 400)
+      return service.arrangementRecognition(params.arrangementRefs as string[])
+    }
     case 'arrangements.list': return await service.listArrangements({
       status: arrangementListStatusParam(params),
+      ...(params.order === 'board' ? { order: 'board' as const, ...(stringParam(params, 'boardVersion') ? { boardVersion: stringParam(params, 'boardVersion') } : {}) } : {}),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.reorder': {
+      const status = arrangementListStatusParam(params)
+      if (status === 'all') throw new ArkmePluginError('arrangement-order-invalid', '安排排序状态无效', false, 400)
+      return await service.reorderArrangement({
+        arrangementRef: stringParam(params, 'arrangementRef'), status,
+        ...(stringParam(params, 'beforeRef') ? { beforeRef: stringParam(params, 'beforeRef') } : {}),
+        ...(stringParam(params, 'afterRef') ? { afterRef: stringParam(params, 'afterRef') } : {}),
+        boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
+      })
+    }
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
@@ -2198,6 +2256,11 @@ export async function dispatchArkmeHostOperation(
     case 'group.bot.add': return await service.addGroupBot(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'botRef'),
+    )
+    case 'group.bot.remove': return await service.removeGroupBot(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'botRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.notification.set': return await service.setGroupMessageDnd(
