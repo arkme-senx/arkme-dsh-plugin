@@ -45,7 +45,10 @@ describe('inline group origin receipt UI', () => {
     let badge = container.querySelector('[data-arkme-interwoven-receipt]')!
     expect(badge.getAttribute('aria-label')).toBe('对方尚未阅读群内原消息')
     expect(badge.nextElementSibling?.tagName.toLowerCase()).toBe('svg')
+    await act(async () => { badge.closest('button')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('产品群，我：')
     await act(async () => { badge.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    expect(document.querySelectorAll('[role="tooltip"]')).toHaveLength(1)
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('对方尚未阅读群内原消息')
     await act(async () => { badge.closest('button')!.click() })
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ momentId: 'm' }))
