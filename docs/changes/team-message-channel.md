@@ -70,3 +70,21 @@ pnpm exec vitest run --config "$ARKME_PLUGIN_CHECKOUT/vitest.team-layout-e2e.con
 已发布消息仅允许作者“删除”，调用 Record 全局删除/最近删除恢复；未发布请求仍可取消并保留草稿。新 UI Host 私有协议使用 delete/cancel/home.visibility，移除未发布的 withdraw，不扩展 Tools/公共 SDK。团队生成的 Record 仍参与作者自己的搜索、日历、统计等业务；首页开关按当前账号、当前团队会话生效，不扩散到其他成员或会话。
 
 最新代码链路、测试结果、结构成本与未覆盖环境见同任务 meta 的 `message-record-parity-review-20260924.md`。本轮由用户负责测试分支合并和重启，没有执行部署。
+
+## 2026-09-28 会话交互复用修复
+
+本轮按已确认的体验问题修复客户端实现，Team 权限、会话关系、幂等发送和 Record owner 不变。没有新增 Host API、Tools、SDK、配置或数据库结构，也没有接入原生 PC。UI 为本轮消费面；其他能力面 N/A：继续使用已有 Team App owner，不新增业务能力。
+
+| 已确认问题 | 实现与验证 |
+| --- | --- |
+| 发送成功后等待列表回读，回读失败时看不到成功消息；发送期间无法写下一条 | Flutter 使用现有 `SendDraftOptimisticSubmitCoordinator`；插件从普通会话提取 `ConfirmedSendRetentionOwner`。发送立即呈现本地待确认内容，回执先落列表，再进行授权回读；原请求与下一条草稿分离。断网、重复提交、重进页面、取消、冲突及回读失败有回归。 |
+| 相同头像按消息行重复读取 | Team 使用现有 `ArkmeUserAvatar`、`useArkmeAvatarImage` 和 `InMemoryArkmeAvatarImageStore`，只注入 Team 图片读取 port；显示标识与可轮换授权引用分离。20 个并发引用合并为 1 次读取，换账号清空旧缓存。 |
+| 移动端查阅弹层另做一套，且等待网络后才显示 | 群聊与 Team 共用 `JotmoMobileReadReceiptList`、成员行和 touch-move sheet；数据 owner 保持独立。弹层立即显示，支持原位重试；关闭后立刻重开时，过期结果不能覆盖当前请求。外部用户仍只看到不可点击的未读点，已读后消失。 |
+| 移动端首屏失败无法恢复 | 复用会话状态展示，提供页内重试；恢复后沿用原输入组件。没有加入常驻加载条。 |
+| 点击附件先等待原图再打开，发送预览资源重复维护 | 移动端立即打开现有媒体预览，由预览组件解析 Team 媒体；插件上传预览沿用附件 tile 和消息内容组件。上传临时 URL 在取消附件、授权资源接管或卸载时释放。 |
+
+验证结果：插件完整套件 8,923 通过、15 跳过；末轮发送回归 19 通过，头像/附件相关 50 通过。打包构建和类型生成通过。Flutter Team 套件 74 通过，独立自适应指标/窗口策略 29 通过，原群聊查阅回归 19 通过；修改文件 analyze 无问题。Flutter 窄屏/宽屏、表情与收起、查阅弹层截图已检查。
+
+最终运行包 SHA-256：`84574f6844162a7dd1880863036a0ff9f6d2b90fecede5ab29d4124def5e6083`。经官方 CLI 安装到全新隔离 DSH_HOME/Profile，使用未修改的 DSH 0.1.5-rc.2 和真实 Chrome 运行 `team-layout.e2e.mjs` 通过。签名更新 6 轮，发送前后头像读取均为 2 次，70 次画面采样未发现原头像闪动；原头像/图片 DOM、图片读取次数、输入节点与位置保持稳定。覆盖阅读点/共享浮层、内联重新编辑、同页及独立窗口图片预览、窄窗/暗色布局。
+
+本轮浏览器用合成 Team/身份响应，不能等同于真实测试服与 Vivo 新包的设备验收。用户当前实例、测试分支和测试服部署未重启或修改；更新后的 Vivo 安装验收由用户更新客户端后进行。配套移动端提交为 `759cc50765`，两个仓库均使用 `codex/c20260922-team-message-channel`。

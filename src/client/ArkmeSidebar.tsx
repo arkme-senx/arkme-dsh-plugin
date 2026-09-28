@@ -1,3 +1,4 @@
+import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { arkmeConversationMessageLayout, dayKey, dayLabel, timeLabel } from './conversation-message-presentation.js'
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
@@ -1371,50 +1372,15 @@ function extensionConversationPreview(extension: ArkmeMessageCopyLinkExtensionIt
     || '非文本内容'
 }
 
-const ARKME_CONFIRMED_SEND_RETENTION_MILLIS = ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4
-
-/**
- * Retains only bounded Host-confirmed sends while an eventually-consistent
- * first page catches up. A signed authoritative row retires its local entry.
- */
-export class ArkmeConfirmedSendRetentionOwner {
-  private readonly entries = new Map<string, { sourceKey: string; item: ArkmeTimelineItem; expiresAtMillis: number }>()
-
-  constructor(private readonly maxItems = 64) {}
-
-  retain(sourceKey: string, item: ArkmeTimelineItem, nowMillis = Date.now()): void {
-    if (sourceKey === '' || item.itemUid.trim() === '' || !item.isMe || item.status < 0) return
-    const key = `${sourceKey}\0${item.itemUid}`
-    this.entries.delete(key)
-    this.entries.set(key, {
-      sourceKey,
-      item: { ...item },
-      expiresAtMillis: nowMillis + ARKME_CONFIRMED_SEND_RETENTION_MILLIS,
+export class ArkmeConfirmedSendRetentionOwner extends ConfirmedSendRetentionOwner<ArkmeTimelineItem> {
+  constructor(maxItems = 64) {
+    super({
+      maxItems, ttlMillis: ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4,
+      key: item => item.itemUid,
+      canRetain: item => item.isMe && item.status >= 0,
+      isAuthoritative: item => item.messageActionRef !== undefined,
+      merge: mergeItems,
     })
-    while (this.entries.size > this.maxItems) {
-      const oldest = this.entries.keys().next().value as string | undefined
-      if (oldest === undefined) break
-      this.entries.delete(oldest)
-    }
-  }
-
-  forget(sourceKey: string, itemUids: readonly string[]): void {
-    for (const itemUid of itemUids) this.entries.delete(`${sourceKey}\0${itemUid}`)
-  }
-
-  merge(sourceKey: string, authoritative: ArkmeTimelineItem[], nowMillis = Date.now()): ArkmeTimelineItem[] {
-    const retained: ArkmeTimelineItem[] = []
-    const authoritativeById = new Map(authoritative.map(item => [item.itemUid, item]))
-    for (const [key, entry] of this.entries) {
-      if (entry.expiresAtMillis <= nowMillis) {
-        this.entries.delete(key)
-        continue
-      }
-      if (entry.sourceKey !== sourceKey) continue
-      retained.push(entry.item)
-      if (authoritativeById.get(entry.item.itemUid)?.messageActionRef !== undefined) this.entries.delete(key)
-    }
-    return mergeItems(retained, authoritative)
   }
 }
 

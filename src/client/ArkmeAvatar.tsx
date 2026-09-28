@@ -1,3 +1,4 @@
+import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 import { ArkmeBotAvatarFallback } from './ArkmeBotIdentity.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
@@ -91,7 +92,7 @@ function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAv
 }
 
 export function ArkmeUserAvatar({
-  avatarRef,
+  avatarRef, imageKey, imagePort,
   lazy = false,
   fallback,
   size = 44,
@@ -99,7 +100,9 @@ export function ArkmeUserAvatar({
   senderKind,
 }: {
   lazy?: boolean
-  avatarRef?: string
+  imageKey?: string | undefined
+  imagePort?: ArkmeAvatarImagePort
+  avatarRef?: string | undefined
   fallback?: ArkmeGroupAvatarFallback
   size?: number
   label?: string
@@ -107,7 +110,7 @@ export function ArkmeUserAvatar({
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
   const container = useRef<HTMLSpanElement>(null)
-  const imageUrl = useArkmeAvatarImage(normalizedRef, lazy ? container : undefined)
+  const imageUrl = useArkmeAvatarImage(normalizedRef, lazy ? container : undefined, {store: imagePort, cacheKey: imageKey})
 
   const styles = avatarStyles(size)
   return <span data-arkme-avatar ref={container} style={styles.avatar} aria-label={label}>
@@ -198,7 +201,7 @@ export function ArkmeAvatarMosaic({
 }
 
 type ArkmeSourceAvatarProps =
-  | { kind: 'single'; avatarRef?: string | undefined; size?: number | undefined }
+  | { kind: 'single'; avatarRef?: string | undefined | undefined; size?: number | undefined }
   | {
     kind: 'group'
     avatarRefs?: readonly string[] | undefined

@@ -33,6 +33,25 @@ function clientSourceFiles(directory: URL, prefix = ''): Array<{ name: string; s
 }
 
 describe('InMemoryArkmeAvatarImageStore', () => {
+  it('shares twenty rotating Team grants by display identity and revalidates with the latest grant', async () => {
+    const pending = deferred<ReturnType<typeof imagePayload>>()
+    const reader = vi.fn().mockImplementationOnce(() => pending.promise).mockResolvedValue(imagePayload('new'))
+    const store = new InMemoryArkmeAvatarImageStore({ reader })
+    store.activateScope('test:1999')
+    const loads = Array.from({length:20}, (_, i) => store.load(`grant-${i}`, 'member-avatar'))
+    expect(reader).toHaveBeenCalledTimes(1)
+    pending.resolve(imagePayload('old'))
+    await Promise.all(loads)
+    expect(store.current('member-avatar')).toBe(imageDataUrl('old'))
+    const stop = store.subscribe('member-avatar', () => undefined)
+    await store.revalidateActive()
+    expect(reader.mock.calls[1]![0]).toBe('grant-19')
+    expect(store.current('member-avatar')).toBe(imageDataUrl('new'))
+    store.activateScope('test:1998')
+    expect(store.current('member-avatar')).toBeUndefined()
+    stop()
+  })
+
   it('reports one failure for a shared load without adding retries or changing the rejection', async () => {
     let now = 100
     const pending = deferred<ReturnType<typeof imagePayload>>()

@@ -8,12 +8,14 @@ export type ArkmeAvatarImageListener = (imageDataUrl: string | undefined) => voi
 export interface ArkmeAvatarImagePort {
   activateScope(scopeKey: string | undefined): void
   current(imageRef: string): string | undefined
-  load(imageRef: string): Promise<string>
+  /** The grant may rotate while the account-scoped display identity stays stable. */
+  load(imageRef: string, cacheKey?: string): Promise<string>
   subscribe(imageRef: string, listener: ArkmeAvatarImageListener): () => void
   revalidateActive(imageRefs?: readonly string[]): Promise<void>
 }
 
 interface AvatarImageEntry {
+  reference: string
   expiresAtMillis: number
   pending: Promise<string> | undefined
   value?: string
@@ -80,8 +82,8 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     return this.entries.get(imageRef)?.value
   }
 
-  load(imageRef: string): Promise<string> {
-    return this.loadInternal(imageRef, false)
+  load(imageRef: string, cacheKey = imageRef): Promise<string> {
+    return this.loadInternal(cacheKey, false, imageRef)
   }
 
   subscribe(imageRef: string, listener: ArkmeAvatarImageListener): () => void {
@@ -105,8 +107,9 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     await Promise.allSettled(activeRefs.map(async imageRef => await this.loadInternal(imageRef, true)))
   }
 
-  private loadInternal(imageRef: string, force: boolean): Promise<string> {
+  private loadInternal(imageRef: string, force: boolean, reference?: string): Promise<string> {
     const existing = this.entries.get(imageRef)
+    if (existing && reference !== undefined) existing.reference = reference
     if (existing?.pending !== undefined) return existing.pending
     if (!force && existing?.value !== undefined && existing.expiresAtMillis > this.now()) {
       return Promise.resolve(existing.value)
@@ -115,10 +118,10 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     const generation = this.generation
     const scopeKey = this.scopeKey
     const startedAtMillis = this.now()
-    const entry = existing ?? { expiresAtMillis: 0, pending: undefined }
+    const entry = existing ?? { reference: reference ?? imageRef, expiresAtMillis: 0, pending: undefined }
     const pending = this.schedule(async () => {
       if (generation !== this.generation) throw new Error(AVATAR_IMAGE_SCOPE_CHANGED)
-      return await this.options.reader(imageRef)
+      return await this.options.reader(entry.reference)
     })
       .then(payload => {
         if (generation !== this.generation) throw new Error(AVATAR_IMAGE_SCOPE_CHANGED)
