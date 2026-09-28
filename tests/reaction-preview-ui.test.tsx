@@ -382,7 +382,7 @@ describe('reaction review UI', () => {
   it('does not cancel an existing reaction when saving and reacting to the same phrase', async () => {
     reactionPreview.setScope('test:1')
     const target = { id: 'm', source: '群', text: '正文' }
-    await reactionPreview.toggle('test:1', target, '已经表态')
+    expect(await reactionPreview.toggle('test:1', target, '已经表态', labelExpression('已经表态', 'purple'))).toBe(true)
     let ui: ReturnType<typeof create>
     await act(async () => { ui = create(<ArkmeReactionPreview scope="test:1" target={target} />) })
     await act(async () => ui!.root.findByProps({ 'aria-label': '表态' }).props.onClick())

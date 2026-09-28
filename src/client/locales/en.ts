@@ -1,6 +1,12 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 个人世界|Personal world
+说话人排序|Sort speakers
+经常出现|Most frequent
+最近出现|Most recent
+正在补齐说话人列表，排序仍在更新…|Loading the remaining speakers. Order is still updating…
+列表尚未完整，当前仅对已加载的说话人排序和搜索。|The list is incomplete. Sorting and search cover loaded speakers only.
+显示更多说话人|Show more speakers
 语音通话邀请|Voice call invitation
 视频通话邀请|Video call invitation
 公开快记|Public note
@@ -580,6 +586,7 @@ AI智能体|AI agent
 群聊名称|Group name
 最新|Latest
 部分历史附件暂不可用|Some earlier attachments are unavailable
+附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history
 重新加载历史附件|Reload earlier attachments
@@ -1623,4 +1630,12 @@ Bot 已移出群聊|Bot removed from the group
 {v0}人|{v0} people
 正在读取群 Bot…|Loading group Bots…
 Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
+新识别 {v0} 个|{v0} newly identified
+识别我的声音|Identify my voice
+你的声纹正在处理中|Your voiceprint is being processed
+已录入声纹，暂未在录音中匹配到你|Voiceprint enrolled. No match found in your recordings yet.
+还没有标记你的声音|Your voice has not been labeled yet
+打开你的录音，点击说话人名称并选择自己；请先试听确认。|Open your recording, listen to confirm, then click the speaker name and select yourself.
+从录音中标记我|Label myself in a recording
+管理声纹|Manage voiceprint
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

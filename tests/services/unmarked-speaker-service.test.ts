@@ -101,6 +101,8 @@ function segmentResponse(overrides: Record<string, unknown> = {}) {
 function fixture(responses: Record<string, unknown> = {}) {
   let currentSession = session
   const runtime = {
+    config: { environment: 'prod' },
+    stateStore: { uniqueCode: vi.fn(async () => 'stable-host-secret') },
     requireSession: vi.fn(async () => currentSession),
     requestScope: vi.fn((userId: number) => `user:${String(userId)}`),
     invalidateKey: vi.fn(),
@@ -137,6 +139,19 @@ async function listedCandidateRef(service: UnmarkedSpeakerService): Promise<stri
 afterEach(() => { vi.useRealTimers() })
 
 describe('UnmarkedSpeakerService', () => {
+  it('publishes a stable account-scoped read-only identity, not an expiring action reference', async () => {
+    const first = fixture()
+    const read = async (service: UnmarkedSpeakerService) => (await service.list()).items[0] as Extract<Awaited<ReturnType<UnmarkedSpeakerService['list']>>['items'][number], { kind: 'unmarked-speaker' }>
+    const a = await read(first.service)
+    const restarted = await read(fixture().service)
+    expect(a.identityKey).toBeTruthy()
+    expect(a.identityKey).toBe(restarted.identityKey)
+    expect(a.candidateRef).not.toBe(restarted.candidateRef)
+    expect(a.identityKey).not.toContain('candidate-private-1')
+    first.setSession({ ...session, userId: 8 })
+    expect((await read(first.service)).identityKey).not.toBe(a.identityKey)
+    await expect(first.service.markOptions(a.identityKey!)).rejects.toMatchObject({ code: 'unmarked-candidate-ref-invalid' })
+  })
   it('uses the upstream count-only contract without projecting candidate rows', async () => {
     const { service, runtime } = fixture({
       '/api/v1/audio/unmarked-speakers/list': listResponse({ cross_day_count: 8, single_day_count: 3 }),
@@ -180,7 +195,7 @@ describe('UnmarkedSpeakerService', () => {
       })
       expect(page.nextCursor).toMatch(/^arkme-unmarked-candidate-cursor-v1\./)
       expect(page.items).toEqual([
-        expect.objectContaining({ kind: 'unmarked-speaker', candidateRef: expect.stringMatching(/^arkme-unmarked-candidate-v1\./), displayName: '说话人 6', subtitle: expect.stringContaining('出现 3 天') }),
+        expect.objectContaining({ kind: 'unmarked-speaker', candidateRef: expect.stringMatching(/^arkme-unmarked-candidate-v1\./), displayName: '说话人 6', subtitle: expect.stringContaining('出现 3 天'), appearanceDays: 3, latestAtMillis: new Date(2026, 7, 22, 10, 30).getTime() }),
         expect.objectContaining({ kind: 'unmarked-speaker', candidateRef: expect.stringMatching(/^arkme-unmarked-candidate-v1\./), displayName: '2026-08-22 · 当天说话人 12' }),
       ])
       const serialized = JSON.stringify(page)

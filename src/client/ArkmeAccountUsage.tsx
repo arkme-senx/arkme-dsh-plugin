@@ -1,4 +1,4 @@
-import { formatAiPoints, type ArkmeAiPointsAccount } from '../ai-points.js'
+import { pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -12,6 +12,10 @@ import { ArkmeStorageUsageBreakdown } from './ArkmeUsageBreakdown.js'
 
 type ReadState<T> = { status: 'loading' | 'error' } | { status: 'ready'; value: T }
 type UsageValue = ArkmeAccountStorageUsage | ArkmeAiPointsAccount | ArkmeAccountVoiceUsage
+// Floor only the overview labels; keep the exact account values for billing and details.
+function formatWholePoints(value: string): string {
+  return (pointsUnits(value) / 10_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
 function useUsage<T extends UsageValue>(operation: 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
   const [result, setResult] = useState<{ scope: string; revision: number; state: ReadState<T> }>()
   useEffect(() => {
@@ -92,7 +96,7 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
     <span className="arkme-usage-summary-rows" aria-live="polite">
       <span className="arkme-usage-summary-row" data-usage-kind="ai-points">
         <span className="arkme-usage-summary-label">{tr('AI 额度')}</span>
-        <strong className="arkme-usage-summary-total">{points.status === 'ready' ? `${formatAiPoints(points.value.availablePoints)} ${tr('积分')}` : status(points)}</strong>
+        <strong className="arkme-usage-summary-total">{points.status === 'ready' ? `${formatWholePoints(points.value.availablePoints)} ${tr('积分')}` : status(points)}</strong>
       </span>
       <UsageSummaryRow label={tr("云端存储")} kind="storage" pending={status(storage)} measurement={storage.status === 'ready' ? {
         used: storage.value.usedBytes, total: storage.value.totalBytes, totalText: formatUsageBytes(storage.value.totalBytes),
@@ -140,7 +144,7 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
     <div className="arkme-usage-metric" data-usage-kind="ai-points" aria-live="polite">
       <div className="arkme-usage-label"><strong>{tr('AI 额度')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
       {points.status !== 'ready' ? <Pending status={points.status} onRetry={retry} /> : <>
-        <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatAiPoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatAiPoints(points.value.grantedPoints), v1: formatAiPoints(points.value.purchasedPoints) })}</span></p>
+        <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatWholePoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatWholePoints(points.value.grantedPoints), v1: formatWholePoints(points.value.purchasedPoints) })}</span></p>
         {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
       </>}
       <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>

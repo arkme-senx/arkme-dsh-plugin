@@ -156,7 +156,7 @@ export type ArkmeDirectorySectionKind =
 export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
-  | { kind: 'unmarked-speaker'; candidateRef: string; speakerToken?: string; displayName: string; subtitle: string }
+  | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
 
@@ -1366,6 +1366,7 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    speakerPresence?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -2459,6 +2460,10 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
   recordUid: string
+  /** Opaque current-conversation member identity for chat reply presentation. */
+  senderMemberRef?: string
+  /** Whether this chat reply was sent by the signed-in viewer. */
+  senderIsMe?: boolean
   /** Locally frozen speaking role for an owned "send to self" extension. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Whether the author's display name came from the record's creation-time snapshot. */
@@ -3060,19 +3065,21 @@ export interface ArkmeRecordingSpeakerCandidate {
 
 export interface ArkmeRecordingSpeakerPresence {
   state: 'building' | 'fresh' | 'stale' | 'failed'
-  /** Recent-only fallback is never presented as an all-history total. */
-  scope: 'all-history' | 'recent-seven-days'
+  scope: 'all-history'
+  version?: string
   items: Array<{ optionKey: string; dayCount: number; lastSeenAt: number }>
   updatedAt?: number
   retryAfterMs?: number
 }
 
 export interface ArkmeRecordingSpeakerMembers {
-  /** Existing day-transcript data only proves associations in this bounded window. */
-  scope: 'recent-seven-days'
+  state: ArkmeRecordingSpeakerPresence['state']
+  scope: 'all-history'
+  version?: string
+  retryAfterMs?: number
   dayCount: number
   lastSeenAt: number
-  items: Array<{ token: string; dayCount: number; lastSeenAt: number }>
+  items: Array<{ identityKey: string; token: string; dayCount: number; lastSeenAt: number }>
 }
 
 export interface ArkmeRecordingSpeakerRecommendation {
@@ -3715,6 +3722,9 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.presence'
+  | 'recordings.speaker.members'
   | 'self-roles.list'
   | 'self-roles.create'
   | 'self-roles.update'
@@ -4069,9 +4079,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
   | 'recordings.playback.open'
-  | 'recordings.speaker.options'
-  | 'recordings.speaker.presence'
-  | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
