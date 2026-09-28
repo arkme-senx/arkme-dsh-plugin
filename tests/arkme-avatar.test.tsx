@@ -7,6 +7,7 @@ import {
   ArkmeUserAvatar,
 } from '../src/client/ArkmeAvatar.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
+import { arkmePersonalAvatarRef } from '../src/client/self-role-presentation.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -48,6 +49,26 @@ describe('ArkmeAvatar', () => {
   })
 
   afterEach(() => { arkmeAvatarImages.activateScope(undefined) })
+
+  it('loads the current self image without requesting an unavailable historical or other-device avatar', async () => {
+    const profile = { avatarRef: 'current-self-avatar' }
+    mocks.callArkme.mockImplementation(async (_operation: string, input: { imageRef: string }) => {
+      if (input.imageRef !== profile.avatarRef) throw new Error('Historical avatar unavailable')
+      return { mediaType: 'image/png', dataBase64: Buffer.from('current-photo').toString('base64') }
+    })
+    for (const avatarRef of ['file_asset://old_avatar_42', 'arkme-self-role-image-v1.device-a', undefined]) {
+      const item = { isMe: true, ...(avatarRef === undefined ? {} : { avatarRef }) }
+      let renderer!: ReactTestRenderer
+      await act(async () => {
+        renderer = create(<ArkmeUserAvatar avatarRef={arkmePersonalAvatarRef(item, profile)!} />)
+        await tick()
+      })
+      expect(renderer.root.findByType('img').props.src).toBe(imageDataUrl('current-photo'))
+      act(() => renderer.unmount())
+    }
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: profile.avatarRef })
+  })
 
   it('uses the Flutter Bot icon for a Bot without an image, and its image when available', async () => {
     let renderer!: ReactTestRenderer

@@ -2391,6 +2391,8 @@ export interface ArkmeMessageCopyLinkExtendResult {
 /** Extension state for a message authorized by its source-scoped action reference. */
 export interface ArkmeSourceMessageExtensionContext extends ArkmeMessageCopyLinkRecordContext {
   parentRecordUid: string
+  /** Immediate source of the opened note, independent of its current topic. */
+  extensionParent?: ArkmeTimelineExtensionParent
 }
 
 export interface ArkmeSourceMessageExtendResult {
@@ -2528,6 +2530,18 @@ export interface ArkmeInterwovenBootstrap {
   moments: ArkmeInterwovenMention[]
   preparedAtMillis: number
   message?: string
+}
+
+/** Receipt of the original group message, never of its private-chat projection. */
+export interface ArkmeInterwovenReadReceipt {
+  momentId: string
+  reader: 'self' | 'peer'
+  status: 'read' | 'unread' | 'unknown'
+  readAtMillis?: number
+}
+
+export interface ArkmeInterwovenReadReceiptList {
+  items: ArkmeInterwovenReadReceipt[]
 }
 
 export interface ArkmeInterwovenDetail {
@@ -3880,6 +3894,7 @@ export type ArkmePluginOperation =
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
+  | 'source.message-extension.parent'
   | 'source.message-extension.extend'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
@@ -4092,6 +4107,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'plugin.update.install-status'
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
+  | 'source.interwoven-read-receipts'
   | 'source.shared-recording-detail'
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'

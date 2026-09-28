@@ -1,4 +1,18 @@
-import type { ArkmeGroupAvatarFallback, ArkmeSelfRoleSnapshot, ArkmeSourceKind, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeGroupAvatarFallback, ArkmeSelfRoleSnapshot, ArkmeSourceKind, ArkmeTimelineItem, ArkmeUserProfile } from '../types.js'
+
+/** Personal views only: local roles keep their identity; the real self uses today's account avatar.
+ * A device without a local role binding must use its own profile reference, not a historical
+ * asset or another device's local avatar. This never mutates the snapshot kept for later sync.
+ */
+export function arkmePersonalAvatarRef(
+  item: Pick<ArkmeTimelineItem, 'isMe' | 'selfRole' | 'avatarRef'>,
+  profile?: Pick<ArkmeUserProfile, 'avatarRef'>,
+): string | undefined {
+  const recordedAvatar = item.avatarRef?.trim() || undefined
+  if (!item.isMe) return recordedAvatar
+  if (item.selfRole !== undefined) return item.selfRole.avatarRef?.trim() || undefined
+  return profile?.avatarRef.trim() || recordedAvatar
+}
 
 /** Role identity is a local display layer, never a replacement for record ownership. */
 export function arkmeSelfRoleForPresentation(
