@@ -841,14 +841,24 @@ describe('ArkmeService', () => {
     ])
   })
 
-  it('invalidates calendar cache and notifies clients after DSH Agent input is created', async () => {
+  it('invalidates record/calendar after DSH input without aborting concurrent session discovery', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     let calendarText = '旧缓存'
+    let directorySignal: AbortSignal | null | undefined, releaseDirectory!: () => void, directoryStarted!: () => void
+    const directoryReady = new Promise<void>(resolve => { directoryStarted = resolve })
+    const directoryWait = new Promise<void>(resolve => { releaseDirectory = resolve })
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url: String(input), body })
+      if (String(input).endsWith('/api/v1/dsh-remote/sessions/account-list')) {
+        directorySignal = init?.signal
+        directoryStarted()
+        await directoryWait
+        directorySignal?.throwIfAborted()
+        return json({ code: 200, data: { items: [] } })
+      }
       if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) {
         return json({ code: 0, data: { items: [], has_more: false } })
       }
@@ -886,11 +896,19 @@ describe('ArkmeService', () => {
       timezone: 'Asia/Shanghai',
       limit: 20,
     })).resolves.toMatchObject({ items: [{ textContent: '旧缓存', creationSource: 0 }] })
+    const directory = service.dshRemotePost('/api/v1/dsh-remote/sessions/account-list', {}).then(value => ({ value }), error => ({ error }))
+    await directoryReady
+    const secondDirectory = service.dshRemotePost('/api/v1/dsh-remote/sessions/account-list', {}).then(value => ({ value }), error => ({ error }))
     await expect(service.createDSHAgentInputText(
       'dc6eb132-1c9d-501d-a0d0-2fae884de198',
       '你好',
       1_787_623_692_290,
     )).resolves.toMatchObject({ recordUid: 'dc6eb132-1c9d-501d-a0d0-2fae884de198', status: 1 })
+    expect(directorySignal?.aborted).toBe(false)
+    releaseDirectory()
+    await expect(directory).resolves.toEqual({ value: { items: [] } })
+    await expect(secondDirectory).resolves.toEqual({ value: { items: [] } })
+    expect(requests.filter(item => item.url.endsWith('/api/v1/dsh-remote/sessions/account-list'))).toHaveLength(1)
     await expect(service.calendarRecords({
       bucketDate: '2026-08-25',
       timezone: 'Asia/Shanghai',

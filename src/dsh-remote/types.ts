@@ -15,6 +15,8 @@ export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
 export type DshRemoteCapability =
   | 'session.native'
   | 'session.native.history'
+  | 'session.native.channel'
+  | 'session.commands.channel'
   | 'workspace.list'
   | 'session.current'
   | 'session.list'
@@ -117,7 +119,7 @@ export interface DshRemoteStatus {
 }
 
 export interface DshRemoteTrustedEventMetadata {
-  senderRole: 'host' | 'controller'
+  senderRole: 'host' | 'controller' | 'service'
   runtimeRef: string
   acceptedAtMillis: number
   targetHostLeaseGeneration: number
@@ -128,6 +130,8 @@ export type DshRemoteRealtimePayload = Record<string, unknown>
 export type DshRemotePublishDirection = 'request' | 'response' | 'snapshot' | 'event'
 
 export interface DshRemoteRuntimeTarget {
+  /** Account-scoped session events; runtimeRef identifies only the publisher. */
+  sessionChannel?: boolean
   runtimeRef: string
   hostProfileRef: string
   hostClientRef: string
@@ -217,6 +221,7 @@ export interface DshRemoteTurnProjection {
 export interface DshRemoteRealtimeTransport {
   revalidate(): void
   subscribeDisconnect(listener: (error: Error) => void): () => void
+  subscribeHostLease?(listener: (generation: number) => void): () => void
   connect(input: { profileRef: string; clientRef: string; signal: AbortSignal }): Promise<void>
   disconnect(): Promise<void>
   registerHost(input: {
@@ -229,6 +234,7 @@ export interface DshRemoteRealtimeTransport {
     target: DshRemoteRuntimeTarget
     afterSequence?: number
     onEvent: (payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => void
+    onError?: (error: Error) => void
     signal: AbortSignal
   }): Promise<() => void>
   publish(input: {

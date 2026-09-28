@@ -101,6 +101,7 @@ export interface DshRemoteTurnUploadOutboxOptions {
   maxPendingSpoolBytes?: number
   onError?: (error: unknown, sessionRef?: string) => void
   onFinalized?: (sessionRef: string) => void
+  canUploadSession?: (sessionRef: string) => boolean
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -279,6 +280,12 @@ export class DshRemoteTurnUploadOutbox {
       DROP TABLE IF EXISTS dsh_history_finalization_v1;
       DROP TABLE IF EXISTS dsh_history_backfill_v1;
     `)
+    for (const table of ['dsh_turn_upload_v2', 'dsh_history_completion_v2']) {
+      const columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+      if (!columns.some(column => column.name === 'last_error_code')) {
+        this.database.exec(`ALTER TABLE ${table} ADD COLUMN last_error_code TEXT`)
+      }
+    }
     this.secureDatabaseFiles()
     this.cleanupCommitted()
     this.recovery = this.recoverOpenTurnsFromDisk()
@@ -319,6 +326,7 @@ export class DshRemoteTurnUploadOutbox {
 
   private async captureEntries(sessionRef: string, entries: readonly DshRemoteHistoryEntry[], historyTurnStart?: number): Promise<void> {
     await this.recovery
+    if (this.deferToCurrentOwner(sessionRef)) return
     const sorted = [...entries].sort((left, right) => left.event.seq - right.event.seq)
     // Historical chunks carry their own Turn identity; they never borrow the live cursor.
     let open = historyTurnStart === undefined ? this.openTurn(sessionRef) : this.createOpenTurn(sessionRef, historyTurnStart)
@@ -475,6 +483,29 @@ export class DshRemoteTurnUploadOutbox {
     this.scheduleDrain(0)
   }
 
+  /** A successful canonical catalog write can repair a formerly missing session.
+   * Only that known failure is resumable; malformed/auth/conflict rows stay paused. */
+  resumePublishedSessions(sessionRefs: readonly string[]): boolean {
+    if (this.closed || this.runtime === undefined || sessionRefs.length === 0) return false
+    const published = new Set(sessionRefs)
+    let resumed = 0
+    for (const table of ['dsh_turn_upload_v2', 'dsh_history_completion_v2']) {
+      const pending = table === 'dsh_turn_upload_v2' ? "state IN ('SEALED', 'PREPARED', 'UPLOADED')" : "state = 'PENDING'"
+      const rows = this.database.prepare(`SELECT DISTINCT session_ref FROM ${table}
+        WHERE ${pending} AND next_attempt_at_millis = ? AND last_error_code = 'REMOTE_NOT_FOUND'
+      `).all(Number.MAX_SAFE_INTEGER) as Array<{ session_ref: string }>
+      for (const { session_ref: ref } of rows) {
+        if (!published.has(ref) || this.options.canUploadSession?.(ref) === false) continue
+        resumed += Number(this.database.prepare(`UPDATE ${table}
+          SET attempts = 0, next_attempt_at_millis = 0, last_error_code = NULL, updated_at_millis = ?
+          WHERE ${pending} AND session_ref = ? AND next_attempt_at_millis = ? AND last_error_code = 'REMOTE_NOT_FOUND'
+        `).run(this.now(), ref, Number.MAX_SAFE_INTEGER).changes)
+      }
+    }
+    if (resumed > 0) this.scheduleDrain(0)
+    return resumed > 0
+  }
+
   async drain(): Promise<void> {
     await this.recovery
     if (this.closed || this.runtime === undefined) return
@@ -592,9 +623,9 @@ export class DshRemoteTurnUploadOutbox {
     const nextAttempt = remote.retryable ? this.now() + delay : Number.MAX_SAFE_INTEGER
     this.database.prepare(`
       UPDATE dsh_history_completion_v2
-      SET attempts = ?, next_attempt_at_millis = ?, updated_at_millis = ?
+      SET attempts = ?, next_attempt_at_millis = ?, last_error_code = ?, updated_at_millis = ?
       WHERE session_ref = ? AND source_revision IS ? AND through_seq = ? AND state = 'PENDING'
-    `).run(attempts, nextAttempt, this.now(), row.session_ref, row.source_revision, row.through_seq)
+    `).run(attempts, nextAttempt, remote.code, this.now(), row.session_ref, row.source_revision, row.through_seq)
     this.options.onError?.(error, row.session_ref)
     if (remote.retryable) this.scheduleDrain(delay)
   }
@@ -651,32 +682,49 @@ export class DshRemoteTurnUploadOutbox {
     }
   }
 
+  private deferToCurrentOwner(sessionRef: string): boolean {
+    if (this.options.canUploadSession?.(sessionRef) !== false) return false
+    // Keep recoverable payloads locally. A handoff is not a network failure;
+    // check only local ownership until this instance becomes the writer again.
+    const next = this.now() + RETRY_MAX_MILLIS
+    this.database.prepare(`UPDATE dsh_turn_upload_v2 SET next_attempt_at_millis = ?
+      WHERE session_ref = ? AND state <> 'COMMITTED'`).run(next, sessionRef)
+    this.database.prepare(`UPDATE dsh_history_completion_v2 SET next_attempt_at_millis = ?
+      WHERE session_ref = ? AND state = 'PENDING'`).run(next, sessionRef)
+    this.scheduleDrain(RETRY_MAX_MILLIS)
+    return true
+  }
+
   private async performDrain(): Promise<void> {
     while (!this.closed && this.runtime !== undefined) {
       const row = this.nextReady()
       if (row === undefined) {
         const finalization = this.nextFinalizationReady()
         if (finalization === undefined) return
+        if (this.deferToCurrentOwner(finalization.session_ref)) continue
         try {
           await this.finalizeHistory(finalization, this.runtime, this.controller.signal)
         } catch (error) {
           if (this.closed || this.controller.signal.aborted) return
+          if (this.deferToCurrentOwner(finalization.session_ref)) continue
           this.deferFinalization(finalization, error)
         }
         continue
       }
+      if (this.deferToCurrentOwner(row.session_ref)) continue
       try {
         await this.advance(row, this.runtime, this.controller.signal)
       } catch (error) {
         if (this.closed || this.controller.signal.aborted) return
+        if (this.deferToCurrentOwner(row.session_ref)) continue
         const remote = asDshRemoteError(error)
         const attempts = row.attempts + 1
         const delay = Math.min(RETRY_MAX_MILLIS, this.retryBaseMillis * (2 ** Math.min(6, attempts - 1)))
         this.database.prepare(`
           UPDATE dsh_turn_upload_v2
-          SET attempts = ?, next_attempt_at_millis = ?, updated_at_millis = ?
+          SET attempts = ?, next_attempt_at_millis = ?, last_error_code = ?, updated_at_millis = ?
           WHERE turn_id = ?
-        `).run(attempts, remote.retryable ? this.now() + delay : Number.MAX_SAFE_INTEGER, this.now(), row.turn_id)
+        `).run(attempts, remote.retryable ? this.now() + delay : Number.MAX_SAFE_INTEGER, remote.code, this.now(), row.turn_id)
         this.options.onError?.(error, row.session_ref)
         if (remote.retryable) {
           this.scheduleDrain(delay)
@@ -764,6 +812,7 @@ export class DshRemoteTurnUploadOutbox {
       if (commit === undefined) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', 'Backend 不支持 Turn OSS 提交', true)
       try {
         await commit.call(this.options.controlPlane, {
+          session_ref: row.session_ref,
           upload_id: row.upload_id,
           content_sha256: row.content_sha256,
         }, signal)

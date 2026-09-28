@@ -2,6 +2,10 @@ import type { DshRemoteTimelineNode } from './types.js'
 
 export interface DshAccountSessionCursor { updated_at: number; session_ref: string; runtime_ref: string }
 export interface DshAccountSession {
+  /** Canonical row revision, independent of observer/runtime connection state. */
+  directoryVersion?: readonly [number, number]
+  /** Hidden in the catalog; its revision prevents stale deltas from resurrecting it. */
+  deleted?: boolean
   runtimeRef: string
   sessionRef: string
   workspaceRef: string
@@ -20,9 +24,14 @@ export interface DshAccountSession {
   runtimeName: string
   presence: 'online' | 'offline' | 'unknown'
   local: boolean
+  /** Verified against this Host's account-scoped journal, never desktop names. */
+  localTakeover?: boolean
+  executorRuntimeRef?: string
 }
 export interface DshAccountSessionPage {
   contractVersion: 1
+  /** Opt-in authoritative tombstones are present, including their row versions. */
+  includesDeleted?: boolean
   warning?: string
   items: DshAccountSession[]
   nextCursor?: DshAccountSessionCursor

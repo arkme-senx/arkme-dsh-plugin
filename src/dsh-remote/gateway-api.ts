@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { randomUUID } from 'node:crypto'
 import type { DshPublicApiProxyLike } from './api-proxy-adapter.js'
 import { snapshotDshHistoryEntry } from './dsh-event-contract.js'
@@ -35,7 +36,7 @@ function array(value: unknown): unknown[] {
 
 /** Keep the existing remote protocol/projections; translate only the DSH API boundary. */
 export function createDshGatewayApi(
-  ctx: Pick<Context, 'on'>,
+  ctx: Pick<Context, 'on'> & { sessions?: { list(): readonly Session[] } },
   gateway: DshGatewayLike,
   connection: DshConnectionLike,
   lifetime: AbortSignal,
@@ -150,11 +151,31 @@ export function createDshGatewayApi(
         frames.push({ frame, bytes: size }); bytes += size; notify()
       } catch (error) { fail(error) }
     }
+    // rc.2 appends this one constructor marker before attaching publication hooks.
+    // Adopt it once per live Session, including sessions restored before this mux.
+    const adopted = new WeakSet<Session>()
+    const adopt = (session: Session & { eventAt?(seq: number): Session['events'][number] | undefined }, incoming?: unknown) => {
+      if (adopted.has(session)) return
+      adopted.add(session)
+      if (!Number.isSafeInteger(session.firstLiveSeq)) return
+      // rc.2 exposes a bounded point read; older supported peers expose events.
+      const event = typeof session.eventAt === 'function'
+        ? session.eventAt(session.firstLiveSeq) : session.events?.[session.firstLiveSeq]
+      if (event?.type === 'session/end-seed' && event !== incoming) push({ type: 'session/event', sessionId: session.id, event: snapshotDshHistoryEntry({ event }).event })
+    }
     // One public append subscription for all sessions, not one follower per historical session.
-    const off = ctx.on('session/event' as never, ((session: { id: string }, event: unknown) => {
-      try { push({ type: 'session/event', sessionId: session.id, event: snapshotDshHistoryEntry({ event }).event }) }
+    const off = ctx.on('session/event' as never, ((session: Session, event: unknown) => {
+      try { adopt(session, event); push({ type: 'session/event', sessionId: session.id, event: snapshotDshHistoryEntry({ event }).event }) }
       catch (error) { fail(error) }
     }) as never, { global: true })
+    const offRestored = ctx.on('session/created', session => {
+      try { adopt(session) } catch (error) { fail(error) }
+    }, { global: true })
+    try { for (const session of ctx.sessions?.list() ?? []) adopt(session) }
+    catch (error) { fail(error) }
+    const offCreated = ctx.on('arkme/session-created', sessionId => {
+      push({ type: 'session/metadata', sessionId })
+    }, { global: true })
     signal.addEventListener('abort', notify, { once: true })
     async function consume(stream: Promise<AsyncIterable<unknown>>, accept: (frame: RecordValue) => Promise<void> | void) {
       try {
@@ -216,7 +237,7 @@ export function createDshGatewayApi(
       }
       if (failure !== undefined) throw failure
     } finally {
-      controller.abort(); off(); signal.removeEventListener('abort', notify)
+      controller.abort(); off(); offCreated(); offRestored(); signal.removeEventListener('abort', notify)
       await Promise.allSettled(tasks)
       for (const [id, item] of pending) if (item.signal === signal) pending.delete(id)
     }

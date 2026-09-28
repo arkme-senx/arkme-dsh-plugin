@@ -69,3 +69,29 @@ it('rechecks a previously empty cache instead of hiding newly uploaded server hi
   await expect(f.cloud.call('runtime', history, 'stream', new AbortController().signal, cache)).rejects.toMatchObject({ code: 'REMOTE_INVALID_RESPONSE' })
   expect(cache.store.page).not.toHaveBeenCalled()
 })
+
+it('opens an ungrouped canonical session omitted by the legacy workspace directory', async () => {
+  const f = fixture(), post = f.post.getMockImplementation()!
+  f.post.mockImplementation(async path => {
+    if (path.endsWith('/sessions/list')) return { items: [] }
+    if (path.endsWith('/sessions/execution')) return { runtime_ref: 'runtime', session_ref: 'empty', title: 'ungrouped', blank: true }
+    return post(path)
+  })
+  expect(await f.call()).toMatchObject({ items: [{ type: 'snapshot', cursor: -1, projections: { values: { title: 'ungrouped' } } }] })
+  f.cloud.close()
+})
+
+it('resumes only the cloud lease whose canonical executor became available', async () => {
+  const f = fixture(), signal = new AbortController().signal
+  const opening = { mode: 'pull', endpoint: 'session/control', payload: { args: {} } }
+  await f.cloud.call('runtime', opening, 'one', signal, undefined, 'session-one')
+  await f.cloud.call('runtime', opening, 'two', signal, undefined, 'session-two')
+  const pending = f.cloud.call('runtime', { mode: 'pull' }, 'one', signal)
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND', retryable: true })
+  f.cloud.resume('runtime', 'session-one')
+  await rejected
+  expect(f.cloud.has('one')).toBe(false)
+  expect(f.cloud.has('two')).toBe(true)
+  expect(f.post).not.toHaveBeenCalled()
+  f.cloud.close()
+})

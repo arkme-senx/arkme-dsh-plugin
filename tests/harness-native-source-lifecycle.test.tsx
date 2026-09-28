@@ -41,7 +41,9 @@ it('allows offline and older instances to open through the cloud data owner', as
   const target = { runtimeRef: 'old', sessionRef: 'A', presence: 'offline' as const, capabilities: [] }
   await expect(openNativeAccountSession(target)).resolves.toBeUndefined()
   await expect(openNativeAccountSession(target, 'old')).resolves.toBeUndefined()
-  expect(event).toHaveBeenCalledTimes(2)
+  await expect(openNativeAccountSession({ ...target, local: true }, 'sibling')).resolves.toBeUndefined()
+  expect(event).toHaveBeenCalledTimes(3)
+  expect(event.mock.calls.at(-1)?.[0].detail.runtimeRef).toBe('')
 })
 it('boots one account document once, reuses documents on every selection and clears them only on account change', () => {
   const container = document.createElement('div'); document.body.append(container)
@@ -118,4 +120,15 @@ it('never holds plugin boot on account discovery or conversation history', async
   expect(current).toBe('B'); expect(open.mock.calls).toEqual([['B']])
   surface.dataset.arkmeOpenSession = 'A'; await Promise.resolve()
   expect(current).toBe('A'); expect(refresh).not.toHaveBeenCalled()
+})
+it('publishes the initial native selection even before the session list changes', () => {
+  const surface = document.createElement('section'); surface.dataset.arkmeOwned = 'deepseek-harness-surface'
+  const frame = document.createElement('iframe'); surface.append(frame); document.body.append(surface)
+  const select = vi.fn()
+  Object.assign(frame.contentWindow!, { __ARKME_NATIVE_DIRECTORY__: { select } })
+  vi.stubGlobal('window', frame.contentWindow!)
+  apply({ inject: () => undefined, effect: (fn: () => () => void) => disposers.push(fn()), sessions: {
+    list: { getSnapshot: () => ({ byId: { restored: {} }, current: 'restored' }), subscribe: () => () => {} },
+  } } as never)
+  expect(select).toHaveBeenCalledExactlyOnceWith('restored')
 })

@@ -3746,6 +3746,7 @@ export type ArkmePluginOperation =
   | 'team.create'
   | 'team.join-by-jotmo-id'
   | 'remote.sessions.list'
+  | 'remote.sessions.observe'
   | 'remote.session.read'
   | 'remote.session.native'
   | 'remote.session.command'

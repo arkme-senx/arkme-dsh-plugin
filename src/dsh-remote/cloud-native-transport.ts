@@ -13,7 +13,7 @@ import type { DshNativeHistoryCache } from './native-history-cache.js'
 
 const BASE = '/api/v1/dsh-remote'
 const unavailable = () => new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端原始历史不完整或与当前 DSH 不兼容，需要源电脑补齐')
-type Lease = { controller: AbortController; touched: number; busy: boolean }
+type Lease = { controller: AbortController; touched: number; busy: boolean; runtime: string; sessionRef: string | undefined }
 
 function nativeHistoryRecord(raw: unknown): NativeHistoryRecord {
   const validators = surface as unknown as { validateSurfaceMetadata?: (event: unknown) => void; validateSessionEventData?: (event: unknown, subject: string) => void }
@@ -34,7 +34,12 @@ export class DshCloudNativeTransport {
   private readonly streams = new Map<string, Lease>()
   constructor(private readonly request: DshRemoteHttpRequester) {}
   has(id: string): boolean { return this.streams.has(id) }
-  release(id: string): void { this.streams.get(id)?.controller.abort(); this.streams.delete(id) }
+  release(id: string, reason?: unknown): void { this.streams.get(id)?.controller.abort(reason); this.streams.delete(id) }
+  resume(runtime: string, sessionRef: string): void {
+    for (const [id, lease] of this.streams) if (lease.runtime === runtime && (lease.sessionRef === undefined || lease.sessionRef === sessionRef)) {
+      this.release(id, new DshRemoteError('REMOTE_NOT_FOUND', '会话执行者已恢复，请重新订阅', true))
+    }
+  }
   close(): void { for (const id of this.streams.keys()) this.release(id) }
 
   private async sessions(runtime: string, signal: AbortSignal): Promise<Record<string, unknown>[]> {
@@ -105,7 +110,7 @@ export class DshCloudNativeTransport {
 
   async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: {
     store: { snapshot: DshNativeHistoryCache['snapshot']; page: DshNativeHistoryCache['page']; write: DshNativeHistoryCache['write'] }; key(session: string): string
-  }): Promise<Record<string, unknown>> {
+  }, sessionRef?: string): Promise<Record<string, unknown>> {
     const mode = body.mode, endpoint = String(body.endpoint ?? '')
     for (const [key, lease] of this.streams) if (Date.now() - lease.touched > 45_000) this.release(key)
     if (mode === 'close') { this.release(id); return { done: true } }
@@ -115,6 +120,7 @@ export class DshCloudNativeTransport {
       if (lease.busy) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '云端订阅请求冲突')
       lease.busy = true; lease.touched = Date.now()
       try { await delay(20_000, undefined, { signal: AbortSignal.any([signal, lease.controller.signal]) }); return { items: [] } }
+      catch (error) { signal.throwIfAborted(); if (lease.controller.signal.aborted) throw lease.controller.signal.reason; throw error }
       finally { lease.busy = false; lease.touched = Date.now() }
     }
     const args = object(object(body.payload).args)
@@ -134,7 +140,13 @@ export class DshCloudNativeTransport {
       if (address.kind !== 'session' || typeof address.sessionId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(address.sessionId)) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端不支持该会话地址')
       const session = address.sessionId
       // Prove current account ownership before consulting local cached content.
-      const row = (await this.sessions(runtime, signal)).find(item => item.session_ref === session)
+      let row = (await this.sessions(runtime, signal)).find(item => item.session_ref === session)
+      // The legacy workspace list omits ungrouped sessions. Resolve that
+      // canonical identity directly before declaring its history unavailable.
+      if (!row) {
+        const value = await this.request.post(`${BASE}/sessions/execution`, { runtime_ref: runtime, session_ref: session }, signal)
+        if (value.runtime_ref === runtime && value.session_ref === session) row = value
+      }
       if (!row) throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该会话')
       if (endpoint === 'session/page' && (!Number.isSafeInteger(request.throughSeq) || Number(request.throughSeq) < -1 || (request.beforeSeq !== undefined && (!Number.isSafeInteger(request.beforeSeq) || Number(request.beforeSeq) < 0)))) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史分页序号无效')
       const key = cache?.key(session), snapshot = key ? cache?.store.snapshot(key) : undefined
@@ -155,7 +167,7 @@ export class DshCloudNativeTransport {
     if (this.streams.has(id)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '云端订阅已存在')
     if (this.streams.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '云端订阅数量超限')
     signal.throwIfAborted()
-    this.streams.set(id, { controller: new AbortController(), touched: Date.now(), busy: false })
+    this.streams.set(id, { runtime, sessionRef, controller: new AbortController(), touched: Date.now(), busy: false })
     return { items: [frame] }
   }
 }

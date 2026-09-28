@@ -18,6 +18,7 @@ type Scope = {
   claim(id: string): Promise<void>
   signal: AbortSignal
   owned(ids: string[]): Promise<Set<string>>
+  ownerAccountId?(id: string): Promise<string | undefined>
 }
 type Lease = {
   accountId: string; endpoint: string; controller: AbortController
@@ -31,19 +32,27 @@ type Lease = {
 export class DshNativeTransport {
   private readonly streams = new Map<string, Lease>()
   private readonly opening = new Set<string>()
-  constructor(private readonly gateway: DshGatewayLike, private readonly connection: DshConnectionLike) {}
+  constructor(private readonly gateway: Pick<DshGatewayLike, 'wireStream'>, private readonly connection: DshConnectionLike) {}
 
   close(): void { for (const id of this.streams.keys()) this.release(id) }
 
-  private release(id: string): void {
+  private release(id: string, expected?: Lease): void {
     const lease = this.streams.get(id)
-    if (!lease) return
+    if (!lease || expected && lease !== expected) return
     this.streams.delete(id); clearTimeout(lease.timer); lease.controller.abort()
     void lease.iterator.return?.().catch(() => undefined)
   }
 
   private async requireOwned(scope: Scope, id: unknown): Promise<void> {
-    if (typeof id !== 'string' || !(await scope.owned([id])).has(id)) throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该会话')
+    if (typeof id !== 'string') throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该会话')
+    if (!(await scope.owned([id])).has(id)) {
+      // Cloud routing can briefly lag a local handoff. An account-owned
+      // session on another executor is recoverable, not a missing session.
+      const account = await scope.ownerAccountId?.(id)
+      scope.signal.throwIfAborted()
+      if (account === scope.accountId) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变，请重新连接', true)
+      throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该会话')
+    }
     scope.signal.throwIfAborted()
   }
 
@@ -181,21 +190,33 @@ export class DshNativeTransport {
       try {
       const endpoint = String(body.endpoint)
       await this.authorize(endpoint, body.payload, scope, true)
-      const controller = new AbortController(), signal = AbortSignal.any([controller.signal, scope.signal])
       const historyRequest = endpoint === 'session/follow' ? nativeRecord(nativeRecord(body.payload).args).request as RecordValue : undefined
       const payload = historyRequest ? { args: { request: { ...historyRequest, maxMessages: 10 } } } : body.payload
-      const stream = await this.gateway.wireStream.open(endpoint, payload, signal)
-      lease = { accountId: scope.accountId, endpoint, controller, iterator: stream[Symbol.asyncIterator](), busy: false, events: new Set(), ...(historyRequest ? { historyRequest, afterSeq: body.afterSeq as number | undefined } : {}), timer: setTimeout(() => this.release(id), 45_000) }
+      const controller = new AbortController()
+      const abortOpening = () => controller.abort(scope.signal.reason)
+      scope.signal.addEventListener('abort', abortOpening, { once: true })
+      let stream: AsyncIterable<unknown>
+      try {
+        scope.signal.throwIfAborted()
+        stream = await this.gateway.wireStream.open(endpoint, payload, controller.signal)
+        scope.signal.throwIfAborted()
+      } catch (error) { controller.abort(error); throw error }
+      finally { scope.signal.removeEventListener('abort', abortOpening) }
+      lease = { accountId: scope.accountId, endpoint, controller, iterator: stream[Symbol.asyncIterator](), busy: false, events: new Set(), ...(historyRequest ? { historyRequest, afterSeq: body.afterSeq as number | undefined } : {}), timer: setTimeout(() => this.release(id, lease), 45_000) }
       lease.timer.unref(); this.streams.set(id, lease)
-      signal.addEventListener('abort', () => this.release(id), { once: true })
       } finally { this.opening.delete(id) }
     }
     if (lease.accountId !== scope.accountId || lease.busy) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生订阅请求冲突')
     lease.busy = true; lease.timer.refresh()
+    // A pull owns its deadline only while it is pending. The established stream
+    // belongs to this lease (explicit close, account close, or idle expiry).
+    const abortPull = () => this.release(id, lease)
+    scope.signal.addEventListener('abort', abortPull, { once: true })
     let timeout: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<undefined>(resolve => { timeout = setTimeout(() => resolve(undefined), 20_000) })
     const items: unknown[] = []
     try {
+      scope.signal.throwIfAborted()
       while (items.length < 64) {
         lease.pending ??= lease.iterator.next()
         let batchTimer: ReturnType<typeof setTimeout> | undefined
@@ -204,7 +225,7 @@ export class DshNativeTransport {
         scope.signal.throwIfAborted()
         if (!next) return { items }
         delete lease.pending
-        if (next.done) { this.release(id); return { items, done: true } }
+        if (next.done) { this.release(id, lease); return { items, done: true } }
         const value = await this.filter(lease.endpoint, next.value, scope, lease)
         if (value !== undefined) {
         if (lease.historyRequest && nativeRecord(value).type === 'snapshot') {
@@ -218,7 +239,12 @@ export class DshNativeTransport {
       }
       }
       return { items }
-    } catch (error) { this.release(id); throw error }
-    finally { clearTimeout(timeout); lease.busy = false; if (this.streams.get(id) === lease) lease.timer.refresh() }
+    } catch (error) { this.release(id, lease); throw error }
+    finally { scope.signal.removeEventListener('abort', abortPull); clearTimeout(timeout); lease.busy = false; if (this.streams.get(id) === lease) lease.timer.refresh() }
   }
+}
+
+/** One read/write classification for both the legacy RPC and session channel. */
+export function nativeRequestIsRead(body: RecordValue): boolean {
+  return body.mode !== 'call' || /^(session\/(list|modelCatalog|canOpenWorkspacePath|attachment|page)|messageFeedback\/list|commands\/list|goals\/get|permissionPresets\/list|fileReferences\/list|subagents\/list|agentPresets\/list|settings\/describe)$/.test(String(body.endpoint))
 }

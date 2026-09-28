@@ -37,7 +37,10 @@ class FakeRealtime implements DshRemoteRealtimeTransport {
   readonly calls: string[] = []
   readonly published: Record<string, unknown>[] = []
   connectWaiter: Promise<void> | undefined
-  onEvent: ((payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => void) | undefined
+  private readonly listeners = new Map<boolean, Parameters<DshRemoteRealtimeTransport['subscribe']>[0]['onEvent']>()
+  onEvent = (payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => {
+    this.listeners.get(String((payload as Record<string, unknown>).kind).startsWith('session.'))?.(payload, metadata)
+  }
   private disconnectListener: ((error: Error) => void) | undefined
   subscribeDisconnect(listener: (error: Error) => void): () => void {
     this.disconnectListener = listener
@@ -49,8 +52,8 @@ class FakeRealtime implements DshRemoteRealtimeTransport {
   async unregisterHost(): Promise<void> { this.calls.push('unregister') }
   async subscribe(input: Parameters<DshRemoteRealtimeTransport['subscribe']>[0]): Promise<() => void> {
     this.calls.push(`subscribe:${input.target.hostLeaseGeneration}`)
-    this.onEvent = input.onEvent
-    return () => { this.calls.push('unsubscribe'); this.onEvent = undefined }
+    this.listeners.set(input.target.sessionChannel === true, input.onEvent)
+    return () => { this.calls.push('unsubscribe'); this.listeners.delete(input.target.sessionChannel === true) }
   }
   async publish(input: Parameters<DshRemoteRealtimeTransport['publish']>[0]): Promise<{ sequence: number }> { this.calls.push('publish'); this.published.push(input.payload as Record<string, unknown>); return { sequence: 1 } }
   emitDisconnect(error: Error): void { this.disconnectListener?.(error) }
@@ -71,6 +74,7 @@ function apiProxy(): DshApiProxyAdapter {
 }
 
 async function fixture(input: {
+  sessionChannel?: ConstructorParameters<typeof ArkmeRemoteRealtimeHost>[0]['sessionChannel']
   nativeTransport?: DshNativeTransport
   featureEnabled?: boolean
   session?: () => { userId: number; clientId: number } | undefined
@@ -124,6 +128,7 @@ async function fixture(input: {
     sessionOwnership,
     onDiagnostic: diagnostics,
     controlPlane, realtime, apiProxy: adapter, ...(input.nativeTransport ? { nativeTransport: input.nativeTransport } : {}),
+    ...(input.sessionChannel ? { sessionChannel: input.sessionChannel } : {}),
     ledgerForAccount: (_accountId, key) => new DshRemoteCommandLedger(join(directory, 'ledger'), key),
     ...(input.turnUploadForAccount === undefined ? {} : { turnUploadForAccount: input.turnUploadForAccount }),
     ...(input.sessionPersistence === undefined ? {} : { sessionPersistence: input.sessionPersistence }),
@@ -141,6 +146,7 @@ function historyOutbox() {
   const revisions = new Map<string, string>()
   return {
     activate: vi.fn(async () => undefined),
+    resumePublishedSessions: vi.fn(() => false),
     close: vi.fn(async () => undefined),
     capture: vi.fn(async () => undefined),
     historyResumeSeq: vi.fn((_sessionRef: string) => 0),
@@ -311,7 +317,7 @@ describe('Host login-only registration lifecycle', () => {
   })
 
   it('does not call an uploaded page a completed snapshot when completion is rejected', async () => {
-    const { host, controlPlane, diagnostics } = await fixture()
+    const { host, controlPlane, diagnostics, realtime } = await fixture({ sessionChannel: { epoch: () => undefined, native: vi.fn() } })
     vi.spyOn(controlPlane, 'completeProjectionSnapshot').mockRejectedValueOnce(new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'count mismatch'))
     try {
       await host.start()
@@ -320,20 +326,23 @@ describe('Host login-only registration lifecycle', () => {
         stage: 'complete_snapshot', session_items_acked: 1, server_completed: false, error_code: 'REMOTE_PROJECTION_CONFLICT',
       }))
       expect(diagnostics.mock.calls.some(([phase]) => phase === 'projection_sync_completed')).toBe(false)
+      expect(realtime.published.some(p => p.directoryChanged)).toBe(false)
+      await (host as unknown as { syncProjectionSnapshotSafely(force: boolean): Promise<void> }).syncProjectionSnapshotSafely(true)
+      expect(realtime.published.filter(p => p.directoryChanged)).toHaveLength(1)
     } finally { await host.stop() }
   })
 
   it('pushes selection changes once, clears on leaving Harness and exposes the latest version for reconnect', async () => {
-    const { host, realtime } = await fixture()
+    const { host, realtime } = await fixture({ sessionChannel: { epoch: () => undefined, native: vi.fn(), canonicalRuntime: () => 'canonical-origin' } })
     await host.start()
     await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
     const flush = async () => { await (host as unknown as { desktopSelectionFlight?: Promise<void> }).desktopSelectionFlight }
     await flush()
-    const selections = () => realtime.published.filter(p => p.operation === 'session.current')
+    const selections = () => realtime.published.map(p => (p.envelope ?? p) as Record<string, unknown>).filter(p => p.operation === 'session.current')
     host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
     await flush()
     expect(selections().at(-1)?.body).toMatchObject({ selectionRevision: 1,
-      session: { sessionRef: 'session-01', workspaceRef: 'workspace-01', running: false } })
+      session: { sessionRef: 'session-01', runtimeRef: 'canonical-origin', workspaceRef: 'workspace-01', running: false } })
     const count = selections().length
     host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 2, sessionRef: 'session-01' })
     await flush()
@@ -341,8 +350,42 @@ describe('Host login-only registration lifecycle', () => {
     host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 3, sessionRef: null })
     await flush()
     expect(selections().at(-1)?.body).toEqual({ session: null, selectionRevision: 2, selectedAt: null })
+    expect(realtime.calls.slice(0, 4)).toEqual(['connect', 'subscribe:0', 'subscribe:0', 'register'])
+    expect(realtime.calls).not.toContain('unsubscribe')
     await host.stop()
+    expect(realtime.calls.filter(call => call === 'unsubscribe')).toHaveLength(2)
     expect((host as unknown as { desktopSelectionTimer?: unknown }).desktopSelectionTimer).toBeUndefined()
+  })
+
+  it('keeps a locally known canonical selection after peer takeover without publishing every presence heartbeat', async () => {
+    const { host, adapter, realtime, sessionOwnership } = await fixture({ sessionChannel: {
+      epoch: () => -4, native: vi.fn(), canonicalRuntime: id => id === 'session-01' ? 'canonical-origin' : undefined,
+    } })
+    try {
+      await host.start()
+      await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+      const flush = async () => { await (host as unknown as { desktopSelectionFlight?: Promise<void> }).desktopSelectionFlight }
+      await flush()
+      const owned = vi.spyOn(sessionOwnership, 'listOwned').mockResolvedValue(new Set())
+      const claim = vi.spyOn(sessionOwnership, 'claimUnownedAndListOwned')
+      const reads = vi.spyOn(adapter, 'sessions')
+      const selections = () => realtime.published.map(p => (p.envelope ?? p) as Record<string, unknown>).filter(p => p.operation === 'session.current')
+      host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
+      await flush()
+      expect(selections().at(-1)?.body).toMatchObject({ session: { sessionRef: 'session-01', runtimeRef: 'canonical-origin', workspaceRef: 'workspace-01' } })
+      const count = selections().length, lookups = reads.mock.calls.length
+      for (const revision of [2, 3, 4]) {
+        host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision, sessionRef: 'session-01' })
+        await flush()
+      }
+      expect(selections()).toHaveLength(count)
+      expect(reads).toHaveBeenCalledTimes(lookups)
+      expect(owned).not.toHaveBeenCalled()
+      expect(claim).not.toHaveBeenCalled()
+      host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 5, sessionRef: 'unknown' })
+      await expect(host.currentSession()).resolves.toEqual({ session: null })
+      expect(owned).toHaveBeenCalled()
+    } finally { await host.stop() }
   })
 
   it('reads only owned non-archived desktop selection and invalidates it on account shutdown', async () => {
@@ -593,31 +636,32 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
-  it('emits explicit tombstones when a previously projected workspace and session disappear', async () => {
+  it.each([false, true])('retains absent sessions during observation (force=%s)', async force => {
     const { host, controlCalls, adapter } = await fixture()
     await host.start()
     await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
-    vi.spyOn(adapter, 'workspaceInventory').mockResolvedValue({
-      items: [], archivedSessionIds: [],
-    })
+    // A native list can lose a session during same-computer handoff. Absence
+    // is not a user deletion, in either periodic snapshots or metadata deltas.
     vi.spyOn(adapter, 'sessions').mockResolvedValue({ items: [] })
-
+    controlCalls.splice(0)
     await (host as unknown as {
       syncProjectionSnapshot(force: boolean): Promise<void>
-    }).syncProjectionSnapshot(true)
+    }).syncProjectionSnapshot(force)
+    expect(controlCalls.filter(call => call.name === 'sessions').at(-1)!.value)
+      .toMatchObject({ items: [] })
+    expect(controlCalls.flatMap(call => call.value.items ?? [])).not.toContainEqual(expect.objectContaining({ deleted: true }))
+    await host.stop()
+  })
 
-    const workspace = controlCalls.filter(call => call.name === 'workspaces').at(-1)!.value
-    const session = controlCalls.filter(call => call.name === 'sessions').at(-1)!.value
-    expect(workspace).toMatchObject({
-      items: [{ workspace_ref: 'workspace-01', deleted: true }],
-    })
-    expect(session).toMatchObject({
-      items: [{
-        workspace_ref: 'workspace-01',
-        session_ref: 'session-01',
-        deleted: true,
-      }],
-    })
+  it('retains absent workspaces during full observation', async () => {
+    const { host, controlCalls, adapter } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    vi.spyOn(adapter, 'workspaceInventory').mockResolvedValue({ items: [], archivedSessionIds: [] })
+    vi.spyOn(adapter, 'sessions').mockResolvedValue({ items: [] })
+    controlCalls.splice(0)
+    await (host as unknown as { syncProjectionSnapshot(force: boolean): Promise<void> }).syncProjectionSnapshot(true)
+    expect(controlCalls.filter(call => call.name === 'workspaces').at(-1)!.value).toMatchObject({ items: [] })
     await host.stop()
   })
 
@@ -630,8 +674,8 @@ describe('Host login-only registration lifecycle', () => {
       syncProjectionSnapshot(force: boolean): Promise<void>
     }
     await Promise.all([
-      internal.syncProjectionSnapshot(true),
-      internal.syncProjectionSnapshot(true),
+      internal.syncProjectionSnapshot(false),
+      internal.syncProjectionSnapshot(false),
     ])
     expect(controlCalls.map(call => call.name)).toEqual([
       'workspaces', 'sessions', 'complete',
@@ -644,8 +688,8 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
-  it('pushes canonical session metadata over Realtime without waiting for Backend, and coalesces changes during sync', async () => {
-    const { host, realtime, adapter, controlPlane, controlCalls } = await fixture()
+  it('coalesces metadata deltas without repeating workspace snapshots and notifies only after commit', async () => {
+    const { host, realtime, adapter, controlPlane, controlCalls } = await fixture({ sessionChannel: { epoch: () => undefined, native: vi.fn() } })
     await host.start()
     const internal = host as unknown as {
       backgroundProjectionFlight?: Promise<void>
@@ -662,18 +706,21 @@ describe('Host login-only registration lifecycle', () => {
     })
     let release!: () => void
     const blocked = new Promise<void>(resolve => { release = resolve })
-    const sync = vi.spyOn(controlPlane, 'syncWorkspaces').mockImplementationOnce(async () => { await blocked; return {} })
+    const sync = vi.spyOn(controlPlane, 'syncSessions').mockImplementationOnce(async () => { await blocked; return {} })
     controlCalls.splice(0)
+    realtime.published.splice(0)
     const emit = async (type: string) => {
       await internal.publishProjectionEvent({ kind: 'session-event', sessionId: 'session-01', entry: { event: historyEvent(type, seq++) } })
       await internal.flushPendingSessionEventBatches()
     }
     try {
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
       await emit('turn/start')
-      const metadata = () => realtime.published.filter(p => p.operation === 'snapshot.get' && (p.body as Record<string, unknown>).sessions)
+      const metadata = () => realtime.published.map(p => (p.envelope ?? p) as Record<string, unknown>).filter(p => p.operation === 'snapshot.get' && (p.body as Record<string, unknown>).sessions)
       expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ sessionId: 'session-01', title: 'First title', blank: false }] })
       await vi.waitFor(() => { expect(sync).toHaveBeenCalledOnce() })
-      expect(controlCalls.some(call => call.name === 'complete')).toBe(false)
+      expect(controlCalls.some(call => call.name === 'workspaces' || call.name === 'complete')).toBe(false)
+      expect(realtime.published.some(p => p.directoryChanged)).toBe(false)
       title = 'Final title'
       await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
       expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ title: 'Final title' }] })
@@ -683,11 +730,92 @@ describe('Host login-only registration lifecycle', () => {
       release()
       await vi.waitFor(() => { expect(sync).toHaveBeenCalledTimes(2) })
       await internal.backgroundProjectionFlight
-      expect(controlCalls.filter(call => call.name === 'sessions').at(-1)?.value).toMatchObject({ items: [{ title: 'Final title' }] })
+      expect(controlCalls.filter(call => call.name === 'sessions').at(-1)?.value).toMatchObject({ snapshot_ref: '', items: [{ title: 'Final title' }] })
+      expect(controlCalls.some(call => call.name === 'workspaces' || call.name === 'complete')).toBe(false)
+      expect(realtime.published.filter(p => p.directoryChanged)).toHaveLength(2)
+      const inventory = await adapter.workspaceInventory()
+      vi.spyOn(adapter, 'workspaceInventory').mockResolvedValue({ ...inventory,
+        items: inventory.items.map(item => ({ ...item, title: 'Renamed workspace' })) })
+      controlCalls.splice(0)
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
+      await internal.backgroundProjectionFlight
+      expect(controlCalls.map(call => call.name)).toEqual(['workspaces', 'sessions', 'complete'])
     } finally {
       release()
       await host.stop()
     }
+  })
+
+  it('notifies with committed canonical deltas only after sync and falls back for an old server', async () => {
+    const { host, realtime, adapter, controlPlane } = await fixture({ sessionChannel: { epoch: () => undefined, native: vi.fn() } })
+    await host.start()
+    const internal = host as unknown as { backgroundProjectionFlight?: Promise<void>; publishProjectionEvent(event: unknown): Promise<void> }
+    await internal.backgroundProjectionFlight
+    const original = adapter.sessions.bind(adapter)
+    let title = 'Attempted title'
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      return { ...page, items: page.items.map(item => ({ ...item, title })) }
+    })
+    const pending = Promise.withResolvers<void>()
+    const sync = vi.spyOn(controlPlane, 'syncSessions').mockImplementationOnce(async input => {
+      await pending.promise
+      return { sessions: (input.items as Record<string, unknown>[]).map(item => ({ ...item,
+        runtime_ref: 'canonical-origin', workspace_ref: 'canonical-workspace', host_generation: 2, projection_at: 1, title: 'Stored title',
+      })) }
+    })
+    realtime.published.splice(0)
+    try {
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce())
+      expect(realtime.published.filter(p => p.directoryChanged)).toHaveLength(0)
+      pending.resolve(); await internal.backgroundProjectionFlight
+      expect(realtime.published.find(p => p.directoryChanged)).toMatchObject({ directoryDelta: { version: 1, sessions: [{
+        runtime_ref: 'canonical-origin', workspace_ref: 'canonical-workspace', title: 'Stored title', host_generation: 2, projection_at: 1,
+      }] } })
+      title = 'Changed on old server'
+      realtime.published.splice(0)
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
+      await internal.backgroundProjectionFlight
+      expect(realtime.published.find(p => p.directoryChanged)).not.toHaveProperty('directoryDelta')
+    } finally { pending.resolve(); await host.stop() }
+  })
+
+  it.each([false, true])('fully invalidates after a committed delta notification fails (new row=%s)', async newRow => {
+    const { host, realtime, adapter, controlPlane, controlCalls } = await fixture({ sessionChannel: { epoch: () => undefined, native: vi.fn() } })
+    await host.start()
+    const internal = host as unknown as { backgroundProjectionFlight?: Promise<void>; syncProjectionSnapshotSafely(force: boolean): Promise<void> }
+    await internal.backgroundProjectionFlight
+    const original = adapter.sessions.bind(adapter)
+    let second = false
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      const items = page.items.map(item => ({ ...item, title: 'Committed before notification' }))
+      if (second && newRow) items.push({ ...items[0]!, sessionId: 'session-02', title: 'Another change' })
+      return { ...page, items }
+    })
+    vi.spyOn(controlPlane, 'syncSessions').mockImplementation(async input => ({
+      // Managed sync has cached the first write. A retry only returns new rows.
+      sessions: (second ? (newRow ? (input.items as unknown[]).slice(1) : []) : input.items as unknown[])
+        .map(raw => ({ ...(raw as Record<string, unknown>), runtime_ref: 'runtime-01', host_generation: 1 })),
+    }))
+    const publish = realtime.publish.bind(realtime)
+    let fail = true
+    vi.spyOn(realtime, 'publish').mockImplementation(async input => {
+      if ((input.payload as Record<string, unknown>).directoryChanged && fail) { fail = false; throw new Error('notification lost') }
+      return publish(input)
+    })
+    realtime.published.splice(0)
+    try {
+      await internal.syncProjectionSnapshotSafely(true)
+      expect(realtime.published.some(p => p.directoryChanged)).toBe(false)
+      second = true; controlCalls.splice(0)
+      await internal.syncProjectionSnapshotSafely(true)
+      expect(controlCalls.map(call => call.name)).toEqual(['workspaces', 'complete'])
+      const notification = realtime.published.find(p => p.directoryChanged)
+      expect(notification).toBeDefined()
+      expect(notification).not.toHaveProperty('directoryDelta')
+    } finally { await host.stop() }
   })
 
   it('does not repeat a complete Backend projection inside the 30 second metadata interval', async () => {
@@ -710,6 +838,36 @@ describe('Host login-only registration lifecycle', () => {
       'workspaces', 'sessions', 'complete',
     ])
     await host.stop()
+  })
+
+  it('keeps authoritative periodic uploads but only pushes changed catalog content', async () => {
+    let now = 2000
+    const { host, realtime, adapter, controlCalls } = await fixture({ now: () => now,
+      sessionChannel: { epoch: () => undefined, native: vi.fn() } })
+    const internal = host as unknown as { backgroundProjectionFlight?: Promise<void>; syncProjectionSnapshotSafely(force?: boolean): Promise<void> }
+    const original = adapter.sessions.bind(adapter)
+    let title = 'One', running = false, added = false, removed = false, workspace = 'workspace-01'
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      const items = page.items.map(item => ({ ...item, title, running, workspaceId: workspace }))
+      return { ...page, items: removed ? [] : added ? [...items, { ...items[0]!, sessionId: 'session-added' }] : items }
+    })
+    const count = () => realtime.published.filter(frame => frame.directoryChanged).length
+    try {
+      await host.start(); await internal.backgroundProjectionFlight
+      expect(count()).toBe(1)
+      controlCalls.splice(0); now = 32_001
+      await internal.syncProjectionSnapshotSafely()
+      expect(controlCalls.map(call => call.name)).toEqual(['workspaces', 'sessions', 'complete'])
+      expect(count()).toBe(1)
+      for (const change of [() => { title = 'Two' }, () => { running = true },
+        () => { workspace = 'workspace-other' }, () => { added = true }, () => { removed = true }]) {
+        const before = count(); change(); await internal.syncProjectionSnapshotSafely(true)
+        expect(count()).toBe(before + 1)
+        await internal.syncProjectionSnapshotSafely(true)
+        expect(count()).toBe(before + 1)
+      }
+    } finally { await host.stop() }
   })
 
   it('activates after login and tears down immediately after logout', async () => {
@@ -1263,4 +1421,100 @@ it('keeps the native carrier usable after the connection attempt completes, dedu
   await host.stop()
   expect(signal?.aborted).toBe(true)
   expect(close).toHaveBeenCalled()
+})
+
+it('clears a recovered discovery error without hiding a session-specific upload failure', async () => {
+  vi.useFakeTimers()
+  const outbox = historyOutbox()
+  const known = vi.fn().mockRejectedValueOnce(new Error('stale account generation')).mockResolvedValue({ session_refs: [] })
+  let callbacks: { onError(error: unknown, sessionRef?: string): void } | undefined
+  const { host } = await fixture({
+    turnUploadForAccount: (_account, _key, _max, value) => { callbacks = value; return outbox as unknown as DshRemoteTurnUploadOutbox },
+    turnObjectCapabilities: async () => ({ available: true, storage_version: 'oss_turn_v1', coverage: 'live_completed_turns', backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024 }),
+    knownHistorySessions: known,
+    sessionPersistence: { listSnapshots: async () => [{ header: { id: 'session-01' }, revision: 'r1' }], readFrom: async () => { throw new Error('must not read unknown history') } },
+  })
+  try {
+    await host.start()
+    await vi.waitFor(() => expect(outbox.activate).toHaveBeenCalled())
+    callbacks!.onError(new Error('previous upload failed'), 'session-01')
+    await vi.advanceTimersByTimeAsync(5_001)
+    expect(host.getStatus().historySyncWarning).toBe('stale account generation')
+    await vi.advanceTimersByTimeAsync(30_001)
+    expect(host.getStatus().historySyncWarning).toBeUndefined()
+    callbacks!.onError(new Error('upload failed'), 'session-01')
+    ;(host as unknown as { scheduleHistoryObjectBackfill(delay: number): void }).scheduleHistoryObjectBackfill(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(host.getStatus().historySyncWarning).toBe('upload failed')
+  } finally { await host.stop() }
+})
+
+it('resumes missing history only after canonical publication and keeps its warning until finalization', async () => {
+  const outbox = historyOutbox()
+  let callbacks: { onError(error: unknown, sessionRef?: string): void; onFinalized(sessionRef: string): void } | undefined
+  const { host, controlPlane } = await fixture({ turnUploadForAccount: (_a, _k, _m, value) => {
+    callbacks = value; return outbox as unknown as DshRemoteTurnUploadOutbox
+  } })
+  const internal = host as unknown as {
+    syncProjectionSnapshot(force: boolean): Promise<void>
+    scheduleHistoryObjectBackfill(delay: number): void
+    backgroundProjectionFlight?: Promise<void>
+  }
+  try {
+    await host.start(); await vi.waitFor(() => expect(callbacks).toBeDefined())
+    await internal.backgroundProjectionFlight
+    outbox.resumePublishedSessions.mockClear()
+    const schedule = vi.spyOn(internal, 'scheduleHistoryObjectBackfill').mockImplementation(() => {})
+    callbacks!.onError(new DshRemoteError('REMOTE_NOT_FOUND', 'canonical missing'), 'session-01')
+    const sync = vi.spyOn(controlPlane, 'syncSessions').mockRejectedValueOnce(new DshRemoteError('REMOTE_NOT_FOUND', 'still missing'))
+    await expect(internal.syncProjectionSnapshot(true)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
+    expect(outbox.resumePublishedSessions).not.toHaveBeenCalled()
+    sync.mockResolvedValue({})
+    outbox.resumePublishedSessions.mockReturnValueOnce(true)
+    await internal.syncProjectionSnapshot(true)
+    expect(outbox.resumePublishedSessions).toHaveBeenCalledWith(['session-01'])
+    expect(schedule).toHaveBeenCalledWith(0)
+    expect(host.getStatus().historySyncWarning).toBe('canonical missing')
+    callbacks!.onFinalized('session-01')
+    expect(host.getStatus().historySyncWarning).toBeUndefined()
+  } finally { await host.stop() }
+})
+
+it('retires the previous owner warning only after a successful owned-session inventory', async () => {
+  const outbox = historyOutbox()
+  let callbacks: { onError(error: unknown, sessionRef?: string): void } | undefined
+  const { host, sessionOwnership } = await fixture({ turnUploadForAccount: (_a, _k, _m, value) => {
+    callbacks = value; return outbox as unknown as DshRemoteTurnUploadOutbox
+  } })
+  try {
+    await host.start(); await vi.waitFor(() => expect(callbacks).toBeDefined())
+    callbacks!.onError(new Error('previous attempt failed'), 'session-01')
+    const internal = host as unknown as { syncProjectionSnapshot(force: boolean): Promise<void> }
+    await internal.syncProjectionSnapshot(true)
+    expect(host.getStatus().historySyncWarning).toBe('previous attempt failed')
+    vi.spyOn(sessionOwnership, 'claimUnownedAndListOwned').mockResolvedValue(new Set())
+    await internal.syncProjectionSnapshot(true)
+    expect(host.getStatus().historySyncWarning).toBeUndefined()
+  } finally { await host.stop() }
+})
+
+
+it('dispatches mobile typed reads with stale generation on the stable channel', async () => {
+  const shared = await mkdtemp(join(tmpdir(), 'dsh-stable-host-'))
+  const f = await fixture({ now: Date.now, sessionChannel: {
+    epoch: () => 1, native: async () => undefined,
+    ledgerForAccount: (_account, key) => new DshRemoteCommandLedger(shared, key),
+  } })
+  try {
+    await f.host.start()
+    expect(f.host.getStatus().capabilities).toContain('session.commands.channel')
+    f.realtime.onEvent?.({ kind: 'session.command', runtimeRef: 'runtime-01', envelope: {
+      protocol: 'dsh.remote', protocol_major: 1, kind: 'request', request_ref: 'mobile-stale-read', host_generation: 999,
+      issued_at: Date.now(), execute_before: Date.now() + 30_000, operation: 'capabilities.get', body: {},
+    } }, { senderRole: 'controller', runtimeRef: 'sessions_v1', targetHostLeaseGeneration: 0, acceptedAtMillis: Date.now() })
+    await vi.waitFor(() => expect(f.realtime.published).toContainEqual(expect.objectContaining({
+      kind: 'session.response', runtimeRef: 'runtime-01', envelope: expect.objectContaining({ request_ref: 'mobile-stale-read', status: 'completed' }),
+    })))
+    expect(f.realtime.calls.filter(value => value === 'connect')).toHaveLength(1)
+  } finally { await f.host.stop() }
 })

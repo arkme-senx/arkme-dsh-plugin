@@ -92,6 +92,7 @@ export function apply(ctx: ClientContext): void {
       ;(window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.select(current)
       restoreRequested()
     })
+    ;(window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.select(observedCurrent)
     const requested = new MutationObserver(() => selectRequested(surface.getAttribute('data-arkme-open-session')))
     requested.observe(surface, { attributes: true, attributeFilter: ['data-arkme-open-session', 'data-arkme-open-revision'] })
     selectRequested(surface.getAttribute('data-arkme-open-session') || query.get('arkme-session'))

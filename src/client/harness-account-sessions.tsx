@@ -4,10 +4,10 @@ import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalSto
 import { Modal, Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { callArkme } from '../sdk/index.js'
+import { callArkme, createArkmeSdk } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
+import { compareDshDirectoryVersion, parseDshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
 import { openNativeAccountSession } from './harness-native-navigation.js'
-import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
 
 type SessionsState = ReturnType<ISessions['list']['getSnapshot']>
 type Workspace = { workspaceId: string; title: string; path: string; createdAt?: number; sessionIds: string[] }
@@ -94,30 +94,81 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
   const known = new Map(previous.map(row => [accountSessionKey(row), row]))
   const next = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()].map(row => {
     const old = known.get(accountSessionKey(row))
+    if (old?.directoryVersion && row.directoryVersion) {
+      const order = compareDshDirectoryVersion(old.directoryVersion, row.directoryVersion)
+      if (order > 0 || order === 0 && old.deleted) return old
+      row = { ...row, projectionAsOfSeq: Math.max(old.projectionAsOfSeq ?? -1, row.projectionAsOfSeq ?? -1) }
+    }
     return old && (Object.keys(row) as Array<keyof DshAccountSession>).every(key =>
-      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : row[key] === old[key]) ? old : row
+      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0')
+        : key === 'directoryVersion' ? row.directoryVersion?.join('/') === old.directoryVersion?.join('/') : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }
 
+/** Reuse this catalog's known runtime/workspace decorations; unknown facts require a read. */
+export function applyAccountSessionDelta(previous: DshAccountSession[], value: unknown, localRuntimeRef?: string): DshAccountSession[] | undefined {
+  const delta = parseDshDirectoryDelta(value)
+  if (!delta) return
+  const next = new Map(previous.map(row => [accountSessionKey(row), row]))
+  for (const item of delta.sessions) {
+    const key = accountSessionKey({ runtimeRef: item.runtime_ref, sessionRef: item.session_ref })
+    const old = next.get(key), version = [item.host_generation, item.projection_at] as const
+    if (old?.directoryVersion && compareDshDirectoryVersion(version, old.directoryVersion) <= 0) {
+      if (compareDshDirectoryVersion(version, old.directoryVersion) === 0 && (item.projection_as_of_seq ?? -1) > (old.projectionAsOfSeq ?? -1)) {
+        next.set(key, { ...old, projectionAsOfSeq: Number(item.projection_as_of_seq) })
+      }
+      continue
+    }
+    const deleted = (item.deleted_at ?? 0) > 0
+    const executor = item.executor_runtime_ref ?? item.runtime_ref
+    const source = previous.find(row => !row.deleted && (row.executorRuntimeRef ?? row.runtimeRef) === executor)
+    const workspace = previous.find(row => !row.deleted && row.runtimeRef === item.runtime_ref && row.workspaceRef === item.workspace_ref)
+    if (!deleted && (!source || item.workspace_ref !== '' && !workspace)) return
+    next.set(key, {
+      runtimeRef: item.runtime_ref, sessionRef: item.session_ref,
+      workspaceRef: item.workspace_ref, workspaceName: item.workspace_ref === '' ? '未分组' : workspace?.workspaceName ?? '',
+      directoryVersion: version, ...(deleted ? { deleted: true } : {}),
+      title: item.title ?? '', updatedAt: item.source_updated_at,
+      projectionAsOfSeq: Math.max(old?.projectionAsOfSeq ?? -1, item.projection_as_of_seq ?? -1),
+      running: item.running, blank: item.blank, archived: item.archived, origin: item.origin ?? '',
+      capabilities: source?.capabilities ?? [], desktopName: source?.desktopName ?? '', runtimeName: source?.runtimeName ?? '',
+      sameDesktop: source?.sameDesktop ?? false, presence: source?.presence ?? 'unknown',
+      local: item.runtime_ref === localRuntimeRef || item.localTakeover === true,
+      ...(item.localTakeover ? { localTakeover: true } : {}),
+      ...(item.executor_runtime_ref ? { executorRuntimeRef: item.executor_runtime_ref } : {}),
+    })
+  }
+  if (next.size > 10_000) return
+  return reconcileAccountSessions(previous, [...next.values()].sort((a, b) => b.updatedAt - a.updatedAt
+    || b.sessionRef.localeCompare(a.sessionRef) || b.runtimeRef.localeCompare(a.runtimeRef)))
+}
+
 function createCatalog(surface: Element, remove: () => void) {
-    const owner = surface.ownerDocument
     let rows: DshAccountSession[] = [], localRuntimeRef: string | undefined, localDesktopName: string | undefined, users = 0
-    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false
+    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false, pending = false, incremental = false
     const listeners = new Set<() => void>()
     let controller = new AbortController()
     let stopRefresh: (() => void) | undefined
-    const publish = () => { snapshot = { rows, localRuntimeRef, localDesktopName }; listeners.forEach(listener => listener()) }
+    const publish = () => {
+      const visible = rows.filter(row => !row.deleted)
+      snapshot = { rows: visible, localRuntimeRef, localDesktopName }
+      ;(window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(visible)
+      listeners.forEach(listener => listener())
+    }
     const refresh = async () => {
-      if (!active || busy || owner.hidden) return
+      if (!active || busy) return
       busy = true
       const signal = controller.signal
+      const before = new Map(rows.map(row => [accountSessionKey(row), row]))
       try {
         const next: DshAccountSession[] = [], seen = new Set<string>()
+        let includesDeleted = true
         let cursor: DshAccountSessionPage['nextCursor']
         do {
-          const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, ...(cursor ? { cursor } : {}) }, signal)
+          const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, includeDeleted: true, ...(cursor ? { cursor } : {}) }, signal)
           if (page.contractVersion !== 1 || !Array.isArray(page.items)) throw new Error('会话目录不可用')
+          includesDeleted &&= page.includesDeleted === true
           localRuntimeRef = page.localRuntimeRef
           localDesktopName = page.localRuntime?.desktopName
           next.push(...page.items.map(row => {
@@ -135,11 +186,20 @@ function createCatalog(surface: Element, remove: () => void) {
           if (next.length > 10_000) throw new Error('会话目录过大')
         } while (cursor && active)
         if (!active || signal.aborted) return
+        // A full read started before a pushed create/delete cannot undo that commit.
+        const returned = new Set(next.map(accountSessionKey))
+        next.push(...rows.filter(row => !returned.has(accountSessionKey(row))
+          && (row.deleted || before.get(accountSessionKey(row)) !== row)))
         const merged = reconcileAccountSessions(rows, next)
-        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows) }
-        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
+        incremental = includesDeleted
+        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) { rows = merged; publish() }
       } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
-      finally { if (signal === controller.signal) busy = false }
+      finally {
+        if (signal === controller.signal) {
+          busy = false
+          if (pending) { pending = false; void refresh() }
+        }
+      }
     }
     return {
       get signal() { return controller.signal },
@@ -148,17 +208,27 @@ function createCatalog(surface: Element, remove: () => void) {
         active = true; busy = false; controller = new AbortController()
         // Discovery belongs to the surface, including when its menu is unmounted.
         const resume = () => { if (surface.getAttribute('data-arkme-visible') !== 'false') void refresh() }
-        const timer = setInterval(resume, 5_000)
+        const sdk = createArkmeSdk()
+        let stopObservation: (() => void) | undefined
+        let retry: ReturnType<typeof setTimeout> | undefined
+        const observe = () => {
+          if (controller.signal.aborted) return
+          stopObservation ??= sdk.observeDshAccountSessions(delta => {
+            if (!active || controller.signal.aborted) return
+            const merged = incremental ? applyAccountSessionDelta(rows, delta, localRuntimeRef) : undefined
+            if (merged !== undefined) {
+              if (merged !== rows) { rows = merged; publish() }
+              return
+            }
+            if (busy) pending = true
+            else resume()
+          }, { signal: controller.signal, onError: () => { stopObservation = undefined; retry = setTimeout(observe, 1_000) } })
+        }
+        observe()
         const observer = new MutationObserver(resume)
         observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
-        document.addEventListener(HARNESS_MENU_OPEN, resume)
-        owner.addEventListener('visibilitychange', resume)
-        owner.defaultView?.addEventListener('focus', resume)
         stopRefresh = () => {
-          clearInterval(timer); observer.disconnect()
-          document.removeEventListener(HARNESS_MENU_OPEN, resume)
-          owner.removeEventListener('visibilitychange', resume)
-          owner.defaultView?.removeEventListener('focus', resume)
+          stopObservation?.(); clearTimeout(retry); observer.disconnect()
         }
       },
       getSnapshot: () => snapshot,

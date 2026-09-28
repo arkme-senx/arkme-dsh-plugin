@@ -1536,7 +1536,6 @@ export class RecordService {
         key: `dsh-agent-input:${normalizedUid}`,
       },
     )
-    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
     return {
       recordUid: stringValue(data.record_uid) || normalizedUid,
       status: numberValue(data.status),

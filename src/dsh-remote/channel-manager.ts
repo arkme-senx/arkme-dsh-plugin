@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { setTimeout as delay } from 'node:timers/promises'
 import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { dshRemoteRequestIdentity } from './protocol-v1.js'
 import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
@@ -26,6 +25,7 @@ export interface DshRemoteHostChannelManagerOptions {
     metadata: DshRemoteTrustedEventMetadata
   }) => Promise<DshRemoteResponse>
   onProjectionError: (error: unknown) => void
+  onProjection?: (envelope: Record<string, unknown>) => Promise<void>
   onFatal: (error: unknown) => void
   onDiagnostic?: (event: string, fields: Record<string, unknown>) => void
 }
@@ -54,6 +54,8 @@ export class DshRemoteHostChannelManager {
   private readonly pendingEvents: Array<{ payload: DshRemoteRealtimePayload; metadata: DshRemoteTrustedEventMetadata }> = []
   private readonly requestFragments = new DshRemoteFragmentReader()
   private closed = false
+  private fenced = false
+  private legacyRequested = false
   private readonly detachParent: () => void
 
   constructor(private readonly options: DshRemoteHostChannelManagerOptions) {
@@ -84,6 +86,7 @@ export class DshRemoteHostChannelManager {
       ...(afterSequence === undefined ? {} : { afterSequence }),
       onEvent: (payload, metadata) => { this.consume(payload, metadata) },
       signal: this.controller.signal,
+      onError: error => this.options.onProjectionError(error),
     })
     try {
       this.unsubscribe = await subscribe(this.lastTransportSequence)
@@ -102,10 +105,11 @@ export class DshRemoteHostChannelManager {
 
   activate(serviceLeaseGeneration: number): void {
     this.controller.signal.throwIfAborted()
-    if (this.closed || this.unsubscribe === undefined || !Number.isSafeInteger(serviceLeaseGeneration) || serviceLeaseGeneration <= 0) {
+    if (this.closed || !Number.isSafeInteger(serviceLeaseGeneration) || serviceLeaseGeneration <= 0) {
       throw new DshRemoteError('HOST_CHANNEL_NOT_READY', 'Runtime channel 尚未完成 Host 注册', true)
     }
     this.target = { ...this.target, hostLeaseGeneration: serviceLeaseGeneration }
+    this.fenced = false
     const pending = this.pendingEvents.splice(0)
     queueMicrotask(() => {
       for (const event of pending) {
@@ -115,11 +119,13 @@ export class DshRemoteHostChannelManager {
     })
   }
 
+  fence(): void { this.fenced = true; this.target.hostLeaseGeneration = 0; this.pendingEvents.length = 0 }
+
   status(): { runtimeRef: string; serviceLeaseGeneration: number; ready: boolean } {
     return {
       runtimeRef: this.options.runtimeRef,
       serviceLeaseGeneration: this.target.hostLeaseGeneration,
-      ready: !this.closed && !this.controller.signal.aborted && this.unsubscribe !== undefined && this.target.hostLeaseGeneration > 0,
+      ready: !this.closed && !this.controller.signal.aborted && this.target.hostLeaseGeneration > 0,
     }
   }
 
@@ -136,7 +142,7 @@ export class DshRemoteHostChannelManager {
 
   async publishProjectionEvent(envelope: Record<string, unknown>, commandId: string, onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void): Promise<void> {
     if (!this.status().ready) return
-    await this.publishPayload(envelope, commandId, 'event', onTiming)
+    await Promise.all([...(this.options.onProjection === undefined || this.legacyRequested ? [this.publishPayload(envelope, commandId, 'event', onTiming)] : []), this.options.onProjection?.(envelope)])
   }
 
   private consume(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): void {
@@ -148,7 +154,7 @@ export class DshRemoteHostChannelManager {
   }
 
   private async handle(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): Promise<void> {
-    if (this.closed || this.controller.signal.aborted) return
+    if (this.closed || this.fenced || this.controller.signal.aborted) return
     if (metadata.transportSequence !== undefined && metadata.transportSequence > this.lastTransportSequence) {
       this.lastTransportSequence = metadata.transportSequence
       if (this.lastTransportSequence - this.persistedTransportSequence >= 16) {
@@ -158,7 +164,8 @@ export class DshRemoteHostChannelManager {
     }
     // Realtime broadcasts Host responses/events to every subscriber. They are
     // evidence for the controller only and never re-enter the command path.
-    if (metadata.senderRole === 'host') return
+    if (metadata.senderRole !== 'controller') return
+    this.legacyRequested = true
     if (this.target.hostLeaseGeneration === 0) {
       if (this.pendingEvents.length >= 8) throw new DshRemoteError('HOST_CHANNEL_NOT_READY', 'Host 注册期间收到过多并发请求', true)
       this.pendingEvents.push({ payload, metadata })
@@ -215,6 +222,7 @@ export class DshRemoteHostChannelManager {
         if (traceRequest || !timing.completed) this.diagnostic('host_response_publish_finished', {
           ...diagnostic, completed: timing.completed,
           queue_ms: Math.round(timing.queueMs), publish_ack_ms: Math.round(timing.publishMs),
+          payload_bytes: timing.payloadBytes, fragment_count: timing.fragmentCount, frame_ack_max_ms: Math.round(timing.frameAckMaxMs),
         })
       }, !(identity?.operation === 'session.history' || (identity?.operation === 'session.native' && body !== null && typeof body === 'object' && ('mode' in body && body.mode === 'pull' || 'endpoint' in body && body.endpoint === 'session/page'))))
       if (!published) this.diagnostic('host_response_publish_failed', { ...diagnostic, error_code: 'HOST_CHANNEL_NOT_READY', retryable: true })
@@ -232,7 +240,7 @@ export class DshRemoteHostChannelManager {
     envelope: unknown,
     commandId: string,
     direction: 'event' | 'response',
-    onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void,
+    onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean; payloadBytes: number; fragmentCount: number; frameAckMaxMs: number }) => void,
     interactive = false,
   ): Promise<void> {
     const bytes = Buffer.byteLength(JSON.stringify(envelope))
@@ -245,32 +253,21 @@ export class DshRemoteHostChannelManager {
     const queuedAt = performance.now()
     const publish = async (): Promise<void> => {
       const startedAt = performance.now()
-      let completed = false
+      let completed = false, frameAckMaxMs = 0
+      const frames = dshRemoteOutboundPayloads(envelope, commandId)
       try {
-        const frames = dshRemoteOutboundPayloads(envelope, commandId)
         for (const frame of frames) {
           if (!this.status().ready) return
           const frameCommandId = frame.commandId ?? commandId
-          for (let attempt = 0; ; attempt += 1) {
-            try {
-              await this.options.realtime.publish({
-                target: this.target,
-                commandId: frameCommandId,
-                direction,
-                payload: frame.value as Record<string, unknown>,
-                signal: this.controller.signal,
-              })
-              break
-            } catch (error) {
-              const remote = asDshRemoteError(error)
-              if (!remote.retryable || attempt >= 2 || this.controller.signal.aborted) throw error
-              await delay(100 * (2 ** attempt), undefined, { signal: this.controller.signal })
-            }
-          }
+          const frameStarted = performance.now()
+          try { await this.options.realtime.publish({
+            target: this.target, commandId: frameCommandId, direction,
+            payload: frame.value as Record<string, unknown>, signal: this.controller.signal,
+          }) } finally { frameAckMaxMs = Math.max(frameAckMaxMs, performance.now() - frameStarted) }
         }
         completed = true
       } finally {
-        try { onTiming?.({ queueMs: startedAt - queuedAt, publishMs: performance.now() - startedAt, completed }) }
+        try { onTiming?.({ queueMs: startedAt - queuedAt, publishMs: performance.now() - startedAt, completed, payloadBytes: bytes, fragmentCount: frames.length, frameAckMaxMs }) }
         catch { /* Timing cannot affect delivery. */ }
       }
     }
