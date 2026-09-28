@@ -8,7 +8,7 @@ const degraded: ArkmeRelatedQuickNoteList = { ...empty, recallMode: 'search_fall
 
 describe('related query recovery', () => {
   beforeEach(() => { vi.useFakeTimers(); mocks.read.mockReset() })
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
   it('distinguishes definitive empty from degraded empty', () => {
     expect(relatedQuickNotesState(empty).kind).toBe('empty')
     expect(relatedQuickNotesState(degraded)).toMatchObject({ kind: 'error', retryable: true })
@@ -44,4 +44,34 @@ describe('related query recovery', () => {
     expect(relatedQuickNotesState(await loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)).kind).toBe('success')
     expect(mocks.read).toHaveBeenCalledTimes(1)
   })
+  it('does not recover if the page becomes hidden during the delay', async () => {
+    const page = { visibilityState: 'visible' }
+    vi.stubGlobal('document', page)
+    mocks.read.mockResolvedValue(degraded)
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).rejects.toThrow('相关快记暂时不可用')
+    await vi.advanceTimersByTimeAsync(1)
+    page.visibilityState = 'hidden'
+    await vi.advanceTimersByTimeAsync(2000)
+    await checked
+    expect(mocks.read).toHaveBeenCalledTimes(1)
+  })
+  it('does not start recovery when the server cooldown exceeds the remaining lifetime', async () => {
+    const response = { ...degraded, retryAfterMillis: 30_000 }
+    mocks.read.mockResolvedValue(response)
+    expect(await loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)).toEqual(response)
+    expect(mocks.read).toHaveBeenCalledTimes(1)
+  })
+  it('cancels a slow transport at the total deadline without starting another query', async () => {
+    mocks.read.mockImplementation((_operation, _params, signal: AbortSignal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await checked
+    expect(mocks.read).toHaveBeenCalledTimes(1)
+    expect(mocks.read.mock.calls[0][2].aborted).toBe(true)
+  })
+
 })
