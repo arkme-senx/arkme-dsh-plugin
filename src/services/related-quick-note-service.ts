@@ -187,6 +187,7 @@ export class RelatedQuickNoteService {
     locator: ArkmeRelatedQuickNoteSourceLocator,
     signal?: AbortSignal,
   ): Promise<ArkmeRelatedQuickNoteList> {
+    const startedAt = performance.now()
     const session = await this.runtime.requireSession()
     const source = this.validLocator(locator, session.userId)
     const body = {
@@ -200,7 +201,14 @@ export class RelatedQuickNoteService {
       '/api/v1/records/related/query', body, session, signal,
       { lane: 'interactive-read', key: `owner-read:related:${source.sourceRef}:${source.sourceOwnerRef}:${JSON.stringify(body)}`,
         cacheMs: 0, failureCooldownMs: 1_000, cancelWhenUnobserved: true },
-    )
+    ).catch((error: unknown) => {
+      // Record's business codes are not HTTP statuses. Only ServerBusy is
+      // transient; keep generic transport recovery in the existing runtime.
+      if (error instanceof ArkmePluginError && /^arkme-code-\d+$/u.test(error.code)) {
+        throw new ArkmePluginError(error.code, error.message, error.code === 'arkme-code-50001', error.httpStatus)
+      }
+      throw error
+    })
     const recallMode = response.recall_mode
     if (!['embedding', 'search_fallback', 'unavailable'].includes(String(recallMode))) {
       throw new ArkmePluginError('related-invalid-response', '相关快记响应无效', false, 502)
@@ -235,11 +243,11 @@ export class RelatedQuickNoteService {
       excluded,
       lockedRecordUids,
     )
-    const profiles = await this.profile.publicProfileSummariesByUserIds(
-      descriptors.map(item => item.authorUserId).filter(id => id > 0),
-      session,
-      signal,
-    ).catch(() => new Map())
+    const profiles = await this.displayProfiles(
+      descriptors.map(item => item.authorUserId).filter(id => id > 0), session,
+      Math.max(0, Math.min(500, 4_950 - (performance.now() - startedAt))), signal,
+    )
+    signal?.throwIfAborted()
     const items: ArkmeRelatedQuickNoteItem[] = []
     for (const descriptor of descriptors) {
       const profile = profiles.get(descriptor.authorUserId)
@@ -271,6 +279,33 @@ export class RelatedQuickNoteService {
       recallMode: recallMode as ArkmeRelatedQuickNoteList['recallMode'],
       retryable: response.retryable === true,
       retryAfterMillis: Math.min(30_000, Math.max(1_000, numberValue(response.retry_after_ms) || 1_500)),
+    }
+  }
+
+  private async displayProfiles(
+    userIds: number[], session: ArkmeSessionCredentials, budgetMillis: number, signal?: AbortSignal,
+  ): Promise<Awaited<ReturnType<ProfileService['publicProfileSummariesByUserIds']>>> {
+    signal?.throwIfAborted()
+    if (budgetMillis <= 0) return new Map()
+    const controller = new AbortController()
+    const profileSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let abort: (() => void) | undefined
+    try {
+      const profiles = this.profile.publicProfileSummariesByUserIds(userIds, session, profileSignal)
+        .catch(() => new Map())
+      const stopped = new Promise<undefined>((resolve, reject) => {
+        timer = setTimeout(() => { resolve(undefined); controller.abort() }, budgetMillis)
+        abort = () => reject(signal?.reason)
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) abort()
+      })
+      // The profile reader may be shared. Bound this subscriber's wait even
+      // when the underlying read cannot stop; late values never change a list.
+      return await Promise.race([profiles, stopped]) ?? new Map()
+    } finally {
+      clearTimeout(timer)
+      if (abort !== undefined) signal?.removeEventListener('abort', abort)
     }
   }
 

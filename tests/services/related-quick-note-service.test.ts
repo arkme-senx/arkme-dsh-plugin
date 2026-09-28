@@ -7,7 +7,7 @@ import {
   RelatedQuickNoteService,
   type ArkmeRelatedQuickNoteSourceLocator,
 } from '../../src/services/related-quick-note-service.js'
-import type { ServiceRuntime } from '../../src/services/service.js'
+import { ArkmePluginError, type ServiceRuntime } from '../../src/services/service.js'
 
 const locator: ArkmeRelatedQuickNoteSourceLocator = {
   viewerUserId: 42,
@@ -86,6 +86,41 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
+  it('returns existing content when profiles hang and ignores late metadata', async () => {
+    vi.useFakeTimers()
+    try {
+      const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] },
+        detail: { record_uid: 'record-b', record_owner_user_id: 13 } })
+      let finish!: (value: Map<number, { userId: number; displayName: string; nickname: string }>) => void
+      vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+      const pending = test.service.list(locator)
+      await vi.advanceTimersByTimeAsync(501)
+      const result = await pending
+      expect(result.items[0]).toMatchObject({ textPreview: 'readable', senderName: 'Arkme 用户' })
+      finish(new Map([[13, { userId: 13, displayName: 'late', nickname: 'late' }]]))
+      await Promise.resolve()
+      expect(result.items[0]?.senderName).toBe('Arkme 用户')
+      await expect(test.service.detail(locator.sourceRef, result.items[0]!.relatedRef)).resolves.toMatchObject({ textContent: '详情正文' })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not deliver a list after the subscriber cancels optional profiles', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+    const controller = new AbortController()
+    vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(async () => {
+      controller.abort(new DOMException('left page', 'AbortError'))
+      return new Promise(() => {})
+    })
+    await expect(test.service.list(locator, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it.each([50001, 40001, 40004])('classifies record business code %i without HTTP-status heuristics', async (code) => {
+    const test = fixture({ relatedResponse: {} })
+    test.authenticatedPost.mockRejectedValueOnce(new ArkmePluginError(`arkme-code-${code}`, 'backend', true, 502))
+    await expect(test.service.list(locator)).rejects.toMatchObject({ code: `arkme-code-${code}`, retryable: code === 50001 })
+  })
+
   it('does not turn a failed required hydration into a definitive empty result', async () => {
     const test = fixture({ relatedResponse: { items: [{ record_uid: 'missing-details' }] }, batchItems: [] })
     await expect(test.service.list(locator)).rejects.toMatchObject({ code: 'related-invalid-response', retryable: false })
@@ -99,7 +134,7 @@ describe('RelatedQuickNoteService', () => {
     })
     const page = await test.service.list(locator)
     expect(page.items).toHaveLength(1)
-    expect(test.profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith([], expect.anything(), undefined)
+    expect(test.profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith([], expect.anything(), expect.any(AbortSignal))
     await expect(test.service.detail(locator.sourceRef, page.items[0]!.relatedRef)).resolves.toMatchObject({ senderName: 'Bot 名称', isMe: false })
   })
 
