@@ -84,6 +84,11 @@ export function ArkmeSelfRoleMenu({ open, anchor, actions, selectedIds, onClose 
     })}
   </div>
   return <><style>{`
+    [data-arkme-action-menu="true"][role="menu"][aria-label="角色操作"] {
+      min-width: 120px;
+      width: max-content;
+      max-width: min(360px, calc(100vw - 16px));
+    }
     .arkme-self-role-menu button { border-radius: 6px; }
     .arkme-self-role-menu button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #f1f2f4); }
     .arkme-self-role-menu button:disabled { opacity: .4; cursor: default; }
