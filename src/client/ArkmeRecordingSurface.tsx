@@ -12,7 +12,7 @@ import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
-import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
+import { RecognizedSpeakerEntry } from './recordings/RecognizedSpeakerEntry.js'
 import type {
   ArkmeRecordingCalendarDay,
   ArkmeRecordingCalendarMonth,
@@ -108,7 +108,7 @@ const styles: Record<string, CSSProperties> = {
   monthDuration: { minWidth: 15, padding: '2px 4px', background: 'transparent', color: colors.secondary, fontSize: 10, lineHeight: '10px', fontWeight: 500 },
   monthDurationBrief: { color: colors.secondary },
   selectedMonthDuration: { color: colors.text },
-  toolbar: { marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', alignItems: 'stretch', gap: 8 },
+  toolbar: { marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', alignItems: 'stretch', gap: 8 },
   mobileGuideButton: { minHeight: 36, padding: '8px 6px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexShrink: 0, whiteSpace: 'nowrap', border: `1px solid ${colors.tertiary}`, borderRadius: 8, background: '#17191c', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 500 },
   content: { minWidth: 0, minHeight: 0, flex: 1, display: 'grid', gridTemplateRows: 'auto minmax(0,1fr)', gap: 16, paddingBottom: 20, boxSizing: 'border-box' },
   dayTimeline: { minWidth: 0, minHeight: 0 },
@@ -1043,8 +1043,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <ArkmeDirectRecordingButton onStart={() => { tour.finish(false); const now = new Date(); now.setHours(0, 0, 0, 0); setVisibleMonth(monthStart(now)); setSelectedDate(now) }} />
         <button data-arkme-feedback="recording-action" ref={mobileGuideTrigger} type="button" style={styles.mobileGuideButton} aria-haspopup="dialog" aria-expanded={mobileGuideOpen}
           onClick={() => { tour.finish(false); setMobileGuideOpen(true) }}><Microphone size={16} style={{ flexShrink: 0 }} aria-hidden />{tr("全天候录音")}</button>
-        <button data-arkme-feedback="recording-action" type="button" style={styles.mobileGuideButton}
-          onClick={() => { tour.finish(false); arkmeUi.showRecognizedSpeakers(selectedDate.getTime()) }}><UsersThree size={16} aria-hidden />{tr("已识别说话人")}<CaretRight size={12} aria-hidden /></button>
+        <RecognizedSpeakerEntry style={styles.mobileGuideButton}
+          accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined}
+          active={active && ui.mode === 'recordings'}
+          onOpen={() => { tour.finish(false); arkmeUi.showRecognizedSpeakers(selectedDate.getTime()) }} />
         <button data-arkme-feedback="recording-action" type="button" style={styles.mobileGuideButton}
           onClick={() => { tour.finish(false); arkmeUi.showVoiceprint() }}><Fingerprint size={16} aria-hidden />{tr("声纹管理")}<CaretRight size={12} aria-hidden /></button>
         <ArkmeRecordingImportTrigger fullWidth status={recordingImportStatus} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
