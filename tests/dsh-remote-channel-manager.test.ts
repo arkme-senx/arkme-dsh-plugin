@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSecureValueStore } from '../src/keychain-store.js'
-import { DshRemoteHostChannelManager } from '../src/dsh-remote/channel-manager.js'
+import { DshRemoteHostChannelManager, type DshRemoteHostChannelManagerOptions } from '../src/dsh-remote/channel-manager.js'
+import { DshSessionChannelHost } from '../src/dsh-remote/session-channel.js'
 import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import { DshRemoteRuntimeSecretBroker } from '../src/dsh-remote/runtime-secret-broker.js'
 import type {
@@ -57,7 +58,7 @@ function response(requestRef: string): Record<string, unknown> {
   }
 }
 
-function managerFixture(): {
+function managerFixture(onProjection?: DshRemoteHostChannelManagerOptions['onProjection']): {
   manager: DshRemoteHostChannelManager
   realtime: FakeRealtime
   dispatch: ReturnType<typeof vi.fn>
@@ -74,6 +75,7 @@ function managerFixture(): {
     onProjectionError: error => { fatals.push({ projection: error }) },
     onFatal: error => { fatals.push(error) },
     onDiagnostic: diagnostics,
+    ...(onProjection ? { onProjection } : {}),
   })
   return { manager, realtime, dispatch, fatals, diagnostics }
 }
@@ -84,6 +86,76 @@ const controllerMetadata = (generation: number, sequence = 1): DshRemoteTrustedE
 })
 
 describe('account-scoped Runtime channel manager', () => {
+  it.each(['stable', 'both', 'stable-failure', 'legacy-failure', 'inactive'] as const)(
+    'reports one actual projection outcome for %s carriers', async mode => {
+      const stableWire = new FakeRealtime()
+      const stable = new DshSessionChannelHost({ transport: stableWire,
+        target: { runtimeRef: 'runtime-01', hostProfileRef: 'web', hostClientRef: 'host-client-01', hostLeaseGeneration: mode === 'inactive' ? 0 : 9 },
+        epoch: () => 1, native: vi.fn(), command: vi.fn(), failed: vi.fn() })
+      const { manager, realtime, dispatch } = managerFixture((envelope, timing) => stable.projection(envelope, timing))
+      const timing = vi.fn()
+      try {
+        await manager.prepare()
+        manager.activate(9)
+        if (mode === 'both' || mode === 'legacy-failure') {
+          realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+          await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+          await vi.waitFor(() => expect(realtime.publishes).toHaveLength(1))
+        }
+        if (mode === 'stable-failure') stableWire.failPublishCount = 1
+        if (mode === 'legacy-failure') realtime.failPublishCount = 1
+        const publication = manager.publishProjectionEvent(response('projection-01'), 'projection-01', timing)
+        if (mode.endsWith('failure')) await expect(publication).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED' })
+        else await publication
+        expect(timing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ queueMs: expect.any(Number), publishMs: expect.any(Number),
+          completed: mode === 'stable' || mode === 'both' }))
+        if (mode === 'stable') expect(realtime.publishes).toHaveLength(0)
+        if (mode === 'inactive') expect(stableWire.publishes).toHaveLength(0)
+      } finally { stable.close(); await manager.close() }
+    })
+
+  it('does not report stable success before all fragment acknowledgements arrive', async () => {
+    const stableWire = new FakeRealtime()
+    let release!: () => void
+    const ack = new Promise<void>(resolve => { release = resolve })
+    vi.spyOn(stableWire, 'publish').mockImplementation(async () => { await ack; return { sequence: 1 } })
+    const stable = new DshSessionChannelHost({ transport: stableWire,
+      target: { runtimeRef: 'runtime-01', hostProfileRef: 'web', hostClientRef: 'host-client-01', hostLeaseGeneration: 9 },
+      epoch: () => 1, native: vi.fn(), command: vi.fn(), failed: vi.fn() })
+    const { manager } = managerFixture((envelope, timing) => stable.projection(envelope, timing))
+    const timing = vi.fn()
+    try {
+      await manager.prepare(); manager.activate(9)
+      const publication = manager.publishProjectionEvent({ ...response('projection-01'), body: { text: 'x'.repeat(100_000) } }, 'projection-01', timing)
+      await vi.waitFor(() => expect(stableWire.publish).toHaveBeenCalled())
+      expect(timing).not.toHaveBeenCalled()
+      release(); await publication
+      expect(timing).toHaveBeenCalledExactlyOnceWith({ queueMs: 0, publishMs: expect.any(Number), completed: true })
+    } finally { release(); stable.close(); await manager.close() }
+  })
+
+  it('waits for the remaining carrier after one projection carrier fails', async () => {
+    const gate = Promise.withResolvers<void>()
+    const { manager, realtime, dispatch } = managerFixture(async (_envelope, timing) => {
+      await gate.promise
+      timing?.({ queueMs: 0, publishMs: 50, completed: true })
+    })
+    const timing = vi.fn()
+    try {
+      await manager.prepare(); manager.activate(9)
+      realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+      await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(realtime.publishes).toHaveLength(1))
+      realtime.failPublishCount = 1
+      const publication = manager.publishProjectionEvent(response('projection'), 'projection', timing)
+      const rejected = expect(publication).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED' })
+      await vi.waitFor(() => expect(realtime.publishes).toHaveLength(2))
+      expect(timing).not.toHaveBeenCalled()
+      gate.resolve(); await rejected
+      expect(timing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ publishMs: expect.any(Number), completed: false }))
+    } finally { gate.resolve(); await manager.close() }
+  })
+
   it('redelivers a ledger result without reusing the previous response delivery ID', async () => {
     const { manager, realtime, dispatch, fatals } = managerFixture()
     await manager.prepare()

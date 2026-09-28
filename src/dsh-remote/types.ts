@@ -12,6 +12,8 @@ export const DSH_REMOTE_MAX_PAGE_RESULT_BYTES = 40 * 1024
 export const DSH_REMOTE_MAX_TEXT_CODE_POINTS = 20_000
 export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
 
+export type DshRemotePublishTiming = { queueMs: number; publishMs: number; completed: boolean }
+
 export type DshRemoteCapability =
   | 'session.native'
   | 'session.native.history'

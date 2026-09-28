@@ -5,6 +5,7 @@ import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
 import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from './transport-fragment.js'
 import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES } from './types.js'
 import type {
+  DshRemotePublishTiming,
   DshRemoteRealtimePayload,
   DshRemoteRealtimeTransport,
   DshRemoteResponse,
@@ -25,7 +26,7 @@ export interface DshRemoteHostChannelManagerOptions {
     metadata: DshRemoteTrustedEventMetadata
   }) => Promise<DshRemoteResponse>
   onProjectionError: (error: unknown) => void
-  onProjection?: (envelope: Record<string, unknown>) => Promise<void>
+  onProjection?: (envelope: Record<string, unknown>, onTiming?: (timing: DshRemotePublishTiming) => void) => Promise<void>
   onFatal: (error: unknown) => void
   onDiagnostic?: (event: string, fields: Record<string, unknown>) => void
 }
@@ -140,9 +141,27 @@ export class DshRemoteHostChannelManager {
     this.unsubscribe = undefined
   }
 
-  async publishProjectionEvent(envelope: Record<string, unknown>, commandId: string, onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void): Promise<void> {
+  async publishProjectionEvent(envelope: Record<string, unknown>, commandId: string, onTiming?: (timing: DshRemotePublishTiming) => void): Promise<void> {
     if (!this.status().ready) return
-    await Promise.all([...(this.options.onProjection === undefined || this.legacyRequested ? [this.publishPayload(envelope, commandId, 'event', onTiming)] : []), this.options.onProjection?.(envelope)])
+    const legacy = this.options.onProjection === undefined || this.legacyRequested
+    const timings: DshRemotePublishTiming[] = []
+    const record = (timing: DshRemotePublishTiming) => { timings.push(timing) }
+    let completed = false
+    try {
+      const results = await Promise.allSettled([
+        ...(legacy ? [this.publishPayload(envelope, commandId, 'event', record)] : []),
+        ...(this.options.onProjection ? [this.options.onProjection(envelope, record)] : []),
+      ])
+      const failed = results.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
+      completed = timings.length === Number(legacy) + Number(!!this.options.onProjection) && timings.every(timing => timing.completed)
+    } finally {
+      // One logical batch, even when old and stable observers coexist. A failed
+      // or inactive carrier cannot acknowledge the batch or clear its error.
+      try { onTiming?.({ ...timings[0], queueMs: Math.max(0, ...timings.map(timing => timing.queueMs)),
+        publishMs: Math.max(0, ...timings.map(timing => timing.publishMs)), completed }) }
+      catch { /* Timing cannot affect delivery. */ }
+    }
   }
 
   private consume(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): void {
