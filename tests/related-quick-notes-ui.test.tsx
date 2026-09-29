@@ -72,7 +72,7 @@ describe('related quick note shared UI', () => {
       onOpen: vi.fn(),
       onRetry: vi.fn(),
     }))
-    expect(error).toContain('网络不可用')
+    expect(error).toContain('相关快记加载失败')
     expect(error).toContain('<button')
     expect(error).toContain('重试')
   })
@@ -95,6 +95,16 @@ describe('related quick note shared UI', () => {
     expect(renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesList, {
       state: { kind: 'error', message: '加载失败' }, onSelect: vi.fn(), onRetry: vi.fn(),
     }))).toContain('重试')
+  })
+
+  it.each([ArkmeRelatedQuickNotesCard, ArkmeRelatedQuickNotesList])('does not expose recall metadata or add controls for usable fallback content', Component => {
+    const list = { total: 1, items: [item('a', '已有相关正文')] }
+    const render = (recallMode: 'embedding' | 'search_fallback') => renderToStaticMarkup(createElement(Component, {
+      state: { kind: 'success', list: { ...list, recallMode, retryable: true, retryAfterMillis: 1500 } },
+      onOpen: vi.fn(), onSelect: vi.fn(), onRetry: vi.fn(),
+    }))
+    expect(render('search_fallback')).toBe(render('embedding'))
+    expect(render('search_fallback')).not.toContain('相关结果可能不完整')
   })
 
   it('reuses rich-content detail rendering and preserves two-level back targets', () => {

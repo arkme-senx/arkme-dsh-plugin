@@ -1,14 +1,7 @@
 import type { ArkmeRelatedQuickNoteList } from '../types.js'
-import type { ArkmeRelatedQuickNotesLoadState } from './ArkmeRelatedQuickNotes.js'
 import { ArkmeClientError, callArkme } from './api.js'
 
 type Operation = 'source.related-quick-notes.from-message' | 'source.related-quick-notes.from-moment'
-
-export function relatedQuickNotesState(list: ArkmeRelatedQuickNoteList): ArkmeRelatedQuickNotesLoadState {
-  if (list.items.length > 0) return { kind: 'success', list }
-  if (list.recallMode === 'embedding') return { kind: 'empty' }
-  return { kind: 'error', message: '相关快记暂时不可用', retryable: list.retryable }
-}
 
 function delay(millis: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -22,21 +15,25 @@ function delay(millis: number, signal: AbortSignal): Promise<void> {
 /** One recovery owner: at most two reads within one five-second lifetime. */
 export async function loadRelatedQuickNotes(operation: Operation, params: Record<string, unknown>, signal: AbortSignal): Promise<ArkmeRelatedQuickNoteList> {
   const deadline = performance.now() + 5_000
+  let lastResult: ArkmeRelatedQuickNoteList | undefined
+  let lastError: unknown
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted()
-    if (attempt > 0 && typeof document !== 'undefined' && document.visibilityState === 'hidden') throw new Error('相关快记暂时不可用')
+    if (attempt > 0 && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      if (lastResult !== undefined) return lastResult
+      throw lastError
+    }
     const controller = new AbortController()
     const abort = () => { controller.abort(signal.reason) }
     signal.addEventListener('abort', abort, { once: true })
     const remaining = deadline - performance.now()
     if (remaining <= 0) {
       signal.removeEventListener('abort', abort)
+      if (lastResult !== undefined) return lastResult
       throw new DOMException('相关快记加载超时', 'TimeoutError')
     }
     const timeout = setTimeout(() => controller.abort(new DOMException('相关快记加载超时', 'TimeoutError')), remaining)
     let retryDelay = 1_500
-    let lastResult: ArkmeRelatedQuickNoteList | undefined
-    let lastError: unknown
     try {
       const list = await callArkme<ArkmeRelatedQuickNoteList>(operation, params, controller.signal)
       if (attempt > 0 || list.items.length > 0 || !list.retryable || list.recallMode === 'embedding') return list
@@ -45,6 +42,9 @@ export async function loadRelatedQuickNotes(operation: Operation, params: Record
     } catch (error) {
       signal.throwIfAborted()
       const retryable = controller.signal.aborted || (error instanceof ArkmeClientError && error.body.retryable) || error instanceof TypeError
+      // A failed optional recovery must not turn a completed fallback response
+      // into a new visible failure. Keep the latest response; never cache it.
+      if (attempt > 0 && retryable && lastResult !== undefined) return lastResult
       if (attempt > 0 || !retryable) throw error
       lastError = error
     } finally {
@@ -53,7 +53,10 @@ export async function loadRelatedQuickNotes(operation: Operation, params: Record
     }
     // No automatic retry once the view is hidden. The active caller keeps its
     // generation guard, so late completions never overwrite another record.
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') throw new Error('相关快记暂时不可用')
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      if (lastResult !== undefined) return lastResult
+      throw lastError
+    }
     const waitMillis = Math.min(30_000, Math.max(1_000, retryDelay)) + Math.random() * 300
     if (deadline - performance.now() <= waitMillis + 1_000) {
       if (lastResult !== undefined) return lastResult

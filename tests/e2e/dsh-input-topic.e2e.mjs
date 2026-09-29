@@ -195,7 +195,13 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(await record.locator('[data-arkme-dsh-agent-input-marker]').count()).toBe(1)
       expect(await record.locator('[aria-label^="来源："]').count()).toBe(0)
       await record.click()
-      await page.getByRole('dialog', { name: '快记详情', exact: true }).waitFor()
+      const detail = page.getByRole('dialog', { name: '快记详情', exact: true })
+      await detail.waitFor()
+      await expect.poll(() => detail.locator('[data-arkme-related-quick-notes-loading]').count()).toBe(0)
+      for (const text of ['正在查找相关快记…', '暂未找到相关快记', '相关快记暂时不可用', '相关结果可能不完整']) {
+        expect(await detail.getByText(text, { exact: true }).count()).toBe(0)
+      }
+      expect(await page.getByRole('alertdialog').count()).toBe(0)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       await page.getByRole('button', { name: '关闭详情', exact: true }).click()
       // Browsing and retrying never rewrite the cross-client preference.

@@ -16,7 +16,7 @@ export type ArkmeRelatedQuickNotesLoadState =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'empty' }
-  | { kind: 'error'; message: string; retryable?: boolean }
+  | { kind: 'error'; message: string }
   | { kind: 'success'; list: ArkmeRelatedQuickNoteList }
 
 export type ArkmeRelatedQuickNoteDetailState =
@@ -119,8 +119,8 @@ export function ArkmeRelatedQuickNotesCard({
   </div>
   if (state.kind === 'error') {
     return <div style={styles.compactError} data-arkme-related-quick-notes-error title={state.message}>
-      <span>{state.message || tr("相关快记加载失败")}</span>
-      {state.retryable !== false && <button type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>}
+      <span>{tr("相关快记加载失败")}</span>
+      <button type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>
     </div>
   }
   if (state.list.items.length === 0) return null
@@ -136,7 +136,6 @@ export function ArkmeRelatedQuickNotesCard({
       <span style={styles.cardCount}>{tr("共")} {state.list.total} {tr("条")}</span>
       <CaretRight size={14} color={arkmeTheme.tertiary} aria-hidden />
     </span>
-    {state.list.recallMode === 'search_fallback' && <span style={styles.sourceLabel}>{tr("相关结果可能不完整")}</span>}
     <span style={styles.previewList}>
       {state.list.items.slice(0, 2).map(item => {
         const preview = notePreview(item)
@@ -162,14 +161,11 @@ export function ArkmeRelatedQuickNotesList({
   if (state.kind === 'error') {
     return <div style={styles.state} role="alert">
       <div>{state.message || tr("相关快记加载失败")}</div>
-      {state.retryable !== false && <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={onRetry}>{tr("重试")}</button>}
+      <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={onRetry}>{tr("重试")}</button>
     </div>
   }
   if (state.list.items.length === 0) return <div style={styles.state}>{tr("暂无相关快记")}</div>
   return <div style={styles.list} data-arkme-related-quick-notes-list>
-    {state.list.recallMode === 'search_fallback' && <div style={styles.state}>
-      {tr('相关结果可能不完整')} <button type="button" style={styles.retry} onClick={onRetry}>{tr('重试')}</button>
-    </div>}
     {state.list.items.map(item => {
       const preview = notePreview(item)
       const time = dateTimeDisplay(item.sendAtMillis)

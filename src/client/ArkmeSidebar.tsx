@@ -1,4 +1,4 @@
-import { loadRelatedQuickNotes, relatedQuickNotesState } from './related-quick-notes-query.js'
+import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
@@ -6176,7 +6176,7 @@ export function ArkmeSurface({
       }, controller.signal)
       if (controller.signal.aborted || momentRelatedRequestRef.current !== controller
         || generation !== momentRelatedGenerationRef.current) return
-      setMomentRelatedState(relatedQuickNotesState(list))
+      setMomentRelatedState(list.items.length === 0 ? { kind: 'empty' } : { kind: 'success', list })
     } catch (caught) {
       if (controller.signal.aborted || momentRelatedRequestRef.current !== controller
         || generation !== momentRelatedGenerationRef.current) return

@@ -104,6 +104,37 @@ describe('normal timeline related quick note drawer', () => {
     act(() => view.unmount())
   })
 
+  it.each(['embedding', 'search_fallback', 'unavailable', 'recovery-network-failure'] as const)('keeps an empty %s response silent in the actual drawer', async mode => {
+    vi.useFakeTimers()
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.message-extension.context') return { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
+      if (operation === 'source.related-quick-notes.from-message') {
+        reads++
+        if (mode === 'recovery-network-failure' && reads === 2) throw new TypeError('network unavailable')
+        return { total: 0, items: [], recallMode: mode === 'recovery-network-failure' ? 'search_fallback' : mode, retryable: mode !== 'embedding', retryAfterMillis: 1500 }
+      }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let view: ReactTestRenderer | undefined
+    try {
+      await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem}
+        sourceRef="source-a" sourceKind="send_to_self" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(reads).toBe(mode === 'embedding' ? 1 : 2)
+      expect(view!.root.findAllByProps({ 'data-arkme-related-quick-notes-error': true })).toHaveLength(0)
+      expect(view!.root.findAllByProps({ 'data-arkme-related-quick-notes-card': true })).toHaveLength(0)
+      const html = JSON.stringify(view!.toJSON())
+      expect(html).toContain('源快记正文')
+      for (const text of ['暂未找到相关快记', '相关快记暂时不可用', '相关结果可能不完整']) expect(html).not.toContain(text)
+      expect(view!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+      expect(view!.root.findAllByProps({ role: 'alertdialog' })).toHaveLength(0)
+    } finally {
+      if (view) act(() => view!.unmount())
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the owning topic in full detail even when the timeline hides its redundant badge', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
@@ -814,7 +845,8 @@ describe('normal timeline related quick note drawer', () => {
       }
     })
     expect(JSON.stringify(renderer.toJSON())).not.toContain('过期来源')
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('相关快记')
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('暂未找到相关快记')
+    expect(renderer.root.findAllByProps({ 'data-arkme-related-quick-notes-card': true })).toHaveLength(0)
     act(() => renderer.unmount())
   })
 
@@ -1027,7 +1059,8 @@ describe('normal timeline related quick note drawer', () => {
     })
 
     expect(JSON.stringify(renderer.toJSON())).not.toContain('加载延展中')
-    expect(renderer.root.findAllByProps({ role: 'status' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-arkme-related-quick-notes-loading': true })).toHaveLength(0)
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('暂未找到相关快记')
   })
 
   it('reports detail extension failures through toast without rendering an inline error row', async () => {
