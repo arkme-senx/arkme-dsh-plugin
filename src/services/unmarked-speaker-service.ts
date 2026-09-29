@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 
 import { unmarkedSpeakerDisplayName } from '../contact-directory-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -180,6 +180,9 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       throw new ArkmePluginError('unmarked-list-contract-invalid', '未标记说话人列表投影状态无效', true, 502)
     }
     const items: ArkmeDirectoryItem[] = []
+    // This identity survives reference expiry/restarts, but is scoped to this host and account.
+    // It cannot be used by any mutation endpoint in place of a candidateRef.
+    const identitySecret = await this.runtime.stateStore.uniqueCode()
     for (const value of listValue(data.items).slice(0, LIST_CAP)) {
       const raw = objectValue(value)
       const candidateId = stringValue(raw.candidate_id).trim()
@@ -200,7 +203,9 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
         segmentCount, firstSeenAtMillis, latestAtMillis,
       })
       items.push({
-        kind: 'unmarked-speaker', candidateRef, speakerToken,
+        kind: 'unmarked-speaker', candidateRef, speakerToken, appearanceDays, latestAtMillis,
+        identityKey: createHmac('sha256', identitySecret)
+          .update(JSON.stringify(['unmarked-speaker-identity-v1', this.runtime.config.environment, session.userId, candidateId])).digest('base64url'),
         displayName: unmarkedSpeakerDisplayName({
           speakerToken,
           firstSeenDate: localDate(status === 'single_day' ? latestAtMillis : firstSeenAtMillis),

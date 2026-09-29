@@ -1831,8 +1831,9 @@ describe('ChatService', () => {
       })),
       recordMediaUnavailable: () => false, richContentBlocks: vi.fn((_raw: unknown, _viewerUserId: number, displayItems: unknown[] = []) => displayItems.length === 0 ? [] : contentBlocks),
     }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'current-extension-avatar') }
     const chat = new ChatService(
-      runtime as never, source as never, {} as never, media as never, {} as never,
+      runtime as never, source as never, profile as never, media as never, {} as never,
       {} as never, {} as never, {} as never, {} as never,
     )
 
@@ -1844,9 +1845,11 @@ describe('ChatService', () => {
       extensions: [expect.objectContaining({
         recordUid: 'extension-record-1', textContent: '补充信息',
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
-        contentBlocks,
+        contentBlocks, senderMemberRef: expect.any(String), senderIsMe: false,
+        senderAvatarUrl: 'current-extension-avatar',
       })],
     })
+    expect(profile.sealProfileImageRef).toHaveBeenCalledWith(42, 7)
     expect(media.hydrateRecordMediaPage).toHaveBeenCalledOnce()
     expect(media.richContentBlocks).toHaveBeenCalledWith(
       expect.objectContaining({ record_uid: 'extension-record-1' }),
@@ -2032,7 +2035,7 @@ describe('ChatService', () => {
     const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
-    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+    const profile = { sealProfileImageRef: vi.fn(async () => 'current-extension-avatar'), refreshProfile: vi.fn(async () => ({ profile: {
       userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
       createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
     } })) }

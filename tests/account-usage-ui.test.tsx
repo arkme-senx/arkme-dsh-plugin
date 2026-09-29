@@ -29,6 +29,17 @@ async function render(scope = 'prod:11') { await act(async () => root.render(<Ar
 const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
+  it.each([
+    ['1980.43', '245.16', '1735.27', '可用 1,980 积分赠送 245 · 充值 1,735'],
+    ['1.9999999', '0.9999999', '1', '可用 1 积分赠送 0 · 充值 1'],
+    ['0', '0', '0', '可用 0 积分赠送 0 · 充值 0'],
+  ])('floors only the balance overview for %s exact points', async (availablePoints, grantedPoints, purchasedPoints, label) => {
+    const account = Object.freeze({ ...points, availablePoints, grantedPoints, purchasedPoints })
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    expect(host.querySelector('.arkme-usage-points-balance')?.textContent).toBe(label)
+    expect(account.availablePoints).toBe(availablePoints)
+  })
   it('loads settled consumption only after opening details and cancels on close', async () => {
     await render()
     expect(mocks.call.mock.calls.some(call => call[0] === 'account.points.consumption')).toBe(false)
@@ -153,10 +164,11 @@ describe('compact summary and dialog', () => {
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
     expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['读取中…', '读取中…', '读取中…', '暂未做限制'])
   })
-  it('shows available points and preserves measured storage/voice bars', async () => {
+  it('floors available points in the compact summary and preserves measured storage/voice bars', async () => {
     const open = vi.fn()
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '1980.9999999' } : defaultValue(operation))
     await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
-    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,250 积分', '10 GB', '2 小时', '暂未做限制'])
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,980 积分', '10 GB', '2 小时', '暂未做限制'])
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
     expect(host.textContent).not.toContain('Token')
     expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('10')

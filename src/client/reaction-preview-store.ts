@@ -41,7 +41,10 @@ export class ReactionPreviewStore {
     if (!existing && this.targets.size >= 200) { this.failures.set(target.id, '请打开消息后刷新表态'); return () => { this.failures.delete(target.id) } }
     this.inactive.delete(target.id)
     this.knownTargets.set(target.id, target)
-    this.targets.set(target.id, { target, count: (existing?.count ?? 0) + 1 })
+    // Additional consumers share the same lifetime token so an in-flight read
+    // still belongs to this message when notification warming joins it.
+    if (existing) { existing.target = target; existing.count++ }
+    else this.targets.set(target.id, { target, count: 1 })
     if (this.refreshing) this.refreshAgain = true
     this.schedule(40)
     if (this.targets.size === 1 && typeof document !== 'undefined') document.addEventListener('visibilitychange', this.visibility)
@@ -53,14 +56,18 @@ export class ReactionPreviewStore {
         this.targets.delete(target.id); this.failures.delete(target.id)
         // Conversation switches release polling, not the last confirmed display.
         // Returning mounts revalidate immediately using the newest opaque refs.
-        if (this.states.has(target.id)) this.inactive.add(target.id)
-        else this.knownTargets.delete(target.id)
-        while (this.inactive.size > 400) {
-          const oldest = this.inactive.values().next().value!
-          this.inactive.delete(oldest); this.states.delete(oldest); this.knownTargets.delete(oldest)
-        }
+        this.retainInactive(target.id)
       }
       if (!this.targets.size) this.stop()
+    }
+  }
+  private retainInactive(id: string) {
+    if (this.targets.has(id)) return
+    if (this.states.has(id) || this.failures.has(id)) this.inactive.add(id)
+    else this.knownTargets.delete(id)
+    while (this.inactive.size > 400) {
+      const oldest = this.inactive.values().next().value!
+      this.inactive.delete(oldest); this.states.delete(oldest); this.knownTargets.delete(oldest); this.failures.delete(oldest)
     }
   }
   async prepare(scope: string, targets: ReactionPreviewTarget[], signal: AbortSignal, force = false): Promise<void> {
@@ -173,7 +180,17 @@ export class ReactionPreviewStore {
         if (recovered.outcome === 'revision_conflict') throw new Error('上次表态已在其他设备更新，请重新选择')
         await this.refresh()
       }
-      if (!this.states.has(target.id)) await this.refresh()
+      if (!this.states.has(target.id)) {
+        // A user action must not depend on viewport admission or unrelated
+        // messages succeeding. The write lock bounds this to one extra read.
+        const page = await this.transport({ action: 'query', accountKey: scope, targets: [target] }, signal) as { items: ReactionSnapshot[] }
+        if (signal.aborted) return false
+        const loaded = page.items.find(item => item.target_id === target.id)
+        if (!loaded) throw new Error('消息已不可访问')
+        const previous = this.states.get(target.id)
+        if (!previous || previous.mine.revision <= loaded.mine.revision) this.states.set(target.id, loaded)
+        this.knownTargets.set(target.id, target)
+      }
       const state = this.states.get(target.id)
       if (signal.aborted || !state) throw new Error('请先成功加载消息表态')
       const selected = state.mine.selections.find(item => expressionIdentity(item.expression) === expressionIdentity(chosen))
@@ -193,7 +210,7 @@ export class ReactionPreviewStore {
       if (!signal.aborted && error instanceof ArkmeClientError && !error.body.retryable) this.pending = undefined
       if (!signal.aborted) { this.failures.set(target.id, error instanceof Error ? error.message : '表态失败，请重试'); this.publish() }
       return false
-    } finally { if (!signal.aborted) { this.writing = false; this.publish() } }
+    } finally { if (!signal.aborted) { this.retainInactive(target.id); this.writing = false; this.publish() } }
   }
   private applyConfirmedState(snapshot: ReactionSnapshot, mine: ReactionSetResult['state'], scope: string): ReactionSnapshot {
     const before = new Map(snapshot.mine.selections.map(item => [item.key, item]))

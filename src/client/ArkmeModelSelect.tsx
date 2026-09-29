@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type Keyboard
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
 import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
+import { ArkmeModelPricing } from './ArkmeModelPricing.js'
 import css from './arkme-model-select.css?inline'
 
 /** The public ModelDirectory face; DSH remains the sole directory and selection owner. */
@@ -58,7 +59,7 @@ export function ArkmeModelSelect({ directory, locked, available }: {
     if (pane === null) return
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const items = [...(root.current?.querySelectorAll<HTMLButtonElement>('[role="menu"] button:not(:disabled)') ?? [])]
+    const items = [...(root.current?.querySelectorAll<HTMLElement>('[role="menu"] button:not(:disabled), [role="menu"] summary') ?? [])]
     if (items.length === 0) return
     event.preventDefault()
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
@@ -112,10 +113,10 @@ export function ArkmeModelSelect({ directory, locked, available }: {
                 aria-checked={selected} disabled={busy} onClick={() => selected ? close(true) : choose({ provider: provider.id, model: item.id })}>
                 <span>{item.name}{provider.id !== 'arkme-managed' && item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
               </button>
-              {provider.id === 'arkme-managed' && item.description && <details className="arkme-model-price"><summary>{tr('按用量扣积分 · 计费说明')}</summary><small>{item.description}</small></details>}
               </div>
             })}
           </section>)}
+          <ArkmeModelPricing models={state.groups.filter(provider => provider.id === 'arkme-managed').flatMap(provider => provider.models)} />
           {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">{tr("暂无可用模型")}</div>}
         </>}
         {(state.error || state.failures.length > 0) && <div className="arkme-model-error" role="alert">

@@ -1451,7 +1451,7 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
     case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
     case 'recordings.speaker.members': return await service.recordingSpeakerMembers(
-      stringParam(params, 'speakerRef').trim(), requestSignal,
+      stringParam(params, 'speakerRef').trim(), requestSignal, stringParam(params, 'expectedVersion').trim() || undefined,
     )
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,

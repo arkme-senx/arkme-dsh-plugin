@@ -8,6 +8,77 @@ afterEach(() => { stores.forEach(s => s.setScope(undefined)); stores.length = 0;
 function setup(transport = (input: ReactionRequest) => reactionFixture.call('reactions', input)) {
  const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a'); store.watch('test:a', target); return store
 }
+it('keeps an in-flight message read when notification warming joins its subscription', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const store = setup(() => new Promise(resolve => { finish = resolve }))
+ const reading = store.refresh()
+ const release = store.watch('test:a', { ...target, sourceRef: 'latest-source' })
+ finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
+ await reading
+ expect(store.snapshot(target.id)).toBeDefined()
+ release()
+ expect(store.snapshot(target.id)).toBeDefined()
+})
+
+it('loads the clicked message independently of a failing unrelated batch', async () => {
+ vi.useFakeTimers()
+ const calls: ReactionRequest[] = []
+ const store = setup(async input => {
+  calls.push(input)
+  if (input.action === 'query' && input.targets.length > 1) throw new Error('another message is inaccessible')
+  return reactionFixture.call('reactions', input)
+ })
+ store.watch('test:a', { ...target, id: 'unrelated' })
+ await store.refresh()
+ expect(await store.toggle('test:a', target, '收到')).toBe(true)
+ expect(calls.some(input => input.action === 'set' && input.target.id === target.id)).toBe(true)
+})
+
+it('can react before the visibility observer subscribes the clicked message', async () => {
+ vi.useFakeTimers()
+ const store = new ReactionPreviewStore((input) => reactionFixture.call('reactions', input))
+ stores.push(store); store.setScope('test:a')
+ expect(await store.toggle('test:a', target, '收到')).toBe(true)
+ expect(store.selections(target.id)).toEqual(['收到'])
+})
+
+it('does not wait for an unrelated in-flight poll before sending a cold reaction', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const store = setup(async input => input.action === 'query' && input.targets[0]?.id === target.id
+  ? new Promise(resolve => { finish = resolve }) : reactionFixture.call('reactions', input))
+ const reading = store.refresh()
+ const clicked = { ...target, id: 'clicked' }
+ expect(await store.toggle('test:a', clicked, '收到')).toBe(true)
+ expect(store.busy(clicked.id)).toBe(false)
+ finish({ items: [] }); await reading
+})
+
+it('drops a cold click read when the account changes and never sends its write', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const calls: ReactionRequest[] = []
+ const store = setup(input => { calls.push(input); return new Promise(resolve => { finish = resolve }) })
+ const clicking = store.toggle('test:a', target, '收到')
+ store.setScope('test:b')
+ finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
+ expect(await clicking).toBe(false)
+ expect(calls.map(input => input.action)).toEqual(['query'])
+ expect(store.snapshot(target.id)).toBeUndefined()
+})
+
+it('bounds cold clicked snapshots without starting background polling', async () => {
+ vi.useFakeTimers()
+ const transport = vi.fn((input: ReactionRequest) => reactionFixture.call('reactions', input))
+ const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a')
+ for (let index = 0; index < 405; index++) expect(await store.toggle('test:a', { ...target, id: String(index) }, '收到')).toBe(true)
+ expect(store.snapshot('0')).toBeUndefined()
+ expect(store.snapshot('404')).toBeDefined()
+ const count = transport.mock.calls.length
+ await vi.advanceTimersByTimeAsync(10000)
+ expect(transport).toHaveBeenCalledTimes(count)
+})
 describe('server-owned reactions', () => {
  it('persists explicit desired state and retains add/remove history', async () => {
   const store = setup(); await store.refresh()

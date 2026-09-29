@@ -2,6 +2,8 @@ import type { ArkmeAuthSnapshot, ArkmeRecordingSpeakerMutationResult, ArkmeRecor
 import { callArkme } from '../api.js'
 import { arkmeAuthStore } from '../auth-store.js'
 import { ResourceStore, resourceCancelled } from '../resource-store.js'
+import { recognizedSpeakerTracker } from '../recognized-speaker-tracker.js'
+import { recognizedSpeakerDirectory } from '../recognized-speaker-directory.js'
 
 export function recordingSpeakerAccount(auth: ArkmeAuthSnapshot | undefined): string | undefined {
   return auth?.status === 'authenticated' && auth.userId !== undefined
@@ -74,6 +76,7 @@ export async function assignRecordingSpeaker(
       throw error
     } finally {
       if (context.current()) {
+        if (binding.account !== undefined) { recognizedSpeakerTracker.uncertain(binding.account); recognizedSpeakerDirectory.invalidate(binding.account) }
         // A failed command may already have created a speaker. Reconcile reads; never retry the write.
         recordingSpeakerOptions.reset()
         recordingSpeakerOptions.invalidate()
