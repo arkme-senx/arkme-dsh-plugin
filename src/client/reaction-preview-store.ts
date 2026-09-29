@@ -1,10 +1,11 @@
+import { callReaction, traceReactionApplied } from './reaction-transport.js'
 import type { ArkmeSourceKind } from '../types.js'
-import type { ReactionHistoryContext, ReactionRequest, ReactionSnapshot, ReactionSetResult, ReactionExpression, ReactionActorPage, ReactionGroupPage, ReactionTargetRef } from '../reaction-contract.js'
+import type { ReactionHistoryContext, ReactionRequest, ReactionSnapshot, ReactionSetResult, ReactionExpression, ReactionActorPage, ReactionGroupPage, ReactionTargetRef, ReactionActor } from '../reaction-contract.js'
 import { expressionLabel, labelExpression, expressionIdentity } from './reaction-expression.js'
 import { reactionLibrary } from './reaction-library.js'
-import { callArkme, ArkmeClientError } from './api.js'
+import { ArkmeClientError } from './api.js'
 
-export type ReactionPreviewTarget = ReactionTargetRef & { source: string; sourceKind?: ArkmeSourceKind; text: string; sourceKey?: string | undefined; itemUid?: string }
+export type ReactionPreviewTarget = ReactionTargetRef & { source: string; sourceKind?: ArkmeSourceKind; text: string; sourceKey?: string | undefined; itemUid?: string; resolveActor?: (actor: ReactionActor) => ReactionActor | undefined }
 export interface ReactionPreviewEvent extends ReactionHistoryContext { id: string; eventId?: string; expression?: ReactionExpression; restricted?: boolean; source: string; sourceKind?: ArkmeSourceKind; text: string; label: string; added: boolean; at: number }
 type Transport = (input: ReactionRequest, signal?: AbortSignal) => Promise<unknown>
 /** Server-owned state. Poll mounted targets only; retain at most 400 recent inactive snapshots in this account/window. */
@@ -14,10 +15,12 @@ export class ReactionPreviewStore {
   private targets = new Map<string, { target: ReactionPreviewTarget; count: number }>()
   private states = new Map<string, ReactionSnapshot>()
   private inactive = new Set<string>()
+  private actorRefreshAt = new Map<string, number>()
   private knownTargets = new Map<string, ReactionPreviewTarget>()
   private failures = new Map<string, string>()
   private listeners = new Set<() => void>()
   private revision = 0
+  private reading: { controller: AbortController; entries: Map<string, { target: ReactionPreviewTarget; count: number }> } | undefined
   private refreshing: Promise<void> | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
   private timerDue = 0
@@ -25,18 +28,20 @@ export class ReactionPreviewStore {
   private retryMillis = 2000
   private pending: Extract<ReactionRequest, { action: 'set' }> | undefined
   private writing = false
-  constructor(private readonly transport: Transport = (input, signal) => callArkme('reactions', input, signal)) {}
+  constructor(private readonly transport: Transport = callReaction) {}
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   readonly getSnapshot = () => this.revision
   isScope(scope: string) { return this.scope === scope }
   setScope(scope?: string) {
     if (this.scope === scope) return
     this.controller.abort(); this.controller = new AbortController(); this.scope = scope
-    this.stop(); this.targets.clear(); this.states.clear(); this.inactive.clear(); this.knownTargets.clear(); this.failures.clear(); this.pending = undefined; this.writing = false; this.refreshing = undefined; this.refreshAgain = false; this.retryMillis = 2000
+    this.stop(); this.targets.clear(); this.states.clear(); this.inactive.clear(); this.actorRefreshAt.clear(); this.knownTargets.clear(); this.failures.clear(); this.pending = undefined; this.writing = false; this.refreshing = undefined; this.refreshAgain = false; this.retryMillis = 2000
     reactionLibrary.setScope(scope); this.publish()
   }
   watch(scope: string, target: ReactionPreviewTarget): () => void {
     if (scope !== this.scope) return () => {}
+    const resolver = target.resolveActor ?? this.knownTargets.get(target.id)?.resolveActor
+    if (resolver) target = { ...target, resolveActor: resolver }
     const existing = this.targets.get(target.id)
     if (!existing && this.targets.size >= 200) { this.failures.set(target.id, '请打开消息后刷新表态'); return () => { this.failures.delete(target.id) } }
     this.inactive.delete(target.id)
@@ -58,6 +63,8 @@ export class ReactionPreviewStore {
         // Returning mounts revalidate immediately using the newest opaque refs.
         this.retainInactive(target.id)
       }
+      const reading = this.reading
+      if (reading && ![...reading.entries].some(([id, entry]) => this.targets.get(id) === entry)) reading.controller.abort()
       if (!this.targets.size) this.stop()
     }
   }
@@ -67,7 +74,7 @@ export class ReactionPreviewStore {
     else this.knownTargets.delete(id)
     while (this.inactive.size > 400) {
       const oldest = this.inactive.values().next().value!
-      this.inactive.delete(oldest); this.states.delete(oldest); this.knownTargets.delete(oldest); this.failures.delete(oldest)
+      this.inactive.delete(oldest); this.states.delete(oldest); this.actorRefreshAt.delete(oldest); this.knownTargets.delete(oldest); this.failures.delete(oldest)
     }
   }
   async prepare(scope: string, targets: ReactionPreviewTarget[], signal: AbortSignal, force = false): Promise<void> {
@@ -89,8 +96,15 @@ export class ReactionPreviewStore {
       // An earlier mounted-message read may have started before these targets joined.
       if (active && !signal.aborted && scope === this.scope && (alreadyReading || missing.some(target => !this.states.has(target.id) && !this.failures.has(target.id)))) await this.refresh()
     }
-    try { await Promise.race([load(), deadline]) }
+    let unsubscribe = () => {}
+    const factsReady = new Promise<void>(resolve => {
+      unsubscribe = this.subscribe(() => {
+        if (missing.every(target => this.states.has(target.id) || this.failures.has(target.id))) resolve()
+      })
+    })
+    try { await Promise.race([load(), deadline, factsReady]) }
     finally {
+      unsubscribe()
       active = false
       clearTimeout(timer); signal.removeEventListener('abort', finish)
       releases.forEach(release => release())
@@ -122,17 +136,20 @@ export class ReactionPreviewStore {
   selections(id: string): readonly string[] { return this.states.get(id)?.mine.selections.map(item => expressionLabel(item.expression)) ?? [] }
   async refresh(): Promise<void> {
     if (this.refreshing) return this.refreshing
-    const scope = this.scope, signal = this.controller.signal
+    const scope = this.scope
     if (!scope) return
+    const controller = new AbortController(), entries = new Map(this.targets)
+    const reading = { controller, entries }
+    this.reading = reading
+    const signal = AbortSignal.any([this.controller.signal, controller.signal])
     const operation = (async () => {
       let failed = false
-      const entries = new Map(this.targets)
       const targets = [...entries.values()].map(item => item.target)
       for (let offset = 0; offset < targets.length; offset += 50) {
         const batch = targets.slice(offset, offset + 50)
         const before = JSON.stringify(batch.map(t => [this.states.get(t.id), this.failures.get(t.id)]))
         try {
-          const page = await this.transport({ action: 'query', accountKey: scope, targets: batch }, signal) as { items: ReactionSnapshot[] }
+          const page = await this.transport({ action: 'query', accountKey: scope, targets: batch, actorPresentation: 'deferred' }, signal) as { items: ReactionSnapshot[] }
           if (signal.aborted) return
           const returned = new Set(page.items.map(item => item.target_id))
           for (const target of batch) if (this.targets.get(target.id) === entries.get(target.id)) {
@@ -142,19 +159,55 @@ export class ReactionPreviewStore {
           for (const item of page.items) if (entries.has(item.target_id) && this.targets.get(item.target_id) === entries.get(item.target_id)) {
             // A read dispatched before a successful write cannot roll that actor's state back.
             const previous = this.states.get(item.target_id)
-            if (!previous || previous.mine.revision <= item.mine.revision) this.states.set(item.target_id, item)
+            if (!previous || previous.mine.revision <= item.mine.revision) {
+              const known = new Map((Date.now() - (this.actorRefreshAt.get(item.target_id) ?? 0) < 60_000 ? previous?.groups : undefined)?.flatMap(group => group.actors ?? []).filter(actor => !actor.presentationPending).map(actor => [actor.userId, actor]))
+              const resolve = this.targets.get(item.target_id)?.target.resolveActor
+              this.states.set(item.target_id, { ...item, groups: item.groups.map(group => ({ ...group, actors: (group.actors ?? []).map(actor =>
+                resolve?.(actor) ?? (actor.presentationPending && known.has(actor.userId) ? { ...actor, ...known.get(actor.userId), ...(actor.memberRef ? { memberRef: actor.memberRef } : {}), presentationPending: false } : actor)),
+              })) })
+            }
           }
+          if (before !== JSON.stringify(batch.map(t => [this.states.get(t.id), this.failures.get(t.id)]))) this.publish()
+          traceReactionApplied(page, 'browser-facts-published')
         } catch (error) {
           if (signal.aborted) return
           failed = true
           for (const target of batch) if (this.targets.get(target.id) === entries.get(target.id)) { this.states.delete(target.id); this.failures.set(target.id, error instanceof Error ? error.message : '表态加载失败') }
         }
-        if (!signal.aborted && before !== JSON.stringify(batch.map(t => [this.states.get(t.id), this.failures.get(t.id)]))) this.publish()
+        if (failed && !signal.aborted && before !== JSON.stringify(batch.map(t => [this.states.get(t.id), this.failures.get(t.id)]))) this.publish()
+        // Publish authorized reaction facts first. Missing names share this bounded
+        // reader's single flight; a slow presentation read never hides the facts.
+        const missing = batch.filter(target => this.states.get(target.id)?.groups.some(group => group.actors?.some(actor => actor.presentationPending)))
+        if (missing.length && !signal.aborted) {
+          const initial = new Map(missing.map(target => [target.id, this.states.get(target.id)]))
+          try {
+            const enriched = await this.transport({ action: 'query', accountKey: scope, targets: missing }, signal) as { items: ReactionSnapshot[] }
+            if (signal.aborted) return
+            for (const item of enriched.items) {
+              const current = this.states.get(item.target_id)
+              if (!current || current !== initial.get(item.target_id) || this.targets.get(item.target_id) !== entries.get(item.target_id)) continue
+              this.actorRefreshAt.set(item.target_id, Date.now())
+              if (!item.actors_visible) {
+                this.states.set(item.target_id, { ...current, actors_visible: false, private: item.private, groups: current.groups.map(group => ({ ...group, actors: [] })) })
+                continue
+              }
+              const actors = new Map(item.groups.flatMap(group => group.actors ?? []).map(actor => [actor.userId, actor]))
+              const resolve = this.targets.get(item.target_id)?.target.resolveActor
+              // Enrichment cannot roll back counts, permissions or a newer local write.
+              this.states.set(item.target_id, { ...current, groups: current.groups.map(group => ({ ...group,
+                actors: (group.actors ?? []).map(actor => resolve?.(actor) ?? (actor.presentationPending && actors.has(actor.userId) ? { ...actor, ...actors.get(actor.userId), ...(actor.memberRef ? { memberRef: actor.memberRef } : {}), presentationPending: false } : actor)),
+              })) })
+            }
+            this.publish()
+            traceReactionApplied(enriched, 'browser-actors-published')
+          } catch { /* Keep confirmed reactions; the existing poll can retry missing names. */ }
+        }
       }
       if (!signal.aborted) this.retryMillis = failed ? Math.min(120000, this.retryMillis * 2) : 2000
     })()
     this.refreshing = operation
     try { await operation } finally {
+      if (this.reading === reading) this.reading = undefined
       if (this.refreshing === operation) {
         this.refreshing = undefined
         if (this.refreshAgain) { this.refreshAgain = false; this.schedule(0) }

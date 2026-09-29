@@ -230,7 +230,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
             const identity: ReactionActor = actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我' ? { ...actor, displayName: actorGroupNickname?.trim() || actorName,
               ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
               ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}),
-            } : actor
+            } : target.resolveActor?.(actor) ?? actor
             const name = identity.displayName
             return <span key={actor.userId}>{index > 0 && '、'}<button type="button" aria-label={`查看${name}的资料`} data-arkme-new-reaction={!newGroup && newActors.has(actor.userId) ? 'actor' : undefined} className={!newGroup && newActors.has(actor.userId) ? 'arkme-new-reaction' : undefined}
               onClick={event => { event.stopPropagation(); setProfileActor(identity) }}

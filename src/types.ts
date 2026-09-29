@@ -1379,6 +1379,7 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
+    imageCacheRead?: true
     selfRoles?: true
     directMessageAdmission?: true
     reactionsV1?: true

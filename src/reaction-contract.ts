@@ -2,7 +2,7 @@ export interface ReactionExpression { text: string; emoji?: string; hand?: strin
 export type ReactionTargetRef = { id: string } & ({ sourceRef: string; messageActionRef: string; worldRecordRef?: never } | { worldRecordRef: string; sourceRef?: never; messageActionRef?: never })
 export interface ReactionSelection { key: string; expression: ReactionExpression; at: number }
 export interface ReactionState { revision: number; selections: ReactionSelection[] }
-export interface ReactionActor { userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
+export interface ReactionActor { memberRef?: string; presentationPending?: boolean; userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
 export interface ReactionGroup { actors?: ReactionActor[]; key: string; expression: ReactionExpression; count: number }
 export interface ReactionSnapshot { target_id: string; mine: ReactionState; groups: ReactionGroup[]; has_more: boolean; actors_visible: boolean; private: boolean }
 export interface ReactionLibrary { revision: number; items: ReactionExpression[] }
@@ -21,10 +21,10 @@ export interface ReactionHistoryPolicyResult { outcome: 'updated' | 'unchanged' 
 export type ReactionResponse<R extends ReactionRequest> = R extends { action: 'notifications' } ? ReactionNotificationPage : R extends { action: 'notifications-read' } ? { ok: boolean } : R extends { action: 'query' } ? { items: ReactionSnapshot[] }
   : R extends { action: 'set' } ? ReactionSetResult : R extends { action: 'actors' } ? ReactionActorPage
   : R extends { action: 'groups' } ? ReactionGroupPage : R extends { action: 'received' } ? ReactionReceivedPage : R extends { action: 'history-policy-query' } ? ReactionHistoryPolicy : R extends { action: 'history-policy-set' } ? ReactionHistoryPolicyResult : R extends { action: 'history' } ? ReactionHistoryPage : R extends { action: 'library-query' } ? ReactionLibrary : ReactionLibraryResult
-export type ReactionRequest = { accountKey: string } & (
+export type ReactionRequest = { accountKey: string; traceId?: string } & (
  | { action: 'notifications'; after_id?: string; limit: number }
  | { action: 'notifications-read'; items: { id: string; revision: number }[] }
- | { action: 'query'; targets: ReactionTargetRef[] }
+ | { action: 'query'; targets: ReactionTargetRef[]; actorPresentation?: 'deferred' }
  | { action: 'set'; target: ReactionTargetRef; expression: ReactionExpression; active: boolean; expected_revision: number; request_id: string }
  | { action: 'actors'; target: ReactionTargetRef; key: string; after_user_id: number; limit: number }
  | { action: 'groups'; target: ReactionTargetRef; after_key: string; limit: number }

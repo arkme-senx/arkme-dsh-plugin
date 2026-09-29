@@ -75,6 +75,7 @@ import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { invalidateSelfTopicDirectories, resetSelfTopicDirectories, selfTopicDirectory } from '../src/client/self-topic-directory-cache.js'
 import { ArkmeConversationMemoryCache } from '../src/client/conversation-memory-cache.js'
+import { reactionPreview } from '../src/client/reaction-preview-store.js'
 
 const target: ArkmeSourceItem = {
   sourceRef: 'source-harness', sourceKey: 'chat:harness', kind: 'private_chat', displayName: 'Harness4',
@@ -174,6 +175,97 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkExtensionText = ''
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
+
+  it.each([target, group])('reuses $kind conversation names without waiting for actor profiles', async selected => {
+    vi.useFakeTimers(); reactionPreview.setScope(undefined)
+    activeSource = { ...selected, peerUserId: 99, displayName: '本地私聊备注' }
+    arkmeUi.selectSource(activeSource)
+    timeline = [{ itemUid: 'local-actor', memberRef: 'actor-member', messageActionRef: 'reaction-ref', sequence: selected.latestSequence,
+      senderName: '卡片显示名字', isMe: false, sendAtMillis: 1, textContent: '正文', status: 1 }]
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'reactions' && params?.action === 'query') {
+        if (params.actorPresentation !== 'deferred') return await new Promise(() => {})
+        return { items: params.targets.map((item: { id: string }) => ({ target_id: item.id,
+          mine: { revision: 0, selections: [] }, groups: [{ key: 'received', expression: { text: '收到' }, count: 1,
+            actors: [{ userId: 99, memberRef: 'actor-member', displayName: '用户', presentationPending: true }] }],
+          has_more: false, actors_visible: true, private: false })) }
+      }
+      return base(operation, params, signal)
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(40) })
+      expect(renderer!.root.findAllByProps({ 'aria-label': `查看${selected.kind === 'private_chat' ? '本地私聊备注' : '卡片显示名字'}的资料` })).toHaveLength(1)
+      expect(mocks.callArkme.mock.calls.filter(([op, params]) => op === 'reactions' && params?.action === 'query').every(([, params]) => params.actorPresentation === 'deferred')).toBe(true)
+    } finally {
+      await act(async () => { renderer?.unmount() }); renderer = undefined; reactionPreview.setScope(undefined); vi.useRealTimers()
+    }
+  })
+
+  it.each([target, group])('renders $kind text before a pending reaction read and fills reactions later', async selected => {
+    vi.useFakeTimers()
+    reactionPreview.setScope(undefined)
+    activeSource = selected
+    arkmeUi.selectSource(selected)
+    timeline = [{ itemUid: 'cold-body', messageActionRef: 'reaction-ref', sequence: selected.latestSequence,
+      senderName: '同事', isMe: false, sendAtMillis: 1, textContent: '正文先显示', status: 1 }]
+    const pending = deferred<void>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'reactions' && params?.action === 'query') {
+        await pending.promise
+        return { items: params.targets.map((item: { id: string }) => ({ target_id: item.id,
+          mine: { revision: 0, selections: [] }, groups: [{ key: 'received', expression: { text: '收到' }, count: 1, actors: [] }],
+          has_more: false, actors_visible: true, private: false })) }
+      }
+      return base(operation, params, signal)
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'cold-body' })).toHaveLength(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(40) })
+      expect(mocks.callArkme.mock.calls.some(([operation, params]) => operation === 'reactions' && params?.action === 'query')).toBe(true)
+      expect(renderedText(renderer!.toJSON())).not.toContain('收到')
+      await act(async () => { pending.resolve() })
+      expect(renderedText(renderer!.toJSON())).toContain('收到')
+    } finally {
+      await act(async () => { pending.resolve(); renderer?.unmount() })
+      renderer = undefined
+      reactionPreview.setScope(undefined)
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([target, group].flatMap(selected => [
+    { selected, visibilityState: 'hidden', focused: true },
+    { selected, visibilityState: 'visible', focused: false },
+  ]))('retains $selected.kind deltas without background read acknowledgement ($visibilityState/$focused)', async state => {
+    const doc = Object.assign(new EventTarget(), { body: {}, activeElement: null,
+      visibilityState: state.visibilityState, hasFocus: () => state.focused })
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    activeSource = { ...state.selected, unreadCount: 1 }
+    arkmeChatDirectory.publish([activeSource])
+    arkmeUi.selectSource(activeSource)
+    timeline = [{ itemUid: 'cached-body', sequence: activeSource.latestSequence,
+      senderName: '同事', isMe: false, sendAtMillis: 1, textContent: '旧正文', status: 1 }]
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, params, signal) => operation === 'source.mark-read'
+      ? Promise.resolve({ effectiveReadSequence: params.readSequence, unreadCount: 0 }) : base(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const readsBefore = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
+    const incoming = { ...timeline[0]!, itemUid: 'background-body', sequence: activeSource.latestSequence! + 1, textContent: '后台正文' }
+    await act(async () => { arkmeChatTimelineDelta.publish([{ source: { ...activeSource, latestSequence: incoming.sequence }, items: [incoming] }]) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+    doc.visibilityState = 'visible'
+    state.focused = true
+    await act(async () => { doc.dispatchEvent(new Event('visibilitychange')) })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readsBefore)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.mark-read')).toHaveLength(1)
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.mark-read', { sourceRef: activeSource.sourceRef, readSequence: incoming.sequence })
+  })
 
   it.each(['send_to_self', 'default_category', 'topic'] as const)('uses current account avatars in %s when this device has no role binding', async kind => {
     const selected = { ...sendToSelf, kind }

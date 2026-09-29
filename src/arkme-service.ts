@@ -1,3 +1,4 @@
+import { withReactionTrace, measureReaction } from './reaction-host-diagnostics.js'
 import { SelfRoleService } from './services/self-role-service.js'
 import { AiPointsService } from './services/ai-points-service.js'
 import type { ArkmeAiPointsQuery } from './ai-points.js'
@@ -884,6 +885,7 @@ export class ArkmeService {
         messageReport: true,
         userBanManagement: true,
         selfRoles: true,
+        imageCacheRead: true,
         directMessageAdmission: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
@@ -1970,6 +1972,7 @@ export class ArkmeService {
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
   async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+    return await withReactionTrace(input, async () => {
     const result = await new ReactionService(this.runtime, target => target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
       const [sources, profiles] = await Promise.all([
@@ -2034,11 +2037,21 @@ export class ArkmeService {
       if (input.action === 'query') {
         for (const item of page.items) if (item.actors_visible) include(sourceByTarget.get(item.target_id), item.groups.flatMap(group => group.actorIds))
       } else include(input.target.sourceRef, ids)
+      if (input.action === 'query' && input.actorPresentation === 'deferred') {
+        const references = new Map<string, Map<number, string>>()
+        for (const [sourceRef, users] of sourceIds) references.set(sourceRef, await this.chat.reactionActorReferences(sourceRef, [...users]))
+        if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+        return { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(({ actorIds, ...group }) => ({
+          ...group, actors: item.actors_visible ? actorIds.map(userId => ({ userId, displayName: '用户', presentationPending: true,
+            ...(references.get(sourceByTarget.get(item.target_id) ?? '')?.get(userId) ? { memberRef: references.get(sourceByTarget.get(item.target_id)!)!.get(userId)! } : {}),
+          })) : [],
+        })) })) }
+      }
       const [profiles, labels] = await Promise.all([
-        this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000),
+        measureReaction('actor-profiles', { count: ids.length }, () => this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000)),
         (async () => {
           const labels = new Map<string, Map<number, { remark: string; groupNickname: string }>>()
-          for (const [sourceRef, users] of sourceIds) labels.set(sourceRef, await actorLabels(sourceRef, [...users]))
+          for (const [sourceRef, users] of sourceIds) labels.set(sourceRef, await measureReaction('actor-labels', { count: users.size }, () => actorLabels(sourceRef, [...users])))
           return labels
         })(),
       ])
@@ -2059,6 +2072,7 @@ export class ArkmeService {
     const avatars = await actorAvatars(session.userId, profiles)
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     return { items: page.user_ids.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(userId), avatars.get(userId))), has_more: page.has_more }
+    })
   }
   async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
   async sendFavoriteSticker(sourceRef: string, fileAssetUid: string, options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.sendFavoriteSticker(sourceRef, fileAssetUid, options) }
@@ -2270,7 +2284,7 @@ export class ArkmeService {
   /** Resolve and download one Provider-authorized Arkme image without exposing OSS credentials or signed URLs. */
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; cacheOnly?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
     return await this.media.readImage(imageRef, options)
   }

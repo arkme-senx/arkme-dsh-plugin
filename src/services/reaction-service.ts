@@ -1,3 +1,4 @@
+import { measureReaction } from '../reaction-host-diagnostics.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 import type { ReactionRequest, ReactionTargetRef } from '../reaction-contract.js'
 import { createHash } from 'node:crypto'
@@ -41,7 +42,7 @@ export class ReactionService {
     const ids = new Map<string, string[]>()
     const resolve = async (target: ReactionTargetRef) => {
       if (!target || typeof target.id !== 'string' || !target.id || target.id.length > 1024 || !(typeof target.worldRecordRef === 'string' && !target.sourceRef && !target.messageActionRef || !target.worldRecordRef && typeof target.sourceRef === 'string' && typeof target.messageActionRef === 'string')) throw new ArkmePluginError('reaction-target-invalid', '表态目标无效', false)
-      return await this.resolve(target)
+      return await measureReaction('target-resolve', {}, () => this.resolve(target))
     }
     switch (input.action) {
       case 'notifications': path = 'notifications/query'; body = { after_id: input.after_id ?? '', limit: input.limit }; break
@@ -50,6 +51,7 @@ export class ReactionService {
         path = 'notifications/read'; body = { items: input.items.map(item => ({ id: key(item.id), revision: integer(item.revision, 1) })) }; break
 
       case 'query': {
+        if (input.actorPresentation !== undefined && input.actorPresentation !== 'deferred') throw new ArkmePluginError('reaction-query-invalid', '表态展示选项无效', false)
         if (!Array.isArray(input.targets) || input.targets.length < 1 || input.targets.length > 50) throw new ArkmePluginError('reaction-query-invalid', '表态查询数量无效', false)
         const targets = [], seenIDs = new Set<string>()
         for (const target of input.targets) {
@@ -60,6 +62,8 @@ export class ReactionService {
           if (aliases) aliases.push(target.id)
           else { ids.set(key, [target.id]); targets.push(wire) }
         }
+        // Canonical wire order lets equivalent UI/SDK/Tool batches share one read.
+        targets.sort((left, right) => targetKey(left).localeCompare(targetKey(right)))
         path = 'query'; body = { targets }; break
       }
       case 'set':
@@ -77,7 +81,7 @@ export class ReactionService {
     }
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    const result = objectValue(await this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal))
+    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal)))
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     if (input.action === 'query') {

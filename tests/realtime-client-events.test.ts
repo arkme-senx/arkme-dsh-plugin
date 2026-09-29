@@ -47,6 +47,45 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it.each([
+  { visibilityState: 'hidden', focused: true },
+  { visibilityState: 'visible', focused: false },
+] as const)('retains private/group message bodies while $visibilityState and focused=$focused', async state => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal('document', Object.assign(new EventTarget(), {
+    visibilityState: state.visibilityState, hasFocus: () => state.focused,
+  }))
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const reads = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    await act(async () => { arkmeChatDirectory.publish([]) })
+    const updates = (['private_chat', 'group_chat'] as const).map(kind => ({
+      sourceKey: kind,
+      source: { ...delta.updates[0]!.source, sourceRef: `${kind}-ref`, sourceKey: kind, kind, latestSequence: 9 },
+      timelineItems: [{ itemUid: `${kind}-9`, sequence: 9, senderName: '同事', isMe: false,
+        sendAtMillis: 9, textContent: '后台收到的正文', status: 1 }],
+    }))
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 1, updates }) } as MessageEvent<string>) })
+    for (const update of updates) {
+      expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
+      expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
+    }
+    expect(reads.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+    await act(async () => { arkmeChatTimelineDelta.activateAccount('test:43') })
+    for (const update of updates) expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual([])
+  } finally { await act(async () => { renderer.unmount() }) }
+})
+
 it('revalidates archive membership without clearing directory rows or refreshing content', async () => {
   let socket!: FakeWebSocket
   class FakeWebSocket {
