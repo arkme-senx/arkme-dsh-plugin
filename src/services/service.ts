@@ -310,6 +310,19 @@ export class ServiceRuntime {
   async deleteSessionIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
     return await this.accountSessions.deleteIfCurrent(expected)
   }
+  async activatePendingBindingSession(expected: ArkmeSessionCredentials): Promise<void> {
+    await this.accountSessions.write(expected, async () => {
+      const current = await this.sessionStore.read()
+      // Concurrent status readers may already have activated this exact login.
+      if (current?.userId === expected.userId && current.refreshToken === expected.refreshToken) return false
+      if (!this.isPendingBindingSession(expected) || current !== undefined) {
+        throw new ArkmePluginError('login-context-changed', '登录账号已变化，请重试当前操作', true, 409)
+      }
+      return true
+    })
+    if (this.isPendingBindingSession(expected)) await this.clearPendingBindingSession()
+  }
+
   async moveSessionToPendingBinding(expected: ArkmeSessionCredentials): Promise<boolean> {
     return await this.accountSessions.deleteIfCurrent(expected, async current => {
       await this.writePendingBindingSession(current)

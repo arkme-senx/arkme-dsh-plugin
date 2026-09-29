@@ -1484,6 +1484,8 @@ export interface ArkmeUserProfile {
   arkmeId: string
   /** Whether this account can still use its one-time Arkme ID change. Omitted for legacy cached profiles. */
   canUpdateArkmeId?: boolean
+  /** Fresh account-service login decision; not persisted across process restarts. */
+  phoneBindingRequired?: boolean
   accountType: number
   createdAt: number
   bindings: {
