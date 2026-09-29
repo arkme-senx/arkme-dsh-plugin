@@ -1,3 +1,4 @@
+import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
 import { retryAfterMillis } from '../http-retry-after.js'
@@ -545,6 +546,12 @@ export class ServiceRuntime {
     if (baseUrl === this.config.chatBaseUrl && new Set([
       '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
+    if (baseUrl === this.config.recordBaseUrl && new Set([
+      '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
+      '/api/v1/reactions/actors/query', '/api/v1/reactions/groups/query',
+      '/api/v1/reactions/history/query', '/api/v1/reactions/received/query',
+      '/api/v1/reactions/history-policy/query', '/api/v1/reactions/library/query',
+    ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
     return false
@@ -564,7 +571,8 @@ export class ServiceRuntime {
   ): Promise<T> {
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
-    return await this.requestCoordinator.run<T>({
+    const onQueue = reactionQueueObserver(path)
+    return await measureReaction('upstream-total', { route: path }, () => this.requestCoordinator.run<T>({
       scope: options.scope ?? 'public',
       lane: options.lane ?? 'write',
       service: options.service ?? this.requestService(baseUrl),
@@ -575,7 +583,7 @@ export class ServiceRuntime {
       ...(options.cancelWhenUnobserved === undefined ? {} : { cancelWhenUnobserved: options.cancelWhenUnobserved }),
       ...(signal === undefined ? {} : { signal }),
       ...(read ? {
-        lane: options.lane === 'background-read' ? 'background-read' as const : 'interactive-read' as const,
+        lane: options.lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
         route,
         key: `owner-read:${route}:${stableReadParameters(body)}`,
         cacheMs: 0,
@@ -587,11 +595,12 @@ export class ServiceRuntime {
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
-      operation: async coordinatedSignal => await this.postDirect<T>(
+      ...(onQueue ? { onQueue } : {}),
+      operation: bindReactionTrace(async coordinatedSignal => await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
-      ),
-    }).catch((error): never => {
+      ))),
+    })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
       }
@@ -863,6 +872,11 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
+    } finally {
+      if (['/api/v1/reactions/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
+        // Even an unknown write outcome must not join a read started before it.
+        this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${this.config.recordBaseUrl.replace(/\/+$/, '')}/api/v1/reactions/`)
+      }
     }
   }
 

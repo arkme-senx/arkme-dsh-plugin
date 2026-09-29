@@ -1,3 +1,4 @@
+import { measureReaction } from '../reaction-host-diagnostics.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import { currentProfileRecordSnapshot } from '../record-sender-snapshot.js'
@@ -527,6 +528,7 @@ export class ProfileService {
       }
       if (cached.value !== null) profiles.set(userId, cached.value)
     }
+    await measureReaction('profile-cache', { requested: normalized.length, hits: normalized.length - missing.length, misses: missing.length }, async () => undefined)
     for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
       const startedAtMillis = Date.now()

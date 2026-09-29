@@ -267,3 +267,47 @@ it('refreshes retained notified messages before click without scanning unknown t
  const request = transport.mock.calls[1]![0]
  expect(request.action === 'query' && request.targets.map(t => t.id)).toEqual([known.id])
 })
+
+it('publishes facts and reuses conversation names without a presentation request', async () => {
+ vi.useFakeTimers()
+ const transport = vi.fn(async () => ({ items: [{ target_id: target.id, mine: { revision: 0, selections: [] }, groups: [{ key: 'a', expression: { text: '收到' }, count: 1, actors: [{ userId: 2, memberRef: 'member', displayName: '用户', presentationPending: true }] }], actors_visible: true, private: false, has_more: false }] }))
+ const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a')
+ store.watch('test:a', { ...target, resolveActor: actor => actor.memberRef === 'member' ? { ...actor, displayName: '本地备注', presentationPending: false } : undefined })
+ await store.refresh()
+ expect(transport).toHaveBeenCalledTimes(1)
+ expect(store.snapshot(target.id)?.groups[0].actors?.[0].displayName).toBe('本地备注')
+})
+
+it('shows reactions during slow enrichment and drops enrichment after account changes', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const snapshot = { target_id: target.id, mine: { revision: 0, selections: [] }, groups: [{ key: 'a', expression: { text: '收到' }, count: 1, actors: [{ userId: 2, displayName: '用户', presentationPending: true }] }], actors_visible: true, private: false, has_more: false }
+ const transport = vi.fn(async (input: ReactionRequest) => input.action === 'query' && input.actorPresentation === 'deferred' ? { items: [snapshot] } : await new Promise(resolve => { finish = resolve }))
+ const store = setup(transport); const loading = store.refresh()
+ await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2))
+ expect(store.snapshot(target.id)?.groups[0].count).toBe(1)
+ store.setScope('test:b'); finish({ items: [{ ...snapshot, groups: [] }] }); await loading
+ expect(store.snapshot(target.id)).toBeUndefined()
+})
+
+
+it('cancels an abandoned conversation read only after its last consumer leaves', async () => {
+ vi.useFakeTimers()
+ let activeSignal: AbortSignal | undefined
+ const transport = vi.fn(async (input: ReactionRequest, signal?: AbortSignal) => {
+  if (input.action === 'query' && input.targets[0]?.id === target.id) {
+   activeSignal = signal
+   return await new Promise((_, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+  }
+  return reactionFixture.call('reactions', input)
+ })
+ const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a')
+ const release = store.watch('test:a', target), shared = store.watch('test:a', target)
+ const reading = store.refresh()
+ release(); expect(activeSignal?.aborted).toBe(false)
+ const next = { ...target, id: 'next-conversation' }; store.watch('test:a', next)
+ shared(); expect(activeSignal?.aborted).toBe(true)
+ await reading; await vi.advanceTimersByTimeAsync(40)
+ expect(store.snapshot(next.id)).toBeDefined()
+ expect(store.error(target.id)).toBeUndefined()
+})
