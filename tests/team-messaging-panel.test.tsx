@@ -191,6 +191,22 @@ describe('Team send UI recovery', () => {
     await act(async () => { release({ message: { key:'sent',ref:'sent',seq:1,state:'published',sender:{nickname:'我'},own:true,media:[],version:0 } }); await tick() })
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
   })
+  it.each(['team-invalid_request', 'team-channel_paused', 'team-conversation_blocked'])('restores both drafts after a pre-admission rejection: %s', async code => {
+    let reject!: (error: unknown) => void
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.send') return new Promise((_, fail) => { reject = fail })
+      return {}
+    })
+    await mount(); await send()
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条'); await tick() })
+    await act(async () => { reject(Object.assign(new Error('发送未接受'), { body: { code } })); await tick() })
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text: '问题\n\n下一条', assets: []})
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题\n\n下一条')
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')).toHaveLength(1)
+  })
   it('unlocks a definitive invalid request but retains a cancellable accepted operation', async () => {
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }

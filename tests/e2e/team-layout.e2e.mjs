@@ -299,6 +299,23 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await pane.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(false)
     await capture('plugin-conversation-media-compact')
     await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
+    // Exercise the same idle/focused surface tokens as ordinary conversations;
+    // a screenshot alone previously missed white-on-white Team draft text.
+    for (const focused of [false, true]) {
+      if (focused) await input.focus()
+      else await pane.locator('header').first().click()
+      const colors = await pane.evaluate((node, focused) => {
+        const surface = node.querySelector('[data-team-composer] > div:last-child')
+        const probe = document.createElement('div')
+        probe.style.background = focused ? 'var(--dsw-specific-input-major)' : 'var(--dsw-alias-bg-base)'
+        document.body.append(probe)
+        const expected = getComputedStyle(probe).backgroundColor
+        probe.remove()
+        return { actual: getComputedStyle(surface).backgroundColor, expected }
+      }, focused)
+      await expect.poll(() => pane.locator('[data-team-composer] > div:last-child')
+        .evaluate(node => getComputedStyle(node).backgroundColor)).toBe(colors.expected)
+    }
     await capture('plugin-conversation-media-dark')
   } catch (error) {
     failures.push(error)
