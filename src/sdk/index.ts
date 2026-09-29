@@ -1125,6 +1125,17 @@ export class ArkmeSdk {
     return await this.call<ArkmeImagePayload>('image.read', { imageRef }, signal)
   }
 
+  /** Probe immutable image bytes without starting an upstream request. */
+  async readCachedImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload | undefined> {
+    if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')
+    if ((await this.capabilities(signal)).features.imageCacheRead !== true) throw new Error('当前 Arkme Provider 不支持本地头像探测，请升级')
+    try { return await this.call<ArkmeImagePayload>('image.read', { imageRef, cacheOnly: true }, signal) }
+    catch (error) {
+      if (error instanceof ArkmeClientError && error.body.code === 'image-cache-miss') return undefined
+      throw error
+    }
+  }
+
   /** Convert a Provider image payload into a browser-renderable data URL. */
   imageDataUrl(image: ArkmeImagePayload): string {
     return `data:${image.mediaType};base64,${image.dataBase64}`
