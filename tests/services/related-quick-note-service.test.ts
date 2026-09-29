@@ -86,23 +86,27 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
-  it('returns existing content when profiles hang and ignores late metadata', async () => {
+  it('retains healthy profiles arriving after 500ms', async () => {
     vi.useFakeTimers()
     try {
-      const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] },
-        detail: { record_uid: 'record-b', record_owner_user_id: 13 } })
-      let finish!: (value: Map<number, { userId: number; displayName: string; nickname: string }>) => void
-      vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(() => new Promise(resolve => { finish = resolve }))
-      const pending = test.service.list(locator)
+      const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+      vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(() => new Promise(resolve => {
+        setTimeout(() => resolve(new Map([[13, { userId: 13, displayName: 'B 用户', nickname: 'B 用户', avatarUrl: 'https://image.test/b.png' }]])), 800)
+      }))
+      let completed = false
+      const pending = test.service.list(locator).then(result => { completed = true; return result })
       await vi.advanceTimersByTimeAsync(501)
-      const result = await pending
-      expect(result.items[0]).toMatchObject({ textPreview: 'readable', senderName: 'Arkme 用户' })
-      finish(new Map([[13, { userId: 13, displayName: 'late', nickname: 'late' }]]))
-      await Promise.resolve()
-      expect(result.items[0]?.senderName).toBe('Arkme 用户')
-      await expect(test.service.detail(locator.sourceRef, result.items[0]!.relatedRef)).resolves.toMatchObject({ textContent: '详情正文' })
+      expect(completed).toBe(false)
+      await vi.advanceTimersByTimeAsync(300)
+      expect((await pending).items[0]).toMatchObject({ textPreview: 'readable', senderName: 'B 用户', senderAvatarRef: 'opaque-avatar-13' })
       expect(vi.getTimerCount()).toBe(0)
     } finally { vi.useRealTimers() }
+  })
+
+  it('uses the existing fallback when the profile service fails', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+    vi.mocked(test.profile.publicProfileSummariesByUserIds).mockRejectedValue(new Error('profile timeout'))
+    expect((await test.service.list(locator)).items[0]).toMatchObject({textPreview: 'readable', senderName: 'Arkme 用户'})
   })
 
   it('does not deliver a list after the subscriber cancels optional profiles', async () => {
@@ -134,7 +138,7 @@ describe('RelatedQuickNoteService', () => {
     })
     const page = await test.service.list(locator)
     expect(page.items).toHaveLength(1)
-    expect(test.profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith([], expect.anything(), expect.any(AbortSignal))
+    expect(test.profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith([], expect.anything(), undefined)
     await expect(test.service.detail(locator.sourceRef, page.items[0]!.relatedRef)).resolves.toMatchObject({ senderName: 'Bot 名称', isMe: false })
   })
 

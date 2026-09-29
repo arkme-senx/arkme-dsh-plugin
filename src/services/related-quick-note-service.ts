@@ -187,7 +187,6 @@ export class RelatedQuickNoteService {
     locator: ArkmeRelatedQuickNoteSourceLocator,
     signal?: AbortSignal,
   ): Promise<ArkmeRelatedQuickNoteList> {
-    const startedAt = performance.now()
     const session = await this.runtime.requireSession()
     const source = this.validLocator(locator, session.userId)
     const body = {
@@ -245,7 +244,7 @@ export class RelatedQuickNoteService {
     )
     const profiles = await this.displayProfiles(
       descriptors.map(item => item.authorUserId).filter(id => id > 0), session,
-      Math.max(0, Math.min(500, 4_950 - (performance.now() - startedAt))), signal,
+      signal,
     )
     signal?.throwIfAborted()
     const items: ArkmeRelatedQuickNoteItem[] = []
@@ -283,29 +282,24 @@ export class RelatedQuickNoteService {
   }
 
   private async displayProfiles(
-    userIds: number[], session: ArkmeSessionCredentials, budgetMillis: number, signal?: AbortSignal,
+    userIds: number[], session: ArkmeSessionCredentials, signal?: AbortSignal,
   ): Promise<Awaited<ReturnType<ProfileService['publicProfileSummariesByUserIds']>>> {
     signal?.throwIfAborted()
-    if (budgetMillis <= 0) return new Map()
-    const controller = new AbortController()
-    const profileSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
-    let timer: ReturnType<typeof setTimeout> | undefined
+    const profiles = this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+      .catch(() => new Map())
+    if (signal === undefined) return profiles
     let abort: (() => void) | undefined
     try {
-      const profiles = this.profile.publicProfileSummariesByUserIds(userIds, session, profileSignal)
-        .catch(() => new Map())
-      const stopped = new Promise<undefined>((resolve, reject) => {
-        timer = setTimeout(() => { resolve(undefined); controller.abort() }, budgetMillis)
-        abort = () => reject(signal?.reason)
-        signal?.addEventListener('abort', abort, { once: true })
-        if (signal?.aborted) abort()
+      const stopped = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason)
+        signal.addEventListener('abort', abort, { once: true })
+        if (signal.aborted) abort()
       })
-      // The profile reader may be shared. Bound this subscriber's wait even
-      // when the underlying read cannot stop; late values never change a list.
-      return await Promise.race([profiles, stopped]) ?? new Map()
+      // Keep the profile service's existing timeout. A shared reader must not
+      // keep this subscriber waiting after the page has been closed.
+      return await Promise.race([profiles, stopped])
     } finally {
-      clearTimeout(timer)
-      if (abort !== undefined) signal?.removeEventListener('abort', abort)
+      if (abort !== undefined) signal.removeEventListener('abort', abort)
     }
   }
 
