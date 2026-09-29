@@ -133,9 +133,6 @@ export function ArkmeQuickAddButton({
   const [menuError, setMenuError] = useState('')
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
-  useEffect(() => {
-    if (!socialAllowed && (dialogKind === 'call' || dialogKind === 'group')) { setDialogKind(undefined); setDialogBusy(false) }
-  }, [socialAllowed, dialogKind])
   const anchorRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const restoreCallFocus = useRef(false)
@@ -209,12 +206,12 @@ export function ArkmeQuickAddButton({
     />
   return <div ref={anchorRef} style={style.anchor}>
     {menu}
-    {socialAllowed && dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
+    {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
       pendingNotificationDismissRef.current = false
       restoreCallFocus.current = true
       setDialogKind(undefined)
     }} />}
-    {socialAllowed && dialogKind === 'group' && <ArkmeGroupCreateDialog
+    {dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
         pendingNotificationDismissRef.current = false
         setDialogBusy(false)

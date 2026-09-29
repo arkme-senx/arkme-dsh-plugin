@@ -27,6 +27,7 @@ describe('packed social access on the target Harness', () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme social acceptance '))
     let scaffold, browser, page
     let allowed = true
+    let bindOnProfileRefresh = false
     const requests = []
     const failures = []
     const jwt = [{ alg: 'HS256', typ: 'JWT' }, { user_id: 10001, client_id: 20001 }]
@@ -79,6 +80,7 @@ describe('packed social access on the target Harness', () => {
           return
         }
         if (operation !== 'user.profile' && operation !== 'user.profile.refresh') { await route.continue(); return }
+        if (operation === 'user.profile.refresh' && bindOnProfileRefresh) { allowed = true; bindOnProfileRefresh = false }
         if (allowed === null) { await route.fulfill({ status: 503, body: 'profile unavailable' }); return }
         const response = await route.fetch()
         const body = await response.json()
@@ -185,6 +187,24 @@ describe('packed social access on the target Harness', () => {
       for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
       await hint.waitFor({ state: 'hidden' })
       expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
+      // A binding completed on another device is discovered by the account
+      // settings' existing fresh read. Navigation must update without a focus
+      // event, another click, or remounting the personal composer.
+      allowed = false
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await navigation('世界').waitFor({ state: 'hidden' })
+      await navigation('个人资料').click()
+      const profileMenu = page.getByRole('dialog', { name: '个人菜单', exact: true })
+      bindOnProfileRefresh = true
+      await profileMenu.getByRole('button', { name: '去绑定', exact: true }).click()
+      await page.locator('[data-arkme-settings-view="account"]').waitFor({ state: 'visible' })
+      // The modal makes its background aria-hidden, so inspect the mounted
+      // navigation before closing, then use accessible roles again afterwards.
+      await page.locator('[data-arkme-home-tour-target="contacts"]').waitFor({ state: 'visible' })
+      await page.keyboard.press('Escape')
+      for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
+      expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
+      expect(await input.evaluate(node => node === window.socialComposerBeforeRefresh)).toBe(true)
       expect(requests.some(path => path.includes('social-access'))).toBe(false)
       expect(pageErrors).toEqual([])
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })

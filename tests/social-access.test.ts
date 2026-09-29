@@ -31,6 +31,15 @@ describe('optional social presentation', () => {
   expect(store.getSnapshot()).toEqual({accountKey:'test:8',allowed:null,resolved:false})
   load.mockRejectedValueOnce(new Error('offline'));await store.refresh();expect(store.getSnapshot().allowed).toBeNull()
  })
+ it('ignores a Host response belonging to a different account before the browser auth snapshot catches up', async () => {
+  const snapshots = { read: () => true, write: vi.fn(), remove: vi.fn() }
+  const store = new SocialAccessStore(async () => ({ userId: 8, allowed: false }), snapshots)
+  store.activate('test:7')
+  const confirmed = store.getSnapshot()
+  await store.refresh()
+  expect(store.getSnapshot()).toBe(confirmed)
+  expect(snapshots.write).not.toHaveBeenCalled()
+ })
  it('classifies human conversations without hiding personal bot sources', () => {
   expect(isSocialSource({kind:'private_chat'})).toBe(true);expect(isSocialSource({kind:'group_chat'})).toBe(true)
   expect(isSocialSource({kind:'send_to_self'})).toBe(false);expect(isSocialSource({kind:'topic'})).toBe(false)

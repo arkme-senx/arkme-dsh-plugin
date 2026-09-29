@@ -31,6 +31,7 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
+import { publishProfileChange } from './profile-change-store.js'
 import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -825,7 +826,11 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         if (snapshot.profile !== null) applyProfileSnapshot(snapshot)
         return await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
       })
-      .then(snapshot => { if (!signal?.aborted) applyProfileSnapshot(snapshot) })
+      .then(snapshot => {
+        if (signal?.aborted) return
+        applyProfileSnapshot(snapshot)
+        publishProfileChange(snapshot)
+      })
       .catch(caught => {
         if (!signal?.aborted) setError(caught instanceof Error ? caught.message : String(caught))
       })
