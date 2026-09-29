@@ -919,9 +919,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     return () => { cancelled = true }
   }, [preciseTarget,preciseTargetDay,transcriptItems])
   useEffect(() => {
-    if (!preciseTarget || !preciseTargetDay) return
+    if (!preciseTarget || !preciseTargetDay || !day?.transcript.viewRef) return
     void pages.through().catch(() => undefined)
-  }, [preciseTarget, preciseTargetDay, pages.through])
+  }, [preciseTarget, preciseTargetDay, day?.transcript.viewRef, pages.through])
   const preciseResolved = preciseResolution?.target === preciseTarget && preciseResolution?.items === transcriptItems
   const preciseItem = preciseTargetDay && preciseResolved ? preciseResolution?.item : undefined
   const preciseUnavailable = !day?.transcript.nextCursor && !pages.loading && preciseTarget !== undefined && preciseTargetDay && preciseResolved && !dayLoading && day !== undefined && day.dateStamp === selectedDate.getTime() && day.transcript.state !== 'processing' && preciseItem === undefined

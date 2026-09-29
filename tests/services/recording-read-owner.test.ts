@@ -59,6 +59,18 @@ function fixture(rows: Row[][]) {
 const rows = (count: number, phase = 0): Row[] => Array.from({ length: count }, (_, i) => ({ body: `原文-${phase}-${i}`, offset: 2 * i + phase, child: phase + 100, ordinal: i }))
 
 describe('RecordingReadOwner', () => {
+  it('preserves the owner search version when a long utterance is split across pages', async () => {
+    const f = fixture([[{body:'原'.repeat(24_000),offset:1,child:100,ordinal:7}]])
+    f.mutate(value => {
+      for (const item of value.utterances as Array<Record<string, unknown>>) item.search_version = 'b'.repeat(64)
+    })
+    const first = await f.owner.transcript(objectId(1), 'primary', window, session)
+    const second = await f.owner.transcript(objectId(1), 'primary', window, session, {cursor:first.nextCursor})
+    expect(first.nextCursor).not.toBe('')
+    expect([...first.items,...second.items].every(item=>item.searchVersion==='b'.repeat(64))).toBe(true)
+    expect(first.items[0]!.textTotal).toBe(24_000)
+    expect(second.nextCursor).toBe('')
+  })
   it('maps only the Audio owner revision marker to recoverable read expiration', async () => {
     const f = fixture([rows(2)])
     const expired = new ArkmeUpstreamResponseError('arkme-code-1001', '参数错误', false, 502, { error_code: 'recording_view_changed' })

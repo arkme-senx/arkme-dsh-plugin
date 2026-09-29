@@ -188,7 +188,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button data-arkme-feedback="neutral" type="button" aria-label={tr("重试读取说话人候选")} style={styles.unassign} onClick={refresh}>{tr("重试")}</button></div>}
     {mutationError !== '' && <div role="alert" style={styles.error}>{mutationError}</div>}
     <div style={styles.bottom}>
-      {canBatch ? <><input aria-label={tr("批量修改")} type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>{tr("批量修改")} “{item.speakerLabel}”</span></> : <span style={styles.batchText}>{tr("仅修改当前片段")}</span>}
+      {canBatch ? <><input aria-label={tr("批量修改")} type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>{tr("修改当天所有“{v0}”片段", { v0: item.speakerLabel })}</span></> : <span style={styles.batchText}>{tr("仅修改当前片段")}</span>}
       <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? tr("保存中…") : tr("确认")}</button>
     </div>
   </div></>
