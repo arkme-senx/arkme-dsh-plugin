@@ -54,6 +54,7 @@ export interface ArkmeCoordinatedRequest<T> {
   shouldCooldown?: (error: unknown) => boolean
   /** Optional service-wide cooldown, for example Retry-After from 429/503. */
   serviceCooldownMs?: (error: unknown) => number
+  onQueue?: (event: 'enter' | 'start' | 'cancel' | 'join', detail: Record<string, string | number | boolean>) => void
   operation(signal: AbortSignal): Promise<T>
 }
 
@@ -78,6 +79,9 @@ interface QueuedPermit {
   service: ArkmeRequestService
   route?: ResolvedLimit
   sequence: number
+  onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue']
+  queuedAt: number
+  blockedBy?: Set<string>
   signal: AbortSignal
   resolve(release: () => void): void
   reject(error: unknown): void
@@ -246,6 +250,7 @@ export class ArkmeRequestCoordinator {
     const existing = this.inFlight.get(fullKey)
     if (existing !== undefined && existing.epoch === epoch && !existing.controller.signal.aborted) {
       this.bump(request, 'joined')
+      request.onQueue?.('join', { lane: request.lane, service: request.service })
       return await this.joinFlight<T>(existing, request.signal).then(clone)
     }
     const controller = new AbortController()
@@ -356,7 +361,7 @@ export class ArkmeRequestCoordinator {
     const deadline = recovery === undefined ? undefined : setTimeout(() => controller.abort(recovery.timeout()), recovery.deadlineMs)
     try {
       while (true) {
-        release = await this.acquire(request.lane, request.service, controller.signal, route)
+        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue)
         this.bump(request, 'started')
         if (controller.signal.aborted) throw abortError(controller.signal.reason)
         if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
@@ -439,6 +444,7 @@ export class ArkmeRequestCoordinator {
     service: ArkmeRequestService,
     signal: AbortSignal,
     route?: ResolvedLimit,
+    onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue'],
   ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(abortError(signal.reason))
     const laneLimit = this.laneLimits.get(lane)!
@@ -459,11 +465,13 @@ export class ArkmeRequestCoordinator {
         const index = this.queue.indexOf(queued)
         if (index >= 0) this.queue.splice(index, 1)
         signal.removeEventListener('abort', abort)
+        onQueue?.('cancel', { lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
         reject(abortError(signal.reason))
       }
-      queued = { lane, service, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort }
+      queued = { lane, service, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
       signal.addEventListener('abort', abort, { once: true })
       this.queue.push(queued)
+      onQueue?.('enter', { lane, service, queueLength: this.queue.length, laneQueued, serviceQueued, laneActive: laneLimit.active, serviceActive: serviceLimit.active })
       this.queue.sort((left, right) => LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
         || left.sequence - right.sequence)
       this.drain()
@@ -493,6 +501,7 @@ export class ArkmeRequestCoordinator {
         queued.route.tokens = Math.max(0, queued.route.tokens - 1)
         queued.route.active += 1
       }
+      queued.onQueue?.('start', { lane: queued.lane, service: queued.service, queueWaitMs: this.now() - queued.queuedAt, queueLength: this.queue.length, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
       let released = false
       queued.resolve(() => {
         if (released) return
@@ -518,18 +527,23 @@ export class ArkmeRequestCoordinator {
       }
       const lane = this.laneLimits.get(queued.lane)!
       const service = this.serviceLimits.get(queued.service)!
-      this.refill(lane)
-      this.refill(service)
-      const route = queued.route
-      if (route !== undefined) {
-        this.refill(route)
-        if (route.active >= route.maxConcurrent || route.tokens < 1 || this.now() < route.cooldownUntil) continue
-      }
-      if (lane.active < lane.maxConcurrent && service.active < service.maxConcurrent
-        && this.now() >= lane.cooldownUntil && this.now() >= service.cooldownUntil
-        && lane.tokens >= 1 && service.tokens >= 1) return index
+      const laneBlocked = this.blocked(lane, 'lane', queued.blockedBy)
+      const serviceBlocked = this.blocked(service, 'service', queued.blockedBy)
+      const routeBlocked = queued.route !== undefined && this.blocked(queued.route, 'route', queued.blockedBy)
+      if (!laneBlocked && !serviceBlocked && !routeBlocked) return index
     }
     return -1
+  }
+
+  private blocked(limit: ResolvedLimit, kind: string, reasons?: Set<string>): boolean {
+    this.refill(limit)
+    const concurrency = limit.active >= limit.maxConcurrent, rate = limit.tokens < 1, cooldown = this.now() < limit.cooldownUntil
+    if (reasons) {
+      if (concurrency) reasons.add(`${kind}-concurrency`)
+      if (rate) reasons.add(`${kind}-rate`)
+      if (cooldown) reasons.add(`${kind}-cooldown`)
+    }
+    return concurrency || rate || cooldown
   }
 
   private refill(limit: ResolvedLimit): void {

@@ -74,3 +74,15 @@ it('projects notification locators without exposing service identifiers', async 
  expect(result).toMatchObject({items:[{sourceKey:'opaque-chat-key',itemUid:'old-record',recordOwnerUserId:7,revision:2}]})
  expect(JSON.stringify(result)).not.toMatch(/internal-chat|rel_uid/)
 })
+
+
+it('canonicalizes equivalent query batches without leaking caller target aliases upstream', async () => {
+ const post = vi.fn(async () => ({ items: [] }))
+ const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never,
+  async target => ({ record_uid: target.messageActionRef }))
+ const a = { id: 'alias-a', sourceRef: 'source', messageActionRef: 'record-a' }, b = { ...a, id: 'alias-b', messageActionRef: 'record-b' }
+ await service.request({ action: 'query', accountKey: 'test:7', targets: [b, a] })
+ await service.request({ action: 'query', accountKey: 'test:7', targets: [{ ...a, id: 'other-a' }, b] })
+ expect(post.mock.calls[0]).toEqual(post.mock.calls[1])
+ expect(JSON.stringify(post.mock.calls)).not.toContain('alias-')
+})

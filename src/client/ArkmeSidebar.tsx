@@ -3904,7 +3904,7 @@ export function ArkmeSurface({
       }, { signal }), controller.signal)
       page = refreshWindow === undefined ? await readPage(cursor)
         : await readConversationTimelineWindow(refreshWindow, readPage, controller.signal)
-      if (refreshWindow === undefined && intent !== 'return-to-latest') await prepareTimelineReactions(page.items, controller.signal)
+      // Mounted reaction rows load their own state without delaying the message body.
     } catch (caught) {
       if (isArkmeRequestAbort(caught, controller.signal)) return
       throw caught
@@ -4028,7 +4028,7 @@ export function ArkmeSurface({
       })
       else await refresh
     }
-  }, [acknowledgeRead, confirmedSendRetention, interwovenMoments, prepareTimelineReactions, source, sourceIsChat, sourceProjectionRevision])
+  }, [acknowledgeRead, confirmedSendRetention, interwovenMoments, source, sourceIsChat, sourceProjectionRevision])
 
   useEffect(() => {
     if (!activeConversation || source === undefined || authenticatedUserId === undefined) return
@@ -5722,6 +5722,25 @@ export function ArkmeSurface({
     () => new Map(conversationMembers.map(member => [member.memberRef, member])),
     [conversationMembers],
   )
+  const localReactionActors = useMemo(() => {
+    const names = new Map<string, { displayName: string; avatarRef?: string }>()
+    for (const item of items) if (item.memberRef && !item.selfRole && item.senderKind !== 'bot') {
+      names.set(item.memberRef, { displayName: arkmeTimelineSenderName(item, selfProfile), ...(item.avatarRef ? { avatarRef: item.avatarRef } : {}) })
+    }
+    for (const member of conversationMembers) if (member.status === 'active' && member.displayName.trim() && member.displayName !== '群成员') {
+      names.set(member.memberRef, { displayName: member.displayName, ...(member.avatarRef ? { avatarRef: member.avatarRef } : {}) })
+    }
+    return names
+  }, [items, selfProfile, conversationMembers])
+  const resolveReactionActor = useCallback((actor: import('../reaction-contract.js').ReactionActor) => {
+    const self = conversationMembers.find(member => member.isSelf)
+    const local = actor.userId === authenticatedUserId
+      ? { displayName: (source?.kind === 'group_chat' ? self?.memberName : undefined) || selfProfile?.displayName || selfProfile?.nickname || '我', ...(selfProfile?.avatarRef ? { avatarRef: selfProfile.avatarRef } : {}) }
+      : source?.kind === 'private_chat' && actor.userId === source.peerUserId
+        ? { displayName: source.displayName, ...(source.avatarRef ? { avatarRef: source.avatarRef } : {}) }
+        : actor.memberRef ? localReactionActors.get(actor.memberRef) : undefined
+    return local ? { ...actor, ...local, presentationPending: false } : undefined
+  }, [authenticatedUserId, source, selfProfile, conversationMembers, localReactionActors])
   const composerMentionsEnabled = source?.kind === 'group_chat' || source?.kind === 'private_chat'
   const mentionCandidates = useMemo(
     (): ArkmeMentionCandidate[] => {
@@ -7914,7 +7933,7 @@ export function ArkmeSurface({
                       }}>
                         {!isSharedRecordingCard && !isExtensionMessage && messageHeader}
                         {(() => {
-                          const reactionTarget = { sourceKey: source.sourceKey, itemUid: item.itemUid, id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, messageActionRef: item.messageActionRef ?? '', source: source.displayName, sourceKind: source.kind, text: item.textContent ?? '' }
+                          const reactionTarget = { resolveActor: resolveReactionActor, sourceKey: source.sourceKey, itemUid: item.itemUid, id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, messageActionRef: item.messageActionRef ?? '', source: source.displayName, sourceKind: source.kind, text: item.textContent ?? '' }
                           const canReact = !!item.messageActionRef
                           const messageBubble = <div
                             role="button"
@@ -8072,7 +8091,7 @@ export function ArkmeSurface({
                   </li>
                 </Fragment>
               })
-  }, [displayRows, personalExtensionParents, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef,
+  }, [displayRows, personalExtensionParents, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,

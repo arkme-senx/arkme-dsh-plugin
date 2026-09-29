@@ -352,7 +352,9 @@ export function useArkmeRealtimeClientEvents(
           browserDocument?.visibilityState,
           browserDocument?.hasFocus?.() ?? true,
         )
-        if (foreground && timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        // Retain delivered bodies in the bounded account cache even while unfocused.
+        // Read acknowledgement has its own visible/focused conversation guard.
+        if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
         for (const dateStamp of arkmeChatDeltaCalendarDateStamps(update)) {
           arkmeCalendarInvalidations.publish({ dateStamp })
         }

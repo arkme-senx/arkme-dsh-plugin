@@ -14,12 +14,12 @@ describe('Arkme realtime client event lifetime', () => {
     expect(visibility).toContain('connectEvents()')
   })
 
-  it('does not publish timeline deltas that could mark the selected chat read while hidden', () => {
+  it('keeps Bot refresh foreground-only while retaining chat timeline bodies in the background', () => {
     expect(arkmeRealtimeTimelineDeliveryAllowed('hidden', true)).toBe(false)
     expect(arkmeRealtimeTimelineDeliveryAllowed('visible', false)).toBe(false)
     expect(arkmeRealtimeTimelineDeliveryAllowed('visible', true)).toBe(true)
     expect(arkmeRealtimeTimelineDeliveryAllowed(undefined)).toBe(true)
-    expect(source).toContain('foreground && timelineUpdates.length > 0')
+    expect(source).toContain('foreground && arkmeSelectedBotAffectedByChatDelta')
   })
 
   it('refreshes interaction counters on read acknowledgements and permission changes even when the Host owns directory refresh', () => {

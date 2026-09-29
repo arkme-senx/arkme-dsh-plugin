@@ -3432,6 +3432,14 @@ export class ChatService {
     return { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid }
   }
 
+  async reactionActorReferences(sourceRef: string, userIds: readonly number[]): Promise<Map<number, string>> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return new Map()
+    return new Map(await Promise.all([...new Set(userIds)].map(async id =>
+      [id, await this.sealChatMemberRef(session.userId, source.ownerRef, id)] as const)))
+  }
+
   /** Keep viewer-owned remarks separate from group nicknames and public profiles. */
   async reactionActorLabels(sourceRef: string, userIds: readonly number[], signal?: AbortSignal): Promise<Map<number, { remark: string; groupNickname: string }>> {
     const session = await this.runtime.requireSession()

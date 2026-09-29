@@ -1,6 +1,6 @@
+import { callReaction, traceReactionApplied } from './reaction-transport.js'
 import { reactionPreview } from './reaction-preview-store.js'
 import type { ReactionNotification, ReactionNotificationPage, ReactionRequest } from '../reaction-contract.js'
-import { callArkme } from './api.js'
 
 type Transport = (request: ReactionRequest, signal: AbortSignal) => Promise<unknown>
 /** One foreground inbox per account/window. Server revisions own read state. */
@@ -22,7 +22,7 @@ export class ReactionNotifications {
  private users = 0
  error = ''
  hasMore = false
- constructor(private transport: Transport = (input, signal) => callArkme('reactions', input, signal)) {}
+ constructor(private transport: Transport = callReaction) {}
  subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
  getSnapshot = () => this.version
  private publish() { this.version++; for (const fn of this.listeners) fn() }
@@ -79,6 +79,7 @@ export class ReactionNotifications {
     for (let pageIndex = 0; pageIndex < 4; pageIndex++) {
      const page = await this.transport({ action: 'notifications', accountKey: scope, after_id: cursor, limit: 50 }, signal) as ReactionNotificationPage
      if (signal.aborted) return
+     traceReactionApplied(page, 'browser-notifications-received')
      rows.push(...page.items); hasMore = page.has_more
      if (!page.has_more) break
      if (!page.after_id || page.after_id === cursor) throw new Error('表态提醒加载不完整')
