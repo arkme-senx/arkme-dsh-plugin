@@ -50,6 +50,24 @@ describe('ArkmeAvatar', () => {
 
   afterEach(() => { arkmeAvatarImages.activateScope(undefined) })
 
+  it('drops a role photo immediately when switching to a default avatar, including a late response', async () => {
+    const pending = deferred<{ mediaType: string; dataBase64: string }>()
+    mocks.callArkme.mockImplementation(async (_operation: string, input: { imageRef: string }) => input.imageRef === 'file_asset://pending-role'
+      ? pending.promise : { mediaType: 'image/png', dataBase64: Buffer.from('role-photo').toString('base64') })
+    let renderer!: ReactTestRenderer
+    const fallback = { kind: 'phone_default', colorIndex: 0, label: '?' } as const
+    await act(async () => { renderer = create(<ArkmeUserAvatar avatarRef="file_asset://ready-role" fallback={fallback} />); await tick() })
+    expect(renderer.root.findAllByType('img')).toHaveLength(1)
+    await act(async () => { renderer.update(<ArkmeUserAvatar fallback={fallback} />) })
+    expect(renderer.root.findAllByType('img')).toHaveLength(0)
+    expect(JSON.stringify(renderer.toJSON())).toContain('?')
+    await act(async () => { renderer.update(<ArkmeUserAvatar avatarRef="file_asset://pending-role" fallback={fallback} />) })
+    await act(async () => { renderer.update(<ArkmeUserAvatar fallback={fallback} />) })
+    await act(async () => { pending.resolve({ mediaType: 'image/png', dataBase64: Buffer.from('late').toString('base64') }); await tick() })
+    expect(renderer.root.findAllByType('img')).toHaveLength(0)
+    await act(async () => { renderer.unmount() })
+  })
+
   it('loads the current self image without requesting an unavailable historical or other-device avatar', async () => {
     const profile = { avatarRef: 'current-self-avatar' }
     mocks.callArkme.mockImplementation(async (_operation: string, input: { imageRef: string }) => {

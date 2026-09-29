@@ -23,13 +23,13 @@ describe('MediaService', () => {
     const profile = new ProfileService(runtime)
     const currentProfile = vi.spyOn(profile, 'publicProfilesByUserIds')
     const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
-    const assets = vi.spyOn(media, 'queryFileAssets').mockResolvedValue(available ? [{
-      fileAssetUid: 'old-avatar', status: 'ready',
-      previewUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
-    }] : [])
+    const assets = vi.spyOn(runtime, 'authenticatedPost').mockResolvedValue({ items: available ? [{
+      file_asset_uid: 'old-avatar', status: 'ready',
+      preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
+    }] : [] })
     if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
     else await expect(media.readImage('file_asset://old-avatar')).rejects.toMatchObject({ code: 'image-ref-unavailable' })
-    expect(assets).toHaveBeenCalledWith(['old-avatar'], undefined)
+    expect(assets).toHaveBeenCalledWith('/api/v1/files/assets/query', { file_asset_uids: ['old-avatar'] }, expect.objectContaining({ userId: 42 }), undefined, { lane: 'interactive-read' })
     expect(currentProfile).not.toHaveBeenCalled()
     expect(fetchImpl).toHaveBeenCalledTimes(available ? 1 : 0)
   })

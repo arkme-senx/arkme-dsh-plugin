@@ -507,6 +507,11 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async selfRoleAvatarLocalRef(userId: number, fileAssetUid: string): Promise<string | undefined> {
+    return (this.database.prepare('SELECT local_ref FROM self_role_avatar_asset WHERE user_id=? AND asset_uid=? LIMIT 1')
+      .get(userId, fileAssetUid) as { local_ref: string } | undefined)?.local_ref
+  }
+
   async readAvatarCache(userId: number, imageRef: string): Promise<ArkmeImageBytes | undefined> {
     const row = this.database.prepare('SELECT media_type, data FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array } | undefined
     if (row === undefined) return undefined
