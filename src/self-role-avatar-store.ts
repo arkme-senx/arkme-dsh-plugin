@@ -27,30 +27,7 @@ function imageType(data: Uint8Array): ArkmeImageMediaType | undefined {
 }
 
 export class SelfRoleAvatarStore {
-  private readonly migrationRetryAt = new Map<string, number>()
-  private readonly migrationInFlight = new Map<number, Promise<void>>()
-
   constructor(private readonly rootDirectory: string) {}
-
-  migrationRetryAfter(userId: number, ref: string): number {
-    return this.migrationRetryAt.get(`${String(userId)}:${ref}`) ?? 0
-  }
-
-  deferMigration(userId: number, ref: string, retryAtMillis: number): void {
-    this.migrationRetryAt.set(`${String(userId)}:${ref}`, retryAtMillis)
-  }
-
-  clearMigrationDelay(userId: number, ref: string): void {
-    this.migrationRetryAt.delete(`${String(userId)}:${ref}`)
-  }
-
-  async runLegacyMigration(userId: number, migrate: () => Promise<void>): Promise<void> {
-    const existing = this.migrationInFlight.get(userId)
-    if (existing !== undefined) return await existing
-    const pending = migrate()
-    this.migrationInFlight.set(userId, pending)
-    try { await pending } finally { this.migrationInFlight.delete(userId) }
-  }
 
   private accountDirectory(userId: number): string {
     assertUserId(userId)
@@ -99,6 +76,8 @@ export class SelfRoleAvatarStore {
       return item.isFile() && item.size > 0 && item.size <= MAX_SELF_ROLE_AVATAR_BYTES
     } catch { return false }
   }
+
+  uploadPath(userId: number, ref: string): string { return this.avatarPath(userId, ref) }
 
   async read(userId: number, ref: string, maxBytes = MAX_SELF_ROLE_AVATAR_BYTES): Promise<ArkmeImageBytes> {
     const path = this.avatarPath(userId, ref)

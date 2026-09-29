@@ -161,7 +161,7 @@ function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
   return <span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
 }
 function normalizedSearchText(value: string): string { return value.replace(/\s+/g, ' ').trim() }
-function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.nickname || '快记' }
+function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.selfRole?.name || item.nickname || '快记' }
 function recordSummary(item: ArkmeSearchRecordItem): string {
   const value = item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')
   return normalizedSearchText(value) === normalizedSearchText(recordTitle(item)) ? '' : value
@@ -190,7 +190,7 @@ function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
   const initialUrl = item.voice?.mediaRef === undefined ? displayUrl(asset) : mediaUrl(item.voice.mediaRef)
   const durationMillis = item.voice?.durationMillis ?? item.recordDurationMillis
   const transcript = item.snippet || item.textContent || '暂无转写内容'
-  const sender = item.nickname || recordTitle(item)
+  const sender = item.selfRole?.name || item.nickname || recordTitle(item)
   const resolveFromConversation = useCallback(async (signal: AbortSignal): Promise<string> => {
     if (item.targetSource === undefined) return ''
     if (item.sourceKind === 3) {

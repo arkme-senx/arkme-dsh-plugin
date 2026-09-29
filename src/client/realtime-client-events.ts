@@ -286,6 +286,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection === 'topic-directory') {
             invalidateSelfTopicDirectories()

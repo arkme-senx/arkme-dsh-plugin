@@ -1,3 +1,6 @@
+import type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
+export type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
+export type { ArkmeSelfRolePort } from '../self-role-contract.js'
 import type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
 export type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
 import type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery } from '../ai-points.js'
@@ -765,6 +768,31 @@ export class ArkmeSdk {
     const normalized = callRef.trim()
     if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
     return await this.call<ArkmeCallSummaryRetryResult>('calls.history.summary.retry', { callRef: normalized }, signal)
+  }
+
+  private async requireSelfRoles(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.selfRoles !== true) throw new Error('当前 Arkme Provider 不支持跨端角色，请升级')
+  }
+  async listSelfRoles(expectedUserId: number, signal?: AbortSignal): Promise<ArkmeSelfRole[]> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.list', { expectedUserId }, signal)
+  }
+  async createSelfRole(expectedUserId: number, name: string, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.create', { expectedUserId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
+  }
+  async updateSelfRole(expectedUserId: number, roleId: string, name: string | undefined, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.update', { expectedUserId, roleId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
+  }
+  async deleteSelfRole(expectedUserId: number, roleId: string, signal?: AbortSignal): Promise<{ok:true}> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.delete', { expectedUserId, roleId }, signal)
+  }
+
+  async bindSelfRole(expectedUserId: number, sourceRef: string, recordUid: string, roleId: string, signal?: AbortSignal): Promise<ArkmeSelfRoleSnapshot> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.bind', { expectedUserId, sourceRef, recordUid, roleId }, signal)
   }
 
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {

@@ -1,3 +1,4 @@
+import { SelfRoleSyncStore } from './self-role-sync-store.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
 import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from './emoji-recent.js'
 import { randomUUID } from 'node:crypto'
@@ -95,14 +96,14 @@ interface SelfRoleBindingRow {
 }
 
 /** Read-only migration input; historical snapshots remain available after a role is deleted. */
-export interface ArkmeSelfRoleMigrationBinding {
+export interface ArkmeSelfRoleBinding {
   recordUid: string
   snapshot: ArkmeSelfRoleSnapshot
   boundAtMillis: number
 }
 
-export interface ArkmeSelfRoleMigrationBatch {
-  items: ArkmeSelfRoleMigrationBinding[]
+export interface ArkmeSelfRoleBindingPage {
+  items: ArkmeSelfRoleBinding[]
   nextCursor?: string
 }
 
@@ -125,6 +126,7 @@ function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
   private readonly database: DatabaseSync
@@ -260,6 +262,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       }
     })
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
+    this.selfRoleSync = new SelfRoleSyncStore(this.database, action => this.transaction(action))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
     if (!recordColumns.some(column => column.name === 'sender_avatar_ref')) {
       this.database.exec('ALTER TABLE record_cache ADD COLUMN sender_avatar_ref TEXT')
@@ -325,39 +328,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async listSelfRoles(userId: number): Promise<ArkmeSelfRole[]> {
     const rows = this.database.prepare(`
       SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
-      FROM self_role WHERE user_id = ? ORDER BY created_at_millis, role_id
+      FROM self_role WHERE user_id = ? AND deleted=0 ORDER BY created_at_millis, role_id
     `).all(userId) as unknown as SelfRoleRow[]
     return rows.map(selfRoleFromRow)
-  }
-
-  /** Historical uploaded avatars occur both on live roles and frozen message presentation. */
-  async legacySelfRoleAvatarRefs(userId: number): Promise<string[]> {
-    const rows = this.database.prepare(`
-      SELECT avatar_ref FROM self_role WHERE user_id = ? AND avatar_ref LIKE 'file_asset://%'
-      UNION
-      SELECT avatar_ref FROM self_role_record WHERE user_id = ? AND avatar_ref LIKE 'file_asset://%'
-    `).all(userId, userId) as unknown as Array<{ avatar_ref: string }>
-    return rows.map(row => row.avatar_ref).filter(ref => /^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(ref))
-  }
-
-  /** Replace only byte-equivalent avatar refs; names and historical role identities stay frozen. */
-  async replaceSelfRoleAvatarRef(userId: number, oldRef: string, newRef: string): Promise<number> {
-    if (!/^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(oldRef)
-      || !/^arkme-self-role-image-v1\.[0-9a-f-]{36}$/i.test(newRef)) return 0
-    let changed = 0
-    this.transaction(() => {
-      const now = Date.now()
-      const roles = this.database.prepare(`
-        UPDATE self_role
-        SET avatar_ref = ?, updated_at_millis = CASE WHEN updated_at_millis >= ? THEN updated_at_millis + 1 ELSE ? END
-        WHERE user_id = ? AND avatar_ref = ?
-      `).run(newRef, now, now, userId, oldRef)
-      const records = this.database.prepare(`
-        UPDATE self_role_record SET avatar_ref = ? WHERE user_id = ? AND avatar_ref = ?
-      `).run(newRef, userId, oldRef)
-      changed = Number(roles.changes) + Number(records.changes)
-    })
-    return changed
   }
 
   async createSelfRole(userId: number, name: string, avatarRef?: string): Promise<ArkmeSelfRole> {
@@ -366,36 +339,37 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       createdAtMillis: Date.now(), updatedAtMillis: Date.now(),
     }
     this.transaction(() => {
-      const count = this.database.prepare('SELECT count(*) AS count FROM self_role WHERE user_id = ?')
+      const count = this.database.prepare('SELECT count(*) AS count FROM self_role WHERE user_id = ? AND deleted=0')
         .get(userId) as { count: number }
       if (count.count >= 20) throw new Error('self-role-limit')
       this.database.prepare(`
-        INSERT INTO self_role (user_id, role_id, name, avatar_ref, created_at_millis, updated_at_millis)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(userId, role.roleId, name, avatarRef ?? null, role.createdAtMillis, role.updatedAtMillis)
+        INSERT INTO self_role (user_id, role_id, name, avatar_ref, created_at_millis, updated_at_millis, name_at, avatar_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(userId, role.roleId, name, avatarRef ?? null, role.createdAtMillis, role.updatedAtMillis, role.updatedAtMillis, role.updatedAtMillis)
     })
     return role
   }
 
-  async updateSelfRole(userId: number, roleId: string, name: string, avatarRef?: string): Promise<ArkmeSelfRole | undefined> {
+  async updateSelfRole(userId: number, roleId: string, name: string | undefined, avatarRef?: string): Promise<ArkmeSelfRole | undefined> {
     const row = this.database.prepare(`
       SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
-      FROM self_role WHERE user_id = ? AND role_id = ?
+      FROM self_role WHERE user_id = ? AND role_id = ? AND deleted=0
     `).get(userId, roleId) as SelfRoleRow | undefined
     if (row === undefined) return undefined
+    const nextName = name ?? row.name
     const nextAvatarRef = avatarRef === undefined ? row.avatar_ref : avatarRef || null
     const updatedAtMillis = Math.max(Date.now(), row.updated_at_millis + 1)
     this.database.prepare(`
-      UPDATE self_role SET name = ?, avatar_ref = ?, updated_at_millis = ?
+      UPDATE self_role SET name_at=CASE WHEN name != ? THEN ? ELSE name_at END, avatar_at=CASE WHEN COALESCE(avatar_ref,'') != ? THEN ? ELSE avatar_at END, name = ?, avatar_ref = ?, updated_at_millis = ?
       WHERE user_id = ? AND role_id = ?
-    `).run(name, nextAvatarRef, updatedAtMillis, userId, roleId)
+    `).run(nextName,updatedAtMillis,nextAvatarRef??'',updatedAtMillis,nextName, nextAvatarRef, updatedAtMillis, userId, roleId)
     this.secureDatabaseFiles()
-    return selfRoleFromRow({ ...row, name, avatar_ref: nextAvatarRef, updated_at_millis: updatedAtMillis })
+    return selfRoleFromRow({ ...row, name: nextName, avatar_ref: nextAvatarRef, updated_at_millis: updatedAtMillis })
   }
 
   async deleteSelfRole(userId: number, roleId: string): Promise<boolean> {
     // The message snapshot intentionally remains after the role is deleted.
-    const result = this.database.prepare('DELETE FROM self_role WHERE user_id = ? AND role_id = ?').run(userId, roleId)
+    const result = this.database.prepare('UPDATE self_role SET deleted=1, deleted_at=MAX(?,updated_at_millis+1),updated_at_millis=MAX(?,updated_at_millis+1) WHERE user_id = ? AND role_id = ? AND deleted=0').run(Date.now(),Date.now(),userId,roleId)
     this.secureDatabaseFiles()
     return Number(result.changes) > 0
   }
@@ -405,7 +379,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.transaction(() => {
       const role = this.database.prepare(`
         SELECT role_id, name, avatar_ref, created_at_millis, updated_at_millis
-        FROM self_role WHERE user_id = ? AND role_id = ?
+        FROM self_role WHERE user_id = ? AND role_id = ? AND deleted=0
       `).get(userId, roleId) as SelfRoleRow | undefined
       if (role === undefined) return
       const existing = this.database.prepare(`
@@ -427,7 +401,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   }
 
   async unbindSelfRole(userId: number, recordUid: string, roleId: string): Promise<void> {
-    this.database.prepare('DELETE FROM self_role_record WHERE user_id = ? AND record_uid = ? AND role_id = ?')
+    this.database.prepare('DELETE FROM self_role_record WHERE user_id = ? AND record_uid = ? AND role_id = ? AND cloud_ack=0')
       .run(userId, recordUid, roleId)
     this.secureDatabaseFiles()
   }
@@ -440,12 +414,13 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     let rebound = false
     this.transaction(() => {
       const source = this.database.prepare(`
-        SELECT role_id, role_name, avatar_ref FROM self_role_record WHERE user_id = ? AND record_uid = ?
-      `).get(userId, recordUid) as SelfRoleBindingRow | undefined
+        SELECT role_id, role_name, avatar_ref, cloud_ack FROM self_role_record WHERE user_id = ? AND record_uid = ?
+      `).get(userId, recordUid) as (SelfRoleBindingRow & {cloud_ack:number}) | undefined
       const target = this.database.prepare(`
         SELECT role_id, role_name, avatar_ref FROM self_role_record WHERE user_id = ? AND record_uid = ?
       `).get(userId, newRecordUid) as SelfRoleBindingRow | undefined
       if (source === undefined) { rebound = target !== undefined; return }
+      if(source.cloud_ack===1)throw new Error('self-role-record-conflict')
       if (target !== undefined && (target.role_id !== source.role_id || target.role_name !== source.role_name || target.avatar_ref !== source.avatar_ref)) {
         throw new Error('self-role-record-conflict')
       }
@@ -472,8 +447,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return new Map(rows.map(row => [row.record_uid, selfRoleSnapshotFromRow(row)]))
   }
 
-  /** Stable, account-scoped pages for a future idempotent cloud backfill. No local row is marked synced or removed. */
-  async selfRoleMigrationBatch(userId: number, afterRecordUid = '', limit = 200): Promise<ArkmeSelfRoleMigrationBatch> {
+  /** Stable, account-scoped pages for a account-scoped snapshot inspection. No local row is marked synced or removed. */
+  async selfRoleBindings(userId: number, afterRecordUid = '', limit = 200): Promise<ArkmeSelfRoleBindingPage> {
     const pageSize = Math.min(200, Math.max(1, Math.trunc(limit) || 200))
     const rows = this.database.prepare(`
       SELECT record_uid, role_id, role_name, avatar_ref, bound_at_millis
@@ -1110,6 +1085,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   private upsertSyncedRecord(userId: number, item: ArkmeSelfRecordItem): void {
     const now = Date.now()
+    if (item.selfRole) this.selfRoleSync.cacheSnapshot(userId,item.recordUid,item.selfRole)
+
     this.database.prepare(`
       INSERT INTO record_cache (
         user_id, record_uid, send_at_millis, title, text_content, template_kind,

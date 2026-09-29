@@ -66,6 +66,18 @@ export interface ArkmeIssuedAudioMedia {
   durationSeconds?: number
 }
 
+/** Persist only the confirmation payload, never signed storage URLs. */
+export interface ArkmeUploadCompletion {
+  upload_session_uid: string
+  uploaded_size: number
+  storage_etag: string
+  multipart_parts: Array<{ part_number: number; etag: string }>
+}
+export interface ArkmeUploadCompletionRecovery {
+  read(): ArkmeUploadCompletion | undefined
+  save(completion: ArkmeUploadCompletion): void
+}
+
 interface ArkmePreparedUpload {
   upload_session_uid?: unknown
   upload_url?: unknown
@@ -334,7 +346,7 @@ export class MediaService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
-    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal } = {},
+    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery } = {},
   ): Promise<ArkmeUploadedAsset> {
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
@@ -350,79 +362,86 @@ export class MediaService {
     const progress = (phase: ArkmeFileProgress['phase'], sentBytes: number) => options.onProgress?.({ phase, sentBytes, totalBytes: metadata.size })
     progress('preparing', 0)
     const uploadMode = metadata.size > 16 * 1024 * 1024 ? 2 : 1
-    const prepared = await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
+    const pendingCompletion = options.completionRecovery?.read()
+    let completionPersisted = pendingCompletion !== undefined
+    const prepared = pendingCompletion === undefined ? await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
       planned_size: metadata.size,
       file_hash: metadata.sha256,
       mime_type: metadata.mimeType || 'application/octet-stream',
       file_kind: metadata.fileKind,
       upload_mode: uploadMode,
       display_name: metadata.fileName,
-    }, session, options.signal)
-    const uploadSessionUid = stringValue(prepared.upload_session_uid).trim()
+    }, session, options.signal) : undefined
+    const uploadSessionUid = pendingCompletion?.upload_session_uid ?? stringValue(prepared?.upload_session_uid).trim()
     if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
     try {
-      let storageETag = ''
-      const completedParts: Array<{ part_number: number; etag: string }> = []
-      if (uploadMode === 1) {
-        const uploadUrl = stringValue(prepared.upload_url).trim()
-        if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
-        const signal = options.signal
-        const body = options.onProgress === undefined ? createReadStream(filePath) : Readable.from((async function* () {
-          let sent = 0
-          for await (const chunk of createReadStream(filePath)) {
-            signal?.throwIfAborted(); sent += (chunk as Buffer).length; progress('uploading', sent); yield chunk
-          }
-        })())
-        const response = await this.runtime.fetchImpl(uploadUrl, {
-          method: 'PUT',
-          headers: Object.fromEntries(Object.entries(objectValue(prepared.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
-          body: body as never,
-          duplex: 'half',
-          redirect: 'error',
-          ...(signal === undefined ? {} : { signal }),
-        } as RequestInit)
-        if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
-        storageETag = response.headers.get('etag') ?? ''
-      } else {
-        const partSize = Math.trunc(numberValue(prepared.multipart_part_size))
-        const parts = listValue(prepared.multipart_parts).map(objectValue)
-        if (partSize <= 0 || parts.length === 0) throw new ArkmePluginError('upload-parts-missing', '分片上传参数缺失', true, 502)
-        const handle = await openFile(filePath, 'r')
-        try {
-          for (const part of parts) {
-            options.signal?.throwIfAborted()
-            const partNumber = Math.trunc(numberValue(part.part_number))
-            const uploadUrl = stringValue(part.upload_url).trim()
-            const offset = (partNumber - 1) * partSize
-            const length = Math.min(partSize, metadata.size - offset)
-            if (partNumber <= 0 || uploadUrl === '' || length <= 0) throw new ArkmePluginError('upload-part-invalid', '分片上传参数无效', true, 502)
-            const buffer = Buffer.allocUnsafe(length)
-            const read = await handle.read(buffer, 0, length, offset)
-            if (read.bytesRead !== length) throw new ArkmePluginError('upload-part-read-failed', '读取上传分片失败', true, 500)
-            const response = await this.runtime.fetchImpl(uploadUrl, {
-              method: 'PUT',
-              headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
-              body: buffer,
-              redirect: 'error',
-              ...(options.signal === undefined ? {} : { signal: options.signal }),
-            })
-            if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
-            completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
-            progress('uploading', Math.min(metadata.size, offset + length))
-          }
-        } finally { await handle.close() }
+      let storageETag = pendingCompletion?.storage_etag ?? ''
+      const completedParts: Array<{ part_number: number; etag: string }> = pendingCompletion?.multipart_parts ?? []
+      if (pendingCompletion === undefined) {
+        if (uploadMode === 1) {
+          const uploadUrl = stringValue(prepared!.upload_url).trim()
+          if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
+          const signal = options.signal
+          const body = options.onProgress === undefined ? createReadStream(filePath) : Readable.from((async function* () {
+            let sent = 0
+            for await (const chunk of createReadStream(filePath)) {
+              signal?.throwIfAborted(); sent += (chunk as Buffer).length; progress('uploading', sent); yield chunk
+            }
+          })())
+          const response = await this.runtime.fetchImpl(uploadUrl, {
+            method: 'PUT',
+            headers: Object.fromEntries(Object.entries(objectValue(prepared!.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+            body: body as never,
+            duplex: 'half',
+            redirect: 'error',
+            ...(signal === undefined ? {} : { signal }),
+          } as RequestInit)
+          if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
+          storageETag = response.headers.get('etag') ?? ''
+        } else {
+          const partSize = Math.trunc(numberValue(prepared!.multipart_part_size))
+          const parts = listValue(prepared!.multipart_parts).map(objectValue)
+          if (partSize <= 0 || parts.length === 0) throw new ArkmePluginError('upload-parts-missing', '分片上传参数缺失', true, 502)
+          const handle = await openFile(filePath, 'r')
+          try {
+            for (const part of parts) {
+              options.signal?.throwIfAborted()
+              const partNumber = Math.trunc(numberValue(part.part_number))
+              const uploadUrl = stringValue(part.upload_url).trim()
+              const offset = (partNumber - 1) * partSize
+              const length = Math.min(partSize, metadata.size - offset)
+              if (partNumber <= 0 || uploadUrl === '' || length <= 0) throw new ArkmePluginError('upload-part-invalid', '分片上传参数无效', true, 502)
+              const buffer = Buffer.allocUnsafe(length)
+              const read = await handle.read(buffer, 0, length, offset)
+              if (read.bytesRead !== length) throw new ArkmePluginError('upload-part-read-failed', '读取上传分片失败', true, 500)
+              const response = await this.runtime.fetchImpl(uploadUrl, {
+                method: 'PUT',
+                headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+                body: buffer,
+                redirect: 'error',
+                ...(options.signal === undefined ? {} : { signal: options.signal }),
+              })
+              if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
+              completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
+              progress('uploading', Math.min(metadata.size, offset + length))
+            }
+          } finally { await handle.close() }
+        }
       }
       if (options.expectedUserId !== undefined
         && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传已取消', false, 409)
       }
       progress('completing', metadata.size)
-      const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', {
-        upload_session_uid: uploadSessionUid,
-        uploaded_size: metadata.size,
-        storage_etag: storageETag,
-        multipart_parts: completedParts,
-      }, session, options.signal)
+      const completion: ArkmeUploadCompletion = {
+        upload_session_uid: uploadSessionUid, uploaded_size: metadata.size,
+        storage_etag: storageETag, multipart_parts: completedParts,
+      }
+      if (options.completionRecovery !== undefined && !completionPersisted) {
+        options.completionRecovery.save(completion)
+        completionPersisted = true
+      }
+      const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', { ...completion }, session, options.signal)
       const fileAssetUid = stringValue(completed.file_asset_uid).trim()
       if (fileAssetUid === '') throw new ArkmePluginError('upload-complete-invalid', '上传完成响应无效', true, 502)
       if (options.expectedUserId !== undefined
@@ -438,7 +457,7 @@ export class MediaService {
         fileKind: metadata.fileKind,
       }
     } catch (error) {
-      await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
+      if (!completionPersisted) await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
       throw error
     }
   }

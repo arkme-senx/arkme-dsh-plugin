@@ -215,6 +215,8 @@ export class ChatRealtimeService {
     this.chatClientListeners.clear()
   }
 
+  selfRoleInvalidation?: () => Promise<void>
+
   startChatRealtime(): () => void {
     this.attentionStopped = false
     this.realtimeStarted = true
@@ -273,6 +275,7 @@ export class ChatRealtimeService {
       return
     }
     if (notice.cause === 'reconcile') {
+      void this.selfRoleInvalidation?.().catch(() => undefined)
       const generation = notice.state.connectionGeneration
       if (notice.connectionUserId !== undefined) this.activateAttentionOwner(notice.connectionUserId)
       this.notificationBaselineGeneration = 0
@@ -300,6 +303,10 @@ export class ChatRealtimeService {
     if (notice.cause === 'projection-invalidation'
       && notice.projectionInvalidation?.projection === 'entity_archive') {
       void this.invalidateTopicDirectoryProjection()
+      return
+    }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'self_role') {
+      void this.selfRoleInvalidation?.().then(() => this.emitChatClientEvent({type:'projection-invalidated',projection:'self_role',revision:this.nextChatClientRevision()})).catch(() => undefined)
       return
     }
     if (notice.cause === 'projection-invalidation'

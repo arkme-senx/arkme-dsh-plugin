@@ -1596,7 +1596,7 @@ export async function dispatchArkmeHostOperation(
       params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
     )
     case 'self-roles.update': return await service.updateSelfRole(
-      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), stringParam(params, 'name'),
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), params.name === undefined ? undefined : stringParam(params, 'name'),
       params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
     )
     case 'self-roles.delete': return await service.deleteSelfRole(

@@ -1,3 +1,4 @@
+import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import type { ProfileService } from './profile-service.js'
 import { parseRecordingSearchItem } from '../recording-search-result.js'
 import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
@@ -528,6 +529,7 @@ export class SearchService {
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
     return {
       recordUid,
+      ...(selfRoleSnapshotFromCloud(core.self_role_snapshot) ? { selfRole: selfRoleSnapshotFromCloud(core.self_role_snapshot)! } : {}),
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
       ...(recordOwnerId(core.creator_user_id) !== 0 ? { recordCreatorUserId: recordOwnerId(core.creator_user_id) } : {}),
       sourceKind: Math.trunc(numberValue(item.source_kind)),

@@ -1,3 +1,4 @@
+import { selfRoleToolModules } from './records/self-roles.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
 import { archiveToolModules } from './conversation/archive.js'
 import { memberPageToolModules } from './conversation/member-pages.js'
@@ -54,6 +55,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  ...selfRoleToolModules,
   directoryReadToolModule,
   recentRecordsToolModule,
   ...accountBusinessToolModules,

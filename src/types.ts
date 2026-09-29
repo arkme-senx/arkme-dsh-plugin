@@ -410,6 +410,7 @@ export interface ArkmeRecordCursor {
 }
 
 export interface ArkmeSelfRecordItem {
+  selfRole?: ArkmeSelfRoleSnapshot
   /** Immutable sender presentation stored with this record. */
   avatarRef?: string
   senderName?: string
@@ -1111,6 +1112,7 @@ export interface ArkmeDshInputOrigin {
 }
 
 export interface ArkmeSearchRecordItem {
+  selfRole?: ArkmeSelfRoleSnapshot
   /** DSH input identity resolved from local public session events; never persisted by record sync. */
   dshOrigin?: ArkmeDshInputOrigin
   /** Local lookup could not inspect every session; never proof of absence. */
@@ -1377,6 +1379,7 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
+    selfRoles?: true
     directMessageAdmission?: true
     reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
@@ -2459,6 +2462,8 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 }
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
+  /** Protected shells must never receive locally cached presentation metadata. */
+  protectedContent?: true
   recordUid: string
   /** Opaque current-conversation member identity for chat reply presentation. */
   senderMemberRef?: string
@@ -3667,7 +3672,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'record' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {

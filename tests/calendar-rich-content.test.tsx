@@ -240,3 +240,13 @@ it('keeps the source badge in forwarded record details', async () => {
   await click('[aria-label="打开快记详情"]')
   expect(host.querySelector('[aria-label="转发快记详情"] [aria-label="来源：项目"]')).not.toBeNull()
 })
+
+it('keeps the frozen role name and avatar when opening personal calendar detail', async () => {
+  api.call.mockImplementation(async (op: string) => op === 'user.profile' ? { profile: {} }
+    : op === 'calendar.buckets' ? { days: [] }
+      : { items: [{ ...record, sourceKind: 'self', content: { ...record.content, selfRole: { roleId: 'frozen-role', name: '冻结的角色' } } }], hasMore: false })
+  await render()
+  expect(host.querySelector('[data-arkme-calendar-role="frozen-role"]')?.textContent).toContain('冻结的角色')
+  await click('strong')
+  expect(host.querySelector('[aria-label="快记详情"]')?.textContent).toContain('冻结的角色')
+})
