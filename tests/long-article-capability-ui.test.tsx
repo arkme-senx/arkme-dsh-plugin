@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 let renderer: ReactTestRenderer | undefined
 beforeEach(() => {
+  vi.stubGlobal('document', { activeElement: null })
   vi.stubGlobal('window', { confirm: () => true, addEventListener: vi.fn(), removeEventListener: vi.fn(), setInterval, clearInterval })
   mocks.call.mockReset()
 })
@@ -48,6 +49,8 @@ it('keeps the original draft version and refuses to overwrite newer content', as
   await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source" item={{ itemUid: 'record' } as never} onClose={() => {}} />) })
   const edit = renderer!.root.find(node => node.type === 'button' && node.children.some(value => typeof value === 'string' && value.includes('编辑')))
   await act(async () => { edit.props.onClick() })
+  const restore = renderer!.root.find(node => node.type === 'button' && node.children.includes('恢复草稿'))
+  await act(async () => { restore.props.onClick() })
   const publish = renderer!.root.find(node => node.type === 'button' && node.children.some(value => typeof value === 'string' && value.includes('发布')))
   await act(async () => { publish.props.onClick() })
   expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.long-article.update')).toBe(false)

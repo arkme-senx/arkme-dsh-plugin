@@ -99,6 +99,17 @@ describe('ArkmeCalendarSurface scoped refresh', () => {
     renderer = undefined
   })
 
+  it('renders the frozen role in personal calendar rows', async () => {
+    const page = recordPage('角色日历正文')
+    Object.assign(page.items[0]!, { content: { itemUid: page.items[0]!.recordUid, isMe: true, senderName: '真实账号', status: 1, sendAtMillis: Date.now(), title: '', textContent: '角色日历正文', selfRole: { roleId: 'calendar-role', name: '日历角色' } } })
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, params) => operation === 'calendar.records' ? Promise.resolve(page) : original(operation, params))
+    await act(async () => { renderer = create(<ArkmeCalendarSurface onClose={() => {}} />) })
+    expect(renderer!.root.findByProps({ 'data-arkme-calendar-role': 'calendar-role' })).toBeDefined()
+    expect(textContent(renderer!.toJSON())).toContain('日历角色')
+
+  })
+
   it('renders day-record emoji and links through shared content without per-record detail requests', async () => {
     mocks.pendingRecords = Promise.resolve(recordPage(emojiSample))
     await act(async () => { renderer = create(<ArkmeCalendarSurface onClose={() => {}} />) })

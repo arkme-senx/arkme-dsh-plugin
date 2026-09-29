@@ -505,9 +505,15 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
     if (original.localRef === undefined) original.receive()
   }
   const contentMaxHeight = filePanel ? 'calc(65vh - 56px)' : '65vh'
+  const fillTextWindow = standalone && showContent && textFile
+  const textWindowPanelStyle: CSSProperties = fillTextWindow ? {
+    width: '100%', height: '100%', maxHeight: 'none', minWidth: 0, minHeight: 0,
+    boxSizing: 'border-box', padding: 0, borderRadius: 0,
+    display: 'flex', flexDirection: 'column',
+  } : {}
   const mediaStyle = { width: '100%', maxHeight: contentMaxHeight, objectFit: 'contain' as const }
-  return createPortal(<div style={{ position: 'fixed', inset: 0, zIndex: 11000, background: standalone ? arkmeTheme.menu : 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center', padding: 24 }} onMouseDown={event => { if (!standalone && event.target === event.currentTarget) onClose() }}>
-    <div ref={panel} tabIndex={-1} role="dialog" aria-modal={standalone ? undefined : true} aria-label={tr("文件预览 {v0}", { v0: block.fileName })} style={{ outline: standalone ? 'none' : undefined, position: 'relative', width: showContent ? 'min(860px, 90vw)' : 'min(420px, 90vw)', maxHeight: '80vh', borderRadius: 16, padding: showContent ? '56px 20px 20px' : '48px 40px 32px', color: arkmeTheme.text, background: arkmeTheme.menu }} onKeyDown={event => {
+  return createPortal(<div style={{ position: 'fixed', inset: 0, zIndex: 11000, background: standalone ? arkmeTheme.menu : 'rgba(0,0,0,.72)', display: 'grid', placeItems: fillTextWindow ? 'stretch' : 'center', gridTemplateRows: fillTextWindow ? 'minmax(0, 1fr)' : undefined, gridTemplateColumns: fillTextWindow ? 'minmax(0, 1fr)' : undefined, padding: 24 }} onMouseDown={event => { if (!standalone && event.target === event.currentTarget) onClose() }}>
+    <div ref={panel} tabIndex={-1} role="dialog" aria-modal={standalone ? undefined : true} aria-label={tr("文件预览 {v0}", { v0: block.fileName })} style={{ outline: standalone ? 'none' : undefined, position: 'relative', width: showContent ? 'min(860px, 90vw)' : 'min(420px, 90vw)', maxHeight: '80vh', borderRadius: 16, padding: showContent ? '56px 20px 20px' : '48px 40px 32px', color: arkmeTheme.text, background: arkmeTheme.menu, ...textWindowPanelStyle }} onKeyDown={event => {
       if (event.key === 'Escape') { event.stopPropagation(); onClose() }
       if (event.key === 'Tab') {
         const focusable = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],video[controls],audio[controls]')
@@ -534,10 +540,10 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
         : visualKind === 'image' ? <img src={url} alt={block.fileName} style={mediaStyle} />
           : visualKind === 'video' ? <video src={url} controls style={mediaStyle} />
             : block.mimeType.trim().toLowerCase().startsWith('audio/') && arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? <audio src={url} controls />
-              : textFile ? <div style={{ maxHeight: contentMaxHeight, overflow: 'auto', overflowWrap: 'anywhere' }}>{text === undefined ? !error && <p role="status">{tr("正在加载文件...")}</p> : /\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
+              : textFile ? <div style={{ maxHeight: fillTextWindow ? undefined : contentMaxHeight, flex: fillTextWindow ? '1 1 0' : undefined, minHeight: fillTextWindow ? 0 : undefined, overflow: 'auto', overflowWrap: 'anywhere' }}>{text === undefined ? !error && <p role="status">{tr("正在加载文件...")}</p> : /\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
                 : null}
-      {filePanel && <div style={{ marginTop: 16 }}>
-        <div role="group" aria-label={tr("文件操作")} style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {filePanel && <div style={{ marginTop: 16, flexShrink: fillTextWindow ? 0 : undefined }}>
+        <div role="group" aria-label={tr("文件操作")} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, ...(fillTextWindow ? { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', maxWidth: 488, marginInline: 'auto' } : {}) }}>
           {!showContent && <button type="button" aria-label={tr("打开文件")} disabled={openBusy || unavailable} onClick={systemFile ? nativeOpen.open : preview}
             style={{ ...filePanelActionStyle, opacity: openBusy || unavailable ? .5 : 1, cursor: openBusy ? 'progress' : unavailable ? 'default' : 'pointer' }}>{tr("打开")}</button>}
           <button type="button" aria-label={tr("另存为文件")} disabled={download.saving || unavailable} onClick={() => { void download.save() }}
@@ -553,7 +559,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
       </div>}
       {error && <div><p role="alert">{error}</p><button type="button" onClick={preview} style={filePanelActionStyle}>{tr("重试预览")}</button></div>}
       <ArkmeFileActionToast notice={actionNotice} style={{ position: 'absolute', left: 74, right: 74, bottom: -8 }} />
-      <div style={{ position: standalone ? 'fixed' : 'absolute', left: 0, right: 0, bottom: standalone ? 0 : -56, color: standalone ? arkmeTheme.text : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: fillTextWindow ? 'static' : standalone ? 'fixed' : 'absolute', flexShrink: fillTextWindow ? 0 : undefined, left: 0, right: 0, bottom: standalone ? 0 : -56, color: standalone ? arkmeTheme.text : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {(!standalone || blocks.length > 1) && <><ArkmeFileActionNavButton label={tr("上一个文件")} direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) { if (navigation) navigation.previous?.(); else onSelect?.(blocks[index - 1]!) } }} />
         {standalone ? <span style={{ padding: "0 16px" }}>{index + 1} / {blocks.length}</span> : <span aria-hidden style={fileActionWideGapStyle} />}
         <ArkmeFileActionNavButton label={tr("下一个文件")} direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else onSelect?.(blocks[index + 1]!) } }} /></>}

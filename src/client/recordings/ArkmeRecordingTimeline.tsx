@@ -356,14 +356,11 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     }
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
   }, [items])
-  const visibleSpeakers = useMemo(() => allDaySpeakers.filter(speaker => speaker.items.some(item => (
-    item.endAtMillis > windowStart && item.startAtMillis < windowEnd
-  ))), [allDaySpeakers, windowEnd, windowStart])
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
 
   useEffect(() => {
-    if (zoomIndex === 0 || visibleSpeakers.length === 0) setLegendOpen(false)
-  }, [visibleSpeakers.length, zoomIndex])
+    if (allDaySpeakers.length === 0) setLegendOpen(false)
+  }, [allDaySpeakers.length])
 
   const zoomTo = (targetIndex: number, anchorRatio = .5, anchorMillis?: number) => {
     const nextIndex = Math.min(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1, Math.max(0, targetIndex))
@@ -597,24 +594,24 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       <span style={styles.emptyIndicator} aria-hidden />
       <span>{tr("无录音")}</span>
       <button data-arkme-hover="none" type="button" style={{ ...styles.importButton, ...(onImportAudio === undefined ? { cursor: 'default', opacity: .3 } : {}) }} disabled={onImportAudio === undefined} onClick={onImportAudio}>{tr("导入音频")}<CaretRight size={8} aria-hidden /></button>
-    </span> : zoomIndex > 0 && visibleSpeakers.length > 0 ? <>
-      {legendOpen && <button type="button" tabIndex={-1} aria-label={tr("关闭当前窗口说话人统计")} style={styles.legendBackdrop} onClick={() => { if (legendRef.current !== null) legendRef.current.open = false; setLegendOpen(false) }} />}
+    </span> : allDaySpeakers.length > 0 ? <>
+      {legendOpen && <button type="button" tabIndex={-1} aria-label={tr("关闭全天说话人统计")} style={styles.legendBackdrop} onClick={() => { if (legendRef.current !== null) legendRef.current.open = false; setLegendOpen(false) }} />}
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>
-      <summary style={styles.legendSummary} aria-label={tr("当前窗口说话人图例")}>
+      <summary style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
         <span style={styles.legendItems}>
-          {visibleSpeakers.slice(0, 3).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
+          {allDaySpeakers.slice(0, 3).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
             {speaker.avatarRef === undefined
               ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
               : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={tr("{v0}头像", { v0: speaker.label })} />}
             <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }) }}>{speaker.label}</span>
           </button>)}
         </span>
-        {visibleSpeakers.length > 3 && <span style={styles.moreChip}>+{visibleSpeakers.length - 3}</span>}
+        {allDaySpeakers.length > 3 && <span style={styles.moreChip}>+{allDaySpeakers.length - 3}</span>}
         <CaretDown size={16} aria-hidden />
       </summary>
       <span style={styles.legendPanel}>
         <span style={styles.legendPanelList}>
-          {visibleSpeakers.map(speaker => {
+          {allDaySpeakers.map(speaker => {
             const percentage = totalSpeakerDurationMillis <= 0 ? 0 : speaker.durationMillis / totalSpeakerDurationMillis * 100
             return <span key={speaker.key} style={styles.legendPanelItem}>
               <span style={styles.legendPanelPrimary}>

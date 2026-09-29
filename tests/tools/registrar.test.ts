@@ -184,6 +184,7 @@ describe('registerArkmeTools', () => {
 
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
+      'arkme_self_roles_list', 'arkme_self_roles_write',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_ai_points',

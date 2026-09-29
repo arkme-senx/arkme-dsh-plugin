@@ -1,3 +1,5 @@
+import type { SelfRoleService } from './self-role-service.js'
+import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import type { ResolvedMentions } from './mention-metadata-codec.js'
 import { prepareRecordReeditMentions, recordReeditMentionMetadata, recordReeditMentionProjection, type NewMentionResolver } from './record-reedit-mentions.js'
 import { recordManualEditFact } from '../record-edit-history.js'
@@ -314,6 +316,17 @@ export class RecordService {
   private readonly reeditAdmissions = new Map<string, Promise<unknown>>()
   private readonly activeRecordCommits = new Set<string>()
   private closed = false
+  selfRoles?: SelfRoleService
+
+  async createPersonalRecord<T>(path: string, body: Record<string, unknown>, session?: ArkmeSessionCredentials, signal?: AbortSignal, options: Parameters<ServiceRuntime['authenticatedPost']>[4] = {}): Promise<T> {
+    const account = session ?? await this.runtime.requireSession()
+    const uid = String(body.record_uid ?? '')
+    const snapshot = await this.selfRoles?.prepare(account, uid)
+    const result = await this.runtime.authenticatedPost<T>(path, { ...body, ...(snapshot === undefined ? {} : { self_role_snapshot: snapshot }) }, account, signal, options)
+    if (snapshot !== undefined) this.selfRoles?.acknowledge(account, uid)
+    return result
+  }
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly media: MediaService,
@@ -1566,7 +1579,7 @@ export class RecordService {
     }
     const hashTags = arkmeHashTagPayload(normalizedText)
     const senderSnapshot = await this.currentSenderSnapshot?.(session)
-    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+    const data = await this.createPersonalRecord<Record<string, unknown>>(
       '/api/v1/records/create',
       {
         record_uid: normalizedUid,
@@ -1628,7 +1641,7 @@ export class RecordService {
     }
     const hashTags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
     const senderSnapshot = await this.currentSenderSnapshot?.(session)
-    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+    const data = await this.createPersonalRecord<Record<string, unknown>>(
       '/api/v1/records/extensions/create',
       {
         parent_record_uid: normalizedParentUid,
@@ -1699,7 +1712,7 @@ export class RecordService {
         : arkmeRecordCaptureContextPayload(pending.captureContext)
       const hashTags = arkmeHashTagPayload(pending.textContent)
       const senderSnapshot = await this.currentSenderSnapshot?.(session)
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      const data = await this.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/records/create',
         {
           record_uid: pending.recordUid,
@@ -1741,6 +1754,7 @@ export class RecordService {
   recordTimelineItem(item: ArkmeSelfRecordItem): ArkmeTimelineItem {
     return {
       itemUid: item.recordUid,
+      ...(item.selfRole === undefined ? {} : { selfRole: item.selfRole }),
       ...(item.hasManualEdit === undefined ? {} : { hasManualEdit: item.hasManualEdit }),
       senderName: item.senderName || '我',
       avatarSnapshot: true,
@@ -1795,7 +1809,7 @@ export class RecordService {
       extensionParentRecordUid: parentRecordUid,
       extensionParent: {
         itemUid: parentRecordUid,
-        senderName: stringValue(
+        senderName: selfRoleSnapshotFromCloud(previewRecord.self_role_snapshot)?.name || stringValue(
           previewRecord.nickname ?? previewRecord.nick_name
             ?? preview.nickname ?? preview.nick_name,
         ).trim() || '我',
@@ -1823,6 +1837,7 @@ export class RecordService {
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       ...recordSenderSnapshot(raw),
+      ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),
       isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
       ...(callRecord === undefined ? {} : { callRecord }),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
@@ -1862,6 +1877,7 @@ export class RecordService {
     return {
       recordUid,
       ...recordSenderSnapshot(raw),
+      ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(core.title),
       textContent: stringValue(core.text_content),
@@ -1901,3 +1917,5 @@ export class RecordService {
     return { pages, complete: !snapshot.hasMore }
   }
 }
+
+function cloudSelfRolePresentation(value: unknown): { selfRole?: import('../types.js').ArkmeSelfRoleSnapshot } { const selfRole = selfRoleSnapshotFromCloud(value); return selfRole === undefined ? {} : { selfRole } }

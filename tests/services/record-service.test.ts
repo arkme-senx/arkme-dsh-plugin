@@ -752,7 +752,7 @@ describe('RecordService', () => {
     })
   })
 
-  it('restores a record extension parent preview from the durable home-feed contract', () => {
+  it.each([undefined, { role_id: 'parent-role', name: '角色作者' }])('restores a record extension parent preview with frozen role %j', selfRole => {
     const media = {
       recordMediaUnavailable: () => false, richContentBlocks: vi.fn((raw: unknown) => {
         const core = (raw as { record_core?: { record_uid?: string } }).record_core
@@ -773,7 +773,7 @@ describe('RecordService', () => {
         parent_record_uid: 'record-parent',
         extension_parent_preview: {
           record: {
-            record_uid: 'record-parent', nickname: '我', title: '', text_content: '原快记内容',
+            record_uid: 'record-parent', nickname: '我', self_role_snapshot: selfRole, title: '', text_content: '原快记内容',
             template_kind: 2, status: 1,
           },
         },
@@ -783,7 +783,7 @@ describe('RecordService', () => {
       textContent: '延展正文',
       extensionParentRecordUid: 'record-parent',
       extensionParent: {
-        itemUid: 'record-parent', senderName: '我', title: '', textContent: '原快记内容',
+        itemUid: 'record-parent', senderName: selfRole?.name ?? '我', title: '', textContent: '原快记内容',
         contentBlocks: [{ kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png' }],
       },
     })

@@ -171,13 +171,15 @@ export function arkmeHomeTourDirectoryAttributes({
 }
 
 const colors = {
-  panel: '#fff',
+  // Keep the conversation directory on DSH surfaces so a locale rerender
+  // cannot reapply a light-only fill over the active dark theme.
+  panel: arkmeTheme.base,
   text: arkmeTheme.text,
   secondary: arkmeTheme.secondary,
   caption: arkmeTheme.caption,
   border: arkmeTheme.borderSoft,
-  active: '#f1f2f6',
-  accent: '#9eadff',
+  active: arkmeTheme.active,
+  accent: arkmeTheme.accent,
   mention: '#20c66a',
 }
 
@@ -210,14 +212,16 @@ const styles: Record<string, CSSProperties> = {
   sortArrow: { width: 10, height: 10, flex: 'none', marginTop: 1, pointerEvents: 'none' },
   searchField: {
     height: 40, flex: 'none', margin: '12px 16px 8px', padding: '0 11px', display: 'flex', alignItems: 'center', gap: 8,
-    boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
+    boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 11,
+    color: arkmeTheme.tertiary, background: arkmeTheme.input,
   },
   conversationToolbar: directorySearchLayout.toolbar,
   embeddedSearchField: { flex: 1, minWidth: 40, margin: 0, cursor: 'pointer', font: 'inherit', fontSize: 12, textAlign: 'left' },
   searchLabel: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   createTaskButton: {
     width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: '1px solid #e2e3e6', borderRadius: 11, background: '#fff', color: '#555a64', cursor: 'pointer',
+    border: `1px solid ${arkmeTheme.border}`, borderRadius: 11, background: arkmeTheme.input,
+    color: arkmeTheme.secondary, cursor: 'pointer',
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '0 6px 18px', overflowY: 'auto', listStyle: 'none' },
   conversationList: { padding: '0 0 18px' },
