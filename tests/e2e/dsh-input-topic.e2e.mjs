@@ -16,7 +16,7 @@ if (!dshRoot || !profile || !recordOrigin || new URL(recordOrigin).hostname !== 
 }
 const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
 const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
-const { connectFreshWorkspace } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
+const { connectFreshWorkspaceZh } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(profileManifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) {
@@ -92,7 +92,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(10001)).toMatchObject({ status: 'authenticated', userId: 10001 })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
-      const browserContext = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
+      const browserContext = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'zh-CN' })
       const realtimePages = new Set()
       browserContext.on('page', clientPage => {
         clientPage.on('websocket', socket => {
@@ -112,7 +112,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
       const harnessPage = await frameElement.contentFrame()
       expect(harnessPage).not.toBeNull()
-      await connectFreshWorkspace(harnessPage, scaffold.workspaceCwd)
+      await connectFreshWorkspaceZh(harnessPage, scaffold.workspaceCwd)
       const input = harnessPage.locator('[data-composer-input]').first()
       await input.fill(prompt)
       const settled = scaffold.whenTurnSettled()
@@ -125,9 +125,14 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(sources.items.some(item => item.topicKind === 3)).toBe(false)
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
       const bucketDate = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-      const calendar = await service.calendarRecords({ bucketDate, timezone, limit: 50 })
-      const archivedRecord = calendar.items.find(item => item.textContent === prompt && item.creationSource === 3)
-      expect(archivedRecord).toBeDefined()
+      // Archive acceptance precedes the calendar projection worker. Wait for
+      // the real read model instead of assuming synchronous projection.
+      let archivedRecord
+      await expect.poll(async () => {
+        const calendar = await service.calendarRecords({ bucketDate, timezone, limit: 50 })
+        archivedRecord = calendar.items.find(item => item.textContent === prompt && item.creationSource === 3)
+        return archivedRecord
+      }, { timeout: 15_000 }).toBeDefined()
       const archive = archivedRecord.source
       expect(archive).toBeDefined()
       const sdk = createArkmeSdk({
@@ -146,8 +151,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(JSON.stringify(result)).toContain('true')
       const self = await service.selfTarget()
       expect((await service.readSource(self.sourceRef)).items.some(item => item.textContent === prompt)).toBe(false)
-      expect((await service.calendarRecords({ bucketDate, timezone, sourceRef: self.sourceRef })).items
-        .some(item => item.recordUid === archivedRecord.recordUid)).toBe(false)
+      // Changing home visibility also invalidates the calendar projection.
+      await expect.poll(async () => (await service.calendarRecords({ bucketDate, timezone, sourceRef: self.sourceRef })).items
+        .some(item => item.recordUid === archivedRecord.recordUid), { timeout: 15_000 }).toBe(false)
       expect((await service.listSources('send_to_self', { refresh: true })).items.some(item => item.topicKind === 3)).toBe(false)
       // Keep an existing non-default preference while exercising the UI.
       // Same browser context/origin: before the transport fix, three pages
@@ -178,7 +184,8 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await route.continue()
       })
       await page.getByRole('button', { name: '日历', exact: true }).click()
-      const calendarSurface = page.locator('section[aria-label="客户端日历"]')
+      await page.getByRole('button', { name: '原版日历', exact: true }).click()
+      const calendarSurface = page.locator('div[aria-label="客户端日历"]')
       await calendarSurface.getByRole('alert').waitFor()
       failCalendarReads = false
       await calendarSurface.getByRole('button', { name: '刷新当天快记', exact: true }).click()
@@ -196,6 +203,14 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(await sdk.topicHomeVisibility(archive.sourceRef)).toEqual({ showInHome: true })
       expect(await sdk.topicHomeVisibility(archive.sourceRef, false)).toEqual({ showInHome: false })
     } catch (error) {
+      if (process.env.ARKME_E2E_SCREENSHOT && browser) {
+        const pages = browser.contexts().flatMap(context => context.pages())
+        for (const [index, page] of pages.entries()) {
+          const path = `${process.env.ARKME_E2E_SCREENSHOT}.failure-${index}`
+          await page.screenshot({ path: `${path}.png` }).catch(() => {})
+          await page.locator('body').innerText().then(text => writeFile(`${path}.txt`, text)).catch(() => {})
+        }
+      }
       failures.push(error)
     } finally {
       const cleanup = async action => { try { await action() } catch (error) { failures.push(error) } }
