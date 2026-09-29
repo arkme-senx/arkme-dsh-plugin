@@ -47,9 +47,12 @@ export class BrowserAvatarPersistentCache implements ArkmeAvatarPersistentCache 
   private writes: Promise<void> = Promise.resolve()
 
   private key(scope: string, ref: string): string | undefined {
-    if (!scope.trim() || !isImmutableAvatarRef(ref) || typeof globalThis.caches === 'undefined'
-      || typeof globalThis.location === 'undefined') return undefined
-    return new URL(`/arkme-self/avatar-cache/v1/${encodeURIComponent(scope)}/${encodeURIComponent(ref)}`, globalThis.location.origin).href
+    try {
+      // Accessing the CacheStorage getter itself can throw in restricted contexts.
+      if (!scope.trim() || !isImmutableAvatarRef(ref) || typeof globalThis.caches === 'undefined'
+        || typeof globalThis.location === 'undefined') return undefined
+      return new URL(`/arkme-self/avatar-cache/v1/${encodeURIComponent(scope)}/${encodeURIComponent(ref)}`, globalThis.location.origin).href
+    } catch { return undefined }
   }
 
   async read(scope: string, ref: string): Promise<ArkmeAvatarImagePayload | undefined> {

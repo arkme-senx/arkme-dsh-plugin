@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrowserAvatarPersistentCache, decodableAvatar } from '../src/client/avatar-persistent-cache.js'
+import { InMemoryArkmeAvatarImageStore } from '../src/client/avatar-image-store.js'
 
 const rows = new Map<string, Response>()
 const keyOf = (key: Request | string) => typeof key === 'string' ? key : key.url
@@ -102,4 +103,22 @@ describe('browser avatar decoding', () => {
       expect(revoke).toHaveBeenCalledOnce()
     } finally { revoke.mockRestore() }
   })
+})
+
+
+it('keeps a Host cache hit usable when the browser denies the CacheStorage getter', async () => {
+  Object.defineProperty(globalThis, 'caches', {
+    configurable: true,
+    get() { throw new DOMException('CacheStorage access denied', 'SecurityError') },
+  })
+  const cachedReader = vi.fn(async () => payload)
+  const reader = vi.fn(async () => payload)
+  const store = new InMemoryArkmeAvatarImageStore({
+    persistentCache: new BrowserAvatarPersistentCache(async () => true), cachedReader, reader,
+  })
+  store.activateScope('prod:4')
+  await expect(store.load(ref)).resolves.toBe(`data:image/png;base64,${payload.dataBase64}`)
+  expect(cachedReader).toHaveBeenCalledOnce()
+  expect(reader).not.toHaveBeenCalled()
+  expect(store.current(ref)).toBe(`data:image/png;base64,${payload.dataBase64}`)
 })
