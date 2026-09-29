@@ -66,7 +66,7 @@ describe('private roles through the packed plugin and real Record API',()=>{
    browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
    const page=await browser.newPage({viewport:{width:1280,height:900},locale:'en-US'})
    await page.goto(scaffold.authenticatedUrl,{waitUntil:'load'})
-   const frame=await(await page.waitForSelector('iframe[title="DeepSeek Harness"]')).contentFrame()
+   const frame=page.frameLocator('iframe[title="DeepSeek Harness"]')
    await connectFreshWorkspace(frame,scaffold.workspaceCwd)
    const input=frame.locator('[data-composer-input]').first();await input.fill(prompt)
    const settled=scaffold.whenTurnSettled();await input.press('Enter');const sessionId=await settled
@@ -100,7 +100,7 @@ describe('private roles through the packed plugin and real Record API',()=>{
    await page.getByText('改名后的角色',{exact:false}).first().waitFor()
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
    // Exercise the actual user path: picker -> create -> select -> composer -> Record.
-   await page.getByRole('menuitem',{name:'＋ 创建角色',exact:true}).click()
+   await page.getByRole('button',{name:'＋ 创建角色',exact:true}).click()
    await page.getByRole('textbox',{name:'角色名称',exact:true}).fill('界面创建角色')
    await page.getByRole('button',{name:'创建并选用',exact:true}).click()
    await page.getByRole('dialog',{name:'创建发言角色'}).waitFor({state:'hidden'})

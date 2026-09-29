@@ -60,9 +60,19 @@ export class SelfRoleService {
     const local=this.local;if(!local)return undefined
     const snapshot=(await local.selfRoleSnapshots(session.userId,[recordUid])).get(recordUid)
     if(!snapshot)return undefined
+    // Confirmed snapshots with a stable avatar need no directory/upload lane.
+    if (local.selfRoleSync.isKnownRemotely(session.userId,snapshot.roleId)
+        && (!snapshot.avatarRef || snapshot.avatarRef.startsWith('file_asset://'))) {
+      await this.assertAccount(session)
+      return await this.cloudSnapshot(session,snapshot)
+    }
     let prepared: CloudSelfRoleSnapshot | undefined
     await this.exclusive(session.userId,async()=>{
-      await this.flush(session,snapshot.roleId)
+      await this.assertAccount(session)
+      // A frozen send depends on directory existence, not on later profile edits.
+      if (!local.selfRoleSync.isKnownRemotely(session.userId,snapshot.roleId)) {
+        await this.flush(session,snapshot.roleId)
+      }
       await this.assertAccount(session)
       // Deleted roles no longer upload their directory avatar. Frozen messages
       // still share its single upload receipt through this same account lane.
@@ -81,7 +91,9 @@ export class SelfRoleService {
     const session=await this.runtime.requireSession()
     const running=this.active.get(session.userId);if(running)return await running
     await this.exclusive(session.userId,async()=>{
-      await this.flush(session)
+      let failure: unknown
+      try { await this.flush(session) } catch (error) { failure = error }
+      // Local upload failures do not block receiving other devices' role edits.
       let after=''
       do{
         await this.assertAccount(session)
@@ -91,25 +103,24 @@ export class SelfRoleService {
         after=page.next_cursor
       }while(after)
       let cursor=''
-      let bindingConflict: Error | undefined
       for(;;){
         const batch=this.local!.selfRoleSync.pendingBindings(session.userId,cursor);if(batch.length===0)break
         for(const binding of batch){
           await this.assertAccount(session)
-          const snapshot=await this.cloudSnapshot(session,binding.snapshot)
           try{
+            const snapshot=await this.cloudSnapshot(session,binding.snapshot)
             await this.runtime.authenticatedPost('/api/v1/records/self-role/fill',{record_uid:binding.recordUid,self_role_snapshot:snapshot},session)
             await this.assertAccount(session);this.local!.selfRoleSync.acknowledgeBinding(session.userId,binding.recordUid)
           }catch(error){
             // A queued message has no cloud record yet. Keep its binding; the
             // ordinary send path acknowledges it after atomic content creation.
-            if(error instanceof Error && error.message.includes('self role version conflict')) { bindingConflict ??= error }
-            else if(!(error instanceof Error)||!error.message.includes('invalid self role'))throw error
+            if(!(error instanceof Error)||!error.message.includes('invalid self role')) failure ??= error
+            await this.assertAccount(session)
           }
           cursor=binding.recordUid
         }
       }
-      if(bindingConflict)throw bindingConflict
+      if(failure)throw failure
     })
   }
 }

@@ -108,3 +108,45 @@ it('a failed role cannot block a different role or ordinary content',async()=>{
  expect(f.roles.get(b.roleId)?.name).toBe('另一个角色')
  await expect(f.records.createPersonalRecord('/api/v1/records/create',{record_uid:'normal',text_content:'普通正文'})).resolves.toBeDefined()
 })
+
+it('failed upload does not block remote roles or unrelated frozen metadata',async()=>{
+ const bad=await db.createSelfRole(7,'坏头像','arkme-self-role-image-v1.abcdefgh')
+ const good=await db.createSelfRole(7,'正常角色');await db.bindSelfRole(7,'good-message',good.roleId)
+ const f=fixture();f.media.uploadLocalFile.mockRejectedValue(new Error('offline upload'))
+ f.roles.set('remote-only',{role_id:'remote-only',name:'另一端创建',name_at:10,avatar_at:10,deleted_at:0,version:1,deleted:false,update_at:10})
+ await expect(f.owner.refresh()).rejects.toThrow('offline upload')
+ expect((await db.listSelfRoles(7)).some(r=>r.roleId==='remote-only')).toBe(true)
+ expect(db.selfRoleSync.next(7,bad.roleId)).toBeDefined()
+ expect(db.selfRoleSync.pendingBindings(7)).toEqual([])
+})
+it('a failed frozen avatar does not starve later metadata bindings',async()=>{
+ const bad=await db.createSelfRole(7,'坏头像','arkme-self-role-image-v1.abcdefgh')
+ await db.bindSelfRole(7,'a-bad-message',bad.roleId);await db.deleteSelfRole(7,bad.roleId)
+ const good=await db.createSelfRole(7,'正常角色');await db.bindSelfRole(7,'z-good-message',good.roleId)
+ const f=fixture();f.media.uploadLocalFile.mockRejectedValue(new Error('offline upload'))
+ await expect(f.owner.refresh()).rejects.toThrow('offline upload')
+ expect(db.selfRoleSync.pendingBindings(7).map(r=>r.recordUid)).toEqual(['a-bad-message'])
+})
+it('frozen send does not wait for later directory avatar edits',async()=>{
+ const role=await db.createSelfRole(7,'旧快照');const f=fixture();await f.owner.refresh()
+ await db.bindSelfRole(7,'old-message',role.roleId)
+ await db.updateSelfRole(7,role.roleId,'后来修改','arkme-self-role-image-v1.abcdefgh')
+ f.media.uploadLocalFile.mockRejectedValue(new Error('offline upload'))
+ await expect(f.owner.prepare(f.session(),'old-message')).resolves.toEqual({role_id:role.roleId,name:'旧快照'})
+ expect(db.selfRoleSync.next(7,role.roleId)).toBeDefined()
+})
+it('confirmed frozen send proceeds while a newer profile upload is in flight',async()=>{
+ const role=await db.createSelfRole(7,'旧快照');const f=fixture();await f.owner.refresh()
+ await db.bindSelfRole(7,'old-message',role.roleId)
+ await db.updateSelfRole(7,role.roleId,'后来修改','arkme-self-role-image-v1.abcdefgh')
+ let release!:()=>void, started!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ const uploading=new Promise<void>(resolve=>{started=resolve})
+ f.media.uploadLocalFile.mockImplementationOnce(async()=>{started();await gate;return {fileAssetUid:'asset-new'}})
+ const refresh=f.owner.refresh();await uploading
+ let timeout:ReturnType<typeof setTimeout>|undefined
+ try {
+  const frozen=await Promise.race([f.owner.prepare(f.session(),'old-message'),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('frozen message blocked')),1000)})])
+  expect(frozen).toEqual({role_id:role.roleId,name:'旧快照'})
+ } finally {clearTimeout(timeout);release();await refresh}
+})

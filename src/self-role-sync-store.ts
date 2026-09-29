@@ -27,6 +27,9 @@ export class SelfRoleSyncStore {
   dirtyRoleIds(userId:number):string[] {
     return (this.db.prepare('SELECT * FROM self_role WHERE user_id=? ORDER BY role_id').all(userId) as unknown as Row[]).filter(r=>r.cloud_payload!==content(desired(r))).map(r=>r.role_id)
   }
+  isKnownRemotely(userId: number, roleId: string): boolean {
+    return this.db.prepare('SELECT 1 FROM self_role WHERE user_id=? AND role_id=? AND cloud_payload IS NOT NULL').get(userId,roleId) !== undefined
+  }
   next(userId:number,roleId?:string):SelfRoleWrite|undefined {
     const rows=this.db.prepare(`SELECT * FROM self_role WHERE user_id=? ${roleId===undefined?'':'AND role_id=?'} ORDER BY role_id`).all(...(roleId===undefined?[userId]:[userId,roleId])) as unknown as Row[]
     for(const row of rows){const op=desired(row);if(row.cloud_payload!==content(op))return op}
