@@ -96,6 +96,16 @@ interface ArkmeOssCredentials {
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
 
+interface PendingAvatarAsset {
+  generation: number
+  session: ArkmeSessionCredentials
+  uid: string
+  started: boolean
+  promise: Promise<ArkmeFileAssetDisplayItem | undefined>
+  resolve: (asset: ArkmeFileAssetDisplayItem | undefined) => void
+  reject: (error: unknown) => void
+}
+
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
 const MAX_ARKME_PROFILE_IMAGE_BYTES = 8 * 1024 * 1024
 const IMAGE_CACHE_TTL_MS = 5 * 60_000
@@ -296,6 +306,10 @@ export class MediaService {
   private imageCacheBytes = 0
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
+  private readonly avatarAssets = new Map<string, PendingAvatarAsset>()
+  private avatarAssetTimer: ReturnType<typeof setTimeout> | undefined
+  private imageGeneration = 0
+  private readonly localAvatarReads = new Map<string, Promise<ArkmeImageBytes | undefined>>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -307,18 +321,27 @@ export class MediaService {
   ) {}
 
   dispose(): void {
+    this.imageGeneration += 1
+    clearTimeout(this.avatarAssetTimer)
+    this.avatarAssetTimer = undefined
+    for (const pending of this.avatarAssets.values()) pending.reject(new Error('Avatar image scope changed'))
+    this.avatarAssets.clear()
     this.mediaRefs.clear()
     this.stableMediaRefs.clear()
     this.imageCache.clear()
     this.imageInFlight.clear()
+    this.localAvatarReads.clear()
     this.imageCacheBytes = 0
     this.imageDownloadWaiters.splice(0).forEach(resolve => { resolve() })
   }
 
   async queryFileAssets(fileAssetUids: readonly string[], signal?: AbortSignal): Promise<ArkmeFileAssetDisplayItem[]> {
+    return await this.queryFileAssetsForSession(await this.runtime.requireSession(), fileAssetUids, signal)
+  }
+
+  private async queryFileAssetsForSession(session: ArkmeSessionCredentials, fileAssetUids: readonly string[], signal?: AbortSignal): Promise<ArkmeFileAssetDisplayItem[]> {
     const unique = [...new Set(fileAssetUids.map(uid => uid.trim()).filter(uid => uid !== ''))].slice(0, 50)
     if (unique.length === 0) return []
-    const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/files/assets/query',
       { file_asset_uids: unique },
@@ -635,10 +658,14 @@ export class MediaService {
 
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean; cacheOnly?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
     options.signal?.throwIfAborted()
+    const generation = this.imageGeneration
     const session = await this.runtime.requireSession()
+    const assetMatch = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
+    if (assetMatch !== null) return await this.readFileAssetImage(session, assetMatch[1]!, options, generation)
+    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
     const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
     const isSelfRoleImage = imageRef.trim().startsWith('arkme-self-role-image-v1.')
@@ -687,6 +714,151 @@ export class MediaService {
       throw error
     } finally {
       if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
+    }
+  }
+
+  /** Immutable asset bytes survive URL expiry and Host restarts in the existing avatar store. */
+  private async readFileAssetImage(
+    session: ArkmeSessionCredentials,
+    uid: string,
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean; cacheOnly?: boolean },
+    generation: number,
+  ): Promise<ArkmeImageBytes> {
+    await this.assertImageAccount(session, generation)
+    options.signal?.throwIfAborted()
+    const byteLimit = Math.min(MAX_SELF_ROLE_AVATAR_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_SELF_ROLE_AVATAR_BYTES)))
+    const diskKey = `asset:${this.runtime.config.environment}:${uid}`
+    const cacheKey = `${session.userId}:${byteLimit}:${diskKey}`
+    const cached = this.cachedImage(cacheKey)
+    if (cached !== undefined) return cached
+    if (options.cacheOnly) {
+      const value = await this.readLocalFileAssetImage(session, uid, diskKey, byteLimit, generation)
+      options.signal?.throwIfAborted()
+      await this.assertImageAccount(session, generation)
+      if (value === undefined) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
+      this.cacheImage(cacheKey, value)
+      return cloneImageBytes(value)
+    }
+    let pending = this.imageInFlight.get(cacheKey)
+    if (pending === undefined) {
+      pending = this.loadFileAssetImage(session, uid, diskKey, byteLimit, generation)
+      this.imageInFlight.set(cacheKey, pending)
+    }
+    try {
+      const value = await pending
+      options.signal?.throwIfAborted()
+      await this.assertImageAccount(session, generation)
+      this.cacheImage(cacheKey, value)
+      return cloneImageBytes(value)
+    } finally {
+      if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
+    }
+  }
+
+  private async assertImageAccount(session: ArkmeSessionCredentials, generation: number): Promise<void> {
+    const current = await this.runtime.requireSession()
+    if (generation !== this.imageGeneration || current.userId !== session.userId) {
+      throw new ArkmePluginError('image-account-changed', '账号已切换，请重试', false, 409)
+    }
+  }
+
+  private async validAvatar(image: ArkmeImageBytes, byteLimit: number): Promise<boolean> {
+    if (image.bytes <= 0 || image.bytes !== image.data.byteLength || image.bytes > byteLimit
+      || imageMediaType(image.data) !== image.mediaType) return false
+    try {
+      const { default: sharp } = await import('sharp')
+      // Decode one full frame, not just metadata or the magic bytes. Bound pixel memory.
+      await sharp(image.data, { failOn: 'warning', limitInputPixels: 64 * 1024 * 1024 })
+        .resize(1, 1).raw().toBuffer()
+      return true
+    } catch { return false }
+  }
+
+  private async readLocalFileAssetImage(session: ArkmeSessionCredentials, uid: string, diskKey: string, byteLimit: number, generation: number): Promise<ArkmeImageBytes | undefined> {
+    const key = `${generation}:${session.userId}:${byteLimit}:${diskKey}`
+    let pending = this.localAvatarReads.get(key)
+    if (pending === undefined) {
+      pending = (async () => {
+        const persisted = await this.runtime.stateStore.readAvatarCache?.(session.userId, diskKey).catch(() => undefined)
+        if (persisted !== undefined && await this.validAvatar(persisted, byteLimit)) return persisted
+        await this.assertImageAccount(session, generation)
+        const localRef = await this.runtime.stateStore.selfRoleAvatarLocalRef?.(session.userId, uid).catch(() => undefined)
+        const original = localRef === undefined ? undefined
+          : await this.selfRoleAvatars?.read(session.userId, localRef, byteLimit).catch(() => undefined)
+        return original !== undefined && await this.validAvatar(original, byteLimit) ? original : undefined
+      })()
+      this.localAvatarReads.set(key, pending)
+    }
+    try {
+      const value = await pending
+      await this.assertImageAccount(session, generation)
+      return value
+    } finally {
+      if (this.localAvatarReads.get(key) === pending) this.localAvatarReads.delete(key)
+    }
+  }
+
+  private async loadFileAssetImage(session: ArkmeSessionCredentials, uid: string, diskKey: string, byteLimit: number, generation: number): Promise<ArkmeImageBytes> {
+    let value = await this.readLocalFileAssetImage(session, uid, diskKey, byteLimit, generation)
+    if (value === undefined) {
+      await this.assertImageAccount(session, generation)
+      const asset = await this.queueAvatarAsset(session, uid, generation)
+      const url = asset?.previewUrl ?? asset?.downloadUrl
+      if (url === undefined) throw new ArkmePluginError('image-ref-unavailable', '历史头像当前不可用', true, 404)
+      await this.assertImageAccount(session, generation)
+      value = await this.withImageDownloadPermit(async () => {
+        await this.assertImageAccount(session, generation)
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.runtime.config.environment, url), byteLimit, undefined, this.runtime.requestScope(session.userId),
+        )
+      })
+      if (!await this.validAvatar(value, byteLimit)) {
+        throw new ArkmePluginError('image-bytes-invalid', '头像数据损坏，请重试', true, 502)
+      }
+    }
+    await this.assertImageAccount(session, generation)
+    await this.runtime.stateStore.writeAvatarCache?.(session.userId, diskKey, value).catch(() => {
+      console.warn('dsh-arkme: avatar_cache_write_failed')
+    })
+    return value
+  }
+
+  private queueAvatarAsset(session: ArkmeSessionCredentials, uid: string, generation: number): Promise<ArkmeFileAssetDisplayItem | undefined> {
+    const key = `${session.userId}:${uid}`
+    const existing = this.avatarAssets.get(key)
+    if (existing !== undefined) return existing.promise
+    let resolve!: PendingAvatarAsset['resolve']
+    let reject!: PendingAvatarAsset['reject']
+    const promise = new Promise<ArkmeFileAssetDisplayItem | undefined>((done, fail) => { resolve = done; reject = fail })
+    this.avatarAssets.set(key, { session, uid, generation, started: false, promise, resolve, reject })
+    // Host calls arrive through separate HTTP requests; allow one short window to collect them.
+    this.avatarAssetTimer ??= setTimeout(() => { this.avatarAssetTimer = undefined; void this.flushAvatarAssets() }, 8)
+    return promise
+  }
+
+  private async flushAvatarAssets(): Promise<void> {
+    const groups = new Map<number, Array<[string, PendingAvatarAsset]>>()
+    for (const entry of this.avatarAssets.entries()) {
+      if (entry[1].started) continue
+      entry[1].started = true
+      const group = groups.get(entry[1].session.userId) ?? []
+      group.push(entry)
+      groups.set(entry[1].session.userId, group)
+    }
+    for (const group of groups.values()) {
+      for (let start = 0; start < group.length; start += 50) {
+        const batch = group.slice(start, start + 50)
+        try {
+          await this.assertImageAccount(batch[0]![1].session, batch[0]![1].generation)
+          const items = await this.queryFileAssetsForSession(batch[0]![1].session, batch.map(([, pending]) => pending.uid))
+          const byUid = new Map(items.map(item => [item.fileAssetUid, item]))
+          for (const [, pending] of batch) pending.resolve(byUid.get(pending.uid))
+        } catch (error) {
+          for (const [, pending] of batch) pending.reject(error)
+        } finally {
+          for (const [key, pending] of batch) if (this.avatarAssets.get(key) === pending) this.avatarAssets.delete(key)
+        }
+      }
     }
   }
 
@@ -741,17 +913,6 @@ export class MediaService {
     if (imageRef.trim().startsWith('arkme-self-role-image-v1.')) {
       if (this.selfRoleAvatars === undefined) throw new ArkmePluginError('self-role-avatar-missing', '本地角色头像不可用', false, 404)
       return await this.selfRoleAvatars.read(session.userId, imageRef.trim(), byteLimit)
-    }
-    const snapshotAsset = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
-    if (snapshotAsset !== null) {
-      // Resolve the immutable historical asset with the existing authenticated file API.
-      // Do not fall back to the user's current profile when this asset is unavailable.
-      const asset = (await this.queryFileAssets([snapshotAsset[1]!], signal))
-        .find(item => item.fileAssetUid === snapshotAsset[1])
-      const url = asset?.previewUrl ?? asset?.downloadUrl
-      if (url === undefined) throw new ArkmePluginError('image-ref-unavailable', '历史头像当前不可用', true, 404)
-      return await this.downloadSignedImage(trustedSignedImageUrl(this.runtime.config.environment, url),
-        byteLimit, signal, this.runtime.requestScope(session.userId))
     }
     if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
       if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)

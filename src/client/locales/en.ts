@@ -1350,6 +1350,24 @@ Arkme 用户|Arkme user
 正在读取录音|Loading recordings
 当前窗口说话人统计|Speaker statistics for this range
 当前窗口说话人图例|Speakers in this range
+全天说话人统计|All-day speaker statistics
+全天说话人图例|All-day speakers
+关闭全天说话人统计|Close all-day speaker statistics
+时间轴记录|Timeline entry
+时间未标注|Time unavailable
+场景类型|Scene
+场景说明|Scene note
+环境说明|Environment note
+评价|Assessment
+评价分数|Assessment score
+事件标签|Event tags
+时段总结|Period summary
+参与者|Participants
+说话人备注|Speaker note
+待办|To-do
+代表性原话|Representative quotes
+对话摘要|Dialogue summaries
+其他信息|Other information
 暂停播放|Pause
 转发录音片段|Forward recording segment
 转发对象|Forwarding destination

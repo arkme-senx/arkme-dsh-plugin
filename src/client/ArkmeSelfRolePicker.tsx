@@ -3,6 +3,7 @@ import type { ArkmePluginResponse, ArkmeSelfRole } from '../types.js'
 import { ArkmeSelfRoleMenu } from './ArkmeSelfRoleMenu.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatarCropDialog } from './ArkmeExtensionAvatarCropDialog.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { callArkme } from './api.js'
 import { arkmeSelfRoleAvatarFallback } from './self-role-presentation.js'
 
@@ -47,10 +48,11 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   const scope = `${accountKey}\0${String(userId)}`
   const scopeRef = useRef(scope)
   scopeRef.current = scope
-  const [roleState, setRoleState] = useState<{ scope: string; roles: ArkmeSelfRole[]; loading: boolean; error: string }>({
-    scope, roles: [], loading: true, error: '',
+  const [roleState, setRoleState] = useState<{ scope: string; roles: ArkmeSelfRole[]; loading: boolean; loaded: boolean; error: string }>({
+    scope, roles: [], loading: true, loaded: false, error: '',
   })
-  const visibleState = roleState.scope === scope ? roleState : { scope, roles: [], loading: true, error: '' }
+  const visibleState = roleState.scope === scope ? roleState : { scope, roles: [], loading: true, loaded: false, error: '' }
+  const initialLoading = visibleState.loading && !visibleState.loaded
   const [refreshRevision, setRefreshRevision] = useState(0)
   useEffect(() => { if (typeof window === 'undefined') return; const refresh = () => setRefreshRevision(value => value + 1); window.addEventListener('arkme-self-roles-changed', refresh); return () => window.removeEventListener('arkme-self-roles-changed', refresh) }, [])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -63,6 +65,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const listControllerRef = useRef<AbortController>()
   const saveControllerRef = useRef<AbortController>()
 
   useEffect(() => {
@@ -81,22 +84,29 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
 
   useEffect(() => {
     const controller = new AbortController()
-    setRoleState({ scope, roles: roleState.scope === scope ? roleState.roles : [], loading: true, error: '' })
+    listControllerRef.current = controller
+    setRoleState(current => ({ scope, roles: current.scope === scope ? current.roles : [],
+      loaded: current.scope === scope && current.loaded, loading: true, error: '' }))
     void callArkme<ArkmeSelfRole[]>('self-roles.list', { expectedUserId: userId }, controller.signal)
       .then(roles => {
         if (controller.signal.aborted || scopeRef.current !== scope) return
-        setRoleState({ scope, roles, loading: false, error: '' })
+        setRoleState({ scope, roles, loading: false, loaded: true, error: '' })
+        // Warm the shared cache before the menu mounts its avatar components.
+        for (const ref of new Set(roles.map(role => role.avatarRef?.trim()).filter((ref): ref is string => !!ref))) {
+          void arkmeAvatarImages.load(ref).catch(() => undefined)
+        }
       })
       .catch(caught => {
         if (controller.signal.aborted || scopeRef.current !== scope) return
         setRoleState(current => ({
-          scope, roles: current.scope === scope ? current.roles : [], loading: false,
+          scope, roles: current.scope === scope ? current.roles : [], loaded: current.scope === scope && current.loaded, loading: false,
           error: caught instanceof Error ? caught.message : '角色加载失败，请重试',
         }))
       })
-    return () => { controller.abort() }
-    // Preserve already shown roles while a manual refresh is pending.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      controller.abort()
+      if (listControllerRef.current === controller) listControllerRef.current = undefined
+    }
   }, [scope, userId, refreshRevision])
 
   useEffect(() => {
@@ -127,7 +137,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
   const createRole = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const roleName = name.trim()
-    if (disabled || saveControllerRef.current !== undefined || visibleState.loading || visibleState.error !== ''
+    if (disabled || saveControllerRef.current !== undefined || initialLoading || visibleState.error !== ''
       || (editingRole === undefined && visibleState.roles.length >= MAX_ROLES) || !roleName || Array.from(roleName).length > MAX_NAME_LENGTH) return
     const controller = new AbortController()
     saveControllerRef.current = controller
@@ -142,8 +152,10 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
         expectedUserId: userId, ...(editingRole?.name === roleName ? {} : {name: roleName}), ...(avatarRef === undefined ? {} : { avatarRef }),
       }, controller.signal)
       if (controller.signal.aborted || scopeRef.current !== submittingScope) return
+      // A list started before this mutation must not replace its committed result.
+      listControllerRef.current?.abort()
       setRoleState(current => current.scope === submittingScope
-        ? { ...current, roles: [...current.roles.filter(role => role.roleId !== created.roleId), created] } : current)
+        ? { ...current, loading: false, loaded: true, error: '', roles: [...current.roles.filter(role => role.roleId !== created.roleId), created] } : current)
       setCreateOpen(false)
       setName('')
       setEditingRole(undefined)
@@ -165,7 +177,7 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     aria-expanded={menuOpen} title={`以${activeName}的身份发送`} data-arkme-self-role-trigger="true"
     data-arkme-self-role-id={selectedRole?.roleId ?? 'me'}
     style={styles.trigger} onPointerDown={event => { event.stopPropagation() }} onClick={() => {
-      if (!menuOpen) setRefreshRevision(value => value + 1)
+      if (!menuOpen && !visibleState.loading) setRefreshRevision(value => value + 1)
       setMenuOpen(value => !value)
     }}>
     <ArkmeSelfRoleAvatar role={selectedRole ?? { roleId: 'me', name: '我', ...(selfAvatarRef?.trim() ? { avatarRef: selfAvatarRef } : {}) }} size={20} />
@@ -180,8 +192,9 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
     setMenuOpen(false)
     void callArkme('self-roles.delete', { expectedUserId: userId, roleId: role.roleId }).then(() => {
       if (scopeRef.current !== scope) return
+      listControllerRef.current?.abort()
       setRoleState(current => current.scope === scope
-        ? { ...current, roles: current.roles.filter(item => item.roleId !== role.roleId) } : current)
+        ? { ...current, loading: false, loaded: true, error: '', roles: current.roles.filter(item => item.roleId !== role.roleId) } : current)
       setRefreshRevision(value => value + 1)
     }).catch(error => {
       if (scopeRef.current === scope) setRoleState(current => ({ ...current, error: error instanceof Error ? error.message : '删除失败' }))
@@ -197,13 +210,13 @@ export function ArkmeSelfRolePicker({ accountKey, userId, selectedRole, selfAvat
         { id: 'role-delete', label: '删除', danger: true, onSelect: () => deleteRole(role) },
       ],
     })),
-    ...(visibleState.loading ? [{ type: 'label' as const, id: 'role-loading', text: '正在加载角色…' }] : []),
+    ...(initialLoading ? [{ type: 'label' as const, id: 'role-loading', text: '正在加载角色…' }] : []),
     ...(visibleState.error ? [
       { type: 'label' as const, id: 'role-error', text: `加载失败：${visibleState.error}` },
       { id: 'role-retry', label: '重试', onSelect: () => { setRefreshRevision(value => value + 1) } },
     ] : []),
     { type: 'separator' as const, id: 'role-create-separator' },
-    { id: 'role-create', label: '＋ 创建角色', disabled: visibleState.loading || visibleState.error !== '' || visibleState.roles.length >= MAX_ROLES,
+    { id: 'role-create', label: '＋ 创建角色', disabled: initialLoading || visibleState.error !== '' || visibleState.roles.length >= MAX_ROLES,
       onSelect: () => { setMenuOpen(false); setEditingRole(undefined); setName(''); setAvatarFile(undefined); setFormError(''); setCreateOpen(true) } },
   ]
 

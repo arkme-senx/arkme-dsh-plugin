@@ -9,6 +9,7 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 const productNavigationSource = readUiSource(
   new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url),
@@ -151,7 +152,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>市集<')
     expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('background:#f1f2f6')
+    expect(markup).toContain(`background:${arkmeTheme.active}`)
     expect(markup).not.toContain('outline:0')
     expect(redesignCss).toContain('[data-arkme-selection-marker],')
     expect(markup).not.toContain('data-slot="conversation"')
@@ -195,7 +196,7 @@ describe('Arkme product navigation', () => {
   it('uses a horizontal layout contract for compact surfaces', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)
     expect(markup).toContain('flex-direction:row')
-    expect(markup).toContain('border-bottom:1px solid #e7e7e9')
+    expect(markup).toContain(`border-bottom:1px solid ${arkmeTheme.borderSoft}`)
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
@@ -225,7 +226,7 @@ describe('Arkme product navigation', () => {
     expect(unreadMarkup.match(/data-arkme-unread-indicator/g)).toHaveLength(1)
     expect(unreadMarkup).toContain('data-arkme-unread-count="110"')
     expect(unreadMarkup).toMatch(/data-arkme-unread-count="110"[^>]*>99\+<\/span>/)
-    expect(unreadMarkup).toContain('background:#ff5a52')
+    expect(unreadMarkup).toContain(`background:${arkmeTheme.danger}`)
 
     arkmeChatDirectory.publish([])
     arkmeAttentionSummary.apply({

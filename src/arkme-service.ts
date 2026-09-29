@@ -885,6 +885,7 @@ export class ArkmeService {
         messageReport: true,
         userBanManagement: true,
         selfRoles: true,
+        imageCacheRead: true,
         directMessageAdmission: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
@@ -2283,7 +2284,7 @@ export class ArkmeService {
   /** Resolve and download one Provider-authorized Arkme image without exposing OSS credentials or signed URLs. */
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; cacheOnly?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
     return await this.media.readImage(imageRef, options)
   }
