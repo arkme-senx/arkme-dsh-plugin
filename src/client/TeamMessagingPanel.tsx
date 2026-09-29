@@ -325,10 +325,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         if (code === 'team-reply_conflict') await refresh()
         // A validated pre-admission rejection has no accepted operation.
         // Unknown transport outcomes must retain the original request key.
-        if (['team-invalid_request', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '') && !attempt.message && !draftRef.current.text) {
+        if (['team-invalid_request', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '') && !attempt.message) {
           setOutgoing(undefined)
-          const kept = { text: attempt.content.text_content, assets: draft.assets }
-          try { persistTeamDraft(localStorage, storageKey, kept); setDraft(kept) }
+          const kept = { text: restoreTeamDraftText(attempt.content.text_content ?? '', draftRef.current.text), assets: draft.assets }
+          try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept) }
           catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")); return }
         }
         if (code === 'team-channel_paused' || code === 'team-conversation_blocked') await refresh()
@@ -444,7 +444,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
 
     <div style={{...composerLayout.composer, flexDirection: 'column'}} data-team-composer={editing ? 'reedit' : 'message'}>
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={busy} onClose={() => {setEditing(undefined);setError('')}} />}
-      <div style={{ ...composerLayout.composerInner, ...arkmeConversationComposerBorder(arkmeTheme.border, !!editing, false), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>
+      <div className="arkme-conversation-composer-inner" data-arkme-primary-composer="true" data-arkme-composer-focused={composerFocused ? 'true' : 'false'}
+        style={{ ...composerLayout.composerInner, ...arkmeConversationComposerBorder(arkmeTheme.border, !!editing, false), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>
         {(!current.channel.enabled || current.blocked) && <p>{tr(current.blocked ? '此对话已被屏蔽，双方暂时不能发送或编辑消息' : '团队已暂停接收新消息')}</p>}
         <ArkmeRichComposerInput key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={tr('发送消息…')} value={editing?.text ?? draft.text} mentions={emptyComposerEntities} emojis={emptyComposerEntities} maxLength={20_000}
           disabled={editing ? busy : uploading}

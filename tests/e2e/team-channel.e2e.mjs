@@ -137,8 +137,12 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       const otherReply = await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: head.conversation.latest_team_reply_seq, content: { text_content: concurrentReply, template_kind: 1 } })
       await panel.getByRole('button', { name: '发送', exact: true }).click()
       await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).waitFor()
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe(reply)
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).getAttribute('contenteditable')).toBe('false')
+      // The accepted command is visible as a pending row; the editor belongs to
+      // the next draft, just as it does during an ordinary conversation send.
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('')
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).getAttribute('contenteditable')).toBe('true')
+      await panel.locator('article').getByText(reply, { exact: true }).waitFor()
+      await panel.getByRole('textbox', { name: '团队消息内容' }).fill('并发处理期间的下一条草稿')
       await panel.locator('article').getByText(concurrentReply, { exact: true }).waitFor()
       // A second race during explicit confirmation must refresh again, never loop
       // forever on the stale expected sequence or silently publish.
@@ -146,9 +150,11 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: otherReply.seq, content: { text_content: newerReply, template_kind: 1 } })
       await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
       await panel.locator('article').getByText(newerReply, { exact: true }).waitFor()
-      expect(await panel.locator('article').getByText(reply, { exact: true }).count()).toBe(0)
+      expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.some(item => item.record?.text_content === reply)).toBe(false)
       await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
-      await panel.locator('article').getByText(reply, { exact: true }).waitFor()
+      await expect.poll(async () => (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.some(item => item.record?.text_content === reply)).toBe(true)
+      expect(await panel.locator('article').getByText(reply, { exact: true }).count()).toBe(1)
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('并发处理期间的下一条草稿')
       const published = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.record?.text_content === reply)
       expect(published.sender.nickname).toBe('验收-member')
       expect(published.actor_user_id).toBeUndefined()
@@ -164,7 +170,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect(ownPage.messages.find(item=>item.message_uid===published.message_uid).recipient_read).toBe(false)
       await teamCall(users.visitor, 'conversations/read/advance', {conversation_uid:uid,side:'external',read_seq:published.seq})
       await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
-      await article.getByRole('button',{name:'已读，查看阅读状态',exact:true}).waitFor()
+      await expect.poll(() => article.locator('[data-arkme-read-receipt-indicator]').count()).toBe(0)
 
       // Settle the locator's viewport scroll before opening a point menu, whose
       // shared dismissal contract intentionally closes it on source scrolling.
