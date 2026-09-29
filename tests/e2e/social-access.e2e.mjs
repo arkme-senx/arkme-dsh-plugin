@@ -187,6 +187,12 @@ describe('packed social access on the target Harness', () => {
       for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
       await hint.waitFor({ state: 'hidden' })
       expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
+      // Start a separate account-refresh journey in the active personal session.
+      // Validate a fresh draft in the visible composer and retain its DOM identity.
+      await navigation('对话').click()
+      await input.waitFor({ state: 'visible' })
+      await input.fill('账号设置恢复前的个人草稿')
+      await input.evaluate(node => { window.socialComposerBeforeSettingsRefresh = node })
       // A binding completed on another device is discovered by the account
       // settings' existing fresh read. Navigation must update without a focus
       // event, another click, or remounting the personal composer.
@@ -198,13 +204,13 @@ describe('packed social access on the target Harness', () => {
       bindOnProfileRefresh = true
       await profileMenu.getByRole('button', { name: '去绑定', exact: true }).click()
       await page.locator('[data-arkme-settings-view="account"]').waitFor({ state: 'visible' })
-      // The modal makes its background aria-hidden, so inspect the mounted
-      // navigation before closing, then use accessible roles again afterwards.
-      await page.locator('[data-arkme-home-tour-target="contacts"]').waitFor({ state: 'visible' })
+      // The existing official-settings adapter temporarily unmounts the Arkme
+      // sidebar. Wait for the fresh account value, then close settings to restore it.
+      await page.locator('[data-arkme-settings-view="account"]').getByText('138****0000', { exact: true }).waitFor({ state: 'visible' })
       await page.keyboard.press('Escape')
       for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
-      expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
-      expect(await input.evaluate(node => node === window.socialComposerBeforeRefresh)).toBe(true)
+      expect(await input.innerText()).toBe('账号设置恢复前的个人草稿')
+      expect(await input.evaluate(node => node === window.socialComposerBeforeSettingsRefresh)).toBe(true)
       expect(requests.some(path => path.includes('social-access'))).toBe(false)
       expect(pageErrors).toEqual([])
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
