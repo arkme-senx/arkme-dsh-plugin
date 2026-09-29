@@ -2,8 +2,9 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSelfRole } from '../src/types.js'
 
-const mocks = vi.hoisted(() => ({ call: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), loadAvatar: vi.fn().mockResolvedValue('image') }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('../src/client/avatar-image-runtime.js', () => ({ arkmeAvatarImages: { load: mocks.loadAvatar } }))
 vi.mock('../src/client/ArkmeAvatar.js', () => ({
   ArkmeUserAvatar: ({ avatarRef }: { avatarRef?: string }) => <span data-avatar-ref={avatarRef} />,
 }))
@@ -30,7 +31,7 @@ function action(id: string) {
   return menu().props.actions.flatMap((entry: { managementActions?: unknown[] }) => [entry, ...(entry.managementActions ?? [])]).find((entry: { id: string }) => entry.id === id)
 }
 
-beforeEach(() => { mocks.call.mockReset() })
+beforeEach(() => { mocks.call.mockReset(); mocks.loadAvatar.mockClear() })
 afterEach(async () => {
   await act(async () => { renderer?.unmount() })
   renderer = undefined
@@ -155,4 +156,48 @@ describe('self role picker', () => {
     expect(action('role-create').disabled).toBe(false)
     expect(action('role:r1').label).toBe('理性我')
   })
+})
+
+ it('does not cancel/restart the initial request when the menu is opened', async () => {
+  let finish!: (roles: ArkmeSelfRole[]) => void
+  mocks.call.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await act(async () => { renderer = create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} onSelect={vi.fn()} />) })
+  const signal = mocks.call.mock.calls[0]![2] as AbortSignal
+  await act(async () => { trigger().props.onClick() })
+  expect(mocks.call).toHaveBeenCalledTimes(1)
+  expect(signal.aborted).toBe(false)
+  expect(action('role-loading')).toBeDefined()
+  await act(async () => { finish([role]) })
+  expect(mocks.loadAvatar).toHaveBeenCalledExactlyOnceWith(role.avatarRef)
+  expect(action('role-loading')).toBeUndefined()
+ })
+
+ it('keeps a loaded menu usable while one background read is pending, including an empty list', async () => {
+  for (const roles of [[role], []]) {
+   mocks.call.mockReset().mockResolvedValueOnce(roles).mockImplementation(() => new Promise(() => {}))
+   await act(async () => { renderer = create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} onSelect={vi.fn()} />) })
+   await act(async () => { trigger().props.onClick() })
+   expect(action('role-loading')).toBeUndefined()
+   expect(action('role-create').disabled).toBe(false)
+   await act(async () => { trigger().props.onClick() })
+   await act(async () => { trigger().props.onClick() })
+   expect(mocks.call).toHaveBeenCalledTimes(2)
+   await act(async () => { renderer!.unmount() })
+  }
+ })
+
+it('does not let a background list overwrite a role created while refreshing', async () => {
+  let finish!: (roles: ArkmeSelfRole[]) => void
+  mocks.call.mockResolvedValueOnce([]).mockImplementation((op: string) => op === 'self-roles.list'
+    ? new Promise(resolve => { finish = resolve }) : Promise.resolve(role))
+  await act(async () => { renderer = create(<ArkmeSelfRolePicker accountKey="test:42" userId={42} onSelect={vi.fn()} />) })
+  await act(async () => { trigger().props.onClick() })
+  const backgroundSignal = mocks.call.mock.calls[1]![2] as AbortSignal
+  await act(async () => { action('role-create').onSelect() })
+  await act(async () => { renderer!.root.findByProps({ 'aria-label': '角色名称' }).props.onChange({ currentTarget: { value: '新角色' } }) })
+  await act(async () => { renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+  expect(backgroundSignal.aborted).toBe(true)
+  await act(async () => { finish([]) })
+  expect(action('role:r1')).toBeDefined()
+  expect(action('role-create').disabled).toBe(false)
 })
