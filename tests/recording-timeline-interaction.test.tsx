@@ -172,7 +172,7 @@ describe('recording timeline math', () => {
     expect(markup).toContain('说话人 1，选择该片段')
     expect(markup).not.toContain('播放该片段')
     expect(markup).toContain('24 小时缩略导航')
-    expect(markup).toContain('当前窗口说话人')
+    expect(markup).toContain('全天说话人')
     expect(markup).toMatch(/style="[^"]*min-height:162px[^"]*" aria-label="真实录音时间轴"/)
     expect(markup).toContain('aria-label="录音覆盖图例"')
   })
@@ -194,7 +194,7 @@ describe('recording timeline math', () => {
 
     const overviewIndex = markup.indexOf('aria-label="24 小时概览"')
     const detailIndex = markup.indexOf('aria-label="详细时间轴')
-    const legendIndex = markup.indexOf('aria-label="当前窗口说话人图例"')
+    const legendIndex = markup.indexOf('aria-label="全天说话人图例"')
     expect(overviewIndex).toBeGreaterThan(-1)
     expect(detailIndex).toBeGreaterThan(overviewIndex)
     expect(legendIndex).toBeGreaterThan(detailIndex)
@@ -389,7 +389,7 @@ describe('recording timeline math', () => {
     }
   })
 
-  it('derives the speaker legend from the visible window while keeping owner identities separate', () => {
+  it('derives the speaker legend from the full day while keeping owner identities separate', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const items = [
       { itemId: 'morning', itemRef: 'morning-ref', speakerKey: 'morning-speaker', speakerLabel: '早间说话人', speakerColorIndex: 0, text: '早', startAtMillis: dayStart + 1_000, endAtMillis: dayStart + 2_000, isBackground: false },
@@ -397,10 +397,10 @@ describe('recording timeline math', () => {
     ] as never
     const markup = renderToStaticMarkup(<ArkmeRecordingTimeline items={items} dayStartMillis={dayStart} isPlaying={false} onSelectAtMillis={() => {}} onTogglePlayback={() => {}} />)
     expect(markup).toContain('早间说话人')
-    expect(markup).not.toContain('晚间说话人')
+    expect(markup).toContain('晚间说话人')
   })
 
-  it('shows the desktop voice-presence legend instead of speaker identities at 24-hour zoom', () => {
+  it('keeps the all-day speaker legend available at 24-hour zoom', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = {
       itemId: 'item-1', itemRef: 'ref-1', speakerKey: 'speaker-1', speakerLabel: '说话人 1',
@@ -416,7 +416,7 @@ describe('recording timeline math', () => {
     const serialized = JSON.stringify(renderer.toJSON())
     expect(serialized).toContain('有录音')
     expect(serialized).toContain('已识别人声')
-    expect(serialized).not.toContain('当前窗口说话人图例')
+    expect(serialized).toContain('全天说话人图例')
   })
 
   it('labels dense mixed-speaker aggregates without borrowing the first speaker identity', () => {

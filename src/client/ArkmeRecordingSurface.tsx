@@ -170,14 +170,36 @@ const styles: Record<string, CSSProperties> = {
   markdown: { fontSize: 14, lineHeight: 1.75, wordBreak: 'break-word' },
   markdownHeading: { margin: '18px 0 8px', fontWeight: 700 },
   markdownLine: { margin: '4px 0', whiteSpace: 'pre-wrap' },
-  eventList: { display: 'flex', flexDirection: 'column', gap: 12 },
-  event: { padding: 14, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.layer1 },
-  eventHeader: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 },
+  eventList: { display: 'flex', flexDirection: 'column', gap: 4 },
+  event: { minWidth: 0, borderBottom: `1px solid ${colors.border}` },
+  eventButton: { width: '100%', minWidth: 0, padding: '12px 8px 13px', display: 'block', border: 0, borderRadius: 9, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', textAlign: 'left' },
+  eventButtonHover: { background: colors.hover },
+  eventHeader: { minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 5 },
   eventTime: { flex: 'none', color: colors.accent, fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 650 },
-  eventTitle: { margin: 0, fontSize: 15 },
-  eventText: { margin: '5px 0', whiteSpace: 'pre-wrap', color: colors.text, fontSize: 13, lineHeight: 1.65 },
-  metaRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  eventTitle: { minWidth: 0, flex: 1, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, fontWeight: 600 },
+  eventScene: { flex: 'none', maxWidth: '30%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  eventArrow: { flex: 'none', color: colors.tertiary, fontSize: 14 },
+  eventText: { maxHeight: 42, margin: 0, overflow: 'hidden', whiteSpace: 'pre-wrap', color: colors.secondary, fontSize: 13, lineHeight: '21px' },
+  metaRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 },
   chip: { padding: '2px 7px', borderRadius: 999, background: colors.subtle, color: colors.secondary, fontSize: 11 },
+  eventMore: { color: colors.tertiary, fontSize: 11 },
+  timelineDetailBackdrop: { position: 'fixed', zIndex: 1_110, inset: 0, display: 'grid', placeItems: 'center', padding: 'min(48px,5vh) min(48px,5vw)', boxSizing: 'border-box', background: 'rgba(0,0,0,.28)' },
+  timelineDetailDialog: { width: 720, maxWidth: '100%', maxHeight: '100%', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', borderRadius: 14, background: colors.layer2, boxShadow: '0 16px 48px rgba(0,0,0,.24)' },
+  timelineDetailHeader: { minWidth: 0, padding: '18px 20px 14px', display: 'flex', alignItems: 'flex-start', gap: 12, borderBottom: `1px solid ${colors.border}` },
+  timelineDetailHeading: { minWidth: 0, flex: 1 },
+  timelineDetailTitle: { margin: 0, color: colors.text, fontSize: 18, lineHeight: '25px', fontWeight: 600 },
+  timelineDetailRange: { margin: '4px 0 0', color: colors.accent, fontSize: 12, fontVariantNumeric: 'tabular-nums' },
+  timelineDetailClose: { width: 32, height: 32, flex: 'none', padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
+  timelineDetailBody: { minHeight: 0, padding: '18px 20px 24px', overflowY: 'auto' },
+  timelineDetailSection: { marginBottom: 20 },
+  timelineDetailSectionLast: { marginBottom: 0 },
+  timelineDetailSectionTitle: { margin: '0 0 8px', color: colors.text, fontSize: 14, lineHeight: '20px', fontWeight: 600 },
+  timelineDetailCopy: { margin: 0, color: colors.secondary, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre-wrap' },
+  timelineDetailParticipantRow: { display: 'flex', flexWrap: 'wrap', gap: 7 },
+  timelineDetailParticipant: { padding: '3px 8px', borderRadius: 999, background: colors.subtle, color: colors.secondary, fontSize: 12 },
+  timelineDetailQuote: { margin: '0 0 10px', padding: '9px 11px', borderLeft: `3px solid ${colors.accent}`, background: colors.base, color: colors.secondary, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre-wrap' },
+  timelineDetailInfoRow: { display: 'grid', gridTemplateColumns: '96px minmax(0,1fr)', gap: 10, marginBottom: 9 },
+  timelineDetailInfoLabel: { color: colors.tertiary, fontSize: 12, lineHeight: '20px' },
 }
 
 export function ArkmeRecordingEmptyState({ recorded = false }: { recorded?: boolean }) {
@@ -583,27 +605,86 @@ function RecordingModelDialog({ kind, config, onClose, onConfirm }: {
   return typeof document === 'undefined' || document.body === undefined ? dialog : createPortal(dialog, document.body)
 }
 
-function RecordingTimelineEvents({ events }: { events: ArkmeRecordingTimelineEvent[] }) {
-  return <div style={styles.eventList}>{events.map(event => <article key={event.eventId} style={styles.event}>
-        <header style={styles.eventHeader}><time style={styles.eventTime}>{event.timeRange || '时间未标注'}</time><h3 style={styles.eventTitle}>{event.title}</h3></header>
-        {event.description !== '' && <p style={styles.eventText}>{event.description}</p>}
-        {event.todo !== '' && <p style={styles.eventText}><strong>{tr("待办：")}</strong>{event.todo}</p>}
-        <div style={styles.metaRow}>
-          {event.scene !== '' && <span style={styles.chip}>{tr("场景 ·")} {event.scene}</span>}
-          {event.emotion !== '' && <span style={styles.chip}>{tr("心情 ·")} {event.emotion}</span>}
-          {event.participants.map(person => <span key={`person:${person}`} style={styles.chip}>{person}</span>)}
-          {event.tags.map(tag => <span key={`tag:${tag}`} style={styles.chip}>#{tag}</span>)}
+function RecordingTimelineDetailDialog({ event, onClose }: { event: ArkmeRecordingTimelineEvent; onClose(): void }) {
+  const titleId = `arkme-recording-timeline-detail-${event.eventId}`
+  const participants = [...new Set([
+    ...event.participants,
+    ...(event.dialoguePoints ?? []).map(point => point.speakerName),
+  ].map(value => value.trim()).filter(value => value !== ''))]
+  const summaries = (event.dialoguePoints ?? []).filter(point => point.summary.trim() !== '')
+  const quotes = (event.dialoguePoints ?? []).filter(point => point.quote.trim() !== '')
+  const info = [
+    ...(event.scene === '' ? [] : [{ label: tr("场景类型"), value: event.scene }]),
+    ...(event.emotion === '' ? [] : [{ label: tr("心情"), value: event.emotion }]),
+    ...(event.positionNote === undefined || event.positionNote === '' ? [] : [{ label: tr("场景说明"), value: event.positionNote }]),
+    ...(event.environmentNote === undefined || event.environmentNote === '' ? [] : [{ label: tr("环境说明"), value: event.environmentNote }]),
+    ...(event.praise === undefined || event.praise === '' ? [] : [{ label: tr("评价"), value: event.praise }]),
+    ...(event.praisePoint === undefined ? [] : [{ label: tr("评价分数"), value: String(event.praisePoint) }]),
+    ...(event.tags.length === 0 ? [] : [{ label: tr("事件标签"), value: event.tags.join(' · ') }]),
+    ...(event.otherInfo ?? []),
+  ]
+  return <div style={styles.timelineDetailBackdrop} role="presentation" onKeyDown={eventKey => { if (eventKey.key === 'Escape') onClose() }} onMouseDown={eventMouse => { if (eventMouse.target === eventMouse.currentTarget) onClose() }}>
+    <section role="dialog" aria-modal="true" aria-labelledby={titleId} style={styles.timelineDetailDialog}>
+      <header style={styles.timelineDetailHeader}>
+        <div style={styles.timelineDetailHeading}>
+          <h2 id={titleId} style={styles.timelineDetailTitle}>{event.title || tr("时间轴记录")}</h2>
+          {(event.timeRange !== '' || event.durationText !== undefined) && <p style={styles.timelineDetailRange}>{event.timeRange || tr("时间未标注")}{event.durationText !== undefined && event.durationText !== '' ? ` · ${event.durationText}` : ''}</p>}
         </div>
-      </article>)}</div>
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.timelineDetailClose} onClick={onClose}><X size={18} aria-hidden /></button>
+      </header>
+      <div style={styles.timelineDetailBody}>
+        {event.description !== '' && <section style={styles.timelineDetailSection}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("时段总结")}</h3>
+          <p style={styles.timelineDetailCopy}>{event.description}</p>
+        </section>}
+        {(participants.length > 0 || event.speakerNote !== undefined && event.speakerNote !== '') && <section style={styles.timelineDetailSection}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("参与者")}</h3>
+          {participants.length > 0 && <div style={styles.timelineDetailParticipantRow}>{participants.map(person => <span key={person} style={styles.timelineDetailParticipant}>{person}</span>)}</div>}
+          {event.speakerNote !== undefined && event.speakerNote !== '' && <p style={{ ...styles.timelineDetailCopy, marginTop: participants.length > 0 ? 10 : 0 }}>{event.speakerNote}</p>}
+        </section>}
+        {event.todo !== '' && <section style={styles.timelineDetailSection}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("待办")}</h3>
+          <p style={styles.timelineDetailCopy}>{event.todo}</p>
+        </section>}
+        {quotes.length > 0 && <section style={styles.timelineDetailSection}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("代表性原话")}</h3>
+          {quotes.map((point, index) => <p key={`quote:${index}`} style={styles.timelineDetailQuote}>{point.speakerName !== '' ? `${point.speakerName}：` : ''}{point.quote}</p>)}
+        </section>}
+        {summaries.length > 0 && <section style={styles.timelineDetailSection}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("对话摘要")}</h3>
+          {summaries.map((point, index) => <p key={`summary:${index}`} style={styles.timelineDetailCopy}>{point.speakerName !== '' ? `${point.speakerName}：` : ''}{point.summary}</p>)}
+        </section>}
+        {info.length > 0 && <section style={{ ...styles.timelineDetailSection, ...styles.timelineDetailSectionLast }}>
+          <h3 style={styles.timelineDetailSectionTitle}>{tr("其他信息")}</h3>
+          {info.map((item, index) => <div key={`${item.label}:${index}`} style={styles.timelineDetailInfoRow}><span style={styles.timelineDetailInfoLabel}>{item.label}</span><span style={styles.timelineDetailCopy}>{item.value}</span></div>)}
+        </section>}
+      </div>
+    </section>
+  </div>
+}
+
+function RecordingTimelineEvents({ events, onOpen }: { events: ArkmeRecordingTimelineEvent[]; onOpen(event: ArkmeRecordingTimelineEvent): void }) {
+  return <div style={styles.eventList}>{events.map(event => <article key={event.eventId} style={styles.event}>
+    <button data-arkme-feedback="neutral" type="button" style={styles.eventButton} aria-label={`${event.timeRange || tr("时间未标注")} ${event.title}`} onClick={() => { onOpen(event) }}>
+      <header data-arkme-recording-timeline-event-header style={styles.eventHeader}><time style={styles.eventTime}>{event.timeRange || tr("时间未标注")}</time><h3 style={styles.eventTitle}>{event.title || tr("时间轴记录")}</h3>{event.scene !== '' && <span data-arkme-recording-timeline-scene style={{ ...styles.chip, ...styles.eventScene }}>{event.scene}</span>}<span aria-hidden style={styles.eventArrow}>›</span></header>
+      {event.description !== '' && <p style={styles.eventText}>{event.description}</p>}
+      {event.participants.length > 0 && <div data-arkme-recording-timeline-participants style={styles.metaRow}>
+        {event.participants.slice(0, 3).map(person => <span key={`person:${person}`} style={styles.chip}>{person}</span>)}
+        {event.participants.length > 3 && <span style={styles.eventMore}>+{event.participants.length - 3}</span>}
+      </div>}
+    </button>
+  </article>)}</div>
 }
 
 function RecordingTourSample({ tab, onTab }: { tab: RecordingTab; onTab(tab: RecordingTab): void }) {
+  const [detailEvent, setDetailEvent] = useState<ArkmeRecordingTimelineEvent>()
   return <section data-arkme-recording-tour-sample aria-label={tr("示例体验 · 我的一天")} style={{ ...styles.analysis, gridTemplateRows: 'minmax(40px,auto) 40px minmax(0,1fr)', minHeight: 280, marginTop:'var(--arkme-recording-tour-sample-offset, 0px)' }}>
     <header style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr)', alignItems:'center', gap:6, padding:'0 12px', color:colors.secondary, fontSize:13 }}><span style={{ minWidth:0, overflowWrap:'anywhere', lineHeight:'18px' }}>{tr("示例体验 · 我的一天")}</span></header>
     <nav style={styles.tabs} aria-label={tr("示例录音内容")}><span style={{ ...styles.tabList, width:'100%', minWidth:0 }} data-arkme-recording-tour-target="tabs">{([['transcript','转写'],['summary','总结'],['timeline','时间轴']] as const).map(([id,label]) => <span key={id} style={{ ...styles.tabSlot, width:'auto', flex:1, minWidth:0 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(tab === id ? styles.tabActive : {}) }} aria-current={tab === id ? 'page' : undefined} onClick={() => onTab(id)}><RecordingDesktopIcon name={id} size={14}/>{label}{tab === id && <span style={styles.tabIndicator}/>}</button></span>)}</span></nav>
     <div style={{ ...styles.pane, ...(tab === 'transcript' ? styles.transcriptPane : {}) }}>
-      {tab === 'transcript' ? <ul style={styles.transcriptList}>{recordingTourSample.transcript.items.map(item => <ArkmeRecordingTranscriptRow key={item.itemId} item={item} selected={false} readOnly />)}</ul> : tab === 'summary' ? <SafeMarkdown content={recordingTourSample.summary.items[0]!.content}/> : <RecordingTimelineEvents events={recordingTourSample.timeline.items[0]!.timelineEvents}/>}
+      {tab === 'transcript' ? <ul style={styles.transcriptList}>{recordingTourSample.transcript.items.map(item => <ArkmeRecordingTranscriptRow key={item.itemId} item={item} selected={false} readOnly />)}</ul> : tab === 'summary' ? <SafeMarkdown content={recordingTourSample.summary.items[0]!.content}/> : <RecordingTimelineEvents events={recordingTourSample.timeline.items[0]!.timelineEvents} onOpen={setDetailEvent}/>}
     </div>
+    {detailEvent !== undefined && <RecordingTimelineDetailDialog event={detailEvent} onClose={() => { setDetailEvent(undefined) }} />}
   </section>
 }
 
@@ -647,6 +728,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const modelConfigAbortRef = useRef<AbortController>()
   const [modelConfig, setModelConfig] = useState<RecordingModelConfigState>({ state: 'loading' })
   const [modelDialogKind, setModelDialogKind] = useState<ArkmeRecordingProjectionKind>()
+  const [timelineDetailEvent, setTimelineDetailEvent] = useState<ArkmeRecordingTimelineEvent>()
   const [editingSpeaker, setEditingSpeaker] = useState<{ item: ArkmeRecordingWorkbenchItem; anchor: RecordingSpeakerPopoverAnchor; forceBatchUpdate: boolean }>()
   const [analysisMaximized, setAnalysisMaximized] = useState(false)
   const [exportNotice, setExportNotice] = useState('')
@@ -811,6 +893,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const activeMatchIndex = Math.min(transcriptMatchIndex, Math.max(0, transcriptMatches.length - 1))
   useEffect(() => {
     setTranscriptSearch(''); setTranscriptMatchIndex(0); setComparison(undefined)
+    setTimelineDetailEvent(undefined)
     comparisonRequest.current?.abort(); comparisonRequest.current = undefined; setComparisonLoading(false)
     setForwardOpen(false); setSelectionMode(false); setForwardAttempt(createRecordingForwardAttempt([]))
     return () => { comparisonRequest.current?.abort(); comparisonRequest.current = undefined }
@@ -996,7 +1079,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         onChange={setTimelineVersionId}
         onGenerate={() => { openModelDialog('timeline') }}
       />
-      <RecordingTimelineEvents events={selectedTimeline.timelineEvents} />
+      <RecordingTimelineEvents events={selectedTimeline.timelineEvents} onOpen={setTimelineDetailEvent} />
     </>
   }
 
@@ -1071,6 +1154,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       onUpdated={setDay}
       onClose={() => { setEditingSpeaker(undefined) }}
     />}
+    {workbenchEnabled && timelineDetailEvent !== undefined && <RecordingTimelineDetailDialog event={timelineDetailEvent} onClose={() => { setTimelineDetailEvent(undefined) }} />}
     {modelDialogKind !== undefined && modelConfig.state === 'ready' && <RecordingModelDialog
       key={modelDialogKind}
       kind={modelDialogKind}

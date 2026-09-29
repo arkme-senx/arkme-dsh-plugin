@@ -68,9 +68,9 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'stretch',
     gap: 5,
-    borderRight: '1px solid #e7e7e9',
-    background: '#fff',
-    color: '#3e4149',
+    borderRight: `1px solid ${theme.borderSoft}`,
+    background: theme.sidebar,
+    color: theme.text,
   },
   compactRail: {
     width: '100%',
@@ -80,7 +80,7 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'row',
     alignItems: 'center',
     borderRight: 0,
-    borderBottom: '1px solid #e7e7e9',
+    borderBottom: `1px solid ${theme.borderSoft}`,
   },
   hostedRail: {
     width: '100%', minWidth: 0, padding: '28px 4px 12px', borderRight: 0,
@@ -91,7 +91,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', justifyContent: 'flex-start', gap: 2,
     overflow: 'visible', borderRadius: 10, background: 'transparent',
   },
-  brandVersion: { color: '#a5a8af', fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
+  brandVersion: { color: theme.tertiary, fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
     minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
     // Keep the existing edge marker and focus outline inside the scroll viewport.
@@ -116,7 +116,7 @@ const styles: Record<string, CSSProperties> = {
   },
   compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
   hostedButton: { minHeight: 52, padding: '6px 2px', borderRadius: 13 },
-  activeButton: { background: '#f1f2f6', color: '#151722' },
+  activeButton: { background: theme.active, color: theme.text },
   activeMarker: { left: -8 },
   compactMarker: { left: '50%', top: 'auto', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
   hostedMarker: { left: -4 },
@@ -125,7 +125,7 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', top: -7, right: -10, minWidth: 16, height: 16,
     padding: '0 4px', boxSizing: 'border-box', display: 'inline-flex',
     alignItems: 'center', justifyContent: 'center', borderRadius: 8,
-    background: '#ff5a52', color: '#fff', boxShadow: '0 0 0 2px #fff',
+    background: theme.danger, color: theme.onPrimaryAction, boxShadow: `0 0 0 2px ${theme.sidebar}`,
     fontSize: 10, fontWeight: 600, lineHeight: '16px', fontVariantNumeric: 'tabular-nums',
   },
   label: { fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap' },

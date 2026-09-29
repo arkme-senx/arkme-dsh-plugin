@@ -3102,6 +3102,19 @@ export interface ArkmeRecordingSpeakerMutationResult {
   day: ArkmeRecordingDay
 }
 
+export interface ArkmeRecordingTimelineDialoguePoint {
+  speakerName: string
+  summary: string
+  quote: string
+  roleDescription: string
+  isSelf: boolean
+}
+
+export interface ArkmeRecordingTimelineDetailItem {
+  label: string
+  value: string
+}
+
 export interface ArkmeRecordingTimelineEvent {
   eventId: string
   startAt: string
@@ -3115,6 +3128,16 @@ export interface ArkmeRecordingTimelineEvent {
   tags: string[]
   participants: string[]
   rawText: string
+  periodLabel?: string
+  durationText?: string
+  relatedToMe?: boolean
+  positionNote?: string
+  environmentNote?: string
+  praise?: string
+  praisePoint?: number
+  speakerNote?: string
+  dialoguePoints?: ArkmeRecordingTimelineDialoguePoint[]
+  otherInfo?: ArkmeRecordingTimelineDetailItem[]
 }
 
 export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'

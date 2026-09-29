@@ -16,7 +16,7 @@ const subscribe = (listener: () => void) => { listeners.add(listener); return ()
 export const getArkmeLocale = (): ArkmeLocale => active
 
 /** One language owner: the Harness preference. No second persisted preference,
- * component remount, network translation, or access to user-authored content. */
+ * component remount, network translation, theme mutation, or access to user-authored content. */
 export function connectArkmeLocale(source: LocaleSource): () => void {
   const sync = () => {
     const next = source.getLocale().active === 'en' ? 'en' : 'zh'

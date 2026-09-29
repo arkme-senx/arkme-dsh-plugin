@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import * as navigation from '../src/client/ArkmeVirtualWorkspace.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 describe('recording navigation entry', () => {
   it('exposes one owner-rendered directory row primitive for consumer slots', () => {
@@ -30,7 +31,7 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>世界公开动态<')
-    expect(markup).toContain('background:#f1f2f6')
+    expect(markup).toContain(`background:${arkmeTheme.active}`)
   })
 
   it('renders a fixed all-day recording row with its read-only feature preview', () => {
