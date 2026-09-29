@@ -364,3 +364,32 @@ it('reserves Host-cache read capacity even before this browser has cached the fi
   slow.resolve(imagePayload('profile'))
   await profile
 })
+
+it('probes Host cache outside the two occupied immutable download permits', async () => {
+  let release!: () => void
+  const slow = new Promise<void>(resolve => { release = resolve })
+  const reader = vi.fn(async () => { await slow; return imagePayload('download') })
+  const cachedReader = vi.fn(async (ref: string) => ref.endsWith('cached') ? imagePayload('local') : undefined)
+  const store = new InMemoryArkmeAvatarImageStore({ reader, cachedReader })
+  store.activateScope('prod:4')
+  const cold = [store.load('file_asset://cold-one'),store.load('file_asset://cold-two')]
+  await vi.waitFor(() => expect(reader).toHaveBeenCalledTimes(2))
+  try {
+    await expect(store.load('file_asset://host-cached')).resolves.toBe(imageDataUrl('local'))
+    expect(reader).toHaveBeenCalledTimes(2)
+  } finally { release(); await Promise.all(cold) }
+})
+
+it('does not deliver an old account cache probe after switching accounts', async () => {
+ const disk=deferred<ReturnType<typeof imagePayload>>()
+ const reader=vi.fn()
+ const store=new InMemoryArkmeAvatarImageStore({reader,cachedReader:async()=>await disk.promise})
+ store.activateScope('prod:4')
+ const old=store.load('file_asset://host-cached')
+ await new Promise(resolve=>setTimeout(resolve,0))
+ store.activateScope('prod:5')
+ disk.resolve(imagePayload('old account'))
+ await expect(old).rejects.toThrow('Avatar image scope changed')
+ expect(reader).not.toHaveBeenCalled()
+ expect(store.current('file_asset://host-cached')).toBeUndefined()
+})

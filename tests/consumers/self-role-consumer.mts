@@ -21,3 +21,13 @@ assert(calls.filter(r=>r.operation.startsWith('self-roles.')).every(r=>r.params.
 const old=createArkmeSdk({fetchImpl:async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}),{headers:{'content-type':'application/json'}})})
 await assert.rejects(old.listSelfRoles(7),/不支持跨端角色/)
 console.log('External public SDK role consumer: passed')
+
+const cacheSdk=createArkmeSdk({fetchImpl:async(_url,init)=>{
+ const req=JSON.parse(String(init?.body))
+ if(req.operation==='provider.capabilities')return new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{imageCacheRead:true}}}))
+ assert.equal(req.params.cacheOnly,true)
+ return new Response(JSON.stringify({ok:false,error:{code:'image-cache-miss',message:'miss',retryable:false}}))
+}})
+assert.equal(await cacheSdk.readCachedImage('file_asset://missing-avatar'),undefined)
+await assert.rejects(old.readCachedImage('file_asset://missing-avatar'),/不支持本地头像探测/)
+console.log('External public SDK cache-only consumer: passed')

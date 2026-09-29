@@ -14,11 +14,36 @@ function validPayload(value: unknown): value is ArkmeAvatarImagePayload {
     && !/[^A-Za-z0-9+/]/.test(payload.dataBase64.replace(/={1,2}$/, ''))
 }
 
+/** Validate browser-persisted bytes too: base64 syntax is not image validity. */
+export async function decodableAvatar(payload: ArkmeAvatarImagePayload): Promise<boolean> {
+  try {
+    const bytes = Uint8Array.from(atob(payload.dataBase64), character => character.charCodeAt(0))
+    const blob = new Blob([bytes], { type: payload.mediaType })
+    if (typeof createImageBitmap === 'function') {
+      const bitmap = await createImageBitmap(blob)
+      bitmap.close()
+      return true
+    }
+    if (typeof Image === 'undefined') return false
+    const url = URL.createObjectURL(blob)
+    try {
+      return await new Promise<boolean>(resolve => {
+        const image = new Image()
+        image.onload = () => resolve(image.naturalWidth > 0 && image.naturalHeight > 0)
+        image.onerror = () => resolve(false)
+        image.src = url
+      })
+    } finally { URL.revokeObjectURL(url) }
+  } catch { return false }
+}
+
 /** Browser bytes survive reloads. Host remains the authenticated source on misses.
  * No TTL for immutable refs; quota eviction and clearing site data are cache misses.
  * Synthetic keys are never fetched and include the environment/account scope.
  */
 export class BrowserAvatarPersistentCache implements ArkmeAvatarPersistentCache {
+  constructor(private readonly decode: (payload: ArkmeAvatarImagePayload) => Promise<boolean> = decodableAvatar) {}
+
   private writes: Promise<void> = Promise.resolve()
 
   private key(scope: string, ref: string): string | undefined {
@@ -35,7 +60,7 @@ export class BrowserAvatarPersistentCache implements ArkmeAvatarPersistentCache 
       const response = await cache.match(key)
       if (response === undefined) return undefined
       const payload: unknown = await response.json().catch(() => undefined)
-      if (validPayload(payload)) return payload
+      if (validPayload(payload) && await this.decode(payload)) return payload
       await cache.delete(key)
     } catch { /* Restricted storage falls back to the Host. */ }
     return undefined
@@ -45,6 +70,7 @@ export class BrowserAvatarPersistentCache implements ArkmeAvatarPersistentCache 
     const key = this.key(scope, ref)
     if (key === undefined || !validPayload(payload)) return Promise.resolve()
     const operation = this.writes.then(async () => {
+      if (!await this.decode(payload)) return
       const cache = await caches.open(CACHE_NAME)
       const body = JSON.stringify(payload)
       // Evict before writing so a full cache can still accept a new avatar.

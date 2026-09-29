@@ -1829,3 +1829,12 @@ it('cancels the live membership check when a common-group panel closes', async (
   await expect(dispatchArkmeHostOperation(service as never, 'group.settings', { sourceRef: 'group' },
     undefined, undefined, undefined, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
 })
+
+it('forwards cache-only image probes without changing ordinary reads or trusting a supplied user ID', async () => {
+ const image={mediaType:'image/png',data:Uint8Array.from([1,2,3]),bytes:3}
+ const service={readImage:vi.fn(async()=>image)}
+ await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar',cacheOnly:true,userId:999})
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar',{cacheOnly:true})
+ await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
+})

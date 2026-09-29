@@ -1664,7 +1664,9 @@ export async function dispatchArkmeHostOperation(
     case 'user.arkme-id.check': return await service.checkArkmeIdAvailability(stringParam(params, 'arkmeId'))
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
-      const image = await service.readImage(stringParam(params, 'imageRef'))
+      const image = params.cacheOnly === true
+        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true })
+        : await service.readImage(stringParam(params, 'imageRef'))
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,

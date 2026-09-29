@@ -18,7 +18,7 @@ const config: ArkmeServiceConfig = {
 
 describe('MediaService', () => {
   it.each([true, false])('loads the recorded asset rather than the current avatar (asset available: %s)', async available => {
-    const fetchImpl = vi.fn(async () => new Response(new Uint8Array([137,80,78,71,13,10,26,10]), { headers: { 'Content-Type': 'image/png' } }))
+    const fetchImpl = vi.fn(async () => new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64'), { headers: { 'Content-Type': 'image/png' } }))
     const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
     const profile = new ProfileService(runtime)
     const currentProfile = vi.spyOn(profile, 'publicProfilesByUserIds')
@@ -27,7 +27,7 @@ describe('MediaService', () => {
       file_asset_uid: 'old-avatar', status: 'ready',
       preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
     }] : [] })
-    if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
+    if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 70 })
     else await expect(media.readImage('file_asset://old-avatar')).rejects.toMatchObject({ code: 'image-ref-unavailable' })
     expect(assets).toHaveBeenCalledWith('/api/v1/files/assets/query', { file_asset_uids: ['old-avatar'] }, expect.objectContaining({ userId: 42 }), undefined, { lane: 'interactive-read' })
     expect(currentProfile).not.toHaveBeenCalled()

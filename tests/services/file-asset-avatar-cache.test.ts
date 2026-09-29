@@ -134,3 +134,59 @@ it('does not query later batches after disposal in the first batch', async () =>
   expect(f.query).toHaveBeenCalledTimes(1)
   expect(f.fetch).not.toHaveBeenCalled()
 })
+
+
+it('replaces a truncated PNG even when its signature remains intact', async () => {
+ const f = fixture()
+ const truncated = png.subarray(0, 8)
+ await db.writeAvatarCache(42, 'asset:test:avatar-asset-1', { data: truncated, mediaType: 'image/png', bytes: truncated.length })
+ await expect(f.media.readImage(ref, { cacheOnly: true })).rejects.toMatchObject({code:'image-cache-miss'})
+ expect(f.query).not.toHaveBeenCalled()
+ expect(f.fetch).not.toHaveBeenCalled()
+ expect(Buffer.from((await f.media.readImage(ref)).data)).toEqual(png)
+ expect(f.fetch).toHaveBeenCalledTimes(1)
+})
+
+it('a cache-only read does not join a pending remote read and returns a local hit while downloads wait', async () => {
+ const f = fixture()
+ let release!: () => void
+ let entered!: () => void
+ const gate = new Promise<void>(resolve => { release=resolve })
+ const downloading = new Promise<void>(resolve => { entered=resolve })
+ f.fetch.mockImplementationOnce(async () => { entered(); await gate; return new Response(png) })
+ const remote = f.media.readImage('file_asset://not-local-asset')
+ await downloading
+ try {
+  await expect(f.media.readImage('file_asset://not-local-asset', { cacheOnly:true })).rejects.toMatchObject({code:'image-cache-miss'})
+  await db.writeAvatarCache(42, 'asset:test:avatar-asset-1', { data:png, mediaType:'image/png', bytes:png.length })
+  expect(Buffer.from((await f.media.readImage(ref,{cacheOnly:true})).data)).toEqual(png)
+  expect(f.query).toHaveBeenCalledTimes(1)
+ } finally {release();await remote}
+})
+
+it('does not persist a damaged download and can retry it', async () => {
+ const f=fixture()
+ f.fetch.mockResolvedValueOnce(new Response(png.subarray(0,8)))
+ await expect(f.media.readImage(ref)).rejects.toMatchObject({code:'image-bytes-invalid'})
+ expect(await db.readAvatarCache(42,'asset:test:avatar-asset-1')).toBeUndefined()
+ expect(Buffer.from((await f.media.readImage(ref)).data)).toEqual(png)
+})
+
+it('browser-to-Host local probes bypass two slow file-asset downloads', async () => {
+ const {InMemoryArkmeAvatarImageStore}=await import('../../src/client/avatar-image-store.js')
+ const f=fixture()
+ await db.writeAvatarCache(42,'asset:test:avatar-asset-1',{data:png,mediaType:'image/png',bytes:png.length})
+ let release!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ f.fetch.mockImplementation(async()=>{await gate;return new Response(png)})
+ const payload=(image: {mediaType:string;data:Uint8Array})=>({mediaType:image.mediaType,dataBase64:Buffer.from(image.data).toString('base64')})
+ const store=new InMemoryArkmeAvatarImageStore({
+  reader:async ref=>payload(await f.media.readImage(ref)),
+  cachedReader:async ref=>{try{return payload(await f.media.readImage(ref,{cacheOnly:true}))}catch(error){if((error as {code?:string}).code==='image-cache-miss')return undefined;throw error}},
+ })
+ store.activateScope('test:42')
+ const pending=['file_asset://cold-avatar-one','file_asset://cold-avatar-two'].map(ref=>store.load(ref))
+ await vi.waitFor(()=>expect(f.fetch).toHaveBeenCalledTimes(2))
+ try {await expect(store.load(ref)).resolves.toBe(`data:image/png;base64,${png.toString('base64')}`)}
+ finally {release();await Promise.all(pending)}
+})
