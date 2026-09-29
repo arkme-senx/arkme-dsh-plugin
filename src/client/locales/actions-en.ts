@@ -1,5 +1,14 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '发现未发布的草稿': 'Unpublished draft found',
+  '草稿预览': 'Draft preview',
+  '预览草稿': 'Preview draft',
+  '关闭草稿预览': 'Close draft preview',
+  '关闭草稿恢复弹窗': 'Close draft recovery dialog',
+  '保存时间：': 'Saved at: ',
+  '保存时间未知': 'Save time unavailable',
+  '编辑原文': 'Edit original',
+  '恢复草稿': 'Restore draft',
   '群聊提及': 'Group mention',
   '群内原消息的已读状态暂不可用': 'Read status of the original group message is unavailable',
   '对方已阅读群内原消息': 'They have read the original group message',
@@ -48,6 +57,10 @@ export const actionEnglish: Record<string,string> = {
   '保留这篇长文的修改？': 'Keep changes to this article?',
   '保存草稿后，可以下次继续编辑。': 'Save a draft to continue editing later.',
   '保存并关闭': 'Save and close',
+  '是否暂存草稿': 'Save a draft?',
+  '保存草稿': 'Save draft',
+  '确认修改': 'Confirm changes',
+  '关闭草稿确认弹窗': 'Close draft confirmation',
   '放弃修改': 'Discard changes',
 
   "关闭用量与额度详情": "Close usage and limits details",
