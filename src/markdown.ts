@@ -134,11 +134,11 @@ export function arkmeArticleImageReference(value: string): boolean {
     || /^arkme-local:arkme-file-v1\.[0-9a-f-]{36}$/u.test(value)
 }
 
-export function arkmeLiteralMarkdownNodes(options?: { articleImages?: boolean }) {
+export function arkmeLiteralMarkdownNodes(options?: { articleImages?: boolean; localArticleImages?: boolean }) {
   return (tree: MarkdownNode, file: { value?: unknown }) => {
     const source = String(file.value ?? '')
     const visit = (node: MarkdownNode) => {
-      if (options?.articleImages && node.type === 'image' && /^arkme-asset:[A-Za-z0-9._:-]{1,256}$/u.test(node.url ?? '')) {
+      if (options?.articleImages && node.type === 'image' && (options.localArticleImages ? arkmeArticleImageReference(node.url ?? '') : /^arkme-asset:[A-Za-z0-9._:-]{1,256}$/u.test(node.url ?? ''))) {
         node.data = { hName: 'span', hProperties: { 'data-arkme-image-ref': node.url, 'data-arkme-image-alt': node.alt ?? '' } }
         return
       }

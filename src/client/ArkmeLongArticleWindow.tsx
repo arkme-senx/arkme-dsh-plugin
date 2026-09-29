@@ -32,7 +32,7 @@ export function ArkmeLongArticleWindow() {
     return () => { active = false; stop(); clearInterval(timer) }
   }, [bridge])
   const mode = useMemo(() => ({
-    displayName: target?.displayName ?? '', invalidated, editOnOpen: target?.article?.mode === 'existing',
+    displayName: target?.displayName ?? '', invalidated,
     verifyAccount: async () => {
       if (!bridge || !target || invalidated || !await bridge.active()) throw new Error('账号已切换，请关闭后重新打开长文')
       await arkmeAuthStore.refresh()

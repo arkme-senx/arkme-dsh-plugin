@@ -44,7 +44,7 @@ export const arkmeMarkdownStyles = `
 .arkme-markdown .ProseMirror > :first-child { margin-top:0; }
 `
 
-export function ArkmeMarkdownBody({ text, highlightMentions = true, renderLink, textStyle, onMentionClick, isMentionClickable, renderImage, mentionTargets, readMentionMembers }: {
+export function ArkmeMarkdownBody({ text, highlightMentions = true, renderLink, textStyle, onMentionClick, isMentionClickable, renderImage, localArticleImages = false, mentionTargets, readMentionMembers }: {
   text: string
   highlightMentions?: boolean
   renderLink?: ArkmeLinkRenderer
@@ -52,6 +52,7 @@ export function ArkmeMarkdownBody({ text, highlightMentions = true, renderLink, 
   onMentionClick?: ArkmeMentionClickHandler
   isMentionClickable?: ArkmeMentionClickPredicate
   renderImage?: ((ref: string, alt: string) => ReactNode) | undefined
+  localArticleImages?: boolean
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
   readMentionMembers?: ReadonlySet<string>
 }) {
@@ -68,7 +69,7 @@ export function ArkmeMarkdownBody({ text, highlightMentions = true, renderLink, 
   return <div style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }} data-arkme-text-format="markdown" onCopy={copyArkmeRichText}>
     <style>{arkmeMarkdownStyles}</style>
     <div className="arkme-markdown" style={textStyle}>
-      <Markdown remarkPlugins={[remarkGfm, remarkBreaks, [arkmeMarkdownBusinessNodes, mentionTargets === undefined ? {} : { mentions: mentionTargets }], [arkmeLiteralMarkdownNodes, { articleImages: Boolean(renderImage) }]]} components={{
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks, [arkmeMarkdownBusinessNodes, mentionTargets === undefined ? {} : { mentions: mentionTargets }], [arkmeLiteralMarkdownNodes, { articleImages: Boolean(renderImage), localArticleImages }]]} components={{
         span: ({ children, node }) => {
           const ref = node?.properties['dataArkmeImageRef'] ?? node?.properties['data-arkme-image-ref']
           const alt = String(node?.properties['dataArkmeImageAlt'] ?? node?.properties['data-arkme-image-alt'] ?? '图片')
