@@ -1,20 +1,22 @@
 // @vitest-environment jsdom
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ArkmeSettingsSurface } from '../src/client/ArkmeSettingsSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { socialAccessStore, loadSocialAccess } from '../src/client/social-access-store.js'
 
-const api = vi.hoisted(() => ({ phone: '138****0000' as string | undefined, calls: vi.fn(), pending: undefined as Promise<unknown> | undefined, fail: false, stale: false }))
+const api = vi.hoisted(() => ({ phone: '138****0000' as string | undefined, calls: vi.fn(), pending: undefined as Promise<unknown> | undefined, fail: false, stale: false, bindOnRefresh: false }))
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(),
   callArkme: async (operation: string) => {
     api.calls(operation)
     if (operation.startsWith('user.profile')) {
       if (api.fail) throw new Error('offline')
-      return api.pending ?? { profile: api.stale && operation === 'user.profile' ? null : { userId: 42, displayName: '用户', contact: { phoneMasked: api.phone } }, cachedAtMillis: Date.now() }
+      if (api.bindOnRefresh && operation === 'user.profile.refresh') api.phone = '138****0000'
+      return api.pending ?? { profile: api.stale && operation === 'user.profile' ? null : { userId: 42, displayName: '用户', nickname: '用户', avatarRef: '', arkmeId: 'user42', accountType: 0, createdAt: 0, bindings: { apple: false, wechat: false, google: false }, contact: { phoneMasked: api.phone } }, cachedAtMillis: Date.now() }
     }
-    return {}
+    return { features: { backgroundSound: false } }
   },
 }))
 let renderer: ReactTestRenderer | undefined
@@ -22,7 +24,7 @@ afterEach(() => {
   act(() => renderer?.unmount()); renderer = undefined
   socialAccessStore.activate(undefined)
   localStorage.clear()
-  api.calls.mockClear(); api.pending = undefined; api.fail = false; api.stale = false; api.phone = '138****0000'
+  api.calls.mockClear(); api.pending = undefined; api.fail = false; api.stale = false; api.bindOnRefresh = false; api.phone = '138****0000'
 })
 const labels = () => renderer!.root.findAllByType('button').map(button => button.props['data-arkme-home-tour-target']).filter(Boolean)
 const expectSocial = (visible: boolean) => {
@@ -70,6 +72,18 @@ describe('social UI without service restrictions', () => {
     api.fail = true
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }) })
     expectSocial(true)
+  })
+  it('restores navigation when the existing account settings refresh discovers binding from another device', async () => {
+    api.phone = undefined
+    await mount(); expectSocial(false)
+    const input = renderer!.root.findByType('input')
+    api.bindOnRefresh = true
+    await act(async () => {
+      renderer!.update(<main><ArkmeProductNavigation compact={false} /><input defaultValue="保留草稿" /><ArkmeSettingsSurface view="account" /></main>)
+    })
+    expect(api.calls).toHaveBeenCalledWith('user.profile.refresh')
+    expectSocial(true)
+    expect(renderer!.root.findAllByType('input')[0]).toBe(input)
   })
   it('uses the existing cache and fetches only when no profile exists', async () => {
     await loadSocialAccess(new AbortController().signal)
