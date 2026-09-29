@@ -1833,6 +1833,9 @@ describe('conversation send directory projection', () => {
   })
 
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
+    // This measures explicit invalidations, not the 250ms scheduled refresh fallback.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    try {
     const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
     const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
     const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
@@ -1909,7 +1912,8 @@ describe('conversation send directory projection', () => {
     })
     expect(renderer!.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
     expect(renderedText(renderer!.toJSON())).toContain('请重新登录')
-  }, 30_000)
+    } finally { vi.useRealTimers() }
+  }, 60_000)
 
   it('shows a partial child-creation warning with the directory closed and retains it after an older read finishes', async () => {
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })

@@ -76,6 +76,7 @@ export class DshRemoteCommandLedger {
     this.path = join(directory, 'remote-command-ledger.sqlite3')
     this.database = new DatabaseSync(this.path)
     this.database.exec(`
+      PRAGMA busy_timeout = 1000;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA foreign_keys = ON;
@@ -110,15 +111,15 @@ export class DshRemoteCommandLedger {
   begin(input: DshRemoteLedgerIdentity): { duplicate: boolean; entry: DshRemoteLedgerEntry } {
     this.validateIdentity(input)
     const hash = argumentsHash(input.operation, input.arguments)
-    const existing = this.identity(input)
-    if (existing !== undefined) {
-      if (existing.operation !== input.operation || existing.arguments_hash !== hash || existing.account_id !== input.accountId) {
-        throw new DshRemoteError('SESSION_STATE_CHANGED', '相同 request_ref 携带了不同操作或参数')
+    return this.transaction(() => {
+      const existing = this.identity(input)
+      if (existing !== undefined) {
+        if (existing.operation !== input.operation || existing.arguments_hash !== hash || existing.account_id !== input.accountId) {
+          throw new DshRemoteError('SESSION_STATE_CHANGED', '相同 request_ref 携带了不同操作或参数')
+        }
+        return { duplicate: true, entry: this.entry(existing) }
       }
-      return { duplicate: true, entry: this.entry(existing) }
-    }
-    const now = this.now()
-    this.transaction(() => {
+      const now = this.now()
       const result = this.database.prepare(`
         INSERT INTO remote_command_identity_v2 (
           account_id, runtime_ref, request_ref, operation, arguments_hash,
@@ -129,11 +130,11 @@ export class DshRemoteCommandLedger {
         dshRemoteCommandRpcId(input), input.executeBeforeMillis, now,
       )
       this.appendEvent(Number(result.lastInsertRowid), 'pending', { arguments: input.arguments }, now)
+      this.secureFiles()
+      const row = this.identity(input)
+      if (row === undefined) throw new DshRemoteError('REMOTE_STORAGE_FAILED', '命令账本写入失败')
+      return { duplicate: false, entry: this.entry(row) }
     })
-    this.secureFiles()
-    const row = this.identity(input)
-    if (row === undefined) throw new DshRemoteError('REMOTE_STORAGE_FAILED', '命令账本写入失败')
-    return { duplicate: false, entry: this.entry(row) }
   }
 
   complete(
@@ -316,9 +317,9 @@ export class DshRemoteCommandLedger {
     })
   }
 
-  private transaction(work: () => void): void {
+  private transaction<T>(work: () => T): T {
     this.database.exec('BEGIN IMMEDIATE')
-    try { work(); this.database.exec('COMMIT') }
+    try { const result = work(); this.database.exec('COMMIT'); return result }
     catch (error) { this.database.exec('ROLLBACK'); throw error }
   }
 

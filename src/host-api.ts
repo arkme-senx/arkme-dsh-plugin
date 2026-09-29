@@ -1,5 +1,6 @@
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
+import { DSH_DIRECTORY_DELTA_MAX_BYTES, parseDshDirectoryDelta, type DshDirectoryDelta } from './dsh-remote/account-session-directory.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -942,14 +943,18 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'calendar.day-recap' && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
-      if (request.operation === 'remote.session.observe') {
+      if (request.operation === 'remote.session.observe' || request.operation === 'remote.sessions.observe') {
         const directory = options.accountSessions?.()
         if (!directory) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)
         try {
-          await directory.observe(params, controller.signal, () => {
+          const notify = (delta?: DshDirectoryDelta) => {
             if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
-            if (!res.write('{"changed":true}\n') && res.writableLength > 4096) { controller.abort(); res.destroy() }
-          })
+            const directoryDelta = parseDshDirectoryDelta(delta)
+            const line = JSON.stringify({ changed: true, ...(directoryDelta === undefined ? {} : { directoryDelta }) }) + '\n'
+            if (!res.write(line) && res.writableLength > DSH_DIRECTORY_DELTA_MAX_BYTES + 4096) { controller.abort(); res.destroy() }
+          }
+          if (request.operation === 'remote.sessions.observe') await directory.observeDirectory(controller.signal, notify)
+          else await directory.observe(params, controller.signal, notify)
         } catch (error) {
           if (!res.headersSent) throw error
           if (!res.destroyed) res.write('{"error":"远程连接已断开，请重试"}\n')

@@ -406,7 +406,7 @@ describe('DSH remote Turn OSS outbox', () => {
     await second.drain()
 
     expect(prepare).toHaveBeenCalledOnce()
-    expect(commit).toHaveBeenCalledWith({ upload_id: 'upload-stable', content_sha256: expect.any(String) }, expect.any(AbortSignal))
+    expect(commit).toHaveBeenCalledWith({ session_ref: 'session-01', upload_id: 'upload-stable', content_sha256: expect.any(String) }, expect.any(AbortSignal))
     expect(second.stats().COMMITTED).toBe(1)
     expect(uploads).toHaveLength(1)
     await second.close()
@@ -612,6 +612,100 @@ describe('DSH remote Turn OSS outbox', () => {
     expect(outbox.stats()).toMatchObject({ SEALED: 1, COMMITTED: 1 })
     expect(prepare.mock.calls.map(call => call[0].session_ref)).toEqual(['session-poison', 'session-good'])
     await outbox.close()
+  })
+
+  it('resumes only published NOT_FOUND work with the same immutable request identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-turn-catalog-recovered-'))
+    let recovered = false
+    const prepare = vi.fn(async (value: Record<string, unknown>) => {
+      if (value.session_ref === 'invalid') throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'hash mismatch')
+      if (!recovered) throw new DshRemoteError('REMOTE_NOT_FOUND', 'canonical session unavailable')
+      return { already_committed: true }
+    })
+    const finalized = vi.fn()
+    const outbox = new DshRemoteTurnUploadOutbox({
+      directory, profileRef: 'web', key: Buffer.alloc(32, 7),
+      controlPlane: backend({ prepare }), onFinalized: finalized,
+    })
+    try {
+      await outbox.activate(runtime)
+      for (const id of ['restored', 'unpublished', 'invalid']) {
+        await outbox.capture(id, [entry('turn/start', 1), entry('turn/end', 2)])
+      }
+      outbox.queueHistoryFinalization('restored', 'r1', 2)
+      await outbox.drain()
+      expect(outbox.stats()).toMatchObject({ SEALED: 3, COMMITTED: 0 })
+      recovered = true
+      outbox.resumePublishedSessions(['restored', 'invalid'])
+      await outbox.drain()
+      expect(outbox.stats()).toMatchObject({ SEALED: 2, COMMITTED: 1 })
+      expect(prepare.mock.calls.map(([value]) => value.session_ref)).toEqual(['restored', 'unpublished', 'invalid', 'restored'])
+      expect(prepare.mock.calls[0]![0].idempotency_key).toBe(prepare.mock.calls[3]![0].idempotency_key)
+      outbox.queueHistoryFinalization('restored', 'r1', 2)
+      outbox.resumePublishedSessions(['restored', 'invalid'])
+      await outbox.drain()
+      expect(prepare).toHaveBeenCalledTimes(4)
+    } finally { await outbox.close() }
+  })
+
+  it('resumes NOT_FOUND finalization only for a current published owner', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-finalization-catalog-recovered-'))
+    let recovered = false, owned = true
+    const complete = vi.fn(async () => {
+      if (!recovered) throw new DshRemoteError('REMOTE_NOT_FOUND', 'canonical session unavailable')
+      return {}
+    })
+    const finalized = vi.fn()
+    const outbox = new DshRemoteTurnUploadOutbox({
+      directory, profileRef: 'web', key: Buffer.alloc(32, 7),
+      controlPlane: backend({ prepare: async () => ({ already_committed: true }), complete }),
+      onFinalized: finalized, canUploadSession: () => owned,
+    })
+    try {
+      await outbox.activate(runtime)
+      outbox.queueHistoryFinalization('restored', 'r1', -1)
+      await outbox.drain()
+      expect(complete).toHaveBeenCalledOnce()
+      recovered = true; owned = false
+      outbox.resumePublishedSessions(['restored'])
+      await outbox.drain()
+      expect(complete).toHaveBeenCalledOnce()
+      owned = true
+      outbox.resumePublishedSessions(['restored'])
+      await outbox.drain()
+      expect(complete).toHaveBeenCalledTimes(2)
+      expect(finalized).toHaveBeenCalledWith('restored')
+    } finally { await outbox.close() }
+  })
+
+  it('migrates an old paused outbox through the existing startup retry before classifying recovery', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-turn-old-catalog-failure-'))
+    let recovered = false
+    const prepare = vi.fn(async () => {
+      if (!recovered) throw new DshRemoteError('REMOTE_NOT_FOUND', 'canonical session unavailable')
+      return { already_committed: true }
+    })
+    const options = { directory, profileRef: 'web', key: Buffer.alloc(32, 7), controlPlane: backend({ prepare }) }
+    const first = new DshRemoteTurnUploadOutbox(options)
+    await first.activate(runtime)
+    await first.capture('restored', [entry('turn/start', 1), entry('turn/end', 2)])
+    await first.drain(); await first.close()
+    const db = new DatabaseSync(join(directory, 'turn-upload.sqlite3'))
+    for (const table of ['dsh_turn_upload_v2', 'dsh_history_completion_v2']) db.exec(`ALTER TABLE ${table} DROP COLUMN last_error_code`)
+    expect(db.prepare('SELECT next_attempt_at_millis AS deadline FROM dsh_turn_upload_v2').get()).toMatchObject({ deadline: Number.MAX_SAFE_INTEGER })
+    db.close()
+    const upgraded = new DshRemoteTurnUploadOutbox(options)
+    try {
+      expect(upgraded.resumePublishedSessions(['restored'])).toBe(false)
+      await upgraded.activate(runtime)
+      await upgraded.drain()
+      expect(prepare).toHaveBeenCalledTimes(2)
+      recovered = true
+      expect(upgraded.resumePublishedSessions(['restored'])).toBe(true)
+      await upgraded.drain()
+      expect(prepare).toHaveBeenCalledTimes(3)
+      expect(upgraded.stats()).toMatchObject({ SEALED: 0, COMMITTED: 1 })
+    } finally { await upgraded.close() }
   })
 
   it('retries a paused SEALED Turn once after restart', async () => {
@@ -832,4 +926,31 @@ describe('DSH remote Turn OSS outbox', () => {
     yieldSpy.mockRestore()
     await outbox.close()
   }, 30_000)
+})
+
+it('defers transferred sessions without starving another upload and resumes retained payloads on return', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-owner-outbox-'))
+  let now = 1_000, owned = true
+  const prepare = vi.fn(async () => ({ already_committed: true }))
+  const onError = vi.fn(), complete = vi.fn(async () => ({}))
+  const outbox = new DshRemoteTurnUploadOutbox({ directory, profileRef: 'web', key: Buffer.alloc(32, 1),
+    now: () => now, controlPlane: backend({ prepare, complete }), onError,
+    canUploadSession: id => id !== 'transferred' || owned,
+  })
+  try {
+    await outbox.capture('transferred', [entry('turn/start', 1), entry('turn/end', 2)])
+    outbox.queueHistoryFinalization('transferred', 'revision', 2)
+    owned = false
+    await outbox.activate(runtime)
+    await outbox.capture('active', [entry('turn/start', 1), entry('turn/end', 2)])
+    await outbox.drain()
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ session_ref: 'active' }), expect.any(AbortSignal))
+    expect(onError).not.toHaveBeenCalled()
+    expect(outbox.stats()).toMatchObject({ SEALED: 1, COMMITTED: 1 })
+    owned = true; now += 30_001
+    await outbox.drain()
+    expect(outbox.stats()).toMatchObject({ SEALED: 0, COMMITTED: 2 })
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ session_ref: 'transferred' }), expect.any(AbortSignal))
+  } finally { await outbox.close() }
 })

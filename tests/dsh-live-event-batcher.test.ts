@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshLiveEventBatcher, LIVE_BATCH_BYTES, LIVE_BATCH_ITEMS, type LiveEventBatch } from '../src/dsh-remote/live-event-batcher.js'
 import type { DshRemoteHistoryEntry } from '../src/dsh-remote/dsh-event-contract.js'
@@ -141,4 +142,42 @@ it('rejects admission beyond 256 pending sessions without allocating another que
   expect(() => queue.enqueue('overflow', entry(0), 1)).toThrow('pending-session limit')
   expect(queue.stats().pendingSessions).toBe(256)
   queue.close(); expect(vi.getTimerCount()).toBe(0)
+})
+
+it('a slow session ACK does not delay another session or reorder its own events', async () => {
+  vi.useFakeTimers()
+  const gate = Promise.withResolvers<void>()
+  const sent: LiveEventBatch[] = []
+  const queue = new DshLiveEventBatcher({ now: Date.now, replay, onError: vi.fn(),
+    publish: async batch => { sent.push(batch); if (batch.sessionRef === 'slow' && sent.length === 1) await gate.promise } })
+  queue.enqueue('slow', entry(0, 'turn/start'), 1)
+  await vi.advanceTimersByTimeAsync(0)
+  queue.enqueue('slow', entry(1, 'turn/end'), 2)
+  queue.enqueue('fast', entry(0, 'turn/start'), 1)
+  await vi.advanceTimersByTimeAsync(500)
+  gate.resolve()
+  await queue.flush()
+  const fastWaitMs = sent.find(batch => batch.sessionRef === 'fast')!.queueWaitMs
+  if (process.env.DSH_WORKLOAD_REPORT) appendFileSync(process.env.DSH_WORKLOAD_REPORT,
+    JSON.stringify({ workload: 'cross-session-slow-ack', slowAckMs: 500, fastWaitMs }) + '\n')
+  expect(sent.filter(batch => batch.sessionRef === 'slow').flatMap(batch => batch.entries.map(e => e.event.seq))).toEqual([0, 1])
+  expect(fastWaitMs).toBeLessThan(40)
+  queue.close()
+})
+
+it('bounds cross-session concurrency and close fences queued sessions', async () => {
+  vi.useFakeTimers()
+  const gate = Promise.withResolvers<void>()
+  const sent: string[] = []
+  const queue = new DshLiveEventBatcher({ now: Date.now, replay, onError: vi.fn(),
+    publish: async batch => { sent.push(batch.sessionRef); await gate.promise } })
+  for (let i = 0; i < 8; i++) queue.enqueue(`session-${i}`, entry(0, 'turn/start'), 1)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(sent).toHaveLength(2)
+  queue.close()
+  gate.resolve()
+  await vi.advanceTimersByTimeAsync(100)
+  expect(sent).toHaveLength(2)
+  expect(queue.stats()).toEqual({ bufferedBytes: 0, bufferedEntries: 0, pendingSessions: 0 })
+  expect(vi.getTimerCount()).toBe(0)
 })

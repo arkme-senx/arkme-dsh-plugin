@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { readCloudTurnHistory } from '../src/dsh-remote/cloud-turn-history.js'
 import { DshCloudNativeTransport } from '../src/dsh-remote/cloud-native-transport.js'
 import { DshNativeHistoryCache } from '../src/dsh-remote/native-history-cache.js'
+import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import type { NativeHistoryRecord } from '../src/dsh-remote/native-history.js'
 
 // The plugin's development peer is older than the native desktop runtime.
@@ -178,7 +179,11 @@ it('aborts downloads when the consumer leaves and never writes a partial snapsho
 
 it('fails closed on missing ownership, incomplete journals and repeated index cursors', async () => {
   const foreign = fixture(), original = foreign.post.getMockImplementation()!
-  foreign.post.mockImplementation(async (path, body) => path.endsWith('/sessions/list') ? { items: [] } : original(path, body))
+  foreign.post.mockImplementation(async (path, body) => {
+    if (path.endsWith('/sessions/list')) return { items: [] }
+    if (path.endsWith('/sessions/execution')) throw new DshRemoteError('REMOTE_NOT_FOUND', 'not owned')
+    return original(path, body)
+  })
   await expect(foreign.cloud.call('runtime', foreign.body, 'foreign', new AbortController().signal)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
   expect(foreign.fetcher).not.toHaveBeenCalled()
   const gap = fixture([0, 5])

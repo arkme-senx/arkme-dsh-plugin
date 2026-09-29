@@ -34,12 +34,16 @@ describe('DSH compatibility contract', () => {
     expect(manifest.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-client-runtime')
   })
 
-  it('declares every supported prerelease family for each DSH peer', () => {
+  it('keeps required peers compatible and gates the optional takeover gateway to its supported release', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       peerDependencies: Record<string, string>
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     const peers = Object.entries(manifest.peerDependencies)
-      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-') && name !== '@deepseek-ai/dsh-api-gateway')
+
+    expect(manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-api-gateway']?.optional).toBe(true)
+    expect(satisfies('0.1.5-rc.2', manifest.peerDependencies['@deepseek-ai/dsh-api-gateway']!)).toBe(true)
 
     expect(peers.length).toBeGreaterThan(0)
     for (const [name, range] of peers) {

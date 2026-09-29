@@ -567,17 +567,31 @@ export function apply(ctx: Context, config: Config): void {
     const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
       `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
     ))
+    const localSessions = apiCtx.get('arkmeLocalSessions')
     const controlPlane = new DshRemoteHttpControlPlane({
-      post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
+      post: async (path, body, signal) => localSessions
+        ? await localSessions.cloud.post(path, body, signal)
+        : await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
     })
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      sessionOwnership: localSessions ? {
+        claimUnownedAndListOwned: input => localSessions.cloud.claimUnownedAndListOwned(input),
+        listOwned: (account, ids) => localSessions.cloud.listOwned(account, ids),
+        ownerAccountId: id => localSessions.cloud.ownerAccountId(id),
+      } : new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
+      ...(localSessions ? { sessionChannel: {
+        recover: (runtime: string, session: string, body: Record<string, unknown>, signal: AbortSignal) => localSessions.recoverChannel(runtime, session, body, signal),
+        canonicalRuntime: (session: string) => localSessions.canonicalRuntime(session),
+        ledgerForAccount: (_account: string, key: Buffer) => new DshRemoteCommandLedger(localSessions.commandLedgerDirectory, key),
+        epoch: (runtime: string, session: string) => localSessions.channelEpoch(runtime, session),
+        native: (runtime: string, session: string, body: Record<string, unknown>, signal: AbortSignal) => localSessions.channelRequest(runtime, session, body, signal),
+      } } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
@@ -609,12 +623,14 @@ export function apply(ctx: Context, config: Config): void {
           ctx.logger.warn('dsh-arkme: Turn OSS upload deferred: %s', error instanceof Error ? error.message : String(error))
         },
         onFinalized: callbacks.onFinalized,
+        ...(localSessions ? { canUploadSession: (sessionRef: string) => localSessions.cloud.ownsSession(sessionRef) } : {}),
       }),
     })
     let historyCache: DshNativeHistoryCache | undefined
     try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
     catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
     const directory = new DshAccountSessions({
+      ...(localSessions ? { localNative: (params: Record<string, unknown>, signal: AbortSignal) => localSessions.carrier(params, signal), localSession: (runtime: string, session: string) => localSessions.hasSession(runtime, session) } : {}),
       ...(historyCache ? { historyCache } : {}),
       onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
       request: { post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal) },
@@ -624,12 +640,8 @@ export function apply(ctx: Context, config: Config): void {
         return String(session.userId)
       },
       localStatus: () => host.getStatus(),
-      createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
-        const session = await service.accountScope.scopedSession()
-        if (!session) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
-        return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
-      }),
-      profileRef: `controller_${profileRef}`, clientRef: 'arkme_directory',
+      transport: realtime,
+      connected: signal => realtime.whenConnected(AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
     })
     accountSessions = directory
     remoteHost = host
@@ -642,8 +654,8 @@ export function apply(ctx: Context, config: Config): void {
       const reconcile = () => {
         directory.close()
         lifecycleTail = lifecycleTail.then(
-          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
-          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
+          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await host.start() } else await host.suspend() },
+          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await host.start() } else await host.suspend() },
         )
       }
       const unsubscribe = service.accountScope.subscribe(reconcile)
@@ -664,7 +676,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.inject(['apiProxy'], apiCtx => {
     attachRemoteApi(apiCtx, apiCtx.apiProxy)
   })
-  ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'connection'], apiCtx => {
+  ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'sessions', 'connection', ...(process.env.ARKME_LOCAL_SESSION_ROOT ? ['arkmeLocalSessions'] : [])], apiCtx => {
     if (apiCtx.get('apiProxy') !== undefined) return
     const lifetime = new AbortController()
     apiCtx.effect(() => () => { lifetime.abort() }, 'arkme: DSH Gateway API lifetime')

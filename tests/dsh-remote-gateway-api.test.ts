@@ -1,4 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { Session } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
 import { createDshGatewayApi, type DshGatewayLike } from '../src/dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter } from '../src/dsh-remote/api-proxy-adapter.js'
@@ -20,10 +23,19 @@ function feed(signal: AbortSignal) {
     },
   }
 }
-function fixture() {
+function fixture(context?: Context, factory = createDshGatewayApi) {
   let listener: ((session: { id: string }, event: unknown) => void) | undefined
   const off = vi.fn(() => { listener = undefined })
-  const ctx = { on: vi.fn((_name, callback) => { listener = callback; return off }) } as unknown as Context
+  let created: ((id: string) => void) | undefined
+  const offCreated = vi.fn(() => { created = undefined })
+  let restored: ((session: Session) => void) | undefined
+  const offRestored = vi.fn(() => { restored = undefined })
+  const liveSessions: Session[] = []
+  const ctx = { sessions: { list: () => liveSessions }, on: vi.fn((name, callback) => {
+    if (name === 'arkme/session-created') { created = callback; return offCreated }
+    if (name === 'session/created') { restored = callback; return offRestored }
+    listener = callback; return off
+  }) } as unknown as Context
   const stopped = vi.fn()
   let controls: ReturnType<typeof feed>
   let interactions: ReturnType<typeof feed>
@@ -47,14 +59,123 @@ function fixture() {
   }
   const fetch = vi.fn(async (_request: Request) => Response.json({ result: { ok: true } }))
   const controller = new AbortController()
-  const api = createDshGatewayApi(ctx, gateway, { createSharedFetchHandler: () => ({ fetch }) }, controller.signal)
-  return { api, gateway, controller, stopped, off, fetch,
+  const api = factory(context ?? ctx, gateway, { createSharedFetchHandler: () => ({ fetch }) }, controller.signal)
+  return { api, gateway, controller, stopped, off, offCreated, offRestored, fetch, created: (id: string) => created?.(id),
+    liveSessions, restored: (session: Session) => restored?.(session),
+    appendSession: (session: Session, event: unknown) => listener?.(session, event),
     controls: () => controls, interactions: () => interactions,
     append: (event: unknown) => listener?.({ id: 'session-1' }, event),
   }
 }
 
 describe('current DSH public Gateway compatibility', () => {
+  it.each([false, true])('keeps restore and live events in the actual Cordis/SessionStore (already restored: %s)', async alreadyRestored => {
+    // The compatibility gate can load the exact installed runtime, not the dev peer.
+    const require = createRequire(process.env.ARKME_DSH_TEST_RUNTIME_PACKAGE ?? import.meta.url)
+    const { Context: RuntimeContext } = require('@deepseek-ai/cordis') as typeof import('@deepseek-ai/cordis')
+    const { SessionStore } = require('@deepseek-ai/dsh-session') as typeof import('@deepseek-ai/dsh-session')
+    const factory = process.env.ARKME_DSH_TEST_GATEWAY_MODULE
+      ? (await import(process.env.ARKME_DSH_TEST_GATEWAY_MODULE)).createDshGatewayApi as typeof createDshGatewayApi
+      : createDshGatewayApi
+    // Read the real assembly declaration; root.provide would bypass inject checks.
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+    const declaration = source.match(/ctx\.inject\(\[('typertGateway'[\s\S]*?)\], apiCtx/)
+    expect(declaration).not.toBeNull()
+    const dependencies = [...declaration![1]!.matchAll(/'([^']+)'/g)].map(match => match[1]!)
+    const root = new RuntimeContext()
+    const store = await root.plugin(SessionStore)
+    const provider = await root.plugin(ctx => {
+      for (const dependency of dependencies) if (dependency !== 'sessions') ctx.provide(dependency, {})
+    })
+    let restored!: Session
+    let owner: Awaited<ReturnType<Context['inject']>> | undefined
+    const restore = async () => {
+      owner = await root.inject(['sessions'], ctx => {
+        restored = ctx.sessions.create('restored', { seed: [
+          { seq: 0, time: 1, type: 'turn/start', data: { turn: 1 } },
+          { seq: 1, time: 2, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+        ] })
+      })
+    }
+    if (alreadyRestored) await restore()
+    let f!: ReturnType<typeof fixture>
+    const scope = await root.inject(dependencies, ctx => { f = fixture(ctx, factory) })
+    const iterator = f.api.events!.mux!({ rpcId: 'real-inject', payload: {} }, f.controller.signal)[Symbol.asyncIterator]()
+    try {
+      const opening = iterator.next()
+      if (!alreadyRestored) await restore()
+      expect(await opening).toMatchObject({ done: false, value: { payload: {
+        type: 'session/event', sessionId: restored.id, event: { type: 'session/end-seed', seq: restored.firstLiveSeq },
+      } } })
+      const event = restored.append('turn/start', { turn: 2 })
+      expect(await iterator.next()).toMatchObject({ done: false, value: { payload: {
+        type: 'session/event', sessionId: restored.id, event: { type: 'turn/start', seq: event.seq },
+      } } })
+    } finally {
+      f.controller.abort()
+      await iterator.return?.()
+      await scope.dispose()
+      await owner?.dispose()
+      await provider.dispose()
+      await store.dispose()
+    }
+  })
+  it.each([false, true])('publishes only the new restore marker before live events (already restored: %s)', async alreadyRestored => {
+    const f = fixture()
+    const seed = Session.create('session-1')
+    seed.append('session/end-seed', {})
+    seed.append('turn/start', { turn: 1 })
+    seed.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const restored = Session.create('session-1', seed.events)
+    // rc.2 constructor appends seq3 before store attachment, without session/event.
+    expect(restored.events[restored.firstLiveSeq]?.type).toBe('session/end-seed')
+    if (alreadyRestored) f.liveSessions.push(restored)
+    const adapter = new DshApiProxyAdapter(f.api)
+    const events: number[] = []
+    adapter.subscribeProjectionEvents(event => { if (event.kind === 'session-event') events.push(event.entry.event.seq) })
+    const stop = adapter.startEvents()
+    await vi.waitFor(() => expect(f.interactions()).toBeDefined())
+    // A prior session/created listener may append before this mux's created callback.
+    const live = restored.append('turn/start', { turn: 2 })
+    f.appendSession(restored, live)
+    f.restored(restored)
+    f.restored(restored)
+    await vi.waitFor(() => expect(events).toEqual([3, 4]))
+    stop()
+    await vi.waitFor(() => expect(f.offRestored).toHaveBeenCalledOnce())
+    f.controller.abort()
+  })
+
+  it('does not republish an inherited marker or a new empty session as restore history', async () => {
+    const f = fixture()
+    const seed = Session.create('seed')
+    seed.append('session/end-seed', {})
+    f.liveSessions.push(Session.create('untouched', seed.events), Session.create('empty'))
+    const adapter = new DshApiProxyAdapter(f.api)
+    const projected = vi.fn()
+    adapter.subscribeProjectionEvents(projected)
+    const stop = adapter.startEvents()
+    await vi.waitFor(() => expect(f.interactions()).toBeDefined())
+    for (const session of f.liveSessions) f.restored(session)
+    f.created('metadata')
+    await vi.waitFor(() => expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'metadata' }))
+    expect(projected.mock.calls.some(([event]) => event.kind === 'session-event')).toBe(false)
+    stop(); f.controller.abort()
+  })
+
+  it('does not duplicate a marker that arrives through the live event hook', async () => {
+    const f = fixture()
+    const adapter = new DshApiProxyAdapter(f.api)
+    const events: number[] = []
+    adapter.subscribeProjectionEvents(event => { if (event.kind === 'session-event') events.push(event.entry.event.seq) })
+    const stop = adapter.startEvents()
+    await vi.waitFor(() => expect(f.interactions()).toBeDefined())
+    const session = Session.create('session-1')
+    f.appendSession(session, session.append('session/end-seed', {}))
+    f.restored(session)
+    await vi.waitFor(() => expect(events).toEqual([0]))
+    stop(); f.controller.abort()
+  })
   it('keeps prompt correlation, maps namespaced errors and closes snapshot readers', async () => {
     const f = fixture()
     const prompt = { sessionId: 'session-1', mode: 'queue' as const, content: [{ type: 'text' as const, text: 'hello' }] }
@@ -80,9 +201,11 @@ describe('current DSH public Gateway compatibility', () => {
     const stop = adapter.startEvents()
     await vi.waitFor(() => expect(f.interactions()).toBeDefined())
     f.interactions().push({ type: 'emit', event: 'api-session/added', args: [{ sessionId: 'new-session' }] })
+    f.created('attached-session')
     f.controls().push({ type: 'projection', sessionId: 'renamed-session', key: 'title', value: 'new title', seq: 2 })
     await vi.waitFor(() => {
       expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'new-session' })
+      expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'attached-session' })
       expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'renamed-session' })
     })
     const event = { type: 'turn/start', seq: 8, time: 123, data: {} }
@@ -106,6 +229,7 @@ describe('current DSH public Gateway compatibility', () => {
     await vi.waitFor(() => expect(adapter.pending()).toHaveLength(0))
     stop()
     await vi.waitFor(() => expect(f.off).toHaveBeenCalledTimes(1))
+    expect(f.offCreated).toHaveBeenCalledOnce()
     f.controller.abort()
   })
 

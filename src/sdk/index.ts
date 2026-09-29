@@ -5,6 +5,8 @@ export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, Arkme
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
 import type { ArkmeCommonGroupPage } from '../common-groups.js'
 export type { ArkmeCommonGroupPage } from '../common-groups.js'
+import type { DshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
+export type { DshDirectoryDelta, DshDirectorySession } from '../dsh-remote/account-session-directory.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
@@ -2259,7 +2261,7 @@ export class ArkmeSdk {
     }
   }
 
-  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
+  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number; includeDeleted?: boolean } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
     const result = await this.call<DshAccountSessionPage>('remote.sessions.list', options, signal)
     if (result.contractVersion !== 1) throw new Error('账号会话协议版本不受支持')
     return result
@@ -2273,7 +2275,11 @@ export class ArkmeSdk {
     return await this.call('remote.session.command', options, signal)
   }
 
-  /** Event-driven invalidation only. Abort or dispose closes the Host subscription. */
+  /** A committed delta when available; otherwise refresh the authoritative directory. */
+  observeDshAccountSessions(changed: (delta?: DshDirectoryDelta) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    return observeDshAccountSession(this.route, this.fetchImpl, undefined, changed, options)
+  }
+
   observeDshAccountSession(target: { runtimeRef: string; sessionRef: string }, changed: () => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
     return observeDshAccountSession(this.route, this.fetchImpl, target, changed, options)
   }

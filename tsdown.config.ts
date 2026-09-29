@@ -15,6 +15,11 @@ export default defineConfig([
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
+      'local-session/index': 'src/local-session-profile.ts',
+      'local-session-registry': 'src/local-session-registry.ts',
+      'local-session-gateway': 'src/local-session-gateway.ts',
+      'local-session-runtime': 'src/local-session-runtime.ts',
+      'local-session-store': 'src/local-session-store.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',

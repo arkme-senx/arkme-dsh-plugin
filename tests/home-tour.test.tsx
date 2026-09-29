@@ -28,7 +28,7 @@ let storage: Map<string, string>
 let props: ArkmeHomeTourProps
 
 async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(200) })
 }
 async function render(changes: Partial<ArkmeHomeTourProps> = {}) {
   props = { ...props, ...changes }
@@ -53,6 +53,7 @@ function setDirectoryReady(ready: boolean, account = 'prod:1') {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const computedStyle = window.getComputedStyle.bind(window)
   vi.spyOn(window, 'getComputedStyle').mockImplementation(element => computedStyle(element))
@@ -113,6 +114,7 @@ afterEach(async () => {
   document.body.replaceChildren()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('home tour browser behavior', () => {
