@@ -80,7 +80,7 @@ describe('normal timeline related quick note drawer', () => {
     { sourceKind: 'topic' as const, path: '产品 / 设计', expected: '产品 / 设计', childTopic: true },
   ])('shows the topic and dated replies in $sourceKind details', async ({ sourceKind, path, expected, childTopic }) => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 1,
         extensions: [{ recordUid: 'reply-1', parentRecordUid: 'record-source', level: 2,
@@ -138,7 +138,7 @@ describe('normal timeline related quick note drawer', () => {
   it('keeps the owning topic in full detail even when the timeline hides its redundant badge', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
-      : { total: 0, items: [] })
+      : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer
       item={timelineItem} sourceRef="current-topic" sourceKind="topic" selfTopicPath="产品"
@@ -151,7 +151,7 @@ describe('normal timeline related quick note drawer', () => {
   it.each(['send_to_self', 'topic'] as const)('does not reserve an empty reply section for $sourceKind', async sourceKind => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
-      : { total: 0, items: [] })
+      : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem}
       sourceRef="source-a" sourceKind={sourceKind} showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
@@ -164,7 +164,7 @@ describe('normal timeline related quick note drawer', () => {
   it.each(['send_to_self', 'default_category', 'topic'] as const)('uses the current account avatar in %s while retaining the recorded nickname', async sourceKind => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
-      : { total: 0, items: [] })
+      : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     const currentSelfProfile = {
       userId: 42, displayName: '现在的昵称', nickname: '现在的昵称', avatarRef: 'current-avatar-ref',
       arkmeId: 'sample', accountType: 1, createdAt: 1,
@@ -192,7 +192,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('updates a self detail without snapshot flags when the current profile arrives', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
-      ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] } : { total: 0, items: [] })
+      ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] } : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     const props = { item: { ...timelineItem, isMe: true, avatarRef: 'other-device-avatar' },
       sourceRef: 'source-a', sourceKind: 'send_to_self' as const, showOriginal: false, onClose: () => {}, onToggleOriginal: () => {} }
     let view!: ReactTestRenderer
@@ -235,7 +235,7 @@ describe('normal timeline related quick note drawer', () => {
           recordUid: 'other-reply', recordOwnerUserId: 99, parentRecordUid: 'record-source', level: 2, sourceKind: 'record_extension',
           senderDisplayName: '另一位作者', senderAvatarUrl: 'other-author-avatar', title: '', textContent: '补充内容', sendAtMillis: 1_710_000_060_000,
           templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
-        }] } : { total: 0, items: [] })
+        }] } : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     const currentSelfProfile = { userId: 42, displayName: '当前账号', nickname: '当前账号', avatarRef: 'current-account-avatar',
       arkmeId: 'sample', accountType: 1, createdAt: 1, bindings: { apple: false, wechat: false, google: false }, contact: {} }
     let view!: ReactTestRenderer
@@ -263,7 +263,7 @@ describe('normal timeline related quick note drawer', () => {
             title: '', textContent: '补充结论', sendAtMillis: 1_710_000_060_000,
             templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
           }] }
-        : { total: 0, items: [] })
+        : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
       let view!: ReactTestRenderer
       await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, avatarSnapshot: true, senderNameSnapshot: true, avatarRef: 'main-old-ref' }}
         sourceRef="source-a" sourceKind="send_to_self" currentSelfProfile={currentSelfProfile}
@@ -286,7 +286,7 @@ describe('normal timeline related quick note drawer', () => {
           }, title: '', textContent: '角色的延展', sendAtMillis: 1_710_000_060_000,
           templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
         }] }
-      : { total: 0, items: [] })
+      : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer
       item={{ ...timelineItem, isMe: true, selfRole: { roleId: 'parent', name: '父消息角色' } }}
@@ -302,7 +302,7 @@ describe('normal timeline related quick note drawer', () => {
   it('renders the topic as the shared source badge and opens it when available', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
       ? { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
-      : { total: 0, items: [] })
+      : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
     const topic = { sourceRef: 'topic-a', kind: 'topic', displayName: '产品主题' } as never
     const onOpenSelfTopic = vi.fn()
     let view!: ReactTestRenderer
@@ -455,7 +455,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('refusal disables detail extension text, attachments and send without losing the draft', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       return { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
     })
     let renderer!: ReactTestRenderer
@@ -538,12 +538,12 @@ describe('normal timeline related quick note drawer', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation !== 'provider.capabilities')).toHaveLength(3)
   })
 
-  it('rechecks one transiently empty related-note response before hiding the card', async () => {
+  it('does not requery a successful empty recall', async () => {
     let relatedCalls = 0
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') {
         relatedCalls += 1
-        return relatedCalls === 1 ? { total: 0, items: [] } : relatedList
+        return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
@@ -554,8 +554,8 @@ describe('normal timeline related quick note drawer', () => {
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer
       item={timelineItem} sourceRef="opaque-source" sourceKind="private_chat"
       showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
-    expect(relatedCalls).toBe(2)
-    expect(view.root.findAllByProps({ 'aria-label': '查看 2 条相关快记' })).toHaveLength(1)
+    expect(relatedCalls).toBe(1)
+    expect(view.root.findAllByProps({ 'aria-label': '查看 2 条相关快记' })).toHaveLength(0)
     act(() => view.unmount())
   })
 
@@ -686,7 +686,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('shows the current quick note extension count and desktop-style extension rows', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source',
         extensionCount: 2,
@@ -831,7 +831,7 @@ describe('normal timeline related quick note drawer', () => {
       for (const task of pending.filter(task => task.action === 'current')) task.resolve(
         task.operation === 'source.message-extension.context'
           ? { parentRecordUid: 'current', extensions: [], extensionCount: 0 }
-          : { total: 0, items: [] })
+          : { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 })
       for (const task of pending.filter(task => task.action === 'old')) task.resolve(
         task.operation === 'source.message-extension.context'
           ? { parentRecordUid: 'old', extensions: [], extensionCount: 0,
@@ -852,7 +852,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('shows a clickable extension source above the current quick note content', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -905,7 +905,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 1, extensions: [{
           recordUid: 'extension-level-two', parentRecordUid: 'record-source', level: 2,
@@ -964,7 +964,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1014,7 +1014,7 @@ describe('normal timeline related quick note drawer', () => {
       if (operation === 'self-roles.bind') return { roleId: role.roleId, name: role.name, avatarRef: role.avatarRef }
       if (operation === 'source.message-extension.extend') return sent
       if (operation === 'source.message-extension.context') return { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       throw new Error(`unexpected operation: ${operation}`)
     })
     vi.stubGlobal('crypto', { randomUUID: vi.fn()
@@ -1045,7 +1045,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('keeps the quick-note detail silent while extension context is loading', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return await new Promise(() => {})
       throw new Error(`unexpected operation: ${operation}`)
     })
@@ -1065,7 +1065,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('reports detail extension failures through toast without rendering an inline error row', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1099,7 +1099,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('uses the desktop detail footer divider and the shared chat send control', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       throw new Error(`unexpected operation: ${operation}`)
     })
     let renderer!: ReactTestRenderer
@@ -1220,7 +1220,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1305,7 +1305,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1372,7 +1372,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1437,7 +1437,7 @@ describe('normal timeline related quick note drawer', () => {
       },
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
         parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
       }
@@ -1491,7 +1491,7 @@ describe('normal timeline related quick note drawer', () => {
   it('reuses the same detail extension record uid after a failed send', async () => {
     let attempts = 0
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.extend') {
         attempts += 1
         if (attempts === 1) throw new Error('网络中断')
@@ -1532,7 +1532,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('removes staged detail attachments when the drawer is discarded', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       throw new Error(`unexpected operation: ${operation}`)
     })
     let renderer!: ReactTestRenderer
@@ -1555,7 +1555,7 @@ describe('normal timeline related quick note drawer', () => {
   it('aborts an in-flight detail extension before cleaning its staged attachment on close', async () => {
     let requestSignal: AbortSignal | undefined
     mocks.callArkme.mockImplementation(async (operation: string, _params?: Record<string, unknown>, signal?: AbortSignal) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.extend') {
         requestSignal = signal
         return await new Promise((_resolve, reject) => {
@@ -1590,7 +1590,7 @@ describe('normal timeline related quick note drawer', () => {
   it('does not let an old detail send clear the next target draft', async () => {
     let resolveOldSend!: (value: unknown) => void
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.extend') return await new Promise(resolve => { resolveOldSend = resolve })
       throw new Error(`unexpected operation: ${operation}`)
     })
@@ -1622,7 +1622,7 @@ describe('normal timeline related quick note drawer', () => {
 
   it('keeps an independent detail-drawer extension draft and sends an attachment-only extension', async () => {
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.extend') return {
         recordUid: params?.recordUid, parentRecordUid: 'record-source', status: 1, localState: 'synced',
         extension: { recordUid: params?.recordUid, level: 2, sourceKind: 'record_extension', senderDisplayName: '我', title: '', textContent: '', sendAtMillis: 1, templateKind: 2, displayKind: 0, officialMark: 0, mediaItems: [] },
