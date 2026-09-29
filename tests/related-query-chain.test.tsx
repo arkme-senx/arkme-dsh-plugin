@@ -7,7 +7,7 @@ import { ServiceRuntime, ArkmePluginError, type ArkmeServiceConfig, type StateSt
 const api = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', async () => ({ callArkme: api, ArkmeClientError: (await import('../src/sdk/index.js')).ArkmeClientError }))
 import { ArkmeClientError } from '../src/sdk/index.js'
-import { loadRelatedQuickNotes, relatedQuickNotesState } from '../src/client/related-quick-notes-query.js'
+import { loadRelatedQuickNotes } from '../src/client/related-quick-notes-query.js'
 import { ArkmeRelatedQuickNotesCard, type ArkmeRelatedQuickNotesLoadState } from '../src/client/ArkmeRelatedQuickNotes.js'
 
 const endpoint = process.env.RELATED_CHAIN_RECORD_URL
@@ -30,42 +30,45 @@ it.skipIf(!endpoint)('walks UI, Host owner, record HTTP, recall and embedding HT
       throw error
     }
   })
+  let completed = ''
   function View({uid}:{uid:string}) {
     const [state,setState]=useState<ArkmeRelatedQuickNotesLoadState>({kind:'loading'})
     const [revision,retry]=useState(0)
     useEffect(()=>{
       const c=new AbortController();setState({kind:'loading'})
       void loadRelatedQuickNotes('source.related-quick-notes.from-message',{uid},c.signal)
-        .then(list=>{if(!c.signal.aborted)setState(relatedQuickNotesState(list))})
-        .catch(()=>{if(!c.signal.aborted)setState({kind:'error',message:'相关快记暂时不可用'})})
+        .then(list=>{if(!c.signal.aborted)setState(list.items.length ? {kind:'success',list} : {kind:'empty'})})
+        .catch(()=>{if(!c.signal.aborted)setState({kind:'error',message:'相关快记加载失败'})})
+        .finally(()=>{if(!c.signal.aborted)completed=uid})
       return ()=>c.abort()
     },[uid,revision])
     return <><p>可阅读的详情正文</p><ArkmeRelatedQuickNotesCard state={state} onOpen={()=>{}} onRetry={()=>retry(value=>value+1)}/></>
   }
   const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
   const show=async(uid:string,text:string)=>{
-    await act(async()=>root.render(<View uid={uid}/>))
+    completed=''
+    await act(async()=>root.render(<View key={uid} uid={uid}/>))
     expect(host.textContent).toContain('可阅读的详情正文')
-    await vi.waitFor(async()=>{await act(async()=>{await new Promise(r=>setTimeout(r,20))});expect(host.textContent).toContain(text)}, {timeout:8000})
+    await vi.waitFor(async()=>{await act(async()=>{await new Promise(r=>setTimeout(r,20))});expect(completed).toBe(uid);expect(host.textContent).toContain(text)}, {timeout:8000})
+    for (const notice of ['暂未找到相关快记','相关快记暂时不可用','相关结果可能不完整']) expect(host.textContent).not.toContain(notice)
+    expect(host.querySelector('[role=alert], [role=alertdialog]')).toBeNull()
   }
   try {
     await show('chain-normal','共 20 条')
-    await show('chain-busy','相关快记暂时不可用')
-    expect(host.textContent).not.toContain('暂未找到相关快记')
-    await act(async()=>host.querySelector<HTMLButtonElement>('button')!.click())
-    await vi.waitFor(async()=>{await act(async()=>{await new Promise(r=>setTimeout(r,20))});expect(host.textContent).toContain('相关快记暂时不可用')},{timeout:8000})
+    await show('chain-busy','可阅读的详情正文')
+    expect(host.querySelector('button')).toBeNull()
     await show('chain-normal','共 20 条')
-    await show('chain-empty','暂未找到相关快记')
+    await show('chain-empty','可阅读的详情正文')
     expect(host.querySelector('[data-arkme-related-quick-notes-card]')).toBeNull()
     await show('chain-recover-plugin','共 20 条')
     await show('chain-serverbusy-plugin','共 20 条')
     slowProfiles = true
     await show('chain-profiles-plugin','共 20 条')
     slowProfiles = false
-    await show('chain-locked','相关快记暂时不可用')
+    await show('chain-locked','可阅读的详情正文')
     expect(host.querySelector('button')).toBeNull()
-    await show('chain-missing','相关快记暂时不可用')
-    await show('chain-timeout','相关快记暂时不可用')
+    await show('chain-missing','可阅读的详情正文')
+    await show('chain-timeout','可阅读的详情正文')
   } finally {
     await act(async()=>root.unmount());host.remove();owner.dispose();runtime.dispose();vi.unstubAllGlobals()
   }

@@ -1,4 +1,4 @@
-import { loadRelatedQuickNotes, relatedQuickNotesState } from './related-quick-notes-query.js'
+import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
@@ -971,7 +971,7 @@ export function ArkmeTimelineDetailDrawer({
       messageActionRef,
     }, controller.signal).then(list => {
       if (controller.signal.aborted || listAbortRef.current !== controller) return
-      setRelatedState(relatedQuickNotesState(list))
+      setRelatedState(list.items.length === 0 ? { kind: 'empty' } : { kind: 'success', list })
     }).catch(error => {
       if (controller.signal.aborted || listAbortRef.current !== controller) return
       setRelatedState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '相关快记加载失败') })

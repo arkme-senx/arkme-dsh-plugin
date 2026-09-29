@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ read: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.read, ArkmeClientError: class extends Error {} }))
-import { loadRelatedQuickNotes, relatedQuickNotesState } from '../src/client/related-quick-notes-query.js'
+import { loadRelatedQuickNotes } from '../src/client/related-quick-notes-query.js'
 import type { ArkmeRelatedQuickNoteList } from '../src/types.js'
 const empty: ArkmeRelatedQuickNoteList = { items: [], total: 0, recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
 const degraded: ArkmeRelatedQuickNoteList = { ...empty, recallMode: 'search_fallback', retryable: true }
@@ -9,10 +9,6 @@ const degraded: ArkmeRelatedQuickNoteList = { ...empty, recallMode: 'search_fall
 describe('related query recovery', () => {
   beforeEach(() => { vi.useFakeTimers(); mocks.read.mockReset() })
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
-  it('distinguishes definitive empty from degraded empty', () => {
-    expect(relatedQuickNotesState(empty).kind).toBe('empty')
-    expect(relatedQuickNotesState(degraded)).toMatchObject({ kind: 'error', retryable: true })
-  })
   it('recovers once and then stops', async () => {
     mocks.read.mockResolvedValue(degraded)
     const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
@@ -21,6 +17,45 @@ describe('related query recovery', () => {
     expect(mocks.read).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(30000)
     expect(mocks.read).toHaveBeenCalledTimes(2)
+  })
+  it('keeps the completed fallback response when optional recovery has a network failure', async () => {
+    mocks.read.mockResolvedValueOnce(degraded).mockRejectedValueOnce(new TypeError('network unavailable'))
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).resolves.toBe(degraded)
+    await vi.advanceTimersByTimeAsync(2000)
+    await checked
+    expect(mocks.read).toHaveBeenCalledTimes(2)
+  })
+  it('does not mask a permanent error from optional recovery', async () => {
+    const error = new Error('permission denied')
+    mocks.read.mockResolvedValueOnce(degraded).mockRejectedValueOnce(error)
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(2000)
+    await checked
+  })
+  it('keeps the completed fallback response when optional recovery reaches the deadline', async () => {
+    mocks.read.mockResolvedValueOnce(degraded).mockImplementationOnce((_operation, _params, signal: AbortSignal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).resolves.toBe(degraded)
+    await vi.advanceTimersByTimeAsync(5000)
+    await checked
+    expect(mocks.read).toHaveBeenCalledTimes(2)
+  })
+  it('stops recovery when the page hides after a transport failure', async () => {
+    const page = { visibilityState: 'visible' }
+    vi.stubGlobal('document', page)
+    const error = new TypeError('network unavailable')
+    mocks.read.mockRejectedValue(error)
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
+    const checked = expect(pending).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(1)
+    page.visibilityState = 'hidden'
+    await vi.advanceTimersByTimeAsync(2000)
+    await checked
+    expect(mocks.read).toHaveBeenCalledTimes(1)
   })
   it('never retries a successful empty result', async () => {
     mocks.read.mockResolvedValue(empty)
@@ -41,7 +76,7 @@ describe('related query recovery', () => {
   it('keeps useful fallback results without an automatic extra query', async () => {
     const list = { ...degraded, items: [{ relatedRef: 'safe', senderName: 'me', sendAtMillis: 1, title: '', textPreview: 'related' }], total: 1 }
     mocks.read.mockResolvedValue(list)
-    expect(relatedQuickNotesState(await loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)).kind).toBe('success')
+    expect(await loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)).toBe(list)
     expect(mocks.read).toHaveBeenCalledTimes(1)
   })
   it('does not recover if the page becomes hidden during the delay', async () => {
@@ -49,7 +84,7 @@ describe('related query recovery', () => {
     vi.stubGlobal('document', page)
     mocks.read.mockResolvedValue(degraded)
     const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
-    const checked = expect(pending).rejects.toThrow('相关快记暂时不可用')
+    const checked = expect(pending).resolves.toBe(degraded)
     await vi.advanceTimersByTimeAsync(1)
     page.visibilityState = 'hidden'
     await vi.advanceTimersByTimeAsync(2000)
