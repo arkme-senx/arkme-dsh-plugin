@@ -97,16 +97,29 @@ describe('related query recovery', () => {
     expect(await loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)).toEqual(response)
     expect(mocks.read).toHaveBeenCalledTimes(1)
   })
-  it('cancels a slow transport at the total deadline without starting another query', async () => {
+  it.each(['source.related-quick-notes.from-message', 'source.related-quick-notes.from-moment'] as const)('preserves a healthy six-second initial read: %s', async operation => {
+    const list = { ...empty, items: [{ relatedRef: 'safe', senderName: 'me', sendAtMillis: 1, title: '', textPreview: 'related' }], total: 1 }
+    mocks.read.mockImplementation((_operation, _params, signal: AbortSignal) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve(list), 6000)
+      signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+    }))
+    const pending = loadRelatedQuickNotes(operation, {}, new AbortController().signal)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.read.mock.calls[0][2].aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await pending).toEqual(list)
+    expect(mocks.read).toHaveBeenCalledTimes(1)
+  })
+  it('still cancels a slow initial read when leaving the view', async () => {
     mocks.read.mockImplementation((_operation, _params, signal: AbortSignal) => new Promise((_resolve, reject) => {
       signal.addEventListener('abort', () => reject(signal.reason), { once: true })
     }))
-    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, new AbortController().signal)
-    const checked = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
-    await vi.advanceTimersByTimeAsync(5_000)
+    const controller = new AbortController()
+    const pending = loadRelatedQuickNotes('source.related-quick-notes.from-message', {}, controller.signal)
+    const checked = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(6000)
+    controller.abort()
     await checked
     expect(mocks.read).toHaveBeenCalledTimes(1)
-    expect(mocks.read.mock.calls[0][2].aborted).toBe(true)
   })
-
 })

@@ -20,7 +20,7 @@ it.skipIf(!endpoint)('walks UI, Host owner, record HTTP, recall and embedding HT
   const runtime = new ServiceRuntime(config, {async read(){return session},async write(){},async delete(){}}, {async uniqueCode(){return 'local-chain-secret'}} as StateStore)
   let slowProfiles = false
   const owner = new RelatedQuickNoteService(runtime, {} as never, {} as never,
-    {async publicProfileSummariesByUserIds(){return slowProfiles ? new Promise(() => {}) : new Map()}} as never,
+    {async publicProfileSummariesByUserIds(){if (slowProfiles) await new Promise(resolve => setTimeout(resolve, 800)); return new Map()}} as never,
     {async lockedRecordUids(){return new Set<string>()}} as never)
   api.mockImplementation(async (_operation, params, signal) => {
     try {

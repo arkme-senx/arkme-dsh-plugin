@@ -12,7 +12,7 @@ function delay(millis: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-/** One recovery owner: at most two reads within one five-second lifetime. */
+/** Preserve the initial service timeout; optional recovery shares a five-second window. */
 export async function loadRelatedQuickNotes(operation: Operation, params: Record<string, unknown>, signal: AbortSignal): Promise<ArkmeRelatedQuickNoteList> {
   const deadline = performance.now() + 5_000
   let lastResult: ArkmeRelatedQuickNoteList | undefined
@@ -27,12 +27,15 @@ export async function loadRelatedQuickNotes(operation: Operation, params: Record
     const abort = () => { controller.abort(signal.reason) }
     signal.addEventListener('abort', abort, { once: true })
     const remaining = deadline - performance.now()
-    if (remaining <= 0) {
+    if (attempt > 0 && remaining <= 0) {
       signal.removeEventListener('abort', abort)
       if (lastResult !== undefined) return lastResult
       throw new DOMException('相关快记加载超时', 'TimeoutError')
     }
-    const timeout = setTimeout(() => controller.abort(new DOMException('相关快记加载超时', 'TimeoutError')), remaining)
+    // The first read keeps the Host service timeout. Only optional recovery
+    // may be cut short by this client budget.
+    const timeout = attempt === 0 ? undefined
+      : setTimeout(() => controller.abort(new DOMException('相关快记加载超时', 'TimeoutError')), remaining)
     let retryDelay = 1_500
     try {
       const list = await callArkme<ArkmeRelatedQuickNoteList>(operation, params, controller.signal)
