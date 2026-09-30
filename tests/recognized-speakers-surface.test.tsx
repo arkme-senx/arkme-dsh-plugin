@@ -4,6 +4,7 @@ import { ArkmeRecognizedSpeakersSurface } from '../src/client/ArkmeRecognizedSpe
 import { RecognizedSpeakerDirectory } from '../src/client/recognized-speaker-directory.js'
 import { loaders, summary, page, person, deferred } from './helpers/speaker-directory.js'
 vi.mock('../src/client/recordings/SpeakerSelfGuide.js', () => ({ SpeakerSelfGuide: () => <aside>识别我的声音</aside> }))
+vi.mock('../src/client/ArkmeAvatar.js', () => ({ ArkmeUserAvatar: ({ avatarRef, label }: { avatarRef?: string; label: string }) => <span data-avatar-label={label} data-avatar-ref={avatarRef ?? ''} /> }))
 const flush = async () => { for (let i = 0; i < 35; i++) await Promise.resolve() }
 const text = (node: ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : text(child)).join('')
 const rows = (view: ReactTestRenderer) => view.root.findAllByProps({ className: 'arkme-recognized-speakers-row' })
@@ -18,6 +19,50 @@ async function render(api = loaders(), extra = {}) {
 const click = (view: ReactTestRenderer, label: string) => view.root.findAllByType('button').find(button => text(button) === label)!.props.onClick()
 
 describe('server-backed recognized speaker surface', () => {
+  it('renders the directory before avatars arrive and preserves default/number avatars', async () => {
+    const pending = deferred<Array<{ detailRef: string; avatarRef?: string }>>()
+    const api = loaders({ list: vi.fn(async () => page({ items: [person('me', { type: 'marked', isSelf: true }), person('manual', { type: 'marked' }), person('12')] })), avatars: vi.fn(async () => pending.promise) })
+    const { view } = await render(api)
+    expect(rows(view)).toHaveLength(3)
+    expect(api.avatars).toHaveBeenCalledWith(['detail-me', 'detail-manual'], expect.any(AbortSignal))
+    expect(view.root.findByProps({ 'data-avatar-label': '说话人 me' }).props['data-avatar-ref']).toBe('')
+    await act(async () => { pending.resolve([{ detailRef: 'detail-me', avatarRef: 'profile-me' }, { detailRef: 'detail-manual' }]); await flush() })
+    expect(view.root.findByProps({ 'data-avatar-label': '说话人 me' }).props['data-avatar-ref']).toBe('profile-me')
+    expect(view.root.findByProps({ 'data-avatar-label': '说话人 manual' }).props['data-avatar-ref']).toBe('')
+    expect(rows(view).map(text)[2]).toContain('12')
+    expect(api.avatars).toHaveBeenCalledTimes(1)
+    expect(api.open).not.toHaveBeenCalled()
+  })
+  it('loads only the new page avatars after pagination', async () => {
+    const api = loaders({ list: vi.fn().mockResolvedValueOnce(page({ items: [person('1', { type: 'marked' })], hasMore: true, nextCursor: 'next' }))
+      .mockResolvedValueOnce(page({ items: [person('2', { type: 'marked' })] })) })
+    const { view } = await render(api)
+    await act(async () => { await click(view, '加载更多说话人'); await flush() })
+    expect(api.avatars).toHaveBeenNthCalledWith(1, ['detail-1'], expect.any(AbortSignal))
+    expect(api.avatars).toHaveBeenNthCalledWith(2, ['detail-2'], expect.any(AbortSignal))
+    expect(rows(view)).toHaveLength(2)
+  })
+  it('retries avatar failures without hiding rows or refetching the directory', async () => {
+    vi.useFakeTimers()
+    const api = loaders({ list: vi.fn(async () => page({ items: [person('me', { type: 'marked' })] })),
+      avatars: vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue([{ detailRef: 'detail-me', avatarRef: 'recovered' }]) })
+    const { view } = await render(api)
+    expect(rows(view)).toHaveLength(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); await flush() })
+    expect(view.root.findByProps({ 'data-avatar-label': '说话人 me' }).props['data-avatar-ref']).toBe('recovered')
+    expect(api.list).toHaveBeenCalledTimes(1)
+  })
+  it('cannot apply an old account avatar after switching accounts', async () => {
+    const pending = deferred<Array<{ detailRef: string; avatarRef: string }>>()
+    const api = loaders({ list: vi.fn().mockResolvedValueOnce(page({ items: [person('old', { type: 'marked' })] }))
+      .mockResolvedValue(page({ items: [person('new', { type: 'marked' })] })),
+      avatars: vi.fn().mockImplementationOnce(() => pending.promise).mockResolvedValue([{ detailRef: 'detail-new', avatarRef: 'new-avatar' }]) })
+    const { view, directory } = await render(api)
+    await act(async () => { view.update(<ArkmeRecognizedSpeakersSurface accountKey="b" onBack={() => {}} directory={directory} />); await flush() })
+    await act(async () => { pending.resolve([{ detailRef: 'detail-old', avatarRef: 'wrong-avatar' }]); await flush() })
+    expect(view.root.findByProps({ 'data-avatar-label': '说话人 new' }).props['data-avatar-ref']).toBe('new-avatar')
+    expect(JSON.stringify(view.toJSON())).not.toContain('wrong-avatar')
+  })
   it('preserves server order and acknowledges only after the main first page is rendered', async () => {
     const api = loaders({ list: vi.fn(async () => page({ items: [person('9', { isSelf: true }), person('1')], hasMore: true, nextCursor: 'next' })) })
     const { view } = await render(api)

@@ -1,4 +1,4 @@
-import type { SpeakerDirectoryDetail, SpeakerDirectoryListInput, SpeakerDirectoryPage, SpeakerDirectoryQuery, SpeakerDirectorySeen, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
+import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryListInput, SpeakerDirectoryPage, SpeakerDirectoryQuery, SpeakerDirectorySeen, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 
@@ -7,12 +7,14 @@ export interface DirectoryLoaders {
   list(input: SpeakerDirectoryListInput, signal: AbortSignal): Promise<SpeakerDirectoryPage>
   seen(throughCursor: string, signal: AbortSignal): Promise<SpeakerDirectorySeen>
   open(detailRef: string, signal: AbortSignal): Promise<SpeakerDirectoryDetail>
+  avatars(detailRefs: string[], signal: AbortSignal): Promise<SpeakerDirectoryAvatar[]>
 }
 const loaders: DirectoryLoaders = {
   summary: (input, signal) => callArkme('speaker-directory.summary', input, signal),
   list: (input, signal) => callArkme('speaker-directory.list', { ...input }, signal),
   seen: (throughCursor, signal) => callArkme('speaker-directory.seen', { throughCursor }, signal),
   open: (detailRef, signal) => callArkme('speaker-directory.open', { detailRef }, signal),
+  avatars: (detailRefs, signal) => callArkme('speaker-directory.avatars', { detailRefs }, signal),
 }
 export class SpeakerReadDeferred extends Error {
   constructor(readonly retryAt: number, cause: unknown) { super(cause instanceof Error ? cause.message : '说话人目录暂不可用', { cause }) }
@@ -205,6 +207,12 @@ export class RecognizedSpeakerDirectory {
   open(account: string, ref: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return this.request(account, `open:${ref}`, inner => this.api.open(ref, inner)).then(value => { signal.throwIfAborted(); return value })
+  }
+  async avatars(account: string, detailRefs: string[], signal: AbortSignal) {
+    const state = this.account(account)
+    const result = await this.api.avatars(detailRefs, AbortSignal.any([state.controller.signal, signal]))
+    signal.throwIfAborted(); this.current(account, state)
+    return result
   }
   /** Visible consumers share one lightweight summary request, including online/focus recovery. */
   watch(account: string, changed: () => void = () => {}): () => void {

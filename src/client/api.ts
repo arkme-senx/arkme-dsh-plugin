@@ -155,6 +155,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'speaker-directory.list'
   | 'speaker-directory.seen'
   | 'speaker-directory.open'
+  | 'speaker-directory.avatars'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'

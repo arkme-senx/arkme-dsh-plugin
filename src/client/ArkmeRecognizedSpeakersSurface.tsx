@@ -119,6 +119,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
   const [loading, setLoading] = useState(true), [moreLoading, setMoreLoading] = useState(false)
   const [error, setError] = useState(''), [seenError, setSeenError] = useState('')
   const [selected, setSelected] = useState<SpeakerDirectoryPerson>()
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({})
   const rootRef = useRef<HTMLDivElement>(null), listScroll = useRef(0), hadSelection = useRef(false)
   useLayoutEffect(() => {
     const root = rootRef.current
@@ -198,6 +199,34 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
   }
   const disabled = summary?.state === 'disabled' || list?.state === 'disabled'
   const rows = disabled || queryPending || !listMatches ? [] : list?.items ?? []
+  const avatarBatch = JSON.stringify(rows.filter(row => row.type === 'marked' && avatars[row.detailRef] === undefined).slice(0, 50).map(row => row.detailRef))
+  useEffect(() => {
+    const refs = JSON.parse(avatarBatch) as string[]
+    if (refs.length === 0) return
+    const controller = new AbortController()
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let busy = false, retryAt = 0
+    const load = async () => {
+      if (!directoryVisible() || controller.signal.aborted || busy) return
+      if (retryAt > Date.now()) { clearTimeout(retry); retry = setTimeout(() => { void load() }, retryAt - Date.now()); return }
+      busy = true
+      try {
+        const result = await directory.avatars(accountKey, refs, controller.signal)
+        if (controller.signal.aborted) return
+        const resolved = new Map(result.map(item => [item.detailRef, item.avatarRef]))
+        setAvatars(previous => ({ ...previous, ...Object.fromEntries(refs.map(ref => [ref, resolved.get(ref) || null])) }))
+      } catch (error) {
+        if (controller.signal.aborted) return
+        const delay = speakerRetryDelay(error)
+        if (delay !== undefined) { retryAt = Date.now() + Math.max(15_000, delay); retry = setTimeout(() => { void load() }, retryAt - Date.now()) }
+      } finally { busy = false }
+    }
+    const wake = () => { clearTimeout(retry); void load() }
+    void load()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
+    if (typeof window !== 'undefined') window.addEventListener('online', wake)
+    return () => { controller.abort(); clearTimeout(retry); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake); if (typeof window !== 'undefined') window.removeEventListener('online', wake) }
+  }, [accountKey, directory, avatarBatch])
   const state = disabled ? tr('说话人目录暂不可用，请稍后再试。') : statusText(summary?.snapshotVersion === list?.snapshotVersion ? summary : list?.coverage === 'complete' ? list : summary)
   const hasNewVersion = list?.coverage === 'complete' && summary?.snapshotVersion && summary.snapshotVersion !== list.snapshotVersion
   const mainFirst = listMatches && filter === 'all' && queryText === '' && !queryPending && list?.coverage === 'complete' && list.state === 'fresh'
@@ -238,7 +267,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
           {!disabled && (loading || queryPending) && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
             : !disabled && !error && rows.length === 0 && list?.coverage === 'complete' && !queryPending ? <div role="status" style={styles.state}>{tr(queryText ? '没有匹配的说话人' : filter === 'all' ? '暂无已识别说话人' : '该分类暂无说话人')}</div>
               : <ul style={styles.list}>{rows.map(row => <li key={row.personKey}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row) }}>
-                {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar size={38} label={row.displayName} />}
+                {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar {...(avatars[row.detailRef] ? { avatarRef: avatars[row.detailRef]! } : {})} size={38} label={row.displayName} />}
                 <span style={styles.copy}><span style={styles.name}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{personStats(row)}</span></span>
                 <span style={styles.badge}>{tr(row.type === 'marked' ? '已标记' : '未标记')} ›</span>
               </button></li>)}</ul>}

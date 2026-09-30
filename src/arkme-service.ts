@@ -1091,6 +1091,7 @@ export class ArkmeService {
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }
+  async speakerDirectoryAvatars(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.avatars(input, signal) }
   async speakerDirectoryList(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.list(input, signal) }
   async speakerDirectorySeen(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.seen(input, signal) }
   async speakerDirectoryOpen(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.open(input, signal) }

@@ -435,6 +435,35 @@ export class RecordingService {
     }, await this.recordingRefKey('arkme-recording-speaker-v1'))
   }
 
+  /** Enrich only verified directory speakers; do not load contact suggestions or presence stats. */
+  async directorySpeakerAvatars(speakerIds: readonly string[], viewerUserId: number, signal?: AbortSignal): Promise<Map<string, string>> {
+    const session = await this.runtime.requireSession()
+    const revision = this.speakerCacheRevision
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (speakerIds.length === 0) return new Map()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-speaker-ls', {}, session, signal,
+      { lane: 'background-read', key: 'directory-speaker-avatars', cacheMs: 10_000 },
+    )
+    if (!Array.isArray(data.spk_ls)) throw new ArkmePluginError('recording-speaker-contract-invalid', '说话人资料响应无效', true, 502)
+    const wanted = new Set(speakerIds)
+    const bindings = new Map<string, number>()
+    for (const value of data.spk_ls) {
+      const raw = objectValue(value)
+      const id = stringValue(raw.speaker_id ?? raw.id ?? raw.spk_id).trim()
+      const userId = positiveUserId(raw.ref_usr_id ?? raw.ref_user_id ?? raw.user_id)
+      if (wanted.has(id) && userId !== undefined) bindings.set(id, userId)
+    }
+    const profiles = await this.recordingSpeakerProfiles([...new Set(bindings.values())], session, signal, true)
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    const result = new Map<string, string>()
+    for (const [id, userId] of bindings) {
+      const avatar = profiles.get(userId)?.avatarRef
+      if (avatar) result.set(id, avatar)
+    }
+    return result
+  }
+
   /** All-history source identities, authorized by the same account-bound speaker reference as the UI. */
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers> {
     this.assertWorkbenchEnabled()
@@ -1827,6 +1856,7 @@ export class RecordingService {
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    propagateFailure = false,
   ): Promise<Map<number, { displayName: string; avatarRef?: string }>> {
     if (this.profile === undefined) return new Map()
     if (userIds.length === 0) return new Map()
@@ -1843,7 +1873,8 @@ export class RecordingService {
         }] as const
       }))
       return new Map(entries)
-    } catch {
+    } catch (error) {
+      if (propagateFailure) throw error
       // Optional identity enrichment must never hide a readable transcript.
       return new Map()
     }

@@ -40,6 +40,11 @@ export interface SpeakerDirectoryPerson {
   /** Host-sealed detail_ref; minted per page, opened only when the user selects a row. */
   detailRef: string
 }
+/** Optional presentation metadata, resolved separately from directory pagination. */
+export interface SpeakerDirectoryAvatar {
+  detailRef: string
+  avatarRef?: string
+}
 export interface SpeakerDirectoryPage extends SpeakerDirectoryStatus {
   items: SpeakerDirectoryPerson[]
   hasMore: boolean

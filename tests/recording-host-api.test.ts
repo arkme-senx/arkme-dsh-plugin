@@ -190,7 +190,7 @@ describe('recording UI-only host operations', () => {
 })
 
 describe('unified speaker directory host operations', () => {
-  it.each(['Summary', 'List', 'Seen', 'Open'] as const)('dispatches %s with the request signal and opaque parameters', async name => {
+  it.each(['Summary', 'List', 'Seen', 'Open', 'Avatars'] as const)('dispatches %s with the request signal and opaque parameters', async name => {
     const method = vi.fn(async () => ({ ok: true }))
     const controller = new AbortController(), params = { snapshotVersion: 'opaque', throughCursor: 'opaque-seen', detailRef: 'sealed' }
     const service = { [`speakerDirectory${name}`]: method } as unknown as ArkmeService

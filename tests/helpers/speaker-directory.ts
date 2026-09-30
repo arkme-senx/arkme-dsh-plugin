@@ -7,7 +7,8 @@ export const person = (key: string, patch: Partial<SpeakerDirectoryPerson> = {})
 export const page = (patch: Partial<SpeakerDirectoryPage> = {}): SpeakerDirectoryPage => ({ ...directoryStatus, items: [person('1')], hasMore: false, nextCursor: '', snapshotVersion: 'v1', throughCursor: 'seen-v1', ...patch })
 export const loaders = (patch: Partial<DirectoryLoaders> = {}): DirectoryLoaders => ({
   summary: vi.fn(async () => summary()), list: vi.fn(async () => page()), seen: vi.fn(async () => ({ success: true, seenVersion: 2 })),
-  open: vi.fn(async () => ({ type: 'speaker', speakerRef: 'speaker-ref', expectedVersion: 'presence-v1' })), ...patch,
+  open: vi.fn(async () => ({ type: 'speaker', speakerRef: 'speaker-ref', expectedVersion: 'presence-v1' })),
+  avatars: vi.fn(async detailRefs => detailRefs.map(detailRef => ({ detailRef }))), ...patch,
 })
 export const query = { filter: 'all' as const, sort: 'frequent' as const, query: '' }
 export function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((ok, fail) => { resolve = ok; reject = fail }); return { promise, resolve, reject } }

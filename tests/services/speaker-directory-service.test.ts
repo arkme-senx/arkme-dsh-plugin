@@ -11,7 +11,7 @@ function fixture() {
   let userId = 7
   const post = vi.fn(async (path: string) => path.endsWith('/summary') ? summary : path.endsWith('/seen') ? { success: true, seen_version: 3 } : page)
   const runtime = { config: { environment: 'prod' }, requireSession: async () => ({ userId, accessToken: 'test-token', refreshToken: 'test-refresh' }), authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'synthetic-secret' } } as unknown as ServiceRuntime
-  const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-reference') } as unknown as Pick<RecordingService, 'directorySpeakerRef'>
+  const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-reference'), directorySpeakerAvatars: vi.fn(async () => new Map([['speaker-id', 'avatar-sealed']])) } as unknown as Pick<RecordingService, 'directorySpeakerRef' | 'directorySpeakerAvatars'>
   const unmarked = { directoryCandidateRef: vi.fn(async () => 'candidate-reference') } as unknown as Pick<UnmarkedSpeakerService, 'directoryCandidateRef'>
   return { service: new SpeakerDirectoryService(runtime, recording, unmarked), post, runtime, recording, unmarked, switchUser: () => { userId = 9 } }
 }
@@ -41,6 +41,26 @@ describe('speaker-directory owner contract', () => {
     const result = await service.list({})
     expect(await service.open({ detailRef: result.items[0]!.detailRef })).toEqual({ type: 'speaker', speakerRef: 'speaker-reference', expectedVersion: 'presence-v9' })
     expect(recording.directorySpeakerRef).toHaveBeenCalledWith('speaker-id', 7)
+  })
+  it('resolves avatars using only account-verified marked detail references', async () => {
+    const { service, post, recording, switchUser } = fixture()
+    post.mockResolvedValue({ ...page, items: [{ ...candidate, type: 'marked', detail_ref: { type: 'speaker', id: 'speaker-id' } }] } as never)
+    const detailRef = (await service.list({})).items[0]!.detailRef
+    expect(recording.directorySpeakerAvatars).not.toHaveBeenCalled()
+    expect(await service.avatars({ detailRefs: [detailRef, detailRef] })).toEqual([{ detailRef, avatarRef: 'avatar-sealed' }])
+    expect(recording.directorySpeakerAvatars).toHaveBeenCalledWith(['speaker-id'], 7, undefined)
+    await expect(service.avatars({ detailRefs: ['speaker-id'] })).rejects.toMatchObject({ code: 'speaker-directory-detail-invalid' })
+    await expect(service.avatars({ detailRefs: Array(51).fill(detailRef) })).rejects.toMatchObject({ code: 'speaker-directory-input-invalid' })
+    switchUser()
+    await expect(service.avatars({ detailRefs: [detailRef] })).rejects.toMatchObject({ code: 'speaker-directory-account-mismatch' })
+    expect(recording.directorySpeakerAvatars).toHaveBeenCalledTimes(1)
+  })
+  it('never opens a candidate detail for an avatar request', async () => {
+    const { service, recording, unmarked } = fixture()
+    const detailRef = (await service.list({})).items[0]!.detailRef
+    await expect(service.avatars({ detailRefs: [detailRef] })).rejects.toMatchObject({ code: 'speaker-directory-input-invalid' })
+    expect(recording.directorySpeakerAvatars).not.toHaveBeenCalled()
+    expect(unmarked.directoryCandidateRef).not.toHaveBeenCalled()
   })
   it('rejects cross-account or tampered details before invoking existing detail services', async () => {
     const { service, switchUser, unmarked } = fixture()

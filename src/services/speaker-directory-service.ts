@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
-import type { SpeakerDirectoryDetail, SpeakerDirectoryPage, SpeakerDirectorySeen, SpeakerDirectoryStatus, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
+import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryPage, SpeakerDirectorySeen, SpeakerDirectoryStatus, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 import type { RecordingService } from './recording-service.js'
 import type { UnmarkedSpeakerService } from './unmarked-speaker-service.js'
@@ -28,7 +28,7 @@ function inputString(value: unknown, maxBytes: number, fallback = ''): string {
 }
 
 export class SpeakerDirectoryService {
-  constructor(private readonly runtime: ServiceRuntime, private readonly recording: Pick<RecordingService, 'directorySpeakerRef'>,
+  constructor(private readonly runtime: ServiceRuntime, private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directorySpeakerAvatars'>,
     private readonly unmarked: Pick<UnmarkedSpeakerService, 'directoryCandidateRef'>) {}
 
   private async request(path: string, body: Record<string, unknown>, signal?: AbortSignal) {
@@ -102,7 +102,32 @@ export class SpeakerDirectoryService {
 
   async open(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerDirectoryDetail> {
     const session = await this.runtime.requireSession()
-    const [kind, iv, bytes, tag, ...extra] = inputString(input.detailRef, 16_384).split('.')
+    const ref = await this.readDetailRef(input.detailRef, session.userId)
+    signal?.throwIfAborted()
+    if (ref.type === 'candidate') return { type: 'candidate', candidateRef: await this.unmarked.directoryCandidateRef(str(ref.id), signal) }
+    if (ref.type !== 'speaker') throw invalid()
+    return { type: 'speaker', speakerRef: await this.recording.directorySpeakerRef(str(ref.id), session.userId),
+      ...(ref.expectedVersion === undefined ? {} : { expectedVersion: str(ref.expectedVersion) }) }
+  }
+
+  async avatars(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerDirectoryAvatar[]> {
+    if (!Array.isArray(input.detailRefs) || input.detailRefs.length > 50) throw new ArkmePluginError('speaker-directory-input-invalid', '头像查询参数无效', false)
+    const session = await this.runtime.requireSession()
+    const requested = await Promise.all([...new Set(input.detailRefs)].map(async detailRef => {
+      const ref = await this.readDetailRef(detailRef, session.userId)
+      if (ref.type !== 'speaker') throw new ArkmePluginError('speaker-directory-input-invalid', '仅查询已标记人物头像', false)
+      return { detailRef: str(detailRef), id: str(ref.id) }
+    }))
+    signal?.throwIfAborted()
+    const avatars = await this.recording.directorySpeakerAvatars(requested.map(item => item.id), session.userId, signal)
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+    signal?.throwIfAborted()
+    return requested.map(({ detailRef, id }) => ({ detailRef, ...(avatars.has(id) ? { avatarRef: avatars.get(id)! } : {}) }))
+  }
+
+  private async readDetailRef(value: unknown, viewerUserId: number): Promise<Record<string, unknown>> {
+    const [kind, iv, bytes, tag, ...extra] = inputString(value, 16_384).split('.')
     let ref: Record<string, unknown>
     try {
       if (kind !== prefix || !iv || !bytes || !tag || extra.length) throw new Error('invalid reference')
@@ -110,12 +135,8 @@ export class SpeakerDirectoryService {
       decipher.setAuthTag(Buffer.from(tag, 'base64url'))
       ref = objectValue(JSON.parse(Buffer.concat([decipher.update(Buffer.from(bytes, 'base64url')), decipher.final()]).toString('utf8')))
     } catch { throw new ArkmePluginError('speaker-directory-detail-invalid', '人物引用已失效，请刷新目录', false, 400) }
-    if (ref.userId !== session.userId || ref.environment !== this.runtime.config.environment) throw new ArkmePluginError('speaker-directory-account-mismatch', '人物引用与当前账号不匹配', false, 403)
-    signal?.throwIfAborted()
-    if (ref.type === 'candidate') return { type: 'candidate', candidateRef: await this.unmarked.directoryCandidateRef(str(ref.id), signal) }
-    if (ref.type !== 'speaker') throw invalid()
-    return { type: 'speaker', speakerRef: await this.recording.directorySpeakerRef(str(ref.id), session.userId),
-      ...(ref.expectedVersion === undefined ? {} : { expectedVersion: str(ref.expectedVersion) }) }
+    if (ref.userId !== viewerUserId || ref.environment !== this.runtime.config.environment) throw new ArkmePluginError('speaker-directory-account-mismatch', '人物引用与当前账号不匹配', false, 403)
+    return ref
   }
 
   private async key() { return createHash('sha256').update(await this.runtime.stateStore.uniqueCode()).update(`\0${prefix}`).digest() }

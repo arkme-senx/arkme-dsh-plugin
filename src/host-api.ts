@@ -1452,6 +1452,7 @@ export async function dispatchArkmeHostOperation(
     case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
     case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
     case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
     case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
     case 'recordings.speaker.members': return await service.recordingSpeakerMembers(
