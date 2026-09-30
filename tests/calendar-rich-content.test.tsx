@@ -10,14 +10,18 @@ import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 import { ArkmeCalendarSurface } from '../src/client/ArkmeCalendarSurface.js'
 
 let root: Root, host: HTMLDivElement
+const today = new Date(2026, 8, 15, 12)
 const record: ArkmeCalendarRecordItem = {
-  recordUid: 'rich', sendAtMillis: Date.now(), accessState: 'available', title: '', textContent: '旧摘要', preview: '旧摘要',
+  recordUid: 'rich', sendAtMillis: today.getTime(), accessState: 'available', title: '', textContent: '旧摘要', preview: '旧摘要',
   sourceKind: 'self', creationSource: 0, templateKind: 1, displayKind: 0, protected: false,
-  content: { itemUid: 'rich', senderName: '我', isMe: true, status: 1, sendAtMillis: Date.now(), title: '',
+  content: { itemUid: 'rich', senderName: '我', isMe: true, status: 1, sendAtMillis: today.getTime(), title: '',
     textFormat: 'markdown', textContent: '**完整正文** [链接](https://example.com)',
     contentBlocks: [{ kind: 'image', mediaRef: 'safe-image', fileName: '图片.png', sortOrder: 0 }] },
 }
 beforeEach(() => {
+  // Keep another past day selectable in the current month, even when run on the 1st.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(today)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   api.call.mockReset().mockImplementation(async (op: string) => {
@@ -27,7 +31,7 @@ beforeEach(() => {
     throw new Error(`unexpected operation ${op}`)
   })
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers() })
 const render = () => act(async () => { root.render(<ArkmeCalendarSurface />) })
 const click = async (selector: string) => act(async () => { const node = host.querySelector<HTMLElement>(selector); expect(node).not.toBeNull(); node!.click() })
 it('renders rich content, opens existing detail from body and returns focus without another data request', async () => {
