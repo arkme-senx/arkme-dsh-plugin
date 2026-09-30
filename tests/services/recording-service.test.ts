@@ -28,12 +28,12 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
-  async function speakerCacheFixture() {
+  async function speakerCacheFixture(overrides: Partial<RecordingServiceDependencies> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'arkme-speaker-persistence-'))
     const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
     let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
-    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }], failWrite: false,
+    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }] as Array<{ speaker_id: string; nick_name: string; ref_usr_id?: number }>, failWrite: false,
       members: {} as Record<string, unknown>, presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
       presence: { state: 'fresh', version: 'v1', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
     const calls: string[] = []
@@ -61,10 +61,44 @@ describe('RecordingService', () => {
       return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
     }) as typeof fetch
     const runtime = new ServiceRuntime(config, sessions, database, fetchImpl)
-    const service = new RecordingService(runtime, dependencies())
+    const service = new RecordingService(runtime, dependencies(gatewayNoop(), overrides))
     return { root, database, runtime, service, state, calls, fetchImpl,
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
+
+  it('enriches only requested speaker IDs through existing public profiles, with no contact or presence scan', async () => {
+    const profiles = vi.fn(async () => new Map([[7, { userId: 7, displayName: '同名', nickname: '同名', avatarUrl: 'https://avatar.test/7' }]]))
+    const seal = vi.fn(async (viewer: number, user: number) => `sealed-${viewer}-${user}`)
+    const contacts = vi.fn(async () => [])
+    const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: seal }, userCandidates: { listRecordingSpeakerUsers: contacts } })
+    try {
+      fixture.state.rows = [
+        { speaker_id: 'selected', nick_name: '同名', ref_usr_id: 7 },
+        { speaker_id: 'other', nick_name: '同名', ref_usr_id: 8 },
+        { speaker_id: 'manual', nick_name: '同名' },
+      ]
+      expect(await fixture.service.directorySpeakerAvatars(['selected', 'manual', 'unknown'], 42)).toEqual(new Map([['selected', 'sealed-42-7']]))
+      expect(profiles).toHaveBeenCalledWith([7], expect.objectContaining({ userId: 42 }), undefined)
+      expect(seal).toHaveBeenCalledWith(42, 7)
+      expect(contacts).not.toHaveBeenCalled()
+      expect(fixture.calls).toEqual(['/api/v1/audio/get-speaker-ls'])
+      await expect(fixture.service.directorySpeakerAvatars(['selected'], 999)).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+    } finally { await fixture.close() }
+  })
+
+  it('does not cache profile failure as absent avatars and rejects an account switch during enrichment', async () => {
+    const profiles = vi.fn().mockRejectedValueOnce(new Error('offline'))
+    const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'sealed' } })
+    try {
+      fixture.state.rows = [{ speaker_id: 'speaker', nick_name: '甲', ref_usr_id: 7 }]
+      await expect(fixture.service.directorySpeakerAvatars(['speaker'], 42)).rejects.toThrow('offline')
+      profiles.mockImplementationOnce(async () => {
+        await fixture.runtime.writeSession({ userId: 43, accessToken: 'other', refreshToken: 'other' })
+        return new Map([[7, { userId: 7, displayName: '甲', nickname: '甲', avatarUrl: 'https://avatar.test/7' }]])
+      })
+      await expect(fixture.service.directorySpeakerAvatars(['speaker'], 42)).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
+    } finally { await fixture.close() }
+  })
 
   it('restores persisted candidates in a new service without calling Audio or recommendations', async () => {
     const fixture = await speakerCacheFixture()
