@@ -34,6 +34,18 @@ function fixture() {
 }
 
 describe('topic scoped calendar', () => {
+  it('keeps Team authorship distinct from uncategorized records without Chat navigation', async () => {
+    const { runtime, service, source } = fixture()
+    runtime.authenticatedCalendarPost.mockResolvedValue({ items: [raw('team-record', 500, {
+      record_core: { record_uid: 'team-record', owner_user_id: 42, origin_kind: 5, content_access_state: 1, text_content: '团队内容' },
+      is_uncategorized: false,
+    })], has_more: false })
+    const result = await service.dayRecords({ bucketDate: day })
+    expect(result.items[0]).toMatchObject({ recordUid: 'team-record', sourceKind: 'team' })
+    expect(result.items[0]?.source).toBeUndefined()
+    expect(source.searchTargetSource).not.toHaveBeenCalled()
+    expect(source.chatSourcesBySessionUids).not.toHaveBeenCalled()
+  })
   it('explicit rollback keeps exact filtering and locates the earliest visible record without new wire fields', async () => {
     const { runtime, service } = fixture()
     runtime.authenticatedCalendarPost.mockResolvedValue({ items: [

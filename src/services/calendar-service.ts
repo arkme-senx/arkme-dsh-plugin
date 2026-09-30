@@ -130,6 +130,7 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
   const chat = objectValue(raw.chat_core)
   const core = objectValue(raw.record_core)
   if (stringValue(topic.topic_uid).trim() !== '') return 'topic'
+  if (numberValue(core.origin_kind) === 5) return 'team'
   if (stringValue(chat.chat_session_uid).trim() !== '' || [3, 4].includes(numberValue(core.origin_kind))) return 'chat'
   if (booleanValue(raw.is_uncategorized) === true) return 'self'
   return 'unknown'

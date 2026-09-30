@@ -30,8 +30,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       const token = [{ alg: 'none' }, { user_id: input.user_id, exp: Math.floor(Date.now() / 1000) + 3600 }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.') + '.fixture'
       data = { access_token: token, refresh_token: 'layout-fixture' }
     } else if (path.endsWith('/get-user-info')) data = { user_id: 99001001, nick_name: '布局验收', jotmo_id: 'layout_test', phone: '13800000000' }
+    else if (path === '/api/v1/records/detail') data = { record_core: { record_uid: 'personal-team-search', owner_user_id: 99001001, creator_user_id: 99001001,
+      origin_kind: 5, source_kind: 4, status: 1, content_access_state: 1, version: 1, template_kind: 1,
+      text_content: '搜索打开的完整团队快记正文', send_at: Date.now(), content_payload: {} } }
     else if (path.startsWith('/api/v1/team/') && teamOwnerFixture) data = teamOwnerFixture(path)
-    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 200, data }))
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: path.startsWith('/api/v1/records/') ? 0 : 200, data }))
   })
   try {
     api.listen(0, '127.0.0.1'); await once(api, 'listening')
@@ -81,7 +84,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       const { operation: op, params = {} } = route.request().postDataJSON()
       calls.push(op)
       let value
-      if (op === 'team.app.channel' || op === 'team.app.official') value = channel()
+      if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要',snippet:'检索摘要',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
+      else if (op === 'team.app.channel' || op === 'team.app.official') value = channel()
       else if (op === 'team.app.channel.configure') { enabled = params.enabled; value = channel() }
       else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ userRef: `usr_v1_${String(i).repeat(32)}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
       else if (op === 'team.app.directory') value = { section: 'teams', items: params.countOnly ? [] : [{ kind: 'team', teamRef, displayName: channel().name, publicId: 'arkme_cn', role: owner ? 'owner' : 'member' }], total: 1, hasMore: false }
@@ -271,14 +275,14 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(flashCheck.flashes).toBe(0)
     expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
-    await page.locator('[data-team-side="team"]').getByText('外部用户',{exact:true}).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview',{exact:true}).waitFor()
     await page.locator('[data-team-side="external"]').getByText('团队',{exact:true}).waitFor()
     await page.locator('[data-team-side="team"]').getByText('鲨鱼辣椒1998', { exact: true }).waitFor()
-    await page.locator('[data-team-side="team"]').getByText('Arkme Internal Interview', { exact: true }).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview', { exact: true }).waitFor()
     await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).waitFor()
     const memberRow = page.locator('[data-team-side="team"]')
     expect(await memberRow.locator('[data-arkme-conversation-content] > span').nth(1).textContent()).toBe('请问可以修改吗？')
-    const contextBox = await memberRow.getByText('Arkme Internal Interview', {exact:true}).boundingBox()
+    const contextBox = await memberRow.getByText('外部用户 · Arkme Internal Interview', {exact:true}).boundingBox()
     expect(contextBox.width).toBeGreaterThan(20)
     await capture('plugin-team-conversation-roles')
     expect(mediaRequests.length).toBe(readsBefore)
@@ -355,6 +359,17 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         .evaluate(node => getComputedStyle(node).backgroundColor)).toBe(colors.expected)
     }
     await capture('plugin-conversation-media-dark')
+    await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
+    await page.setViewportSize({width:1440,height:1000})
+    await page.getByRole('button',{name:'搜索对话或消息',exact:true}).click()
+    await page.getByRole('textbox',{name:'搜索',exact:true}).fill('团队来源')
+    await page.getByText('搜索团队快记',{exact:true}).click()
+    await page.locator('[data-arkme-note-detail]').getByText('搜索打开的完整团队快记正文',{exact:true}).waitFor()
+    expect(calls).toContain('record.app.detail')
+    await capture('plugin-team-search-personal-detail')
+    await page.keyboard.press('Escape')
+    expect(await page.locator('[data-arkme-note-detail]').count()).toBe(0)
+    await page.getByText('搜索团队快记',{exact:true}).waitFor()
   } catch (error) {
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})

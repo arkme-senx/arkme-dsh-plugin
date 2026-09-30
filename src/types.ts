@@ -539,7 +539,7 @@ export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
   textFormat?: 'plain' | 'markdown'
   preview: string
   topicTitle?: string
-  sourceKind: 'self' | 'topic' | 'chat' | 'unknown'
+  sourceKind: 'self' | 'topic' | 'chat' | 'team' | 'unknown'
   creationSource: number
   templateKind: number
   displayKind: number

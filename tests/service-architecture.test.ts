@@ -14,7 +14,7 @@ const expectedPublicMethods = [
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
   'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
-  'executeTeamApp', 'fetchTeamMedia', // built-in App UI composition only; not Consumer SDK or Tools
+  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',

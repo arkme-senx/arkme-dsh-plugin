@@ -2212,7 +2212,7 @@ export function ArkmeNavigation({
               </span>
               <span data-arkme-conversation-content style={styles.chatContent}>
                 <span style={styles.chatTop}><span style={{ ...styles.entryName, flex: '0 1 auto' }}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
-                  <ArkmeTopicTagBadge label={teamText(c.side === 'team' ? '外部用户' : '团队')} selected={selected} />{c.side === 'team' && <span title={c.channel.name} style={{ ...styles.preview, flex: '0 1 auto', maxWidth: '32%', minWidth: 0 }}>{c.channel.name}</span>}<span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
+                  <ArkmeTopicTagBadge label={c.side === 'team' ? `${teamText('外部用户')} · ${c.channel.name}` : teamText('团队')} selected={selected} truncate /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
                 <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
               </span>
             </button>
