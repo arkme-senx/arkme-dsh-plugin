@@ -92,10 +92,9 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       }
       const conversation = (await teamCall(users.visitor, 'conversations/open', { public_ref: channel.public_ref })).conversation
       const uid = conversation.conversation_uid
-      // The synthetic official team and its visitor conversation survive reruns.
-      // Reset only this fixture account's preference before exercising the menu.
-      const home = await teamCall(users.member, 'conversations/home-visibility', { conversation_uid: uid, side: 'team' })
-      if (!home.show_in_home) await teamCall(users.member, 'conversations/home-visibility', { conversation_uid: uid, side: 'team', expected_version: home.version, show_in_home: true })
+      for (const [user, side] of [[users.member, 'team'], [users.visitor, 'external']]) {
+        expect((await teamCall(user, 'conversations/home-visibility', {conversation_uid:uid,side})).show_in_home).toBe(false)
+      }
       const marker = `真实团队链路 ${randomUUID()}`
       const command = { conversation_uid: uid, side: 'external', client_message_uid: randomUUID(), content: { text_content: marker, template_kind: 1 } }
       const message = await teamCall(users.visitor, 'conversations/messages/send', command)
@@ -125,9 +124,8 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect(await page.getByRole('dialog', { name: /^团队消息/ }).count()).toBe(0)
       await panel.getByText(marker, { exact: true }).waitFor()
       expect(await panel.getByRole('button',{name:'刷新',exact:true}).count()).toBe(0)
-      await panel.getByRole('button',{name:'对话选项',exact:true}).click()
-      await page.getByRole('menuitem',{name:'快记不显示在首页',exact:true}).click()
-      await expect.poll(async()=> (await teamCall(users.member,'conversations/home-visibility',{conversation_uid:uid,side:'team'})).show_in_home).toBe(false)
+      expect(await panel.getByRole('button',{name:'对话选项',exact:true}).count()).toBe(0)
+      expect(await page.getByRole('menuitem',{name:'快记不显示在首页',exact:true}).count()).toBe(0)
       const reply = `插件真实回复 ${randomUUID()}`
       await panel.getByRole('textbox', { name: '团队消息内容' }).fill(reply)
       // Another member replies after this screen loaded. The accepted draft

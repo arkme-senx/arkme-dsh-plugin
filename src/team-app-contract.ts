@@ -2,7 +2,7 @@ import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
-  'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'join'
+  'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'send' | 'send.status' | 'send.confirm' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
@@ -38,3 +38,5 @@ export interface TeamApplication { ref: string; name: string; state: string; rev
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }
 
 export interface TeamHomeVisibility { showInHome: boolean; version: number }
+
+export interface TeamJotmoIdAvailability { available: boolean; reason: string }
