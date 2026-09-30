@@ -9,7 +9,9 @@ it('opens the existing account settings and closes the originating menu', () => 
   const stop = arkmeUi.bindSettingsOpener(open)
   const renderer = create(<ArkmeSocialBindingHint onOpen={close} />)
   try {
-    expect(renderer.root.findByType('p').children.join('')).toContain('聊天、世界、联系人和通话')
+    const button = renderer.root.findByType('button')
+    expect(button.props['aria-label']).toBe('去绑定')
+    expect(renderer.root.findByProps({ id: button.props['aria-describedby'] }).children.join('')).toBe('绑定手机号后即可使用社交功能')
     act(() => renderer.root.findByType('button').props.onClick())
     expect(close).toHaveBeenCalledOnce()
     expect(open).toHaveBeenCalledExactlyOnceWith('arkme-account')

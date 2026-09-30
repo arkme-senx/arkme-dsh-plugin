@@ -165,7 +165,7 @@ describe('packed social access on the target Harness', () => {
       await navigation('通话').waitFor({ state: 'hidden' })
       const hint = page.locator('[data-arkme-owned="product-surface"] [data-arkme-social-binding-hint]').first()
       await hint.waitFor({ state: 'visible' })
-      expect(await hint.innerText()).toContain('绑定手机号后可使用聊天、世界、联系人和通话')
+      expect(await hint.innerText()).toContain('绑定手机号后即可使用社交功能')
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.call-guide.png` })
       await hint.getByRole('button', { name: '去绑定', exact: true }).click()
       const account = page.locator('.arkme-redesign-settings-surface').filter({ hasText: '手机号' })
