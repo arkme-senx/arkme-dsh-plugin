@@ -49,7 +49,7 @@ function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media:
   return {
     key: attempt.uid, ref: '', seq: 0, revision: 0, side: conversation.side,
     sender: sender ?? { nickname: '' }, own: true, state: 'sending',
-    createdAt: Date.now(), canEdit: false, canDelete: false, version: 0,
+    createdAt: attempt.createdAt ?? Date.now(), canEdit: false, canDelete: false, version: 0,
     contentStatus: 'available', content: attempt.content,
     media: draft.assets.map(asset => ({
       ref: asset.fileAssetUid, key: asset.fileAssetUid, url: media.get(asset.fileAssetUid) ?? '',
@@ -205,6 +205,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const sendBusy = useRef(false), receiptsBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
   const draftRef = useRef(draft); draftRef.current = draft
+  const resumeSend = useRef<() => Promise<void>>(async () => {})
+  const recovering = useRef(false), recoverAgain = useRef(false)
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort() }, [])
@@ -256,14 +258,32 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       setError('')
       if (receiptRef.current) await readReceipts(receiptRef.current.message)
       if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
+      return data
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
   }, [conversation.ref, readReceipts])
-  useEffect(() => { void refresh(); return subscribeTeamMessageChanges(account => { if (account === accountKey) { void refresh() } }) }, [refresh, accountKey])
-  useEffect(() => {
-    const focus = () => { void refresh() }
-    window.addEventListener('focus', focus)
-    return () => window.removeEventListener('focus', focus)
+  const recover = useCallback(async () => {
+    if (ctrl.current.signal.aborted) return
+    if (recovering.current) { recoverAgain.current = true; return }
+    recovering.current = true
+    try {
+      do {
+        recoverAgain.current = false
+        const fresh = await refresh()
+        const attempt = draftRef.current.attempt
+        if (fresh && attempt && fresh.conversation.channel.enabled && !fresh.conversation.blocked
+          && ['', 'network_unavailable', 'dependency_unavailable', 'preparing'].includes(attempt.reason ?? '')) {
+          await resumeSend.current()
+        }
+      } while (recoverAgain.current && !ctrl.current.signal.aborted)
+    } finally { recovering.current = false }
   }, [refresh])
+  useEffect(() => { void recover(); return subscribeTeamMessageChanges(account => { if (account === accountKey) { void recover() } }) }, [recover, accountKey])
+  useEffect(() => {
+    const recoverOnline = () => { void recover() }
+    window.addEventListener('focus', recoverOnline)
+    window.addEventListener('online', recoverOnline)
+    return () => { window.removeEventListener('focus', recoverOnline); window.removeEventListener('online', recoverOnline) }
+  }, [recover])
   // Same before-paint scroll restoration as ordinary conversation previews.
   // A refresh must never paint at the wrong position then jump on the next frame.
   useLayoutEffect(() => {
@@ -291,10 +311,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     return () => { observer.disconnect(); window.removeEventListener('focus', advance); document.removeEventListener('visibilitychange', advance) }
   }, [advance, timeline])
   const send = async (confirm = false) => {
+    const timeline = latest.current, draft = draftRef.current
     if (!timeline || sendBusy.current || uploading || busy) return
     if (!draft.attempt && (!draft.text.trim() && !draft.assets.length || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
     if (draft.attempt?.reason === 'reply_conflict' && !confirm) return
-    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq }
+    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq }
     const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', attempt }
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr("无法保存发送请求，请释放本机存储后再发送")); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
@@ -333,13 +354,20 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         onChanged()
       }
       else if (result.message?.state === 'cancelled') { setOutgoing(undefined); const kept = { text: restoreTeamDraftText(attempt.content.text_content ?? '', draftRef.current.text), assets: draft.assets }; persistTeamDraft(localStorage, storageKey, kept); setDraft(kept); notice = tr("原发送已取消，草稿已保留，可修改后重新发送") }
-      else { setDraft(v => ({ ...v, attempt: { ...attempt, ...(result.message ? { message: result.message } : {}), ...(result.reason ? { reason: result.reason } : {}) } })); notice = result.reason === 'reply_conflict' ? tr("其他成员刚刚回复。请阅读新消息，再确认是否仍需发送。") : tr("消息正在处理中，请使用原请求重试。") }
+      else {
+        const next = { ...draftRef.current, attempt: { ...attempt, ...(result.message ? { message: result.message } : {}), reason: result.reason ?? '' } }
+        persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
+        notice = result.reason === 'reply_conflict' ? tr("其他成员刚刚回复。请阅读新消息，再确认是否仍需发送。") : tr("消息正在处理中，请使用原请求重试。")
+      }
       await refresh()
       if (!ctrl.current.signal.aborted && notice) setError(notice)
     } catch (e) {
       if (!ctrl.current.signal.aborted) {
         if (published) { setError(errorText(e)); return }
         const code = (e as { body?: { code?: string } })?.body?.code
+        const failed = { ...draftRef.current, attempt: { ...attempt, reason: code?.replace(/^team-/, '') ?? 'network_unavailable' } }
+        try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
+        catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         if (code === 'team-reply_conflict') await refresh()
         // A validated pre-admission rejection has no accepted operation.
         // Unknown transport outcomes must retain the original request key.
@@ -355,6 +383,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     }
     finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
+  resumeSend.current = () => send()
   const upload = async (files: FileList | null) => {
     if (!files || editing || busy || uploading || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
     setUploading(true)

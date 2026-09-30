@@ -40,6 +40,64 @@ describe('Team send UI recovery', () => {
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
+  it('online recovery retries the same command once and keeps the next draft and original time', async () => {
+    await mount(); await send()
+    const original = JSON.parse(localStorage.getItem(storageKey)!).attempt
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条'); await tick() })
+    let release!: (value: unknown) => void
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send') return new Promise(resolve => { release = resolve })
+      return {}
+    })
+    await act(async () => { window.dispatchEvent(new Event('online')); window.dispatchEvent(new Event('focus')); await tick() })
+    const sends = mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')
+    expect(sends).toHaveLength(2)
+    expect(sends.map(call => call[1].clientUid)).toEqual([original.uid, original.uid])
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.createdAt).toBe(original.createdAt)
+    await act(async () => {
+      release({message:{key:'sent',ref:'sent',seq:1,state:'published',sender:{nickname:'我'},own:true,media:[],version:0}})
+      await tick()
+    })
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+  })
+
+  it.each(['reply_conflict', 'idempotency_conflict', 'not_accessible'])('does not automatically retry %s after reconnect', async reason => {
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      throw Object.assign(new Error(reason), {body:{code:`team-${reason}`}})
+    })
+    await mount(); await send()
+    await act(async () => { window.dispatchEvent(new Event('online')); await tick() })
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.reason).toBe(reason)
+  })
+
+  it('does not lose an invalidation arriving during an in-flight refresh', async () => {
+    await mount()
+    let release!: (value: unknown) => void
+    let reads = 0
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op !== 'team.app.timeline') return {}
+      if (++reads === 1) return new Promise(resolve => { release = resolve })
+      return {conversation,messages:[{key:'latest',ref:'latest',seq:1,revision:1,createdAt:1,canEdit:false,canDelete:false,state:'published',side:'external',own:true,
+        sender:{nickname:'我'},media:[],version:1,contentStatus:'available',content:{text_content:'最新回复'}}],hasMore:false,beforeSeq:0}
+    })
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    await act(async () => { release({conversation,messages:[],hasMore:false,beforeSeq:0}); await tick() })
+    expect(reads).toBe(2)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('latest')
+  })
+
+  it('does not recover a pending write without a fresh authorized timeline', async () => {
+    await mount(); await send()
+    mocks.call.mockRejectedValue(new Error('still offline'))
+    await act(async () => { window.dispatchEvent(new Event('online')); await tick() })
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeDefined()
+  })
+
   it('uses the shared attachment tile preview and releases removed upload previews', async () => {
     const createUrl = vi.fn(() => 'blob:team-upload')
     const revokeUrl = vi.fn()
