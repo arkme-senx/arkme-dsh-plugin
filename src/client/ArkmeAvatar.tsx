@@ -94,6 +94,7 @@ export function ArkmeUserAvatar({
   avatarRef,
   lazy = false,
   fallback,
+  fallbackContent,
   size = 44,
   label = '用户头像',
   senderKind,
@@ -101,6 +102,7 @@ export function ArkmeUserAvatar({
   lazy?: boolean
   avatarRef?: string
   fallback?: ArkmeGroupAvatarFallback
+  fallbackContent?: ReactNode
   size?: number
   label?: string
   senderKind?: 'human' | 'bot' | undefined
@@ -115,7 +117,7 @@ export function ArkmeUserAvatar({
       ? <img src={imageUrl} alt="" draggable={false} style={styles.image} />
       : fallback?.kind === 'phone_default'
         ? <PhoneDefaultAvatar fallback={fallback} size={size} />
-        : senderKind === 'bot' ? <ArkmeBotAvatarFallback size={size} /> : <DefaultUserAvatar size={size} />}
+        : fallbackContent ?? (senderKind === 'bot' ? <ArkmeBotAvatarFallback size={size} /> : <DefaultUserAvatar size={size} />)}
   </span>
 }
 

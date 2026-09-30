@@ -664,3 +664,19 @@ it('removes a shared queued reaction read when its final consumer disconnects', 
   expect(fetcher).toHaveBeenCalledTimes(1)
   runtime.dispose()
 })
+
+describe('speaker directory HTTP contract', () => {
+  it.each([[2, 45000], [60, 2000]])('honors both Retry-After and retry_after_ms: %s seconds, %s ms', async (seconds, milliseconds) => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 429, data: { error_code: 'directory_rate_limited', retry_after_ms: milliseconds } }), { status: 429, headers: { 'Retry-After': String(seconds) } }))
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+      .rejects.toMatchObject({ upstreamStatus: 429, retryAfterMillis: Math.max(seconds * 1000, milliseconds) })
+    expect(fetcher).toHaveBeenCalledTimes(1); runtime.dispose()
+  })
+  it.each([0, 1001, 1002])('does not treat HTTP 200 business code %s as success', async code => {
+    const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({ code, data: { items: [] } }))))
+    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+      .rejects.toMatchObject({ code: `arkme-code-${code}` })
+    runtime.dispose()
+  })
+})

@@ -232,6 +232,31 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
     }
   }
 
+  /** Hydrate on selection, so paginating a large directory never evicts selected references. */
+  async directoryCandidateRef(candidateId: string, signal?: AbortSignal): Promise<string> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/unmarked-speakers/detail', { candidate_id: candidateId }, session, signal,
+    )
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('unmarked-candidate-ref-account-mismatch', '账号已切换', false, 403)
+    if (data.outcome === 'candidate_not_found') throw new ArkmePluginError('unmarked-candidate-not-found', '该人物已变化，请刷新目录', false, 404)
+    const raw = objectValue(data.candidate)
+    if (stringValue(raw.candidate_id) !== candidateId || !['cross_day', 'single_day'].includes(String(raw.status))) {
+      throw new ArkmePluginError('unmarked-detail-contract-invalid', '人物详情暂不可用', true, 502)
+    }
+    this.pruneRefs()
+    const ref = this.sealCandidateRef(session.userId, {
+      candidateId, status: raw.status as CandidateStatus,
+      speakerToken: boundedInteger(raw.speaker_display_number) > 0 ? String(raw.speaker_display_number) : stringValue(raw.label),
+      appearanceDays: boundedInteger(raw.day_count), validAudioDurationMillis: boundedInteger(raw.total_speech_duration_ms),
+      segmentCount: boundedInteger(raw.segment_count), firstSeenAtMillis: positiveTimestamp(raw.first_seen_at),
+      latestAtMillis: positiveTimestamp(raw.last_seen_at),
+    })
+    return ref
+  }
+
   async markOptions(candidateRef: string, signal?: AbortSignal): Promise<ArkmeUnmarkedSpeakerOptions> {
     const { session, entry, normalizedRef } = await this.resolveCandidateRef(candidateRef)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(

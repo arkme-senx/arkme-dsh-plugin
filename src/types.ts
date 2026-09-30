@@ -3752,6 +3752,11 @@ export type ArkmeChatClientEvent = {
 
 export type ArkmePluginOperation =
   | 'recordings.speaker.options'
+  | 'speaker-directory.summary'
+  | 'speaker-directory.list'
+  | 'speaker-directory.seen'
+  | 'speaker-directory.open'
+  | 'speaker-directory.avatars'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'self-roles.list'
