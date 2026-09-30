@@ -2201,6 +2201,7 @@ export function ArkmeNavigation({
           />
           if (row.kind === 'team') {
             const c = row.conversation
+            const preview = c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side
             return <button key={`team:${c.side}:${c.key}`} data-team-side={c.side} type="button" role="treeitem" aria-selected={selected}
               style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}
@@ -2211,8 +2212,8 @@ export function ArkmeNavigation({
               </span>
               <span data-arkme-conversation-content style={styles.chatContent}>
                 <span style={styles.chatTop}><span style={styles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
-                  <ArkmeTopicTagBadge label={teamText(c.side === 'team' ? '代表团队' : '联系团队')} selected={selected} /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
-                <span style={styles.chatBottom}><span style={styles.preview}>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''}</span></span>
+                  <ArkmeTopicTagBadge label={teamText(c.side === 'team' ? '外部用户' : '团队')} selected={selected} /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
+                <span style={styles.chatBottom}><span style={styles.preview}>{[...(c.side === 'team' ? [c.channel.name] : []), ...(preview ? [preview] : [])].join(' · ')}</span></span>
               </span>
             </button>
           }

@@ -295,7 +295,12 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await settings.getByText('没有待处理申请',{exact:true}).waitFor()
       expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'rejected'})
       await teamCall(users.stranger,'join-requests/create',{team_id:team.team_id,request_uid:randomUUID()})
-      await settings.getByRole('button',{name:'刷新消息设置',exact:true}).click()
+      // This fixture runs without IM. Re-enter the page to read the new request;
+      // production uses the existing Team change subscription, not a refresh button.
+      await page.reload()
+      await page.getByRole('button', { name: '联系人', exact: true }).click()
+      if (await ownerTeams.locator('.arkme-contact-directory-section-header').getAttribute('aria-expanded') !== 'true') await ownerTeams.locator('.arkme-contact-directory-section-header').click()
+      await ownerTeams.getByRole('button', { name: new RegExp(team.name) }).click()
       await settings.getByRole('button',{name:'同意',exact:true}).click()
       await settings.getByRole('button',{name:'确认',exact:true}).click()
       await settings.getByText('没有待处理申请',{exact:true}).waitFor()

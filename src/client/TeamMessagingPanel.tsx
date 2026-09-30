@@ -5,7 +5,6 @@ import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
 import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
-import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
@@ -509,18 +508,13 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
     catch { if (!ctrl.current.signal.aborted) setNotice(tr('复制失败，请手动复制链接')) }
   }
   const pendingCount = applications?.items.filter(a => a.state === 'pending').length ?? 0
-  return <section className="team-settings" aria-label={tr('对外消息')}>
-    <header className="team-settings-header">
-      <div><h2>{tr('对外消息')}</h2><p>{tr('他人可通过链接向团队发消息，成员共同查看和回复。')}</p></div>
-      <button type="button" className="team-settings-refresh" disabled={busy} aria-label={tr('刷新消息设置')} title={tr('刷新消息设置')}
-        onClick={() => { void refresh() }}><ArrowClockwise size={18} /></button>
-    </header>
-    {error && <p role="alert" className="team-error">{error}</p>}
+  return <section className="team-settings" aria-label={tr('外部消息')}>
+    {error && <div role="alert" className="team-error">{error}<button type="button" disabled={busy} onClick={() => { void refresh() }}>{tr('重试')}</button></div>}
     {!channel && !error && <p role="status">{tr('正在加载…')}</p>}
     {channel && <div className="team-channel-card">
       <div className="team-channel-state">
         <span className="team-channel-icon" aria-hidden><LinkSimple size={22} /></span>
-        <div><strong>{tr('接收外部消息')}</strong><small>{channel.enabled ? tr('正在接收消息') : channel.publicRef ? tr('已暂停接收新消息') : tr('尚未开启')}</small></div>
+        <div><h2>{tr('外部消息')}</h2><small>{channel.enabled ? tr('正在接收消息') : channel.publicRef ? tr('已暂停接收新消息') : tr('尚未开启')}</small></div>
         {channel.canManage && <button type="button" role="switch" className="team-channel-switch" aria-checked={channel.enabled}
           aria-label={tr('接收外部消息')} disabled={busy}
           onClick={() => {
@@ -529,19 +523,21 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
           }}><span /></button>}
       </div>
       {channel.publicRef && <div className="team-channel-sharing">
-        <div className="team-channel-share-heading"><span>{tr('分享链接即可开始对话，无需加入团队。')}</span>
-          <button type="button" className="arkme-team-action" onClick={() => { void copyLink() }}><Copy size={16} />{tr('复制消息链接')}</button></div>
-        <details className="team-link-details"><summary>{tr('查看消息链接')}</summary>
+        <div className="team-channel-share-heading"><span>{tr('消息链接')}</span>
+          {channel.canManage && <button type="button" className="team-link-reset" disabled={busy} onClick={() => { setConfirm({ label: tr('重置后旧链接失效，已存在的会话继续保留。确认重置？'), run: () => configure(channel.enabled, true) }) }}>{tr('重置链接')}</button>}
+        </div>
+        <div className="team-channel-link-row">
           <input aria-label={tr('团队消息分享链接')} readOnly value={channel.link} onFocus={e => e.currentTarget.select()} />
-        </details>
+          <button type="button" className="arkme-team-action" onClick={() => { void copyLink() }}><Copy size={16} />{tr('复制链接')}</button>
+        </div>
+        <p className="team-channel-link-help">{tr('通过链接发消息，无需加入团队。')}</p>
       </div>}
       {notice && <p className="team-settings-notice" role="status">{notice}</p>}
     </div>}
-    {channel?.canManage && <>
+    {channel?.canManage &&
       <details className="team-setting-disclosure" open={pendingCount > 0}>
         <summary><span>{tr('加入申请')}</span><small>{pendingCount > 0 ? tr('{v0} 条待处理', { v0: pendingCount }) : tr('没有待处理申请')}</small></summary>
         <div className="team-setting-disclosure-body">
-          <p>{tr('批准后，该成员可查看和回复团队历史对话。')}</p>
           {applications?.items.map(a => <div className="team-member-row" key={a.ref}>
             <span><strong>{a.name}</strong><small>{new Date(a.requestedAt).toLocaleString()}</small></span>
             {a.state === 'pending' && <div className="team-application-actions"><button disabled={busy} onClick={() => { void mutate(() => callArkme('team.app.application.decide', { applicationRef: a.ref, approve: false }, ctrl.current.signal)) }}>{tr('拒绝')}</button>
@@ -549,12 +545,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
           </div>)}
           {applications?.hasMore && <button disabled={busy} onClick={() => { void loadApplications(applications.nextCursor, ++generation.current).catch(e => { setError(errorText(e)) }) }}>{tr('更多申请')}</button>}
         </div>
-      </details>
-      {channel.publicRef && <details className="team-setting-disclosure"><summary>{tr('消息链接设置')}</summary>
-        <div className="team-setting-disclosure-body"><p>{tr('重置后旧链接失效，已存在的会话继续保留。')}</p>
-          <button disabled={busy} onClick={() => { setConfirm({ label: tr('重置后旧链接失效，已存在的会话继续保留。确认重置？'), run: () => configure(channel.enabled, true) }) }}>{tr('重置分享链接')}</button></div>
       </details>}
-    </>}
     {confirm && <div className="team-confirm" role="alert"><p>{confirm.label}</p><button disabled={busy} onClick={() => { setConfirm(undefined) }}>{tr('取消')}</button><button className="arkme-team-action" disabled={busy} onClick={() => { void mutate(confirm.run) }}>{tr('确认')}</button></div>}
   </section>
 }

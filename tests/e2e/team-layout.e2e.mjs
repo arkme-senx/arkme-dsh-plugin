@@ -137,7 +137,20 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(geometry.settingsTop).toBeGreaterThanOrEqual(geometry.membersBottom - 1)
     expect(geometry.overflow).toBe('auto')
     const output = process.env.ARKME_E2E_CAPTURE_DIR
-    const capture = async name => { if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: join(output, `${name}.png`) }) } }
+    const capture = async name => {
+      if (output) {
+        await mkdir(output, { recursive: true })
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        await page.screenshot({ path: join(output, `${name}.png`), animations: 'disabled' })
+      }
+    }
+    expect(await detail.getByRole('button', { name: '刷新消息设置', exact: true }).count()).toBe(0)
+    const links = detail.locator('.team-channel-card')
+    await links.getByRole('heading', { name: '外部消息', exact: true }).waitFor()
+    expect(await links.getByRole('textbox', { name: '团队消息分享链接' }).inputValue()).toBe(channel().link)
+    await links.getByRole('button', { name: '重置链接', exact: true }).click()
+    await detail.getByRole('alert').getByText('重置后旧链接失效，已存在的会话继续保留。确认重置？', { exact: true }).waitFor()
+    await detail.getByRole('button', { name: '取消', exact: true }).click()
     await capture('plugin-owner-team')
     await section.getByRole('button', { name: '团队操作', exact: true }).click()
     await page.getByRole('menuitem', { name: '创建团队', exact: true }).waitFor()
@@ -150,7 +163,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       const dialog = page.getByRole('dialog', { name: label, exact: true })
       await dialog.waitFor(); await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     }
-    await detail.getByRole('button', { name: '复制消息链接', exact: true }).click()
+    await detail.getByRole('button', { name: '复制链接', exact: true }).click()
     await detail.getByText('通道链接已复制', { exact: true }).waitFor()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(channel().link)
     await detail.getByRole('switch').click()
@@ -239,8 +252,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(flashCheck.flashes).toBe(0)
     expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
-    await page.locator('[data-team-side="team"]').getByText('代表团队',{exact:true}).waitFor()
-    await page.locator('[data-team-side="external"]').getByText('联系团队',{exact:true}).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('外部用户',{exact:true}).waitFor()
+    await page.locator('[data-team-side="external"]').getByText('团队',{exact:true}).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('布局验收', { exact: true }).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('Arkme Internal Interview', { exact: true }).waitFor()
+    await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).waitFor()
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
