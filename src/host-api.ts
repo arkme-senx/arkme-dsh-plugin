@@ -1,5 +1,6 @@
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { TeamAppOperation } from './team-app-contract.js'
+import type { RecordAppOperation } from './record-app-contract.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
@@ -1003,7 +1004,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
 
 export async function dispatchArkmeHostOperation(
   service: ArkmeService,
-  operation: ArkmePluginRequest['operation'] | TeamAppOperation,
+  operation: ArkmePluginRequest['operation'] | TeamAppOperation | RecordAppOperation,
   params: Record<string, unknown>,
   updateManager?: Pick<
     ArkmePluginUpdateManager,
@@ -1021,6 +1022,7 @@ export async function dispatchArkmeHostOperation(
   accountSessions?: DshAccountSessions,
 ): Promise<unknown> {
   if (operation.startsWith('team.app.')) return await service.executeTeamApp(operation as TeamAppOperation, params, requestSignal)
+  if (operation === 'record.app.detail') return await service.personalRecordDetail(String(params.recordUid ?? ''), requestSignal)
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()

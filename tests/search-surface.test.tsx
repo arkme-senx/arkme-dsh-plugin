@@ -7,6 +7,12 @@ import type { ArkmeSearchRecordItem } from '../src/types.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), hasDsh: vi.fn() }))
+vi.mock('../src/client/ArkmeNoteDetails.js', () => ({
+  ArkmeTimelineDetailDrawer: (props: any) => <div data-personal-detail>{props.item.textContent}<button onClick={props.onClose}>关闭详情</button></div>,
+}))
+vi.mock('../src/client/ArkmeDetailShell.js', () => ({
+  ArkmeDetailShell: (props: any) => <div data-personal-detail>{props.children}<button onClick={props.onClose}>关闭详情</button></div>,
+}))
 
 vi.mock('../src/client/DeepSeekHarnessSurface.js', () => ({ hasEmbeddedDshSession: mocks.hasDsh }))
 
@@ -66,6 +72,30 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
+  it('opens a personal detail destination through the shared drawer without a conversation target', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    const openConversation = vi.fn()
+    mocks.callArkme.mockImplementation(async (op, p, signal) => {
+      if (op === 'record.app.detail') return { itemUid: 'team-record', textContent: '完整的团队快记正文' }
+      if (op === 'search.records') return { ...arkmeResults(), items: [{ ...arkmeResults().items[0],
+        recordUid: 'team-record', sourceKind: 4, sourceUid: 'team-uid', sourceTitle: '团队对话',
+        routeTargetKind: 'record_detail', targetSource: undefined,
+      }] }
+      return original(op, p, signal)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface onOpenRecord={openConversation} />) })
+      act(() => renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '测试' } }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      await act(async () => renderer.root.findByType(RecordRow).props.onClick())
+      expect(mocks.callArkme).toHaveBeenCalledWith('record.app.detail', { recordUid: 'team-record' }, expect.any(AbortSignal))
+      expect(content(renderer.toJSON())).toContain('完整的团队快记正文')
+      expect(openConversation).not.toHaveBeenCalled()
+      act(() => renderer.root.findAllByType('button').find(b => content(b.props.children) === '关闭详情')!.props.onClick())
+      expect(content(renderer.toJSON())).not.toContain('完整的团队快记正文')
+    } finally { renderer.unmount() }
+  })
   it('continues empty segment pages and retries a failed next page without losing results', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     let failed = false

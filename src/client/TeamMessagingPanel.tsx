@@ -130,7 +130,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
         {items.map(c => <button key={`${c.side}:${c.key}`} className="team-conversation-row" onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }}>
           <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
-          <span><span className="team-conversation-row-title"><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><ArkmeTopicTagBadge label={tr(c.side === 'team' ? '外部用户' : '团队')} />{c.side === 'team' && <small title={c.channel.name}>{c.channel.name}</small>}</span><small>{c.preview?.text}</small></span>
+          <span><span className="team-conversation-row-title"><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><ArkmeTopicTagBadge label={c.side === 'team' ? `${tr('外部用户')} · ${c.channel.name}` : tr('团队')} truncate /></span><small>{c.preview?.text}</small></span>
           {c.unread > 0 && <b>{c.unread}</b>}
         </button>)}
         {items.length === 0 && !directory.error && <p className="team-empty" role={directory.loading ? 'status' : undefined}>{tr(directory.loading ? '正在打开对话…' : '还没有团队对话')}</p>}

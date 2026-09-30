@@ -20,6 +20,34 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it.each([[5, 4], [4, 3], [3, 3], [1, 1]])('distinguishes Record origin %s from effective search source %s in tag results', async (origin, expected) => {
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
+      items: [{ record_core: { record_uid: 'record', owner_user_id: 42, origin_kind: origin, origin_container_ref: 'container', text_content: '#项目' } }],
+    }) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchTagRecords({ normalizedTag: '项目', limit: 20 })
+    expect(result.items[0]?.sourceKind).toBe(expected)
+    if (origin === 5) expect(result.items[0]?.routeTargetKind).toBe('record_detail')
+  })
+  it('includes personal Team Records without constructing a Chat or Home navigation target', async () => {
+    const authenticatedPost = vi.fn(async () => ({ items: [{
+      record_uid: 'team-record', source_kind: 4, source_uid: 'team-conversation',
+      route_target_kind: 'record_detail', route_target_uid: 'team-record',
+      record_core: { origin_kind: 5, owner_user_id: 42, text_content: '团队内容' },
+    }], source_aggregates: [] }))
+    const searchTargetSource = vi.fn()
+    const chatSourcesBySessionUids = vi.fn()
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost } as unknown as ServiceRuntime
+    const service = new SearchService(runtime, {} as never, {} as never,
+      { searchTargetSource, chatSourcesBySessionUids } as unknown as SourceService,
+      { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '团队', limit: 20 })
+    expect(authenticatedPost.mock.calls[0]).toContainEqual(expect.objectContaining({ source_kinds: [1, 2, 3, 4] }))
+    expect(result.items[0]).toMatchObject({ sourceKind: 4, sourceTitle: '团队对话', routeTargetKind: 'record_detail' })
+    expect(result.items[0]?.targetSource).toBeUndefined()
+    expect(searchTargetSource).not.toHaveBeenCalled()
+    expect(chatSourcesBySessionUids).not.toHaveBeenCalled()
+  })
+
   it('projects viewer remarks into every source aggregate, including sources with no message on the current page', async () => {
     const target = (displayName: string, privateNickname: string) => ({ sourceRef: displayName, kind: 'private_chat', displayName, privateNickname, unreadCount: 0, activeAtMillis: 0 })
     const chats = new Map([['chat-1', target('周鹏', '狗才')], ['chat-2', target('何宏顺', '1D3E')]])

@@ -636,7 +636,7 @@ function calendarTimelineItem(item: ArkmeCalendarRecordItem, avatarRef?: string)
 function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   // DSH inputs use the shared origin marker, not a personal-topic navigation.
   if (isDshAgentInputCreationSource(item)) return null
-  const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
+  const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'team' ? tr('团队对话') : item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
   return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
     aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}

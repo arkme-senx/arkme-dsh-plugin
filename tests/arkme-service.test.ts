@@ -4882,7 +4882,7 @@ describe('ArkmeService', () => {
       }],
     })
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
-      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
+      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3, 4] },
       { scene_kind: 3, limit: 10, search_scope: 'global' },
       { keyword: '北京', result_mode: 'segments', limit: 9 },
     ])
