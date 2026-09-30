@@ -263,7 +263,8 @@ const english: Record<string,string> = {
   "尚未开启": "Not enabled",
   "通过链接发消息，无需加入团队。": "Message the team using this link. No team membership needed.",
   "复制链接": "Copy link",
-  "消息链接": "Message link",
+  "外部用户可通过链接发消息": "External users can send messages using this link",
+  "返回团队对话": "Back to team conversations",
   "重置链接": "Reset link",
   "{v0} 条待处理": "{v0} pending",
 }

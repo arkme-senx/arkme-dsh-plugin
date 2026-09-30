@@ -54,6 +54,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
     const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'鲨鱼辣椒1998'}, preview:{status:'available',text:'请问可以修改吗？',hasMedia:false}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
+    const secondConversation = () => ({...conversation(), ref:'second-ref', key:'second-key', visitor:{nickname:'第二位来访者'}, preview:{status:'available',text:'我想了解一下团队功能',hasMedia:false}})
     const messages = [
       {key:'own-text',ref:'own-text',seq:1,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'你好，我想反馈一个使用问题。',template_kind:1},media:[]},
       {key:'reply',ref:'reply',seq:2,side:'team',own:false,sender:{nickname:'Loki1999'},content:{text_content:'你好，请发一张截图，我们一起确认。',template_kind:1},media:[]},
@@ -87,7 +88,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       let value
       if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要',snippet:'检索摘要',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
       else if (op === 'team.app.source') value = await hostOwner.executeTeamApp(op, params)
-      else if (op === 'team.app.channel' || op === 'team.app.official') value = channel()
+      else if (op === 'team.app.channel' || op === 'team.app.official') value = {...channel(), teamRef:`refreshed-channel-${randomUUID()}`}
       else if (op === 'team.app.channel.configure') { enabled = params.enabled; value = channel() }
       else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ userRef: `usr_v1_${String(i).repeat(32)}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
       else if (op === 'team.app.directory') value = { section: 'teams', items: params.countOnly ? [] : [{ kind: 'team', teamRef, displayName: channel().name, publicId: 'arkme_cn', role: owner ? 'owner' : 'member' }], total: 1, hasMore: false }
@@ -96,7 +97,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if(op === 'team.app.timeline') {
         const revision=++grantRevision
         const avatarPage = await hostOwner.executeTeamApp('team.app.timeline', {conversationRef:avatarConversation.ref})
-        value={conversation:conversation(),messages:messages.map((m,i)=>({...m,ref:`${m.key}-grant-${revision}`,
+        value={conversation:params.conversationRef === 'second-ref' ? secondConversation() : conversation(),messages:params.conversationRef === 'second-ref' ? [] : messages.map((m,i)=>({...m,ref:`${m.key}-grant-${revision}`,
           sender:avatarPage.messages[i].sender,
           media:m.media.map(f=>({...f,key:`asset-${m.key}`,ref:`media-grant-${revision}`,url:`/arkme-self/test-team-media/image?grant=${revision}`}))})),hasMore:false,beforeSeq:0}
       }
@@ -115,7 +116,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if(op === 'team.app.read') value={}
       else if(op === 'team.app.create.check') value={available:params.jotmoId !== 'already_taken',reason:params.jotmoId === 'already_taken' ? 'taken' : ''}
       else if (op === 'team.app.conversations') value = { items: params.side === 'team'
-        ? [conversation()]
+        ? [conversation(), secondConversation()]
         : [{...conversation(),key:'contacted-team',side:'external',channel:{...channel(),name:'设计团队',jotmoId:'design_team'}}], hasMore:false }
       else if (op === 'team.app.applications') value = { items: [], hasMore: false }
       else if (op === 'team.app.attention') value = { team: false, external: false, applications: false }
@@ -156,6 +157,13 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const links = detail.locator('.team-channel-card')
     await links.getByRole('heading', { name: '接收外部消息', exact: true }).waitFor()
     expect(await links.getByRole('textbox', { name: '团队消息分享链接' }).inputValue()).toBe(channel().link)
+    expect(await links.getByText('消息链接',{exact:true}).count()).toBe(0)
+    await links.getByText('外部用户可通过链接发消息',{exact:true}).waitFor()
+    const copyBox = await links.getByRole('button',{name:'复制链接',exact:true}).boundingBox()
+    const resetBox = await links.getByRole('button',{name:'重置链接',exact:true}).boundingBox()
+    expect(resetBox.x).toBeGreaterThan(copyBox.x + copyBox.width)
+    expect(Math.abs(resetBox.y + resetBox.height/2 - copyBox.y - copyBox.height/2)).toBeLessThan(2)
+    expect(await links.getByRole('button',{name:'重置链接',exact:true}).textContent()).toBe('')
     await links.getByRole('button', { name: '重置链接', exact: true }).click()
     await detail.getByRole('alert').getByText('重置后旧链接失效，已存在的会话继续保留。确认重置？', { exact: true }).waitFor()
     await detail.getByRole('button', { name: '取消', exact: true }).click()
@@ -207,6 +215,30 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await detail.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe('rgb(255, 255, 255)')
     await capture('plugin-owner-dark')
     await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
+    await detail.getByRole('button',{name:'查看团队对话',exact:true}).click()
+    const teamDirectory = page.locator('.team-conversation-directory')
+    await teamDirectory.getByRole('button',{name:/第二位来访者/}).waitFor()
+    await capture('plugin-team-conversation-list')
+    await page.setViewportSize({width:640,height:800})
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false)
+    const rowBounds = await teamDirectory.getByRole('button',{name:/第二位来访者/}).boundingBox()
+    expect(rowBounds.x + rowBounds.width).toBeLessThanOrEqual(640)
+    const narrowName = await page.getByRole('treeitem').filter({hasText:'第二位来访者'}).getByText('第二位来访者',{exact:true}).boundingBox()
+    expect(narrowName.width).toBeGreaterThan(20)
+    await capture('plugin-team-conversation-list-compact')
+    await page.setViewportSize({width:1440,height:1000})
+    await teamDirectory.getByRole('button',{name:/鲨鱼辣椒1998/}).click()
+    const replyPane = page.locator('.team-conversation-pane')
+    await replyPane.getByRole('textbox',{name:'团队消息内容'}).fill('给第一位来访者的草稿')
+    expect(await replyPane.getByRole('button',{name:'对话选项',exact:true}).count()).toBe(0)
+    await capture('plugin-team-conversation-back')
+    await replyPane.getByRole('button',{name:'返回团队对话',exact:true}).click()
+    await teamDirectory.getByRole('button',{name:/第二位来访者/}).click()
+    await expect.poll(()=>replyPane.getByRole('textbox',{name:'团队消息内容'}).textContent()).toBe('')
+    await replyPane.getByRole('button',{name:'返回团队对话',exact:true}).click()
+    await teamDirectory.getByRole('button',{name:/鲨鱼辣椒1998/}).click()
+    await expect.poll(()=>replyPane.getByRole('textbox',{name:'团队消息内容'}).textContent()).toBe('给第一位来访者的草稿')
+    await replyPane.getByRole('textbox',{name:'团队消息内容'}).fill('')
     await page.setViewportSize({ width: 1024, height: 768 })
     owner = false; await page.reload()
     await page.getByRole('button', { name: '联系人', exact: true }).click()
@@ -279,12 +311,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(flashCheck.flashes).toBe(0)
     expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
-    await page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview',{exact:true}).waitFor()
+    await expect.poll(() => page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview',{exact:true}).count()).toBe(2)
     await page.locator('[data-team-side="external"]').getByText('团队',{exact:true}).waitFor()
     await page.locator('[data-team-side="team"]').getByText('鲨鱼辣椒1998', { exact: true }).waitFor()
-    await page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview', { exact: true }).waitFor()
     await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).waitFor()
-    const memberRow = page.locator('[data-team-side="team"]')
+    const memberRow = page.locator('[data-team-side="team"]').filter({hasText:'鲨鱼辣椒1998'})
     expect(await memberRow.locator('[data-arkme-conversation-content] > span').nth(1).textContent()).toBe('请问可以修改吗？')
     const contextBox = await memberRow.getByText('外部用户 · Arkme Internal Interview', {exact:true}).boundingBox()
     expect(contextBox.width).toBeGreaterThan(20)
