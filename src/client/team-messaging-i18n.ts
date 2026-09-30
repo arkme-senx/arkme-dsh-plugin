@@ -1,5 +1,7 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '暂时无法打开团队对话，请稍后重试': 'Unable to open the team conversation. Please try again.',
+  '来源：{v0}': 'Source: {v0}',
   '创建未完成，请检查团队名称和即我号后重试': 'Could not create the team. Check its name and Arkme ID, then retry.',
   '仅支持字母、数字和下划线': 'Use only letters, numbers and underscores',
   '最少6位': 'Use at least 6 characters',

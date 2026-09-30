@@ -1,3 +1,4 @@
+import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
@@ -161,7 +162,7 @@ function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
       {dateLabel === '' ? null : <time>{dateLabel}</time>}
     </span>
   }
-  return <span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
+  return <span style={styles.meta}>{item.sourceKind === 4 ? <><TeamRecordSource conversationUid={item.sourceUid} /> · </> : item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
 }
 function normalizedSearchText(value: string): string { return value.replace(/\s+/g, ' ').trim() }
 function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.selfRole?.name || item.nickname || '快记' }
@@ -243,7 +244,7 @@ function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
         downloadName={item.voice?.fileName}
         collapsible={transcript.length > 300 || transcript.split('\n').length > 5}
       ><ArkmeRichText text={transcript} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} /></ArkmeVoiceContent>
-      {isDshAgentInputRecord(item) ? <RecordMeta item={item} /> : <span style={styles.audioMeta}>{sender}{item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>}
+      {isDshAgentInputRecord(item) ? <RecordMeta item={item} /> : <span style={styles.audioMeta}>{sender}{item.sourceKind === 4 ? <> · <TeamRecordSource conversationUid={item.sourceUid} /></> : item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>}
     </div>
   </article>
 }
@@ -253,7 +254,10 @@ function Status({ loading, error, empty }: { loading: boolean; error?: string; e
   return empty === true ? <div style={styles.status}>{tr("暂无相关内容")}</div> : null
 }
 
-export function ArkmeSearchSurface({
+export function ArkmeSearchSurface(props: ArkmeSearchSurfaceProps) {
+  return <TeamRecordSourceScope><ArkmeSearchSurfaceBody {...props} /></TeamRecordSourceScope>
+}
+function ArkmeSearchSurfaceBody({
   variant = 'page', initialQuery, initialQueryRevision, searchDshMessages, onOpenDshSession, onOpenRecord, onClose,
 }: ArkmeSearchSurfaceProps = {}) {
   useArkmeLocale()
@@ -785,7 +789,9 @@ export function ArkmeSearchSurface({
     </div>}
     {personalDetail !== undefined && (personalDetail.value !== undefined
       ? <ArkmeTimelineDetailDrawer item={personalDetail.value} canExtend={false}
-        sourceBadge={<ArkmeTopicTagBadge label={personalDetail.source.sourceTitle || tr('快记')} />}
+        sourceBadge={personalDetail.source.sourceKind === 4
+          ? <TeamRecordSource conversationUid={personalDetail.source.sourceUid} navigable onOpened={() => { closePersonalDetail(); onClose?.() }} />
+          : <ArkmeTopicTagBadge label={personalDetail.source.sourceTitle || tr('快记')} />}
         showOriginal={personalDetailOriginal} onToggleOriginal={() => setPersonalDetailOriginal(value => !value)} onClose={closePersonalDetail} />
       : <ArkmeDetailShell title={tr('快记详情')} label={tr('快记详情')} onClose={closePersonalDetail}>
         <Status loading={personalDetail.error === undefined} {...(personalDetail.error === undefined ? {} : { error: personalDetail.error })} />

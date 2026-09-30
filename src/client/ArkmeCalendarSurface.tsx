@@ -1,3 +1,4 @@
+import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -633,10 +634,11 @@ function calendarTimelineItem(item: ArkmeCalendarRecordItem, avatarRef?: string)
   }), ...(avatarRef === undefined ? {} : { avatarRef }) }
 }
 
-function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function CalendarSourceBadge({ item, onSelect, onTeamOpened }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void; onTeamOpened?: (() => void) | undefined }) {
   // DSH inputs use the shared origin marker, not a personal-topic navigation.
   if (isDshAgentInputCreationSource(item)) return null
-  const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'team' ? tr('团队对话') : item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
+  if (item.sourceKind === 'team') return <TeamRecordSource conversationUid={item.teamConversationUid} navigable onOpened={onTeamOpened} />
+  const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
   return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
     aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}
@@ -648,7 +650,7 @@ function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem
   </button>
 }
 
-function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function RecordRow({ item, avatarRef, onOpen, onSelectSource, onTeamOpened }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onTeamOpened?: () => void; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   const sourceLabel = arkmeCalendarRecordSourceLabel(item)
   const role = !item.protected && (item.sourceKind === 'self' || item.sourceKind === 'topic') ? item.content?.selfRole : undefined
   return <article data-arkme-calendar-role={role?.roleId} style={{ ...styles.recordRow, ...(role === undefined ? {} : { flexDirection: 'row-reverse', justifyContent: 'flex-end' }) }}>
@@ -669,7 +671,7 @@ function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCal
       }}>
         <ArkmeMessageContent item={calendarTimelineItem(item, avatarRef)} onArticleOpen={onOpen} onCallDetailOpen={onOpen} />
 
-        <CalendarSourceBadge item={item} onSelect={onSelectSource} />
+        <CalendarSourceBadge item={item} onSelect={onSelectSource} onTeamOpened={onTeamOpened} />
         {sourceLabel === '' ? null : <ArkmeDshAgentInputMarker
           style={styles.recordSource}
           iconStyle={styles.recordSourceIcon}
@@ -744,7 +746,10 @@ export function ArkmeCalendarCell({
   </>
 }
 
-export function ArkmeCalendarSurface({
+export function ArkmeCalendarSurface(props: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
+  return <TeamRecordSourceScope><ArkmeCalendarSurfaceBody {...props} /></TeamRecordSourceScope>
+}
+function ArkmeCalendarSurfaceBody({
   onClose, anchor = 'directory', accountScope,
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
   useArkmeLocale()
@@ -885,7 +890,7 @@ export function ArkmeCalendarSurface({
     onClose?.()
     arkmeUi.selectSource(source)
   }
-  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} />
+  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }} />
 
   return <div style={{
     ...styles.root,
@@ -932,7 +937,7 @@ export function ArkmeCalendarSurface({
               <strong>{tr("这一天还没有快记")}</strong>
             </div>
               : <ArkmeDirectoryWindow scrollRootRef={listRef} activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
-                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource}
+                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }}
                 {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}</ArkmeDirectoryWindow>}
           {records?.hasMore === true && records.nextCursor !== undefined && <div ref={loadMoreSentinel} style={{ minHeight: 1 }}>
             {loadingMore && <div style={styles.loadingStatus} role="status">{tr("加载中…")}</div>}

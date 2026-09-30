@@ -28,6 +28,22 @@ describe('Team channel settings interactions', () => {
     })
   })
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.unstubAllGlobals() })
+  it('hides empty joining applications and duplicate channel status text', async () => {
+    await mount()
+    expect(text(renderer!.root)).toContain('接收外部消息')
+    expect(text(renderer!.root)).not.toContain('正在接收消息')
+    expect(text(renderer!.root)).not.toContain('没有待处理申请')
+    expect(renderer!.root.findAllByType('details')).toHaveLength(0)
+  })
+  it('still shows pending joining applications', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation(async (op, p) => op === 'team.app.applications'
+      ? {items:[{ref:'application',name:'申请人甲',state:'pending',requestedAt:1}],hasMore:false}
+      : original(op,p))
+    await mount()
+    expect(text(renderer!.root)).toContain('申请人甲')
+    expect(button('同意')).toBeDefined()
+  })
   it('requires confirmation before opening to all existing members and preserves revision on pause', async () => {
     await mount()
     await click(renderer!.root.findByProps({ role: 'switch' }))

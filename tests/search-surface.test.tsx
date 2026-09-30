@@ -53,6 +53,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     setTimeout: (...args: Parameters<typeof setTimeout>) => setTimeout(...args),
     clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
+    addEventListener: vi.fn(), removeEventListener: vi.fn(),
   })
   mocks.callArkme.mockReset()
   mocks.hasDsh.mockReset()

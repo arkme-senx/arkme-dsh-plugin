@@ -28,6 +28,14 @@ describe('SearchService', () => {
     expect(result.items[0]?.sourceKind).toBe(expected)
     if (origin === 5) expect(result.items[0]?.routeTargetKind).toBe('record_detail')
   })
+  it('uses current Record Team origin even before the search source projection catches up', async () => {
+    const runtime = { requireSession: async () => ({userId:42}), authenticatedPost:async () => ({items:[{
+      record_uid:'r',source_kind:1,route_target_kind:'home_feed',
+      record_core:{owner_user_id:42,origin_kind:5,origin_container_ref:'team-conversation',text_content:'正文'}
+    }],source_aggregates:[]}) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchRemote({query:'正文'})
+    expect(result.items[0]).toMatchObject({sourceKind:4,sourceUid:'team-conversation',routeTargetKind:'record_detail'})
+  })
   it('includes personal Team Records without constructing a Chat or Home navigation target', async () => {
     const authenticatedPost = vi.fn(async () => ({ items: [{
       record_uid: 'team-record', source_kind: 4, source_uid: 'team-conversation',
