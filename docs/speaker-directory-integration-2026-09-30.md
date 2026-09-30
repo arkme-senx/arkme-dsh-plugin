@@ -28,3 +28,11 @@
 - 浏览器工具打开本地地址失败，本机 UI 控制连续超时。页面交互已通过组件测试，但浏览器视觉、真实音频播放和真实标记写入未验收；没有为测试修改真实说话人或声纹。
 
 本地接口验证记录：`/Users/tison/arkme/.codex-artifacts/recording-directory-0930/live-verification.json`。不含账号凭据、人物姓名或音频正文。
+
+## 继续验收（2026-09-30 21:43）
+
+- 直接对生产接口做同候选串行对照：mark-options 6,581 ms、segments(limit=1) 6,330 ms 成功；detail 使用 90 s 诊断上限，60,073 ms 收到上游 HTTP 504。插件超时配置未改动，延长它不能解决此样本的服务端失败。
+- 合同后端提交的 getSpeakerDirectoryCandidateDetail 会先 buildSpeakerDirectoryCandidateCatalog；后者对账号 Source.Walk / ReadChildren 并聚合、聚类，然后才定位选中候选。此全账号重建路径是最可能的主要耗时原因，尚缺服务端 trace，不能确认为唯一瓶颈。相关源文件与本轮刷新后的 origin/master 无差异。
+- 现有 Host 试听链路的一个旧目录样本成功取得音频 HTTP 206（FLAC，Range 0–63，共 64 字节）。这是媒体授权/读取证据，未覆盖新目录入口、解码或真实播放。
+- CUA 能发现 Edge，打开页面和读取 UI 状态仍各 30 s 超时；未完成视觉验收。未调用生产 seen，未修改真实人物/声纹/录音。
+- 完整验收仍未通过。本轮不修改问题代码，待用户确认根因与修复方向。详细对照、影响范围及后端源文件快照见 `/Users/tison/arkme/.codex-artifacts/recording-directory-0930/acceptance-2026-09-30.md`。
