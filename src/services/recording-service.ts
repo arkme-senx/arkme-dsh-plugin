@@ -428,6 +428,13 @@ export class RecordingService {
     }
   }
 
+  /** Called only for an authenticated, Host-verified directory detail_ref. */
+  async directorySpeakerRef(speakerId: string, viewerUserId: number): Promise<string> {
+    return this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
+      version: 1, viewerUserId, target: { kind: 'speaker', speakerId },
+    }, await this.recordingRefKey('arkme-recording-speaker-v1'))
+  }
+
   /** All-history source identities, authorized by the same account-bound speaker reference as the UI. */
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers> {
     this.assertWorkbenchEnabled()

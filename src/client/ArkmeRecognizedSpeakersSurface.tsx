@@ -1,55 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { ArkmeDirectoryPage, ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerMembers, ArkmeRecordingSpeakerPresence } from '../types.js'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import type { ArkmeRecordingSpeakerMembers } from '../types.js'
+import type { SpeakerDirectoryDetail, SpeakerDirectoryPerson, SpeakerDirectoryQuery, SpeakerDirectoryStatus } from '../speaker-directory-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { tr, useArkmeLocale } from './locale.js'
+import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
 import { UnmarkedSpeakerTokenAvatar } from './redesign/contacts/UnmarkedSpeakerVisuals.js'
-import { compareRecognizedSpeakers, readRecognizedSpeakerOrder, writeRecognizedSpeakerOrder, type RecognizedSpeakerOrder } from './recognized-speaker-order.js'
-import { recognizedSpeakerTracker } from './recognized-speaker-tracker.js'
+import { readRecognizedSpeakerOrder, writeRecognizedSpeakerOrder } from './recognized-speaker-order.js'
 import { SpeakerSelfGuide } from './recordings/SpeakerSelfGuide.js'
-import { RecognizedSpeakerDirectory, recognizedSpeakerDirectory, readSpeakerOptions as defaultLoadMarked, readSpeakerPage as defaultLoadUnmarked, readSpeakerPresence as defaultLoadPresence, speakerRetryDelay } from './recognized-speaker-directory.js'
-
-type SpeakerFilter = 'all' | 'marked' | 'unmarked'
-type UnmarkedSpeaker = Extract<ArkmeDirectoryPage['items'][number], { kind: 'unmarked-speaker' }>
-export type IdentifiedSpeakerRow =
-  | { kind: 'marked'; key: string; optionKey: string; speakerRef: string; name: string; avatarRef?: string; isCurrentUser: boolean }
-  | { kind: 'unmarked'; key: string; name: string; token: string; subtitle: string; candidateRef: string; dayCount?: number | undefined; lastSeenAt?: number | undefined }
-
-/** Group only by a stable owner identity, never by a shared name or speaker number. */
-export function identifiedSpeakerRows(
-  options: readonly ArkmeRecordingSpeakerCandidate[],
-  candidates: readonly UnmarkedSpeaker[],
-): IdentifiedSpeakerRow[] {
-  const marked = new Map<string, Extract<IdentifiedSpeakerRow, { kind: 'marked' }>>()
-  for (const option of options) {
-    if (option.kind !== 'speaker') continue
-    const key = option.personKey || option.optionKey
-    if (marked.has(key)) continue
-    marked.set(key, {
-      kind: 'marked', key, optionKey: option.optionKey, speakerRef: option.speakerRef,
-      name: option.label.trim() || '未命名说话人',
-      ...(option.avatarRef === undefined ? {} : { avatarRef: option.avatarRef }),
-      isCurrentUser: option.isCurrentUser,
-    })
-  }
-  const unmarked = new Map<string, Extract<IdentifiedSpeakerRow, { kind: 'unmarked' }>>()
-  for (const candidate of candidates) {
-    if (unmarked.has(candidate.candidateRef)) continue
-    unmarked.set(candidate.candidateRef, {
-      kind: 'unmarked', key: candidate.candidateRef,
-      name: tr('说话人 {v0}', { v0: candidate.speakerToken?.trim() || candidate.displayName }),
-      token: candidate.speakerToken?.trim() || '', subtitle: candidate.subtitle,
-      candidateRef: candidate.candidateRef,
-      dayCount: candidate.appearanceDays, lastSeenAt: candidate.latestAtMillis,
-    })
-  }
-  return [
-    ...[...marked.values()].sort((left, right) => left.name.localeCompare(right.name)),
-    ...unmarked.values(),
-  ]
-}
+import { RecognizedSpeakerDirectory, recognizedSpeakerDirectory, directoryQueryValid, directoryVisible, directoryErrorCode, normalizeDirectoryQuery, speakerRetryDelay, type DirectoryList } from './recognized-speaker-directory.js'
 
 const styles: Record<string, CSSProperties> = {
   root: { flex: 1, minWidth: 0, minHeight: 0, height: '100%', overflow: 'auto', containerType: 'inline-size', background: arkmeTheme.base, color: arkmeTheme.text },
@@ -81,194 +41,168 @@ const styles: Record<string, CSSProperties> = {
 export interface ArkmeRecognizedSpeakersSurfaceProps {
   accountKey: string
   onBack(): void
-  loadMarked?: (signal: AbortSignal) => Promise<ArkmeRecordingSpeakerCandidate[]>
-  loadPresence?: (signal: AbortSignal) => Promise<ArkmeRecordingSpeakerPresence>
-  loadMarkedMembers?: (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => Promise<ArkmeRecordingSpeakerMembers>
-  loadUnmarked?: (cursor: string, signal: AbortSignal) => Promise<ArkmeDirectoryPage>
   directory?: RecognizedSpeakerDirectory
+  loadMarkedMembers?: (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => Promise<ArkmeRecordingSpeakerMembers>
 }
-
-const defaultLoadMarkedMembers = async (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => await callArkme<ArkmeRecordingSpeakerMembers>(
-  'recordings.speaker.members', { speakerRef, ...(expectedVersion === undefined ? {} : { expectedVersion }) }, signal,
-)
-
-function failureMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim() !== '' ? error.message : tr('说话人列表暂时无法加载')
+const defaultLoadMarkedMembers = (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => callArkme<ArkmeRecordingSpeakerMembers>(
+  'recordings.speaker.members', { speakerRef, ...(expectedVersion === undefined ? {} : { expectedVersion }) }, signal)
+const failureMessage = (error: unknown) => error instanceof Error ? error.message : tr('说话人列表暂时无法加载')
+function personStats(row: SpeakerDirectoryPerson) {
+  const recent = row.lastSeenAt > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.lastSeenAt) : tr('时间未知')
+  return tr('出现 {v0} 天 · 最近 {v1}', { v0: row.dayCount, v1: recent })
 }
-
-function markedPresenceLabel(stat: ArkmeRecordingSpeakerPresence['items'][number] | undefined, result: ArkmeRecordingSpeakerPresence | undefined, loading: boolean, error: string): string {
-  if (loading || result?.state === 'building') return tr('出现统计整理中')
-  if (error !== '' || result?.state === 'failed' || result === undefined) return tr('出现统计暂不可用')
-  if (result.state === 'stale') return tr('出现统计更新中')
-  if (stat !== undefined) {
-    const date = new Date(stat.lastSeenAt)
-    if (!Number.isNaN(date.getTime())) {
-      const two = (value: number) => String(value).padStart(2, '0')
-      const recent = `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
-      return tr('出现 {v0} 天 · 最近 {v1}', { v0: stat.dayCount, v1: recent })
-    }
-  }
-  return tr('暂无可统计的录音片段')
+function statusText(status: SpeakerDirectoryStatus | undefined): string {
+  if (status?.state === 'disabled') return tr('说话人目录暂不可用，请稍后再试。')
+  if (status?.coverage === 'unknown') return status.state === 'failed' ? tr('说话人目录暂不可用，请稍后刷新。') : tr('正在整理说话人目录…')
+  if (status?.state === 'failed') return tr('更新暂未完成，当前显示上次整理的目录。')
+  if (status?.state === 'stale') return tr('正在更新，当前显示已整理的目录。')
+  if (status && (status.processingSessionCount > 0 || status.pendingIdentityAggregationCount > 0 || status.insufficientEvidenceCount > 0 || status.scanTruncated)) return tr('部分录音仍在整理，人物可能继续更新。')
+  return ''
 }
-
-function MarkedSpeakerDetail({ accountKey, speaker, loadMembers, version, onVersionChanged }: {
-  version?: string | undefined
-  onVersionChanged: () => void
-  accountKey: string
-  speaker: Extract<IdentifiedSpeakerRow, { kind: 'marked' }>
-  loadMembers: (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => Promise<ArkmeRecordingSpeakerMembers>
+function PersonDetail({ row, accountKey, directory, loadMembers, onChanged }: {
+  row: SpeakerDirectoryPerson; accountKey: string; directory: RecognizedSpeakerDirectory
+  loadMembers: NonNullable<ArkmeRecognizedSpeakersSurfaceProps['loadMarkedMembers']>; onChanged(): void
 }) {
-  const [state, setState] = useState<{ loading: boolean; result?: ArkmeRecordingSpeakerMembers; error: string }>({ loading: true, error: '' })
+  const [detail, setDetail] = useState<SpeakerDirectoryDetail>()
+  const [members, setMembers] = useState<ArkmeRecordingSpeakerMembers>()
+  const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
-    setState({ loading: true, error: '' })
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const load = async () => {
-      try {
-        const result = await loadMembers(speaker.speakerRef, controller.signal, version)
+    let retry: ReturnType<typeof setTimeout> | undefined
+    setDetail(undefined); setMembers(undefined); setError('')
+    void directory.open(accountKey, row.detailRef, controller.signal).then(async value => {
+      if (controller.signal.aborted) return
+      setDetail(value)
+      if (value.type === 'speaker') {
+        const result = await loadMembers(value.speakerRef, controller.signal, value.expectedVersion)
         if (controller.signal.aborted) return
-        setState({ loading: false, result, error: '' })
-        if (result.state === 'stale' && result.version !== undefined && result.version !== version) onVersionChanged()
-        if (result.state !== 'fresh') timer = setTimeout(() => { void load() }, Math.max(5_000, result.retryAfterMs ?? 10_000))
-      } catch (error) {
-        if (!controller.signal.aborted) setState({ loading: false, error: failureMessage(error) })
+        setMembers(result)
+        if (result.state === 'stale') onChanged()
+        else if (result.state !== 'fresh') retry = setTimeout(() => { if (directoryVisible()) setRevision(value => value + 1) }, Math.max(5_000, result.retryAfterMs ?? 10_000))
       }
-    }
-    void load()
-    return () => { clearTimeout(timer); controller.abort() }
-  }, [accountKey, speaker.speakerRef, loadMembers, version, onVersionChanged])
-
+    }).catch(error => {
+      if (controller.signal.aborted) return
+      if (directoryErrorCode(error) === 'unmarked-candidate-not-found') onChanged()
+      else setError(failureMessage(error))
+    })
+    return () => { controller.abort(); clearTimeout(retry) }
+  }, [row.detailRef, accountKey, directory, loadMembers, onChanged, revision])
+  if (error) return <div role="alert" style={styles.error}>{error} <button style={styles.button} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button></div>
+  if (!detail) return <div role="status" style={styles.state}>{tr('正在加载人物详情…')}</div>
+  if (detail.type === 'candidate') return <UnmarkedSpeakerDetail accountKey={accountKey} candidateRef={detail.candidateRef} onDirectoryRefresh={onChanged} onCandidateCleared={onChanged} />
   return <section aria-label={tr('已标记说话人详情')}>
-    <h2 style={styles.detailTitle}>{speaker.name}{speaker.isCurrentUser ? ` · ${tr('我')}` : ''}</h2>
-    <p style={{ ...styles.meta, margin: 0 }}>{tr('查看已确认归属的原始识别身份')}</p>
+    <h2 style={styles.detailTitle}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</h2>
+    <p style={{ ...styles.meta, margin: 0 }}>{personStats(row)}</p>
     <h3 style={styles.detailSection}>{tr('对应的识别说话人')}</h3>
-    <p style={{ ...styles.meta, margin: '0 0 8px', whiteSpace: 'normal' }}>{tr('展示全部历史已转写片段中可核实的关联。')}</p>
-    {state.loading || state.result?.state === 'building' ? <div role="status" style={styles.state}>{tr('正在查找关联说话人…')}</div>
-      : state.error !== '' || state.result?.state === 'failed' ? <div role="alert" style={styles.error}>{state.error || tr('出现统计暂不可用')}</div>
-        : state.result?.state === 'stale' ? <div role="status" style={styles.state}>{tr('出现统计更新中')}</div>
-        : state.result?.items.length === 0 ? <div role="status" style={styles.state}>{state.result.dayCount > 0
-          ? tr('有发声，但未找到稳定的原始识别身份。')
-          : tr('暂无可核实的关联说话人。')}</div>
-          : <ul style={styles.list}>{state.result?.items.map(member => <li key={member.identityKey} style={styles.memberRow}>
-            <UnmarkedSpeakerTokenAvatar token={member.token} size={36} label={tr('说话人 {v0}', { v0: member.token })} />
-            <span style={styles.copy}><span style={styles.name}>{tr('说话人 {v0}', { v0: member.token })}</span>
-              <span style={styles.meta}>{tr('出现 {v0} 天', { v0: member.dayCount })}</span></span>
-          </li>)}</ul>}
+    <p style={{ ...styles.meta, whiteSpace: 'normal' }}>{tr('展示全部历史已转写片段中可核实的关联。')}</p>
+    {!members || members.state !== 'fresh' ? <div role="status" style={styles.state}>{members?.state === 'failed' ? tr('出现统计暂不可用') : tr('出现统计整理中')}</div>
+      : members.items.length === 0 ? <div style={styles.state}>{tr('暂无可核实的关联说话人。')}</div>
+        : <ul style={styles.list}>{members.items.map(member => <li key={member.identityKey} style={styles.memberRow}>
+          <UnmarkedSpeakerTokenAvatar token={member.token} size={36} label={tr('说话人 {v0}', { v0: member.token })} />
+          <span style={styles.copy}><span style={styles.name}>{tr('说话人 {v0}', { v0: member.token })}</span><span style={styles.meta}>{tr('出现 {v0} 天', { v0: member.dayCount })}</span></span>
+        </li>)}</ul>}
   </section>
 }
 
-export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked = defaultLoadMarked, loadPresence = defaultLoadPresence, loadMarkedMembers = defaultLoadMarkedMembers, loadUnmarked = defaultLoadUnmarked, directory: providedDirectory }: ArkmeRecognizedSpeakersSurfaceProps) {
+export function ArkmeRecognizedSpeakersSurface(props: ArkmeRecognizedSpeakersSurfaceProps) {
+  return <DirectorySurface key={props.accountKey} {...props} />
+}
+function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDirectory, loadMarkedMembers = defaultLoadMarkedMembers }: ArkmeRecognizedSpeakersSurfaceProps) {
   useArkmeLocale()
-  const directory = useMemo(() => providedDirectory ?? (loadMarked === defaultLoadMarked && loadUnmarked === defaultLoadUnmarked && loadPresence === defaultLoadPresence ? recognizedSpeakerDirectory
-    : new RecognizedSpeakerDirectory({ marked: loadMarked, page: loadUnmarked, presence: loadPresence }, 0)), [providedDirectory, loadMarked, loadUnmarked, loadPresence])
-  const [filter, setFilter] = useState<SpeakerFilter>('all')
-  const [query, setQuery] = useState('')
-  const [orderPreference, setOrderPreference] = useState(() => ({ accountKey, value: readRecognizedSpeakerOrder(accountKey) }))
-  const order = orderPreference.accountKey === accountKey ? orderPreference.value : readRecognizedSpeakerOrder(accountKey)
-  const [visibleCount, setVisibleCount] = useState(100)
-  const [refreshRevision, setRefreshRevision] = useState(0)
-  const [marked, setMarked] = useState<{ loading: boolean; items: ArkmeRecordingSpeakerCandidate[]; error: string }>({ loading: true, items: [], error: '' })
-  const [presence, setPresence] = useState<{ loading: boolean; result?: ArkmeRecordingSpeakerPresence; error: string }>({ loading: true, error: '' })
-  const [unmarked, setUnmarked] = useState<{ loading: boolean; complete: boolean; items: UnmarkedSpeaker[]; projectionState: ArkmeDirectoryPage['projectionState']; error: string }>({ loading: true, complete: false, items: [], projectionState: undefined, error: '' })
-  const [selectedCandidate, setSelectedCandidate] = useState<string>()
-  const [selectedMarked, setSelectedMarked] = useState<Extract<IdentifiedSpeakerRow, { kind: 'marked' }>>()
-  const lastAccountKey = useRef(accountKey)
-  const readAccount = useRef<string>()
-  const refresh = useCallback(() => { directory.invalidate(accountKey); setSelectedMarked(undefined); setRefreshRevision(value => value + 1) }, [directory, accountKey])
-  useEffect(() => { setVisibleCount(100) }, [accountKey, filter, query, order])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    const retryTimers: ReturnType<typeof setTimeout>[] = []
-    const retry = (error: unknown, read: () => void) => {
-      const delay = speakerRetryDelay(error)
-      if (delay !== undefined) retryTimers.push(setTimeout(() => { if (!controller.signal.aborted) read() }, delay))
+  const [filter, setFilter] = useState<SpeakerDirectoryQuery['filter']>('all')
+  const [input, setInput] = useState(''), [queryText, setQueryText] = useState('')
+  const [sort, setSort] = useState(() => readRecognizedSpeakerOrder(accountKey))
+  const query = useMemo<SpeakerDirectoryQuery>(() => ({ filter, sort, query: queryText }), [filter, sort, queryText])
+  const [list, setList] = useState<DirectoryList>()
+  const listRef = useRef(list); listRef.current = list
+  const [loading, setLoading] = useState(true), [moreLoading, setMoreLoading] = useState(false)
+  const [error, setError] = useState(''), [seenError, setSeenError] = useState('')
+  const [selected, setSelected] = useState<SpeakerDirectoryPerson>()
+  const rootRef = useRef<HTMLDivElement>(null), listScroll = useRef(0), hadSelection = useRef(false)
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (root && root.clientWidth <= 680) {
+      if (selected && !hadSelection.current) { listScroll.current = root.scrollTop; root.scrollTop = 0 }
+      else if (!selected && hadSelection.current) root.scrollTop = listScroll.current
     }
-    readAccount.current = undefined
-    if (lastAccountKey.current !== accountKey) {
-      lastAccountKey.current = accountKey
-      setMarked({ loading: true, items: [], error: '' })
-      setPresence({ loading: true, error: '' })
-      setUnmarked({ loading: true, complete: false, items: [], projectionState: undefined, error: '' })
-      setOrderPreference({ accountKey, value: readRecognizedSpeakerOrder(accountKey) })
-      setQuery('')
-      setSelectedMarked(undefined)
-      setSelectedCandidate(undefined)
-    }
-    setMarked(previous => ({ ...previous, loading: true, error: '' }))
-    setPresence(previous => ({ ...previous, loading: true, error: '' }))
-    setUnmarked(previous => ({ ...previous, loading: true, complete: false, error: '' }))
-    const cachedMarked = directory.peekMarked(accountKey)
-    if (cachedMarked !== undefined) setMarked({ loading: false, items: cachedMarked, error: '' })
-    const readMarked = () => { void directory.readMarked(accountKey, controller.signal).then(items => {
-      if (!controller.signal.aborted) setMarked({ loading: false, items, error: '' })
-    }).catch(error => {
-      if (!controller.signal.aborted) { setMarked(previous => ({ ...previous, loading: false, error: failureMessage(error) })); retry(error, readMarked) }
-    }) }
-    readMarked()
-    const cachedPresence = directory.peekPresence(accountKey)
-    if (cachedPresence !== undefined) setPresence({ loading: false, result: cachedPresence, error: '' })
-    const readPresence = () => { void directory.readPresence(accountKey, controller.signal).then(result => {
-      if (!controller.signal.aborted) setPresence({ loading: false, result, error: '' })
-    }).catch(error => {
-      if (!controller.signal.aborted) { setPresence(previous => ({ ...previous, loading: false, error: failureMessage(error) })); retry(error, readPresence) }
-    }) }
-    readPresence()
-    const readCandidates = () => { void directory.readCandidates(accountKey, controller.signal, snapshot => {
-      if (!controller.signal.aborted) { readAccount.current = accountKey; setUnmarked({ ...snapshot, loading: true, error: '' }) }
-    }).then(snapshot => {
-      if (!controller.signal.aborted) setUnmarked({ ...snapshot, loading: false, error: '' })
-    }).catch(error => {
-      if (!controller.signal.aborted) {
-        setUnmarked(previous => ({ ...previous, loading: false, complete: false, error: failureMessage(error) }))
-        retry(error, readCandidates)
-      }
-    }) }
-    readCandidates()
-    return () => { controller.abort(); retryTimers.forEach(clearTimeout) }
-  }, [accountKey, refreshRevision, directory])
-
+    hadSelection.current = selected !== undefined
+  }, [selected])
+  const [revision, setRevision] = useState(0)
+  const force = useRef(false), recoveryAttempts = useRef(0)
+  const controllerRef = useRef<AbortController>()
+  const snapshot = useSyncExternalStore(directory.subscribe, () => directory.get(accountKey), () => directory.get(accountKey))
+  const summary = snapshot.summary
+  const queryValid = directoryQueryValid(input)
+  const queryPending = normalizeDirectoryQuery(input) !== queryText
+  const listMatches = list?.query.filter === filter && list.query.sort === sort && list.query.query === queryText
+  useEffect(() => { if (!directory.hasPendingSeen(accountKey)) setSeenError('') }, [directory, accountKey, snapshot])
+  useEffect(() => { const timer = setTimeout(() => setQueryText(normalizeDirectoryQuery(input)), 300); return () => clearTimeout(timer) }, [input])
+  const refresh = useCallback(() => { force.current = true; directory.invalidate(accountKey); setRevision(value => value + 1) }, [directory, accountKey])
   useEffect(() => {
-    const state = presence.result?.state
-    if (presence.loading || presence.error !== '' || (state !== 'building' && state !== 'stale' && state !== 'failed')) return
-    const controller = new AbortController()
-    const timer = setTimeout(() => {
-      void directory.refreshPresence(accountKey, controller.signal).then(result => {
-        if (!controller.signal.aborted) setPresence({ loading: false, result, error: '' })
-      }).catch(error => {
-        if (!controller.signal.aborted) setPresence(previous => ({ ...previous, loading: false, error: failureMessage(error) }))
-      })
-    }, Math.max(5_000, presence.result?.retryAfterMs ?? 10_000))
-    return () => { clearTimeout(timer); controller.abort() }
-  }, [accountKey, refreshRevision, directory, presence.loading, presence.error, presence.result])
-
-  const refreshPresenceVersion = useCallback(() => { setPresence({ loading: false, result: { state: 'stale', scope: 'all-history', items: [], retryAfterMs: 1000 }, error: '' }) }, [])
-
-  const rows = useMemo(() => identifiedSpeakerRows(marked.items, unmarked.items), [marked.items, unmarked.items])
-  const hasSelf = rows.some(row => row.kind === 'marked' && row.isCurrentUser)
-  useEffect(() => {
-    if (readAccount.current !== accountKey || marked.loading || marked.error !== '') return
-    // Opening a successfully rendered directory clears the already-known notification.
-    if (rows.length > 0 || (!unmarked.loading && unmarked.complete)) recognizedSpeakerTracker.acknowledge(accountKey)
-    if (!unmarked.loading && unmarked.complete && unmarked.error === '') {
-      recognizedSpeakerTracker.observe(accountKey, marked.items, unmarked.items, true)
+    const controller = new AbortController(); controllerRef.current = controller
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let busy = false
+    const cached = directory.peek(accountKey, query)
+    setList(cached); setSelected(undefined); setError(''); setMoreLoading(false)
+    const load = async () => {
+      if (busy || !directoryVisible() || controller.signal.aborted) return
+      if (!directoryQueryValid(query.query)) { setLoading(false); return }
+      busy = true; setLoading(true)
+      try {
+        const result = await directory.first(accountKey, query, controller.signal, force.current)
+        if (!controller.signal.aborted) { force.current = false; setList(result); setError('') }
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setError(failureMessage(error))
+        const delay = speakerRetryDelay(error)
+        if (delay !== undefined) retry = setTimeout(() => { void load() }, delay)
+      } finally { busy = false; if (!controller.signal.aborted) setLoading(false) }
     }
-  }, [accountKey, marked.loading, marked.error, marked.items, unmarked.loading, unmarked.complete, unmarked.error, unmarked.items, rows.length])
-  const presenceByOption = useMemo(() => new Map(presence.error === '' && presence.result?.state === 'fresh' ? presence.result.items.map(item => [item.optionKey, item]) : []), [presence.result, presence.error])
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  const orderValue = (row: IdentifiedSpeakerRow) => {
-    const stat = row.kind === 'marked' ? presenceByOption.get(row.optionKey)
-      : unmarked.projectionState === undefined || unmarked.projectionState === 'fresh' ? row : undefined
-    return { key: `${row.kind}:${row.key}`, name: row.name, dayCount: stat?.dayCount, lastSeenAt: stat?.lastSeenAt }
+    void load()
+    const unwatch = directory.watch(accountKey, () => {
+      if (controller.signal.aborted) return
+      const current = listRef.current
+      if (!current || current.coverage === 'unknown' || directory.needsReload(accountKey, current)) void load()
+    })
+    return () => { controller.abort(); clearTimeout(retry); unwatch() }
+  }, [accountKey, directory, query, revision])
+  // A committed, visible main-directory render is the only source of acknowledgement.
+  useEffect(() => {
+    if (!list || loading || queryPending || list.query.filter !== filter || list.query.query !== queryText) return
+    let disposed = false
+    const confirm = () => { if (directoryVisible()) void directory.confirmDisplayed(accountKey, list).then(() => {
+      if (!disposed) { setSeenError(''); if (directory.needsReload(accountKey, list)) refresh() }
+    }).catch(() => { if (!disposed) setSeenError(tr('查看状态暂未同步，联网后自动重试。')) }) }
+    confirm()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', confirm)
+    return () => { disposed = true; if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', confirm) }
+  }, [accountKey, directory, list, loading, queryPending, filter, queryText, refresh])
+  const recoverDetail = useCallback(() => {
+    if (!selected || recoveryAttempts.current >= 1) { setSelected(undefined); refresh(); return }
+    recoveryAttempts.current += 1
+    const controller = controllerRef.current
+    if (!controller) return
+    void directory.first(accountKey, query, controller.signal, true).then(next => {
+      if (controller.signal.aborted) return
+      setList(next); setSelected(next.items.find(item => item.personKey === selected.personKey))
+    }).catch(error => { if (!controller.signal.aborted) { setSelected(undefined); setError(failureMessage(error)) } })
+  }, [accountKey, directory, selected, query, refresh])
+  const loadMore = async () => {
+    const controller = controllerRef.current
+    if (!list || !controller || moreLoading || queryPending) return
+    setMoreLoading(true); setError('')
+    try { const next = await directory.more(accountKey, list, controller.signal); if (!controller.signal.aborted) setList(next) }
+    catch (error) { if (!controller.signal.aborted) setError(failureMessage(error)) }
+    finally { if (!controller.signal.aborted) setMoreLoading(false) }
   }
-  const visible = rows.filter(row => (filter === 'all' || row.kind === filter)
-    && (normalizedQuery === '' || row.name.toLocaleLowerCase().includes(normalizedQuery)
-      || (row.kind === 'unmarked' && row.subtitle.toLocaleLowerCase().includes(normalizedQuery))))
-    .sort((left, right) => Number(right.kind === 'marked' && right.isCurrentUser) - Number(left.kind === 'marked' && left.isCurrentUser)
-      || compareRecognizedSpeakers(orderValue(left), orderValue(right), order))
-  const loading = marked.loading || unmarked.loading
-
-  return <div style={styles.root} data-arkme-owned="recognized-speakers-surface">
+  const disabled = summary?.state === 'disabled' || list?.state === 'disabled'
+  const rows = disabled || queryPending || !listMatches ? [] : list?.items ?? []
+  const state = disabled ? tr('说话人目录暂不可用，请稍后再试。') : statusText(summary?.snapshotVersion === list?.snapshotVersion ? summary : list?.coverage === 'complete' ? list : summary)
+  const hasNewVersion = list?.coverage === 'complete' && summary?.snapshotVersion && summary.snapshotVersion !== list.snapshotVersion
+  const mainFirst = listMatches && filter === 'all' && queryText === '' && !queryPending && list?.coverage === 'complete' && list.state === 'fresh'
+  const selfMissing = mainFirst && !list.items.some(row => row.isSelf)
+  return <div ref={rootRef} style={styles.root} data-arkme-owned="recognized-speakers-surface">
     <style>{`
       .arkme-recognized-speakers-grid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
       .arkme-recognized-speakers-grid:not([data-detail-open="true"]) { display: block; max-width: 760px; }
@@ -282,51 +216,36 @@ export function ArkmeRecognizedSpeakersSurface({ accountKey, onBack, loadMarked 
       }
     `}</style>
     <div style={styles.inner}>
-      <header style={styles.header}>
-        <button type="button" style={styles.button} onClick={onBack}>{tr('‹ 返回录音')}</button>
+      <header style={styles.header}><button type="button" style={styles.button} onClick={onBack}>{tr('‹ 返回录音')}</button>
         <div><h1 style={styles.title}>{tr('已识别说话人')}</h1><p style={styles.subhead}>{tr('查看录音中已标记和未标记的说话人')}</p></div>
-        <button type="button" style={{ ...styles.button, marginLeft: 'auto' }} onClick={refresh}>{tr('刷新')}</button>
+        <button type="button" style={{ ...styles.button, marginLeft: 'auto' }} onClick={refresh} disabled={loading}>{tr('刷新')}</button>
       </header>
       <div style={styles.filters}>
-        {([['all', '全部'], ['marked', '已标记'], ['unmarked', '未标记']] as const).map(([kind, label]) => <button key={kind} type="button" aria-pressed={filter === kind} style={{ ...styles.filter, ...(filter === kind ? styles.selectedFilter : {}) }} onClick={() => { setFilter(kind); setSelectedCandidate(undefined); setSelectedMarked(undefined) }}>{tr(label)}</button>)}
-        <input aria-label={tr('搜索说话人')} placeholder={tr('搜索说话人')} value={query} onChange={event => { setQuery(event.target.value) }} style={styles.search} />
-        <select aria-label={tr('说话人排序')} value={order} onChange={event => {
-          const next: RecognizedSpeakerOrder = event.target.value === 'recent' ? 'recent' : 'frequent'
-          setOrderPreference({ accountKey, value: next }); writeRecognizedSpeakerOrder(accountKey, next)
-        }} style={styles.sort}>
-          <option value="frequent">{tr('经常出现')}</option>
-          <option value="recent">{tr('最近出现')}</option>
+        {([['all', '全部', summary?.totalCount], ['marked', '已标记', summary?.markedCount], ['unmarked', '未标记', summary?.unmarkedCount]] as const).map(([kind, label, count]) => <button key={kind} type="button" aria-pressed={filter === kind} style={{ ...styles.filter, ...(filter === kind ? styles.selectedFilter : {}) }} onClick={() => setFilter(kind)}>{tr(label)}{!disabled && count != null ? ` ${count}` : ''}</button>)}
+        <input aria-label={tr('搜索说话人')} placeholder={tr('搜索名称或编号')} value={input} onChange={event => setInput(event.target.value)} style={styles.search} />
+        <select aria-label={tr('说话人排序')} value={sort} onChange={event => { const next = event.target.value === 'recent' ? 'recent' : 'frequent'; setSort(next); writeRecognizedSpeakerOrder(accountKey, next) }} style={styles.sort}>
+          <option value="frequent">{tr('经常出现')}</option><option value="recent">{tr('最近出现')}</option>
         </select>
       </div>
-      {!marked.loading && marked.error === '' && !hasSelf && <SpeakerSelfGuide key={accountKey} onOpenRecordings={onBack} />}
-      <div className="arkme-recognized-speakers-grid" data-detail-open={selectedCandidate === undefined && selectedMarked === undefined ? 'false' : 'true'}>
-        <div className="arkme-recognized-speakers-list">
-          {filter !== 'marked' && unmarked.loading && !unmarked.complete && rows.length > 0 && <p role="status" style={styles.note}>{tr('正在补齐说话人列表，排序仍在更新…')}</p>}
-          {filter !== 'marked' && !unmarked.loading && !unmarked.complete && <p role="status" style={styles.note}>{tr('列表尚未完整，当前仅对已加载的说话人排序和搜索。')}</p>}
-          {marked.error !== '' && <div role="alert" style={styles.error}>{tr('已标记说话人读取失败：')} {marked.error}</div>}
-          {unmarked.error !== '' && <div role="alert" style={styles.error}>{tr('未标记说话人读取失败：')} {unmarked.error}</div>}
-          {unmarked.projectionState === 'building' && <div role="status" style={styles.state}>{tr('未标记说话人正在整理，结果可能不完整。')}</div>}
-          {unmarked.projectionState === 'stale' && <div role="status" style={styles.state}>{tr('未标记说话人正在更新，结果可能不完整。')}</div>}
-          {unmarked.projectionState === 'failed' && <div role="alert" style={styles.error}>{tr('未标记说话人整理失败，请稍后刷新。')}</div>}
-          {loading && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
-            : visible.length === 0 ? <div role="status" style={styles.state}>{loading ? tr('正在更新说话人…') : rows.length === 0 && marked.error === '' && unmarked.error === '' && (unmarked.projectionState === undefined || unmarked.projectionState === 'fresh') ? tr('暂无已识别说话人') : tr('暂无可显示的说话人')}</div>
-              : <ul style={styles.list}>{visible.slice(0, visibleCount).map(row => <li key={`${row.kind}:${row.key}`}>
-                {row.kind === 'unmarked'
-                  ? <button type="button" className="arkme-recognized-speakers-row" aria-current={selectedCandidate === row.candidateRef ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { setSelectedCandidate(row.candidateRef); setSelectedMarked(undefined) }}>
-                    <UnmarkedSpeakerTokenAvatar token={row.token} size={38} label={row.name} />
-                    <span style={styles.copy}><span style={styles.name}>{row.name}</span><span style={styles.meta}>{row.subtitle}</span></span><span style={styles.badge}>{tr('未标记')} ›</span>
-                  </button>
-                  : <button type="button" className="arkme-recognized-speakers-row" aria-current={selectedMarked?.key === row.key ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { setSelectedMarked(row); setSelectedCandidate(undefined) }}><ArkmeUserAvatar {...(row.avatarRef === undefined ? {} : { avatarRef: row.avatarRef })} size={38} label={row.name} /><span style={styles.copy}><span style={styles.name}>{row.name}{row.isCurrentUser ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{markedPresenceLabel(presenceByOption.get(row.optionKey), presence.result, presence.loading, presence.error)}</span></span><span style={styles.badge}>{tr('已标记')} ›</span></button>}
-              </li>)}</ul>}
-          {visible.length > visibleCount && <button type="button" style={{ ...styles.button, marginTop: 14 }} onClick={() => { setVisibleCount(count => count + 100) }}>{tr('显示更多说话人')}</button>}
+      {!queryValid && <p role="alert" style={styles.error}>{tr('搜索内容过长，请缩短至 256 字节以内。')}</p>}
+      {selfMissing && <SpeakerSelfGuide key={accountKey} onOpenRecordings={onBack} />}
+      {hasNewVersion && <p role="status" style={styles.note}>{tr('目录有更新，刷新后查看最新人物。')}</p>}
+      {state && <p role="status" style={styles.note}>{state}</p>}
+      {seenError && <p role="status" style={styles.note}>{seenError}</p>}
+      {error && <div role="alert" style={styles.error}>{error}</div>}
+      <div className="arkme-recognized-speakers-grid" data-detail-open={selected !== undefined ? 'true' : 'false'}>
+        <div className="arkme-recognized-speakers-list" aria-busy={loading || queryPending}>
+          {!disabled && (loading || queryPending) && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
+            : !disabled && !error && rows.length === 0 && list?.coverage === 'complete' && !queryPending ? <div role="status" style={styles.state}>{tr(queryText ? '没有匹配的说话人' : filter === 'all' ? '暂无已识别说话人' : '该分类暂无说话人')}</div>
+              : <ul style={styles.list}>{rows.map(row => <li key={row.personKey}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row) }}>
+                {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar size={38} label={row.displayName} />}
+                <span style={styles.copy}><span style={styles.name}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{personStats(row)}</span></span>
+                <span style={styles.badge}>{tr(row.type === 'marked' ? '已标记' : '未标记')} ›</span>
+              </button></li>)}</ul>}
+          {!disabled && !queryPending && list?.hasMore && <button type="button" disabled={moreLoading || loading} style={{ ...styles.button, marginTop: 14 }} onClick={() => { void loadMore() }}>{tr(moreLoading ? '正在加载…' : '加载更多说话人')}</button>}
         </div>
-        {selectedCandidate !== undefined && <div style={styles.detail}>
-          <button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => { setSelectedCandidate(undefined) }}>{tr('‹ 返回列表')}</button>
-          <UnmarkedSpeakerDetail key={`${accountKey}:${selectedCandidate}`} accountKey={accountKey} candidateRef={selectedCandidate} onDirectoryRefresh={refresh} onCandidateCleared={() => { setSelectedCandidate(undefined) }} />
-        </div>}
-        {selectedMarked !== undefined && <div style={styles.detail}>
-          <button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => { setSelectedMarked(undefined) }}>{tr('‹ 返回列表')}</button>
-          <MarkedSpeakerDetail key={`${accountKey}:${selectedMarked.speakerRef}`} accountKey={accountKey} speaker={selectedMarked} loadMembers={loadMarkedMembers} version={presence.result?.version} onVersionChanged={refreshPresenceVersion} />
+        {selected && !disabled && <div style={styles.detail}><button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => setSelected(undefined)}>{tr('‹ 返回列表')}</button>
+          <PersonDetail key={selected.detailRef} row={selected} accountKey={accountKey} directory={directory} loadMembers={loadMarkedMembers} onChanged={recoverDetail} />
         </div>}
       </div>
     </div>
