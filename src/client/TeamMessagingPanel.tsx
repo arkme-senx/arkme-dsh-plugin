@@ -389,7 +389,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }
   const current = timeline?.conversation ?? conversation
   return <section className="team-conversation-pane">
-    <header style={messageLayout.header}><div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong>{current.side === 'team' && <small style={messageLayout.headerSubtitle}>{current.channel.name}</small>}</div></div>
+    <header style={messageLayout.header}><div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
       {current.side === 'team' && current.channel.canManage && <ArkmeActionMenu open={headerMenu} label={tr('对话选项')} onClose={() => setHeaderMenu(false)}
         anchor={<ArkmeComposerToolButton aria-label={tr('对话选项')} aria-expanded={headerMenu} onClick={() => { setHeaderMenu(value => !value) }}><DotsThree size={24} /></ArkmeComposerToolButton>}
         actions={[
@@ -495,13 +495,13 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
     catch { if (!ctrl.current.signal.aborted) setNotice({text: tr('复制失败，请手动复制链接'), failed: true, sequence: ++noticeSequence.current}) }
   }
   const pendingCount = applications?.items.filter(a => a.state === 'pending').length ?? 0
-  return <section ref={settingsRef} className="team-settings" aria-label={tr('外部消息')}>
+  return <section ref={settingsRef} className="team-settings" aria-label={tr('接收外部消息')}>
     {error && <div role="alert" className="team-error">{error}<button type="button" disabled={busy} onClick={() => { void refresh() }}>{tr('重试')}</button></div>}
     {!channel && !error && <p role="status">{tr('正在加载…')}</p>}
     {channel && <div className="team-channel-card">
       <div className="team-channel-state">
         <span className="team-channel-icon" aria-hidden><LinkSimple size={22} /></span>
-        <div><h2>{tr('外部消息')}</h2><small>{channel.enabled ? tr('正在接收消息') : channel.publicRef ? tr('已暂停接收新消息') : tr('尚未开启')}</small></div>
+        <div><h2>{tr('接收外部消息')}</h2></div>
         {channel.canManage && <button type="button" role="switch" className="team-channel-switch" aria-checked={channel.enabled}
           aria-label={tr('接收外部消息')} disabled={busy}
           onClick={() => {
@@ -521,7 +521,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
       </div>}
 
     </div>}
-    {channel?.canManage &&
+    {channel?.canManage && pendingCount > 0 &&
       <details className="team-setting-disclosure" open={pendingCount > 0}>
         <summary><span>{tr('加入申请')}</span><small>{pendingCount > 0 ? tr('{v0} 条待处理', { v0: pendingCount }) : tr('没有待处理申请')}</small></summary>
         <div className="team-setting-disclosure-body">

@@ -528,7 +528,9 @@ export class SearchService {
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
     const linkUrls = arkmeSearchRecordLinks(stringValue(core.text_content))
-    const sourceTitle = stringValue(topic.title ?? chat.title).trim() || (numberValue(item.source_kind) === 4 ? '团队对话' : '')
+    const kind = numberValue(core.origin_kind) === 5 && ![2, 3].includes(numberValue(item.source_kind)) ? 4 : Math.trunc(numberValue(item.source_kind))
+    const sourceUid = kind === 4 ? stringValue(core.origin_container_ref || item.source_uid).trim() : stringValue(item.source_uid).trim()
+    const sourceTitle = stringValue(topic.title ?? chat.title).trim() || (kind === 4 ? '团队对话' : '')
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
     return {
@@ -536,9 +538,9 @@ export class SearchService {
       ...(selfRoleSnapshotFromCloud(core.self_role_snapshot) ? { selfRole: selfRoleSnapshotFromCloud(core.self_role_snapshot)! } : {}),
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
       ...(recordOwnerId(core.creator_user_id) !== 0 ? { recordCreatorUserId: recordOwnerId(core.creator_user_id) } : {}),
-      sourceKind: Math.trunc(numberValue(item.source_kind)),
-      ...(stringValue(item.source_uid).trim() === '' ? {} : { sourceUid: stringValue(item.source_uid).trim() }),
-      routeTargetKind: stringValue(item.route_target_kind).trim(),
+      sourceKind: kind,
+      ...(sourceUid ? { sourceUid } : {}),
+      routeTargetKind: kind === 4 ? 'record_detail' : stringValue(item.route_target_kind).trim(),
       ...(stringValue(item.route_target_uid).trim() === '' ? {} : { routeTargetUid: stringValue(item.route_target_uid).trim() }),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: clippedText(core.title, 500),

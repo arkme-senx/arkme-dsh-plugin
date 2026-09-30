@@ -236,6 +236,12 @@ export class TeamAppService {
         return { items: await Promise.all(list(data.items).map(v => this.conversation(v, actor))), hasMore: data.has_more === true,
           ...(data.next_cursor ? { nextCursor: await this.ref('conversation-cursor', { cursor: data.next_cursor }, actor) } : {}) }
       }
+      case 'team.app.source': {
+        const data = await post('conversations/context', { conversation_uid: str(p.conversationUid) }, true)
+        if (!str(data.conversation_uid) || !['team', 'external'].includes(str(data.side)) || !str(data.team_name)) throw invalid()
+        return { name: str(data.team_name), conversationRef: await this.ref('conversation',
+          { conversation_uid: str(data.conversation_uid), side: str(data.side) }, actor) }
+      }
       case 'team.app.timeline': {
         const context = await conversation(), data = await post('conversations/timeline/page', { ...context, before_seq: num(p.beforeSeq), limit: num(p.limit) || 50 }, true)
         return { conversation: await this.conversation(data.conversation, actor), messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),

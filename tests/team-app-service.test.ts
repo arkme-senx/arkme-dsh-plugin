@@ -30,6 +30,24 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('resolves Record origin under current Team authority and seals its navigation reference', async () => {
+    const f = fixture(path => path.endsWith('/context')
+      ? { conversation_uid: conversation.conversation_uid, side: 'external', team_name: '新团队名' }
+      : { conversation, messages: [] })
+    const source = await f.service.execute('team.app.source', { conversationUid: conversation.conversation_uid }) as { name: string; conversationRef: string }
+    expect(source.name).toBe('新团队名')
+    expect(JSON.stringify(source)).not.toContain(conversation.conversation_uid)
+    await f.service.execute('team.app.timeline', { conversationRef: source.conversationRef })
+    expect(f.requests[0]!.body).toEqual({ conversation_uid: conversation.conversation_uid })
+    expect(f.requests[1]!.body).toMatchObject({ conversation_uid: conversation.conversation_uid, side: 'external' })
+    f.changeAccount()
+    await expect(f.service.execute('team.app.timeline', { conversationRef: source.conversationRef })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+  })
+  it('does not invent a Team source when the current user lost access', async () => {
+    const f = fixture(() => new Response(JSON.stringify({ code:1001, data:{reason:'not_accessible'} })))
+    await expect(f.service.execute('team.app.source', {conversationUid:'source'})).rejects.toMatchObject({code:'team-not_accessible'})
+  })
+
   it('explains an ID claim race without retrying the create mutation', async () => {
     const f = fixture(path => path.endsWith('/create') ? new Response(JSON.stringify({code:1001,message:'参数错误'})) : {available:false,reason:'taken'})
     await expect(f.service.execute('team.app.create', {name:'团队',jotmoId:'studio_1',requestUid:'request'})).rejects.toMatchObject({message:'该即我号已被占用'})

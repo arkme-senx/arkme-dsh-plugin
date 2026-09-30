@@ -64,6 +64,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const rawConversation = { conversation_uid: 'signed-avatar-fixture', channel: rawChannel, side: 'team' }
     let signatureRevision = 0
     teamOwnerFixture = path => {
+      if (path.endsWith('/conversations/context')) return { conversation_uid: 'signed-avatar-fixture', side:'team', team_name: rawChannel.name }
       if (path.endsWith('/conversations/open')) return { channel: rawChannel, conversation: rawConversation }
       if (path.endsWith('/timeline/page')) {
         const signature = ++signatureRevision
@@ -85,6 +86,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       calls.push(op)
       let value
       if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要',snippet:'检索摘要',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
+      else if (op === 'team.app.source') value = await hostOwner.executeTeamApp(op, params)
       else if (op === 'team.app.channel' || op === 'team.app.official') value = channel()
       else if (op === 'team.app.channel.configure') { enabled = params.enabled; value = channel() }
       else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ userRef: `usr_v1_${String(i).repeat(32)}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
@@ -130,6 +132,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const detail = page.locator('.arkme-team-detail')
     await detail.getByRole('heading', { name: '团队成员', exact: true }).waitFor()
     await detail.getByRole('switch', { name: '接收外部消息' }).waitFor()
+    expect(await detail.getByText('加入申请',{exact:true}).count()).toBe(0)
+    expect(await detail.getByText('正在接收消息',{exact:true}).count()).toBe(0)
     expect(await detail.getByRole('listitem').count()).toBe(4)
     const geometry = await detail.evaluate(node => {
       const header = node.querySelector('.arkme-team-detail-header').getBoundingClientRect()
@@ -150,7 +154,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     }
     expect(await detail.getByRole('button', { name: '刷新消息设置', exact: true }).count()).toBe(0)
     const links = detail.locator('.team-channel-card')
-    await links.getByRole('heading', { name: '外部消息', exact: true }).waitFor()
+    await links.getByRole('heading', { name: '接收外部消息', exact: true }).waitFor()
     expect(await links.getByRole('textbox', { name: '团队消息分享链接' }).inputValue()).toBe(channel().link)
     await links.getByRole('button', { name: '重置链接', exact: true }).click()
     await detail.getByRole('alert').getByText('重置后旧链接失效，已存在的会话继续保留。确认重置？', { exact: true }).waitFor()
@@ -366,10 +370,13 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.getByText('搜索团队快记',{exact:true}).click()
     await page.locator('[data-arkme-note-detail]').getByText('搜索打开的完整团队快记正文',{exact:true}).waitFor()
     expect(calls).toContain('record.app.detail')
+    const teamSource = page.locator('[data-arkme-note-detail]').getByRole('button', {name:'来源：Arkme Internal Interview',exact:true})
+    await teamSource.waitFor()
     await capture('plugin-team-search-personal-detail')
-    await page.keyboard.press('Escape')
-    expect(await page.locator('[data-arkme-note-detail]').count()).toBe(0)
-    await page.getByText('搜索团队快记',{exact:true}).waitFor()
+    await teamSource.click()
+    await page.locator('[data-arkme-note-detail]').waitFor({ state: 'detached' })
+    await page.locator('[data-team-composer]').waitFor()
+    await capture('plugin-team-source-navigation')
   } catch (error) {
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})

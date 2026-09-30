@@ -534,6 +534,8 @@ export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
   preview: string
   topicTitle?: string
   sourceKind: 'self' | 'topic' | 'chat' | 'team' | 'unknown'
+  /** Team origin identity; optional label/navigation is resolved by Team under current authority. */
+  teamConversationUid?: string
   creationSource: number
   templateKind: number
   displayKind: number
