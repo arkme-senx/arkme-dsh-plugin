@@ -160,11 +160,13 @@ describe('Team send UI recovery', () => {
     } finally { await act(async () => { stop() }) }
   })
 
-  it.each(['arkme_cn', 'project_team'])('keeps author history copy specific to the official team: %s', async jotmoId => {
+  it.each(['arkme_cn', 'project_team'])('omits redundant explanation and Home controls for external conversations: %s', async jotmoId => {
     const target = { ...conversation, channel: { ...conversation.channel, jotmoId } }
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
-    expect(JSON.stringify(renderer!.toJSON()).includes('与作者的历史私聊')).toBe(jotmoId === 'arkme_cn')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('与作者的历史私聊')
+    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.home.visibility')).toBe(false)
   })
 
   it('persists the stable request before network I/O, refuses double admission, and reuses it after remount', async () => {

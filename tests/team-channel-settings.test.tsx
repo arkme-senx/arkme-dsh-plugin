@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamChannel } from '../src/team-app-contract.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', async original => ({ ...await original<typeof import('@deepseek-ai/dsh-client-ui-primitives')>(), Toast: ({text}: {text:string}) => <div role="status">{text}</div> }))
 import { TeamChannelSettings } from '../src/client/TeamMessagingPanel.js'
 
 function text(node: ReactTestInstance): string {
@@ -52,7 +53,7 @@ describe('Team channel settings interactions', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.applications')).toBe(false)
     await click(button('复制链接'))
     expect(writeText).toHaveBeenCalledWith(channel.link)
-    expect(text(renderer!.root)).toContain('通道链接已复制')
+    expect(text(renderer!.root)).toContain('链接已复制')
   })
   it('offers retry after a failed initial load without a permanent refresh action', async () => {
     mocks.call.mockRejectedValueOnce(new Error('暂时无法读取'))

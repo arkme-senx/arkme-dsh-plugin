@@ -1,10 +1,12 @@
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-cache.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
 import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
+import { Toast, IconCheckOutline16, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
@@ -17,7 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeUploadedAsset } from '../types.js'
-import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamReceipts, TeamSendResult, TeamTimeline, TeamHomeVisibility } from '../team-app-contract.js'
+import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamReceipts, TeamSendResult, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
@@ -120,17 +122,15 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
       onAccessLost={() => { discardTeamDirectory(accountKey, selected) }} />
   </div>
   const items = directory.items.filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
-  const direct = intent.kind === 'official' || intent.kind === 'link' || intent.kind === 'conversation'
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
     <header className="team-panel-header"><strong>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong></header>
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
       : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
-        {!direct && <p className="team-empty">{tr('团队成员共同查看和回复，每位外部用户的对话彼此独立。')}</p>}
         {items.map(c => <button key={`${c.side}:${c.key}`} className="team-conversation-row" onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }}>
           <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
-          <span><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><small>{c.side === 'team' ? `${c.channel.name} · ` : ''}{c.preview?.text}</small></span>
+          <span><span className="team-conversation-row-title"><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><ArkmeTopicTagBadge label={tr(c.side === 'team' ? '外部用户' : '团队')} />{c.side === 'team' && <small title={c.channel.name}>{c.channel.name}</small>}</span><small>{c.preview?.text}</small></span>
           {c.unread > 0 && <b>{c.unread}</b>}
         </button>)}
         {items.length === 0 && !directory.error && <p className="team-empty" role={directory.loading ? 'status' : undefined}>{tr(directory.loading ? '正在打开对话…' : '还没有团队对话')}</p>}
@@ -147,7 +147,6 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets'>): TeamCon
 export function TeamConversationPane({ conversation, accountKey, onChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onAccessLost?(): void }) {
   useArkmeLocale()
   const [headerMenu, setHeaderMenu] = useState(false), [composerFocused, setComposerFocused] = useState(false)
-  const [home, setHome] = useState<TeamHomeVisibility>(), [homeBusy,setHomeBusy] = useState(false)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
@@ -337,19 +336,6 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
   const [confirmBlock,setConfirmBlock] = useState(false)
-  const loadHome = async () => {
-    setHomeBusy(true)
-    try { const value = await callArkme<TeamHomeVisibility>('team.app.home.visibility',{conversationRef:conversation.ref},ctrl.current.signal); if(!ctrl.current.signal.aborted) setHome(value) }
-    catch(e) { if(!ctrl.current.signal.aborted) setError(errorText(e)) }
-    finally { if(!ctrl.current.signal.aborted) setHomeBusy(false) }
-  }
-  const toggleHome = async () => {
-    if (!home || homeBusy) return
-    setHomeBusy(true)
-    try { const value = await callArkme<TeamHomeVisibility>('team.app.home.visibility',{conversationRef:conversation.ref,showInHome:!home.showInHome,version:home.version},ctrl.current.signal); if(!ctrl.current.signal.aborted) setHome(value) }
-    catch(e) { if(!ctrl.current.signal.aborted) { setError(errorText(e)); await loadHome() } }
-    finally { if(!ctrl.current.signal.aborted) setHomeBusy(false) }
-  }
   const block = async () => {
     if (busy) return
     setBusy(true)
@@ -403,16 +389,14 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }
   const current = timeline?.conversation ?? conversation
   return <section className="team-conversation-pane">
-    <header style={messageLayout.header}><div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.channel.name}</small></div></div>
-      <ArkmeActionMenu open={headerMenu} label={tr('对话选项')} onClose={() => setHeaderMenu(false)}
-        anchor={<ArkmeComposerToolButton aria-label={tr('对话选项')} aria-expanded={headerMenu} onClick={() => { setHeaderMenu(value => !value); if (!headerMenu) void loadHome() }}><DotsThree size={24} /></ArkmeComposerToolButton>}
+    <header style={messageLayout.header}><div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong>{current.side === 'team' && <small style={messageLayout.headerSubtitle}>{current.channel.name}</small>}</div></div>
+      {current.side === 'team' && current.channel.canManage && <ArkmeActionMenu open={headerMenu} label={tr('对话选项')} onClose={() => setHeaderMenu(false)}
+        anchor={<ArkmeComposerToolButton aria-label={tr('对话选项')} aria-expanded={headerMenu} onClick={() => { setHeaderMenu(value => !value) }}><DotsThree size={24} /></ArkmeComposerToolButton>}
         actions={[
-          {id:'home',label:tr(home ? (home.showInHome ? '快记不显示在首页' : '快记显示在首页') : homeBusy ? '正在读取设置…' : '重试读取设置'),disabled:homeBusy,onSelect:() => { setHeaderMenu(false); void (home ? toggleHome() : loadHome()) }},
           current.side === 'team' && current.channel.canManage && {id:'block',label:tr(current.blocked ? '解除屏蔽' : '屏蔽此用户'),disabled:busy,onSelect:() => { setHeaderMenu(false); setConfirmBlock(true) }},
-        ]} />
+        ]} />}
     </header>
     {error && <div role="alert" className="team-error">{error}</div>}
-    {current.side === 'external' && <p className="team-consultation-notice">{tr(current.channel.jotmoId === 'arkme_cn' ? "此对话由团队成员共同查看和回复；与作者的历史私聊仍保留在原会话。" : "此对话由团队成员共同查看和回复，仅你与团队可见。")}</p>}
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {[...(timeline?.messages ?? []), ...(outgoing ? [outgoing] : [])].map((m, index) => <Fragment key={m.key}>
@@ -471,7 +455,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
 export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRef: string; accountKey: string; onChanged(): void }) {
   useArkmeLocale()
   const [channel, setChannel] = useState<TeamChannel>(), [applications, setApplications] = useState<TeamPage<TeamApplication>>()
-  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false)
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<{ text: string; failed: boolean; sequence: number }>()
+  const settingsRef = useRef<HTMLElement>(null), noticeSequence = useRef(0)
+  const dismissNotice = useCallback(() => setNotice(undefined), [])
   const [confirm, setConfirm] = useState<{ label: string; run(): Promise<unknown> }>()
   const ctrl = useRef(new AbortController()), generation = useRef(0)
   useEffect(() => () => { ctrl.current.abort() }, [])
@@ -504,11 +491,11 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
   const configure = (enabled: boolean, rotate = false) => callArkme('team.app.channel.configure', { teamRef, revision: channel?.revision ?? 0, enabled, rotate }, ctrl.current.signal)
   const copyLink = async () => {
     if (!channel?.link) return
-    try { await navigator.clipboard.writeText(channel.link); if (!ctrl.current.signal.aborted) setNotice(tr('通道链接已复制')) }
-    catch { if (!ctrl.current.signal.aborted) setNotice(tr('复制失败，请手动复制链接')) }
+    try { await navigator.clipboard.writeText(channel.link); if (!ctrl.current.signal.aborted) setNotice({text: tr('链接已复制'), failed: false, sequence: ++noticeSequence.current}) }
+    catch { if (!ctrl.current.signal.aborted) setNotice({text: tr('复制失败，请手动复制链接'), failed: true, sequence: ++noticeSequence.current}) }
   }
   const pendingCount = applications?.items.filter(a => a.state === 'pending').length ?? 0
-  return <section className="team-settings" aria-label={tr('外部消息')}>
+  return <section ref={settingsRef} className="team-settings" aria-label={tr('外部消息')}>
     {error && <div role="alert" className="team-error">{error}<button type="button" disabled={busy} onClick={() => { void refresh() }}>{tr('重试')}</button></div>}
     {!channel && !error && <p role="status">{tr('正在加载…')}</p>}
     {channel && <div className="team-channel-card">
@@ -532,7 +519,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
         </div>
         <p className="team-channel-link-help">{tr('通过链接发消息，无需加入团队。')}</p>
       </div>}
-      {notice && <p className="team-settings-notice" role="status">{notice}</p>}
+
     </div>}
     {channel?.canManage &&
       <details className="team-setting-disclosure" open={pendingCount > 0}>
@@ -546,6 +533,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
           {applications?.hasMore && <button disabled={busy} onClick={() => { void loadApplications(applications.nextCursor, ++generation.current).catch(e => { setError(errorText(e)) }) }}>{tr('更多申请')}</button>}
         </div>
       </details>}
+    {notice && <Toast key={notice.sequence} text={notice.text} anchor={settingsRef.current} icon={notice.failed ? <IconWarningOutline16 /> : <IconCheckOutline16 />} onDone={dismissNotice} />}
     {confirm && <div className="team-confirm" role="alert"><p>{confirm.label}</p><button disabled={busy} onClick={() => { setConfirm(undefined) }}>{tr('取消')}</button><button className="arkme-team-action" disabled={busy} onClick={() => { void mutate(confirm.run) }}>{tr('确认')}</button></div>}
   </section>
 }

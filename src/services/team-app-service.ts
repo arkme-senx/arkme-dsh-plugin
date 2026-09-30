@@ -134,6 +134,13 @@ export class TeamAppService {
     }
   }
 
+  private async checkTeamJotmoId(name: string, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/check-jotmo-id-available', { name, scene: 'team_create' }, session, signal,
+    )
+    return { available: data.available === true, reason: str(data.reason) }
+  }
+
   private async dispatch(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials,
     post: (path: string, body?: Record<string, unknown>, read?: boolean) => Promise<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown> {
     const actor = session.userId
@@ -191,7 +198,18 @@ export class TeamAppService {
         return await post('members/remove', { team_id: ref.team_id, target_user_id: ref.user_id })
       }
       case 'team.app.leave': return await post('members/leave', { team_id: await teamID() })
-      case 'team.app.create': return await this.team((await post('create', { name: str(p.name), jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })).team, actor)
+      case 'team.app.create.check': return await this.checkTeamJotmoId(str(p.jotmoId).trim(), session, signal)
+      case 'team.app.create': {
+        try { return await this.team((await post('create', { name: str(p.name), jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })).team, actor) }
+        catch (error) {
+          if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-1001') throw error
+          // Availability can change between checking the form and claiming the ID.
+          // Recheck only; never repeat the creation mutation or change its request UID.
+          const availability = await this.checkTeamJotmoId(str(p.jotmoId).trim(), session, signal).catch(() => undefined)
+          const reason = availability?.reason
+          throw new ArkmePluginError('team-create-rejected', reason === 'taken' ? '该即我号已被占用' : reason === 'invalid' ? '即我号格式不正确' : '创建未完成，请检查团队名称和即我号后重试', false, 400, { cause: error })
+        }
+      }
       case 'team.app.join.status': {
         const data = await post('join-requests/status', { jotmo_id: str(p.jotmoId) }, true)
         return { state: str(data.state) }

@@ -1,5 +1,17 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '创建未完成，请检查团队名称和即我号后重试': 'Could not create the team. Check its name and Arkme ID, then retry.',
+  '仅支持字母、数字和下划线': 'Use only letters, numbers and underscores',
+  '最少6位': 'Use at least 6 characters',
+  '团队名称最多64个字': 'Team names can contain up to 64 characters',
+  '该即我号可用': 'This Arkme ID is available',
+  '该即我号已被占用': 'This Arkme ID is already taken',
+  '即我号格式不正确': 'Invalid Arkme ID format',
+  '该即我号不可用': 'This Arkme ID is not available',
+  '暂时无法校验即我号，请重试': 'Unable to check the Arkme ID. Please retry.',
+  '正在校验…': 'Checking…',
+  '最少6位，支持字母、数字和下划线': 'At least 6 characters: letters, numbers and underscores',
+
   "外部用户": "External user",
   "团队": "Team",
   "已读状态同步中": "Syncing read status",
@@ -150,7 +162,6 @@ const english: Record<string,string> = {
   "正在接收消息": "Accepting messages",
   "已暂停接收新消息": "New messages paused",
   "团队消息分享链接": "Team contact sharing link",
-  "通道链接已复制": "Channel link copied",
   "复制失败，请手动复制链接": "Copy failed. Please copy the link manually.",
   "复制通道链接": "Copy channel link",
   "建立通道后，现有成员均可查看全部团队对话。请核对下方成员名单；此后新成员须经所有者审批。确认建立？": "All current members will be able to read every conversation. Check the member list below. Future members require owner approval. Create the channel?",

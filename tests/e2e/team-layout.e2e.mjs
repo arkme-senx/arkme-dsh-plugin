@@ -50,7 +50,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     let owner = true, enabled = true
     const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
-    const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'布局验收'}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
+    const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'鲨鱼辣椒1998'}, preview:{status:'available',text:'请问可以修改吗？',hasMedia:false}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
     const messages = [
       {key:'own-text',ref:'own-text',seq:1,side:'external',own:true,sender:{nickname:'布局验收'},content:{text_content:'你好，我想反馈一个使用问题。',template_kind:1},media:[]},
       {key:'reply',ref:'reply',seq:2,side:'team',own:false,sender:{nickname:'Loki1999'},content:{text_content:'你好，请发一张截图，我们一起确认。',template_kind:1},media:[]},
@@ -107,7 +107,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         {nickname:'Loki1999',read:true,readAt:Date.now(),imageKey:'receipt-avatar',imageRef:'receipt-avatar'},
         {nickname:'设计同事',read:false,readAt:0},{nickname:'研发同事',read:false,readAt:0}]}
       else if(op === 'team.app.read') value={}
-      else if(op === 'team.app.home.visibility') value={version:1,showInHome:true}
+      else if(op === 'team.app.create.check') value={available:params.jotmoId !== 'already_taken',reason:params.jotmoId === 'already_taken' ? 'taken' : ''}
       else if (op === 'team.app.conversations') value = { items: params.side === 'team'
         ? [conversation()]
         : [{...conversation(),key:'contacted-team',side:'external',channel:{...channel(),name:'设计团队',jotmoId:'design_team'}}], hasMore:false }
@@ -137,11 +137,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(geometry.settingsTop).toBeGreaterThanOrEqual(geometry.membersBottom - 1)
     expect(geometry.overflow).toBe('auto')
     const output = process.env.ARKME_E2E_CAPTURE_DIR
-    const capture = async name => {
+    const capture = async (name, animations = 'disabled') => {
       if (output) {
         await mkdir(output, { recursive: true })
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-        await page.screenshot({ path: join(output, `${name}.png`), animations: 'disabled' })
+        await page.screenshot({ path: join(output, `${name}.png`), animations })
       }
     }
     expect(await detail.getByRole('button', { name: '刷新消息设置', exact: true }).count()).toBe(0)
@@ -161,10 +161,28 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       await section.getByRole('button', { name: '团队操作', exact: true }).click()
       await page.getByRole('menuitem', { name: label, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: label, exact: true })
-      await dialog.waitFor(); await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+      await dialog.waitFor()
+      if (label === '创建团队') {
+        await dialog.getByRole('textbox', {name:'团队名称',exact:true}).fill('测试团队')
+        await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('你好')
+        await dialog.getByText('仅支持字母、数字和下划线',{exact:true}).waitFor()
+        expect(await dialog.getByRole('button',{name:'创建团队',exact:true}).isDisabled()).toBe(true)
+        await capture('plugin-team-create-validation')
+        await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('already_taken')
+        await dialog.getByText('该即我号已被占用',{exact:true}).waitFor()
+        expect(await dialog.getByRole('button',{name:'创建团队',exact:true}).isDisabled()).toBe(true)
+        await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('available_team')
+        await expect.poll(()=>dialog.getByRole('button',{name:'创建团队',exact:true}).isEnabled()).toBe(true)
+        expect(calls).not.toContain('team.app.create')
+      }
+      await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     }
     await detail.getByRole('button', { name: '复制链接', exact: true }).click()
-    await detail.getByText('通道链接已复制', { exact: true }).waitFor()
+    await page.getByText('链接已复制', { exact: true }).waitFor()
+    await expect.poll(()=>page.getByRole('alert').filter({hasText:'链接已复制'}).evaluate(node=>getComputedStyle(node).opacity)).toBe('1')
+    await capture('plugin-team-link-toast', 'allow')
+    await page.getByText('链接已复制', { exact: true }).waitFor({state:'hidden'})
+    expect(await detail.locator('.team-settings-notice').count()).toBe(0)
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(channel().link)
     await detail.getByRole('switch').click()
     await expect.poll(() => detail.getByRole('switch').getAttribute('aria-checked')).toBe('false')
@@ -191,6 +209,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await detail.getByRole('button', { name: '移除', exact: true }).count()).toBe(0)
     await capture('plugin-member-team')
     expect(calls).toContain('team.app.members')
+    expect(calls).not.toContain('team.app.home.visibility')
     await page.setViewportSize({width:1440,height:1000})
     await page.getByRole('button',{name:'对话',exact:true}).click()
     await page.getByRole('treeitem',{name:'联系作者',exact:true}).click()
@@ -254,9 +273,14 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
     await page.locator('[data-team-side="team"]').getByText('外部用户',{exact:true}).waitFor()
     await page.locator('[data-team-side="external"]').getByText('团队',{exact:true}).waitFor()
-    await page.locator('[data-team-side="team"]').getByText('布局验收', { exact: true }).waitFor()
+    await page.locator('[data-team-side="team"]').getByText('鲨鱼辣椒1998', { exact: true }).waitFor()
     await page.locator('[data-team-side="team"]').getByText('Arkme Internal Interview', { exact: true }).waitFor()
     await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).waitFor()
+    const memberRow = page.locator('[data-team-side="team"]')
+    expect(await memberRow.locator('[data-arkme-conversation-content] > span').nth(1).textContent()).toBe('请问可以修改吗？')
+    const contextBox = await memberRow.getByText('Arkme Internal Interview', {exact:true}).boundingBox()
+    expect(contextBox.width).toBeGreaterThan(20)
+    await capture('plugin-team-conversation-roles')
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
@@ -276,10 +300,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.keyboard.press('Escape')
     expect(await receiptPanel.count()).toBe(0)
 
-    await pane.getByRole('button',{name:'对话选项',exact:true}).click()
-    await page.getByRole('menuitem',{name:'快记不显示在首页'}).waitFor()
-    expect(await page.getByRole('menuitem',{name:/刷新|关于此对话/}).count()).toBe(0)
-    await page.keyboard.press('Escape')
+    expect(await pane.getByRole('button',{name:'对话选项',exact:true}).count()).toBe(0)
+    expect(await page.getByRole('menuitem',{name:/快记不显示在首页|刷新|关于此对话/}).count()).toBe(0)
     await pane.getByRole('textbox',{name:'团队消息内容'}).fill('尚未发送的草稿')
     await pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true}).click({button:'right'})
     await page.getByRole('menuitem',{name:'编辑',exact:true}).click()

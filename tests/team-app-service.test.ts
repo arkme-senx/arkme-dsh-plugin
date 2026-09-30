@@ -30,6 +30,21 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('explains an ID claim race without retrying the create mutation', async () => {
+    const f = fixture(path => path.endsWith('/create') ? new Response(JSON.stringify({code:1001,message:'参数错误'})) : {available:false,reason:'taken'})
+    await expect(f.service.execute('team.app.create', {name:'团队',jotmoId:'studio_1',requestUid:'request'})).rejects.toMatchObject({message:'该即我号已被占用'})
+    expect(f.requests.map(r=>r.path)).toEqual(['/api/v1/team/create','/api/v1/auth/check-jotmo-id-available'])
+  })
+
+  it.each([true, false])('checks Team IDs in team_create without personal edit restrictions: %s', async available => {
+    const f = fixture(() => ({available, reason: available ? '' : 'taken'}))
+    expect(await f.service.execute('team.app.create.check', {jotmoId:' studio_1 '})).toEqual({available,reason:available?'':'taken'})
+    expect(f.requests).toHaveLength(1)
+    expect(f.requests[0]!.path).toBe('/api/v1/auth/check-jotmo-id-available')
+    expect(f.requests[0]!.body).toEqual({name:'studio_1',scene:'team_create'})
+    expect(f.requests[0]!.headers.get('authorization')).toBe('Bearer app-token')
+  })
+
   it('distinguishes missing official setup from revoked conversation access', async () => {
     const f = fixture(() => new Response(JSON.stringify({ code: 1001, data: { reason: 'official_unavailable' } })))
     await expect(f.service.execute('team.app.official', {})).rejects.toMatchObject({ code: 'team-official_unavailable', message: '暂时无法联系作者，请稍后重试' })
