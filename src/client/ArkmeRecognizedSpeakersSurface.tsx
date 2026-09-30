@@ -9,6 +9,7 @@ import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail
 import { UnmarkedSpeakerTokenAvatar } from './redesign/contacts/UnmarkedSpeakerVisuals.js'
 import { readRecognizedSpeakerOrder, writeRecognizedSpeakerOrder } from './recognized-speaker-order.js'
 import { SpeakerSelfGuide } from './recordings/SpeakerSelfGuide.js'
+import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
 import { RecognizedSpeakerDirectory, recognizedSpeakerDirectory, directoryQueryValid, directoryVisible, directoryErrorCode, normalizeDirectoryQuery, speakerRetryDelay, type DirectoryList } from './recognized-speaker-directory.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -47,6 +48,19 @@ export interface ArkmeRecognizedSpeakersSurfaceProps {
 const defaultLoadMarkedMembers = (speakerRef: string, signal: AbortSignal, expectedVersion?: string) => callArkme<ArkmeRecordingSpeakerMembers>(
   'recordings.speaker.members', { speakerRef, ...(expectedVersion === undefined ? {} : { expectedVersion }) }, signal)
 const failureMessage = (error: unknown) => error instanceof Error ? error.message : tr('说话人列表暂时无法加载')
+const nameSegmenter = new Intl.Segmenter('zh-CN', { granularity: 'grapheme' })
+function speakerNameAvatarFallback(row: SpeakerDirectoryPerson) {
+  const initial = nameSegmenter.segment(row.displayName.trim())[Symbol.iterator]().next().value?.segment
+  if (!initial) return undefined
+  let hash = 0
+  for (const character of row.personKey) hash = (Math.imul(hash, 31) + character.codePointAt(0)!) >>> 0
+  const color = recordingSpeakerColor(hash % 15)
+  return <span aria-hidden style={{
+    width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
+    background: `color-mix(in srgb, ${color} 30%, ${arkmeTheme.base})`, color: arkmeTheme.text,
+    fontSize: 17, fontWeight: 600, lineHeight: 1,
+  }}>{initial}</span>
+}
 function personStats(row: SpeakerDirectoryPerson) {
   const recent = row.lastSeenAt > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.lastSeenAt) : tr('时间未知')
   return tr('出现 {v0} 天 · 最近 {v1}', { v0: row.dayCount, v1: recent })
@@ -267,7 +281,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
           {!disabled && (loading || queryPending) && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
             : !disabled && !error && rows.length === 0 && list?.coverage === 'complete' && !queryPending ? <div role="status" style={styles.state}>{tr(queryText ? '没有匹配的说话人' : filter === 'all' ? '暂无已识别说话人' : '该分类暂无说话人')}</div>
               : <ul style={styles.list}>{rows.map(row => <li key={row.personKey}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row) }}>
-                {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar {...(avatars[row.detailRef] ? { avatarRef: avatars[row.detailRef]! } : {})} size={38} label={row.displayName} />}
+                {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar {...(avatars[row.detailRef] ? { avatarRef: avatars[row.detailRef]! } : {})} fallbackContent={speakerNameAvatarFallback(row)} size={38} label={row.displayName} />}
                 <span style={styles.copy}><span style={styles.name}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{personStats(row)}</span></span>
                 <span style={styles.badge}>{tr(row.type === 'marked' ? '已标记' : '未标记')} ›</span>
               </button></li>)}</ul>}
