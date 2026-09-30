@@ -1,6 +1,7 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
-  "代表团队": "On behalf of team",
+  "外部用户": "External user",
+  "团队": "Team",
   "已读状态同步中": "Syncing read status",
   "未读，查看阅读状态": "Unread, view read status",
   "已读，查看阅读状态": "Read, view read status",
@@ -157,7 +158,6 @@ const english: Record<string,string> = {
   "暂停通道": "Pause channel",
   "开启通道": "Enable channel",
   "重置后旧链接失效，已存在的会话继续保留。确认重置？": "The old link will stop working. Existing conversations remain. Reset the link?",
-  "重置分享链接": "Reset sharing link",
   "团队成员": "Team members",
   "启用消息通道后，新成员须由所有者审批加入；退出或被移除后立即失去团队访问权。": "Once the channel is enabled, new members need owner approval. Leaving or removal immediately revokes team access.",
   "所有者": "Owner",
@@ -246,17 +246,13 @@ const english: Record<string,string> = {
   " · 待回复": " · Needs reply",
   " · 等待团队回复": " · Waiting for the team",
   "团队操作": "Team actions",
-  "对外消息": "Messages from others",
-  "刷新消息设置": "Refresh message settings",
-  "他人可通过链接向团队发消息，成员共同查看和回复。": "People can message your team using a link. Members can read and reply together.",
+  "外部消息": "External messages",
   "尚未开启": "Not enabled",
-  "分享链接即可开始对话，无需加入团队。": "Share the link to start a conversation. No team membership needed.",
-  "复制消息链接": "Copy message link",
-  "查看消息链接": "View message link",
+  "通过链接发消息，无需加入团队。": "Message the team using this link. No team membership needed.",
+  "复制链接": "Copy link",
+  "消息链接": "Message link",
+  "重置链接": "Reset link",
   "{v0} 条待处理": "{v0} pending",
-  "批准后，该成员可查看和回复团队历史对话。": "Approved members can read and reply to team conversation history.",
-  "消息链接设置": "Message link settings",
-  "重置后旧链接失效，已存在的会话继续保留。": "Resetting invalidates the old link. Existing conversations are kept."
 }
 
 // Only application-owned Team copy enters this function, never user messages.
