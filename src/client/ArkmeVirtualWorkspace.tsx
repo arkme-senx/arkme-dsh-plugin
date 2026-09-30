@@ -1,12 +1,12 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
-import { TeamAvatar } from './TeamMessagingPanel.js'
-import { teamText } from './team-messaging-i18n.js'
+import { TeamConversationRow } from './TeamMessagingPanel.js'
+import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
-import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { tr, useArkmeLocale } from './locale.js'
 import { directorySearchLayout } from './directory-search-layout.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import type { ArkmeArchiveState } from '../archive-contract.js'
@@ -18,7 +18,6 @@ import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { ArkmeConversationRemovalFeedback, ArkmeConversationRemovalStyles, conversationRemovalRowStyle } from './ArkmeConversationRemovalFeedback.js'
 import { useConversationRemovalFeedback } from './use-conversation-removal-feedback.js'
 import { ArkmeOverlayScrollArea } from './ArkmeOverlayScrollArea.js'
-import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createHomeTourTrace } from './home-tour-diagnostics.js'
@@ -186,6 +185,7 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
+  ...conversationDirectoryStyles,
   shell: {
     position: 'relative', width: '100%', height: '100%', minHeight: 0,
     display: 'flex', flexDirection: 'column', background: colors.panel, color: colors.text,
@@ -227,33 +227,14 @@ const styles: Record<string, CSSProperties> = {
   conversationList: { padding: '0 0 18px' },
   topicList: { paddingBottom: 74 },
   topicCardList: { paddingTop: 0 },
-  chatRow: {
-    position: 'relative', width: '100%', height: ARKME_CONVERSATION_ROW_HEIGHT, minHeight: ARKME_CONVERSATION_ROW_HEIGHT, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
-    // (58 - 33) / 2 joins the rounded edge to the centered selection marker.
-    // Text clips in chatContent; the corner badge keeps its own small outline.
-    padding: '10px 10px', boxSizing: 'border-box', overflow: 'visible', border: 0, borderRadius: 12.5,
-    background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
-  },
   chatRowActive: { background: colors.active },
   chatRowRemoving: { background: arkmeTheme.hover, cursor: 'default' },
-  chatContent: { flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4 },
-  chatTop: { minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 7 },
   // Keep the name readable as the directory narrows; trailing metadata clips first.
   chatName: {
     flex: '1 0 auto', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     fontSize: 13, lineHeight: '18px', fontWeight: 600,
   },
-  entryName: {
-    flex: '0 0 auto', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 13, lineHeight: '18px', fontWeight: 600,
-  },
-  chatTime: { flex: 'none', color: colors.caption, fontSize: 10, lineHeight: '15px' },
   muteIcon: { flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
-  chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
-  preview: {
-    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.secondary, fontSize: 11, lineHeight: '16px',
-  },
   mentionPreviewPrefix: { color: colors.mention, fontWeight: 600 },
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
@@ -261,18 +242,11 @@ const styles: Record<string, CSSProperties> = {
     color: arkmeTheme.foreground, fontSize: 10, lineHeight: '17px',
   },
   botBadge: { padding: '1px 6px', borderRadius: 999, background: arkmeTheme.subtle, color: colors.secondary, fontSize: 9, lineHeight: '15px', fontWeight: 600 },
-  sourceAvatarWrap: { width: 38, height: 38, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center' },
 
   directoryActionFeedback: {
     position: 'fixed', zIndex: 10001, left: '50%', bottom: 24, transform: 'translateX(-50%)',
     maxWidth: 360, padding: '9px 13px', borderRadius: 9, background: 'rgba(34, 38, 44, .92)',
     color: '#fff', boxShadow: '0 6px 18px rgba(22, 26, 31, .18)', fontSize: 12, lineHeight: '18px',
-  },
-  mentionUnread: {
-    position: 'absolute', top: -2, right: -2, minWidth: 17, height: 17, padding: '0 5px',
-    boxSizing: 'border-box', borderRadius: 999, display: 'inline-flex', alignItems: 'center',
-    justifyContent: 'center', background: colors.mention, color: arkmeTheme.foreground,
-    border: `2px solid ${colors.panel}`, fontSize: 10, lineHeight: '13px', fontWeight: 700,
   },
   mutedUnreadDot: {
     position: 'absolute', top: -1, right: -1, width: 10, height: 10, boxSizing: 'border-box',
@@ -642,19 +616,6 @@ export function ArkmeOfficialAuthorRow({
   />
 }
 
-function timeLabel(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const time = new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
-  if (day === start) return time
-  if (day === start - 86_400_000) return tr("昨天 {v0}", { v0: time })
-  if (day > start - 7 * 86_400_000) return new Intl.DateTimeFormat(arkmeIntlLocale(), { weekday: 'short' }).format(date)
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(date)
-}
 
 export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
@@ -2113,21 +2074,9 @@ export function ArkmeNavigation({
         <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items).map(row => {
           if (row.kind === 'team') {
             const c = row.conversation
-            const preview = c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side
-            return <button key={`team:${c.side}:${c.key}`} data-team-side={c.side} type="button" role="treeitem" aria-selected={selected}
-              style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}
-              onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }}>
-              <span style={styles.sourceAvatarWrap}>
-                <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
-                {c.unread > 0 && <span style={styles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
-              </span>
-              <span data-arkme-conversation-content style={styles.chatContent}>
-                <span style={styles.chatTop}><span style={{ ...styles.entryName, flex: '0 1 auto' }}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
-                  <ArkmeTopicTagBadge label={c.side === 'team' ? `${teamText('外部用户')} · ${c.channel.name}` : teamText('团队')} selected={selected} truncate /><span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(c.updatedAt)}</span></span>
-                <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
-              </span>
-            </button>
+            return <TeamConversationRow key={`team:${c.side}:${c.key}`} conversation={c} selected={selected} role="treeitem"
+              onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }} />
           }
 
           if (row.kind === 'bot') {

@@ -13,7 +13,7 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 let renderer: ReactTestRenderer | undefined
 let channel: TeamChannel
 let changed: ReturnType<typeof vi.fn>
-const button = (label: string) => renderer!.root.findAllByType('button').find(node => text(node) === label)!
+const button = (label: string) => renderer!.root.findAllByType('button').find(node => node.props['aria-label'] === label || text(node) === label)!
 const click = async (node: ReactTestInstance) => { await act(async () => { node.props.onClick(); await tick() }) }
 const mount = async () => { await act(async () => { renderer = create(<TeamChannelSettings teamRef="team" accountKey="account" onChanged={changed} />); await tick() }) }
 describe('Team channel settings interactions', () => {
@@ -86,7 +86,13 @@ describe('Team channel settings interactions', () => {
     await mount()
     const card = renderer!.root.findByProps({ className: 'team-channel-card' })
     expect(card.findAllByType('button').map(text)).toContain('复制链接')
-    expect(card.findAllByType('button').map(text)).toContain('重置链接')
+    expect(card.findAllByType('button').map(text)).not.toContain('重置链接')
+    const linkRow = card.findByProps({className: 'team-channel-link-row'})
+    const actions = linkRow.findAllByType('button')
+    expect(actions.map(node => node.props['aria-label'] || text(node))).toEqual(['复制链接', '重置链接'])
+    expect(text(card)).not.toContain('消息链接')
+    expect(text(card)).toContain('外部用户可通过链接发消息')
+    expect(button('重置链接').props.title).toBe('重置链接')
     await click(button('重置链接'))
     expect(text(renderer!.root.findByProps({ role: 'alert' }))).toContain('重置后旧链接失效，已存在的会话继续保留')
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.channel.configure')).toBe(false)

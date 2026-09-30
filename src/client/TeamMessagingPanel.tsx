@@ -8,6 +8,9 @@ import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnaps
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { Toast, IconCheckOutline16, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
+import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { conversationDirectoryStyles as directoryStyles, conversationTimeLabel } from './conversation-directory-presentation.js'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
 import { startTeamDirectory, subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory } from './team-conversation-directory.js'
@@ -29,9 +32,7 @@ import { ArkmeRichComposerInput } from './ArkmeRichComposerInput.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeAttachmentDraftTile } from './ArkmeRichContent.js'
-import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
-import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
 import { ArkmeReadReceiptMember, ArkmeReadReceiptPanel, ArkmeReadReceiptStatus } from './ArkmeReadReceiptPanel.js'
@@ -64,6 +65,28 @@ function restoreTeamDraftText(original: string, next: string): string {
 export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: number }) {
   return <ArkmeUserAvatar avatarRef={identity.imageRef} imageKey={identity.imageKey}
     imagePort={teamAvatarImages} size={size ?? 32} label={identity.nickname} />
+}
+
+export function TeamConversationRow({ conversation: c, selected = false, showTeamName = true, role, onClick }: {
+  conversation: TeamConversation; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
+}) {
+  const preview = c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''
+  return <button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
+    {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
+    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onClick={onClick}>
+    <span style={directoryStyles.sourceAvatarWrap}>
+      <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
+      {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
+    </span>
+    <span data-arkme-conversation-content style={directoryStyles.chatContent}>
+      <span style={directoryStyles.chatTop}>
+        <span style={directoryStyles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
+        <ArkmeTopicTagBadge label={c.side === 'team' ? `${tr('外部用户')}${showTeamName ? ` · ${c.channel.name}` : ''}` : tr('团队')} selected={selected} truncate />
+        <span style={{ ...directoryStyles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(c.updatedAt)}</span>
+      </span>
+      <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}>{preview}</span></span>
+    </span>
+  </button>
 }
 
 export function TeamMessagingMount({ accountKey, active }: { accountKey: string; active: boolean }) {
@@ -123,16 +146,13 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   </div>
   const items = directory.items.filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
-    <header className="team-panel-header"><strong>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong></header>
+    <header style={messageLayout.header}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong>{channel && <small style={messageLayout.headerSubtitle}>{tr('团队对话')}</small>}</div></header>
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
       : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
-        {items.map(c => <button key={`${c.side}:${c.key}`} className="team-conversation-row" onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }}>
-          <TeamAvatar identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
-          <span><span className="team-conversation-row-title"><strong>{c.side === 'team' ? c.visitor?.nickname : c.channel.name}</strong><ArkmeTopicTagBadge label={c.side === 'team' ? `${tr('外部用户')} · ${c.channel.name}` : tr('团队')} truncate /></span><small>{c.preview?.text}</small></span>
-          {c.unread > 0 && <b>{c.unread}</b>}
-        </button>)}
+        <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow conversation={c} showTeamName={!channel}
+          onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }} /></div>)}</div>
         {items.length === 0 && !directory.error && <p className="team-empty" role={directory.loading ? 'status' : undefined}>{tr(directory.loading ? '正在打开对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
       </div>}
@@ -146,7 +166,7 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets'>): TeamCon
 }
 export function TeamConversationPane({ conversation, accountKey, onChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onAccessLost?(): void }) {
   useArkmeLocale()
-  const [headerMenu, setHeaderMenu] = useState(false), [composerFocused, setComposerFocused] = useState(false)
+  const [composerFocused, setComposerFocused] = useState(false)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
@@ -335,14 +355,6 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     }
     finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
-  const [confirmBlock,setConfirmBlock] = useState(false)
-  const block = async () => {
-    if (busy) return
-    setBusy(true)
-    try { await callArkme('team.app.block',{conversationRef:conversation.ref,blocked:!(latest.current?.conversation ?? conversation).blocked},ctrl.current.signal); await refresh(); onChanged(); if(!ctrl.current.signal.aborted) setConfirmBlock(false) }
-    catch(e) { if(!ctrl.current.signal.aborted) setError(errorText(e)) }
-    finally { if(!ctrl.current.signal.aborted) setBusy(false) }
-  }
   const upload = async (files: FileList | null) => {
     if (!files || editing || busy || uploading || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
     setUploading(true)
@@ -389,12 +401,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }
   const current = timeline?.conversation ?? conversation
   return <section className="team-conversation-pane">
-    <header style={messageLayout.header}><div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
-      {current.side === 'team' && current.channel.canManage && <ArkmeActionMenu open={headerMenu} label={tr('对话选项')} onClose={() => setHeaderMenu(false)}
-        anchor={<ArkmeComposerToolButton aria-label={tr('对话选项')} aria-expanded={headerMenu} onClick={() => { setHeaderMenu(value => !value) }}><DotsThree size={24} /></ArkmeComposerToolButton>}
-        actions={[
-          current.side === 'team' && current.channel.canManage && {id:'block',label:tr(current.blocked ? '解除屏蔽' : '屏蔽此用户'),disabled:busy,onSelect:() => { setHeaderMenu(false); setConfirmBlock(true) }},
-        ]} />}
+    <header style={messageLayout.header}>
+      {current.side === 'team' && <ArkmeComposerToolButton aria-label={tr('返回团队对话')} title={tr('返回团队对话')}
+        onClick={() => openTeamMessages({ kind: 'team', teamRef: current.channel.teamRef })}><ArrowLeft size={20} aria-hidden /></ArkmeComposerToolButton>}
+      <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
     </header>
     {error && <div role="alert" className="team-error">{error}</div>}
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
@@ -421,9 +431,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       description={tr('删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。')}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={busy} {...(error ? {error} : {})}
       onConfirm={() => { void mutateMessage() }} onClose={() => { setDeleting(undefined) }} />}
-    {confirmBlock && <ArkmeConfirmDialog titleId="team-block-title" title={tr(current.blocked ? '解除屏蔽' : '屏蔽此用户')}
-      description={tr(current.blocked ? '恢复双方在此对话中发送和编辑消息的能力。' : '屏蔽后，双方均不能在此对话中发送或编辑消息，历史消息仍可查看。')}
-      busy={busy} confirmLabel={tr('确认')} busyLabel={tr('正在保存…')} onClose={() => setConfirmBlock(false)} onConfirm={() => { void block() }} />}
+
 
     <div style={{...composerLayout.composer, flexDirection: 'column'}} data-team-composer={editing ? 'reedit' : 'message'}>
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={busy} onClose={() => {setEditing(undefined);setError('')}} />}
@@ -510,14 +518,13 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
           }}><span /></button>}
       </div>
       {channel.publicRef && <div className="team-channel-sharing">
-        <div className="team-channel-share-heading"><span>{tr('消息链接')}</span>
-          {channel.canManage && <button type="button" className="team-link-reset" disabled={busy} onClick={() => { setConfirm({ label: tr('重置后旧链接失效，已存在的会话继续保留。确认重置？'), run: () => configure(channel.enabled, true) }) }}>{tr('重置链接')}</button>}
-        </div>
         <div className="team-channel-link-row">
           <input aria-label={tr('团队消息分享链接')} readOnly value={channel.link} onFocus={e => e.currentTarget.select()} />
           <button type="button" className="arkme-team-action" onClick={() => { void copyLink() }}><Copy size={16} />{tr('复制链接')}</button>
+          {channel.canManage && <ArkmeComposerToolButton className="team-link-reset" aria-label={tr('重置链接')} title={tr('重置链接')} disabled={busy}
+            onClick={() => { setConfirm({ label: tr('重置后旧链接失效，已存在的会话继续保留。确认重置？'), run: () => configure(channel.enabled, true) }) }}><ArrowClockwise size={18} aria-hidden /></ArkmeComposerToolButton>}
         </div>
-        <p className="team-channel-link-help">{tr('通过链接发消息，无需加入团队。')}</p>
+        <p className="team-channel-link-help">{tr('外部用户可通过链接发消息')}</p>
       </div>}
 
     </div>}

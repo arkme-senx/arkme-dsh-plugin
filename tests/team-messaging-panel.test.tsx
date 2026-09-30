@@ -169,6 +169,16 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.home.visibility')).toBe(false)
   })
 
+  it.each(['team', 'external'] as const)('hides moderation and empty menus for owners on the %s side', async side => {
+    const target = { ...conversation, side, channel: { ...conversation.channel, canManage: true } }
+    mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
+    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
+    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/屏蔽此用户|解除屏蔽|对话选项/)
+    expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(side === 'team')
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.block')).toBe(false)
+  })
+
   it('persists the stable request before network I/O, refuses double admission, and reuses it after remount', async () => {
     let release!: (value: unknown) => void
     mocks.call.mockImplementation(async (op: string, payload: { clientUid?: string }) => {

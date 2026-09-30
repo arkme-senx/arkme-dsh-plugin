@@ -1,3 +1,4 @@
+import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
@@ -82,7 +83,7 @@ describe('Arkme conversation directory load state', () => {
   })
 
   it('uses 38px avatars consistently in the conversation directory', () => {
-    expect(workspaceSource).toContain("sourceAvatarWrap: { width: 38, height: 38")
+    expect(conversationDirectoryStyles.sourceAvatarWrap).toMatchObject({ width: 38, height: 38 })
     expect(workspaceSource.match(/<ArkmeMark size=\{38\} \/>/g)).toHaveLength(3)
     expect(workspaceSource).toContain('<ArkmeSendToSelfIcon size={38} />')
     expect(workspaceSource).toContain('<ArkmeDirectorySourceAvatar source={source} size={38} />')
