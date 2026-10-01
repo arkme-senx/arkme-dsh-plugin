@@ -1,5 +1,6 @@
 import { withReactionTrace, measureReaction } from './reaction-host-diagnostics.js'
 import { SelfRoleService } from './services/self-role-service.js'
+import { teamCodexPost } from './services/team-codex-transport.js'
 import { AiPointsService } from './services/ai-points-service.js'
 import type { ArkmeAiPointsQuery } from './ai-points.js'
 import { homedir } from 'node:os'
@@ -665,6 +666,9 @@ export class ArkmeService {
   }
 
   async resolveManagedAccessCredential(): Promise<SecretValue> { return await resolveManagedAccessCredential(this.runtime) }
+  async teamCodexPost<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T> {
+    return await teamCodexPost<T>(this.runtime, owner, path, body, signal)
+  }
   async generateDayRecap(input: unknown, signal?: AbortSignal) {
     const assertAccount = async (scope: string) => {
       const session = await this.runtime.requireSession()

@@ -1418,6 +1418,8 @@ export interface ArkmeProviderCapabilities {
     teamMembers?: true
     /** Explicit create and join-by-Jotmo-ID Team governance is available. */
     teamGovernance?: true
+    /** Private, local-only Codex task activity journal. */
+    teamCodexLocal?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
@@ -3796,6 +3798,11 @@ export type ArkmePluginOperation =
   | 'team.list'
   | 'team.resolve'
   | 'team.members.list'
+  | 'team.codex.state'
+  | 'team.codex.entry-availability'
+  | 'team.codex.invite'
+  | 'team.codex.events'
+  | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
   | 'remote.sessions.list'
