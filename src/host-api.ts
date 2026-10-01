@@ -44,6 +44,7 @@ import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-bac
 import { parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
 import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 import type { TeamServicePort } from './services/team-service.js'
+import type { TeamCodexService } from './team-codex-service.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
@@ -881,6 +882,7 @@ export interface ArkmeHostApiOptions {
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
   teamService?: TeamServicePort
+  teamCodex?: TeamCodexService
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -912,6 +914,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('team.codex.')) {
+        if (!isLoopback(req.socket.remoteAddress) || origin === undefined || !['http:','https:'].includes(new URL(origin).protocol)) {
+          throw new ArkmePluginError('origin-required', '本地工作动态只能从当前本机页面访问', false, 403)
+        }
+        if (new URL(origin).host !== req.headers.host) {
+          throw new ArkmePluginError('origin-rejected', '本地工作动态必须从当前页面访问', false, 403)
+        }
+      }
       if (request.operation === 'user.profile.update' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
         throw new ArkmePluginError('origin-required', '资料修改必须从本机设置页面发起', false, 403)
       }
@@ -971,6 +981,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamService,
         options.remoteUnavailableReason,
         options.accountSessions?.(),
+        options.teamCodex,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -1018,11 +1029,13 @@ export async function dispatchArkmeHostOperation(
   teamService?: TeamServicePort,
   remoteUnavailableReason?: () => string,
   accountSessions?: DshAccountSessions,
+  teamCodex?: TeamCodexService,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
       if (accountSessions) capabilities.features = { ...capabilities.features, dshAccountSessions: true }
+      if (teamCodex) capabilities.features = { ...capabilities.features, teamCodexLocal: true }
       return teamService === undefined ? capabilities : {
         ...capabilities,
         features: {
@@ -1097,6 +1110,23 @@ export async function dispatchArkmeHostOperation(
     ))
     case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
     case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
+    case 'team.codex.entry-availability': {
+      if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
+      return await teamCodex.entryAvailability(numberParam(params,'expectedUserId',-1))
+    }
+    case 'team.codex.state':
+    case 'team.codex.invite':
+    case 'team.codex.events':
+    case 'team.codex.change': {
+      if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
+      const teamRef = stringParam(params, 'teamRef')
+      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'))
+      if (operation === 'team.codex.invite') return await teamCodex.invite(teamRef)
+      const id = stringParam(params, 'id')
+      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'))
+      await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
+      return { ok: true }
+    }
     case 'team.list': {
       const limit = optionalNumberParam(params, 'limit')
       const pageCursor = optionalTeamStringParam(params, 'pageCursor')

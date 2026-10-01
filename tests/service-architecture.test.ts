@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'teamCodexPost',
   'interwovenReadReceipts', 'sourceMessageExtensionParent',
   'reactions',
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
@@ -96,6 +97,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'team-codex-transport.ts',
   'reaction-service.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
   'archive-service.ts',

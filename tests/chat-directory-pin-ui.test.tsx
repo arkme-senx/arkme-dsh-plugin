@@ -54,6 +54,7 @@ function deferRemoval() {
 
 beforeEach(async () => {
   vi.stubGlobal('window', {
+    location: {search:''},
     addEventListener: vi.fn(), removeEventListener: vi.fn(), innerWidth: 1200, innerHeight: 800,
     matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
     requestAnimationFrame: () => 1, cancelAnimationFrame: vi.fn(), setTimeout, clearTimeout,
@@ -91,6 +92,20 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it('does not show Codex for a logged-in new user and shows it after confirmed enrollment',async()=>{
+    const fallback=mocks.callArkme.getMockImplementation()!
+    let bound=false
+    mocks.callArkme.mockImplementation(async(operation:string,...args:unknown[])=>operation==='team.codex.entry-availability'
+      ? {userId:7001,visible:bound,checked:true} : fallback(operation,...args))
+    await act(async()=>{renderer!.update(<ArkmeNavigation showHarnessEntry embeddedProductShell/>)})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(0)
+    await act(async()=>{renderer!.update(<ArkmeNavigation active={false} showHarnessEntry embeddedProductShell/>)})
+    bound=true
+    await act(async()=>{renderer!.update(<ArkmeNavigation showHarnessEntry embeddedProductShell/>)})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(1)
+    await act(async()=>{arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:8002})})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(0)
+  })
   it.each([false, true])('uses a small curved top-left pin without moving content (compact=%s)', async compactDirectory => {
     await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />) })
     const before = row().props.style

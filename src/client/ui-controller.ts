@@ -4,6 +4,7 @@ import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
+import type { CodexConversationTarget } from './redesign/contacts/codex-conversation-target.js'
 
 function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
@@ -44,7 +45,8 @@ export interface ArkmeUiState {
   recordRevision: number
   topicDirectoryRevision: number
   mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'harness'
+    | 'harness' | 'codex'
+  codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
@@ -94,6 +96,7 @@ export type ArkmeWorldViewTarget = ArkmeWorldTarget | ArkmeContactWorldTarget
 
 type ArkmeConversationDestination =
   | { kind: 'harness' }
+  | { kind: 'codex' }
   | { kind: 'send_to_self' }
   | { kind: 'source'; source: ArkmeSourceItem }
   | { kind: 'bot'; bot: ArkmeBotSummary }
@@ -147,7 +150,7 @@ export class ArkmeUiController {
     this.leaveContacts()
     if (authenticated) {
       if (resetSelection) this.lastConversationDestination = undefined
-      const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
+      const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
       const { calendarOpen: _activeCalendar, productMode: _activeProductMode, webLoginDialogOpen: _dialogFromCalendar, ...stateWithoutCalendar } = this.state
       const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
       const startsClientConversation = state.mode === 'login'
@@ -161,7 +164,7 @@ export class ArkmeUiController {
       return
     }
     this.lastConversationDestination = undefined
-    const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
+    const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'login',
@@ -343,7 +346,7 @@ export class ArkmeUiController {
     const destination = this.lastConversationDestination
     this.publish({
       ...rest,
-      mode: destination?.kind === 'harness' ? 'harness' : destination?.kind === 'bot' ? 'bot' : 'source',
+      mode: destination?.kind === 'codex' ? 'codex' : destination?.kind === 'harness' ? 'harness' : destination?.kind === 'bot' ? 'bot' : 'source',
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
@@ -376,6 +379,15 @@ export class ArkmeUiController {
     this.lastConversationDestination = { kind: 'harness' }
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({ ...rest, mode: 'harness' })
+  }
+
+  showCodex(target?: CodexConversationTarget | null): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'codex' }
+    const { selectedSource: _source, calendarOpen: _calendar, productMode: _product, ...rest } = this.state
+    const { codexTarget: previousTarget, ...withoutTarget } = rest
+    const nextTarget = target === undefined ? previousTarget : target
+    this.publish({ ...withoutTarget, mode: 'codex', ...(nextTarget ? { codexTarget: nextTarget } : {}) })
   }
 
   openExtensionShare(shareRef: string, action?: ArkmeExtensionShareAction): void {
@@ -480,6 +492,7 @@ export class ArkmeUiController {
     }
     const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
+      && next.codexTarget === this.state.codexTarget
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision

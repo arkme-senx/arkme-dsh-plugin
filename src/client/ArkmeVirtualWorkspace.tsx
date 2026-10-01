@@ -8,6 +8,7 @@ import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import type { ArkmeArchiveState } from '../archive-contract.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useHarnessActivity } from './use-harness-activity.js'
+import { useCodexEntryAvailability } from './redesign/contacts/use-codex-entry-availability.js'
 import { watchHarnessSessionHover } from './harness-session-hover.js'
 import { nextArkmeUnreadConversation } from '../conversation-attention.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
@@ -1027,6 +1028,8 @@ export function ArkmeNavigation({
   const currentAccountKey = authenticated && auth.userId !== undefined
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
+    active && showHarnessEntry && !lockedDirectory)
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
@@ -2135,6 +2138,16 @@ export function ArkmeNavigation({
           }}
         />}
         {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && showHarnessEntry && codexEntryVisible && <button type="button" role="treeitem" aria-label="Codex"
+          aria-selected={ui.mode === 'codex'} data-arkme-codex-entry
+          style={{ ...styles.chatRow, ...(ui.mode === 'codex' ? styles.chatRowActive : {}) }}
+          onClick={() => { activateNativeEntry(); arkmeUi.showCodex(null); onActivateSurface?.() }}>
+          <span style={styles.avatar} aria-hidden><span className="arkme-codex-glyph">&gt;_</span></span>
+          <span data-arkme-conversation-content style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>Codex</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
+          </span>
+        </button>}
         {authenticated && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
           {...(officialAuthorProfile === undefined ? {} : { profile: officialAuthorProfile })}
           busy={officialAuthorOpening}

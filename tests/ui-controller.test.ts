@@ -12,6 +12,28 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('opens personal Codex explicitly without retaining a colleague target', () => {
+    const controller = new ArkmeUiController()
+    controller.showCodex({accountKey:'prod:11',team:{teamRef:'team-a',name:'Team A',jotmoId:'a'},member:'22'})
+    controller.showCodex(null)
+    expect(controller.getSnapshot().mode).toBe('codex')
+    expect(controller.getSnapshot().codexTarget).toBeUndefined()
+  })
+  it('remembers Codex as the conversation destination and drops scoped targets on account changes', () => {
+    const controller = new ArkmeUiController()
+    const target = {accountKey:'prod:11',team:{teamRef:'team-a',name:'Team A',jotmoId:'a'}}
+    controller.showCodex(target)
+    controller.showContacts()
+    controller.showConversations()
+    expect(controller.getSnapshot()).toMatchObject({mode:'codex',codexTarget:target})
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+    controller.authChanged(true,true)
+    expect(controller.getSnapshot().codexTarget).toBeUndefined()
+    controller.showCodex(target)
+    controller.authChanged(false)
+    expect(controller.getSnapshot().codexTarget).toBeUndefined()
+    expect(controller.getSnapshot().mode).toBe('login')
+  })
   it('returns from a contact personal World to that contact, while other personal Worlds return to World', () => {
     const controller = new ArkmeUiController()
     arkmeContactsTab.activateAccount('return-world-test')

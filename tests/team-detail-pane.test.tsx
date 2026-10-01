@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 
 import { TeamDetailPane } from '../src/client/redesign/contacts/TeamDetailPane.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
 const teamRefA = `team_v1_${'a'.repeat(32)}`
 const teamRefB = `team_v1_${'b'.repeat(32)}`
@@ -64,6 +65,7 @@ describe('TeamDetailPane', () => {
     avatarScope += 1
     arkmeAvatarImages.activateScope(`team-detail:${String(avatarScope)}`)
     mocks.callArkme.mockReset()
+    arkmeUi.authChanged(false)
   })
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await tick() })
@@ -112,6 +114,61 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findByProps({ 'data-team-member-role': 'owner' })).toBeDefined()
     expect(renderer!.root.findAllByType(ArkmeUserAvatar).map(avatar => avatar.props.avatarRef))
       .toEqual(['avatar-member-one', undefined])
+  })
+
+  it('routes a member to the shared reader with an opaque identity, not their display name', async () => {
+    const data=page(teamRefA,'团队 A')
+    mocks.callArkme.mockResolvedValue(data)
+    await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
+    await act(async()=>{button(renderer!,'查看对话 ›').props.onClick();await tick()})
+    expect(arkmeUi.getSnapshot().codexTarget).toMatchObject({accountKey:'account-a',team:data.team,member:data.items[0]!.userRef,memberName:data.items[0]!.displayName,returnView:'members'})
+    expect(mocks.callArkme.mock.calls.every(call=>call[0]==='team.members.list')).toBe(true)
+  })
+
+  it('opens the legacy management route as a dialog above the retained member list', async () => {
+    mocks.callArkme.mockImplementation(async operation=>operation==='team.members.list'?page(teamRefA,'团队 A'):{self:null,localOnly:true,installations:[],tasks:[]})
+    await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} initialView="activity"/>);await tick()})
+    expect(text(renderer!.root)).toContain('Codex 同步')
+    expect(text(renderer!.root)).toContain('团队 A成员')
+    expect(renderer!.root.findByProps({ role: 'dialog' })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ className: 'arkme-team-tabs' })).toHaveLength(0)
+    expect(text(renderer!.root)).not.toContain('把正在做的事留在团队里')
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-task-sidebar'})).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-conversation'})).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.every(call=>['team.members.list','team.codex.state'].includes(call[0]))).toBe(true)
+    await act(async()=>{button(renderer!,'查看团队对话 ›').props.onClick();await tick()})
+    expect(arkmeUi.getSnapshot().codexTarget).toMatchObject({member:'',returnView:'activity',accountKey:'account-a'})
+    expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
+  })
+
+  it('loads sync only on opening its feature and keeps the member list mounted on close', async () => {
+    mocks.callArkme.mockImplementation(async operation => operation === 'team.members.list' ? page(teamRefA, '团队 A') : { self:null, localOnly:true, installations:[], tasks:[] })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(text(renderer!.root)).toContain('团队功能')
+    expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.map(call => call[0])).toEqual(['team.members.list'])
+    const members = renderer!.root.findByProps({ className:'arkme-team-member-list' })
+    await act(async () => { button(renderer!, 'Codex 同步›').props.onClick(); await tick() })
+    expect(renderer!.root.findByProps({ role:'dialog' })).toBeDefined()
+    await act(async () => { renderer!.root.findByProps({ 'aria-label':'关闭' }).props.onClick(); await tick() })
+    expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ className:'arkme-team-member-list' })).toBe(members)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'team.members.list')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.every(call => ['team.members.list', 'team.codex.state'].includes(call[0]))).toBe(true)
+  })
+
+  it.each(['account', 'team'])('closes the old sync dialog when the %s changes', async scope => {
+    const pendingSync = deferred<unknown>()
+    mocks.callArkme.mockImplementation(async (operation, params) => operation === 'team.members.list' ? page(params.teamRef, params.teamRef === teamRefA ? '团队 A' : '团队 B') : pendingSync.promise)
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { button(renderer!, 'Codex 同步›').props.onClick(); await tick() })
+    const syncSignal = mocks.callArkme.mock.calls.find(call => call[0] === 'team.codex.state')?.[2] as AbortSignal
+    await act(async () => { renderer!.update(<TeamDetailPane accountKey={scope === 'account' ? 'account-b' : 'account-a'} teamRef={scope === 'team' ? teamRefB : teamRefA} />); await tick() })
+    expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
+    expect(syncSignal.aborted).toBe(true)
+    pendingSync.resolve({ self:null, localOnly:true, installations:[], tasks:[] })
+    await act(async () => { await tick() })
+    expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
   })
 
   it('uses the opaque next cursor and merges a later member page without duplicating rows', async () => {

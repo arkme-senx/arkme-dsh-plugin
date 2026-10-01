@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeTeamMember, ArkmeTeamMemberPage, ArkmeTeamRole } from '../../../types.js'
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
+import { TeamCodexSyncDialog } from './TeamCodexSyncDialog.js'
+import { arkmeUi } from '../../ui-controller.js'
 
 interface TeamDetailState {
   status: 'loading' | 'ready' | 'error'
@@ -30,9 +32,16 @@ function memberIdentity(member: ArkmeTeamMember): string {
       : member.jotmoId === undefined ? '即我号暂不可用' : `@${member.jotmoId}`
 }
 
-export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; teamRef: string }) {
+export function TeamDetailPane({ accountKey, teamRef, initialView = 'members' }: { accountKey: string; teamRef: string; initialView?: 'members' | 'activity' }) {
+  // Keep pagination and the sync dialog scoped to one signed-in account and team.
+  return <ScopedTeamDetailPane key={`${accountKey}:${teamRef}`} accountKey={accountKey} teamRef={teamRef} initialView={initialView} />
+}
+
+function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey: string; teamRef: string; initialView: 'members' | 'activity' }) {
   useArkmeLocale()
   const [state, setState] = useState<TeamDetailState>({ status: 'loading' })
+  const [syncOpen, setSyncOpen] = useState(initialView === 'activity')
+  useEffect(() => { setSyncOpen(initialView === 'activity') }, [initialView])
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
 
@@ -106,6 +115,23 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
         </span>
       </div>
     </header>
+    <section className="arkme-team-features" aria-label={tr('团队功能')}>
+      <div className="arkme-team-features-container">
+        <h2>{tr('团队功能')}</h2>
+        <div className="arkme-team-feature-list">
+          <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={syncOpen} onClick={() => setSyncOpen(true)}>
+            <span className="arkme-team-feature-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="4" />
+                <path d="m9 9-3 3 3 3m6-6 3 3-3 3" />
+              </svg>
+            </span>
+            <span>{tr('Codex 同步')}</span>
+            <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
+        </div>
+      </div>
+    </section>
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <h2>{tr("团队成员")}</h2>
@@ -126,6 +152,11 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
             <span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
             </span>
+            <button type="button" className="arkme-team-member-conversations"
+              aria-label={tr('查看 {name} 的 Codex 对话',{name:member.displayName})}
+              onClick={() => arkmeUi.showCodex({accountKey,team:page.team,member:member.userRef,memberName:member.displayName,fromTeam:true,returnView:'members'})}>
+              {tr('查看对话')} <span aria-hidden>›</span>
+            </button>
           </div>)}
           {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
           {page.hasMore && page.nextPageCursor !== undefined && <button
@@ -137,5 +168,9 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
         </div>
       </div>
     </section>
+    {syncOpen && <TeamCodexSyncDialog team={page.team} onClose={() => setSyncOpen(false)} onViewConversations={() => {
+      setSyncOpen(false)
+      arkmeUi.showCodex({ accountKey, team: page.team, member: '', fromTeam: true, returnView: 'activity' })
+    }} />}
   </section>
 }

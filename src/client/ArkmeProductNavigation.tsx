@@ -203,7 +203,7 @@ export function ArkmeProductNavigation({
   // Utility pages also highlight Conversations, but hide its directory/header.
   // Only relinquish the native fallback when the adapted conversation UI is active.
   const conversationDragActive = !hidden && !locked && activeId === 'conversations'
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'harness')
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'harness' || ui.mode === 'codex')
   const windowDragMode = conversationDragActive ? 'conversation'
     : !hidden && !locked && activeId === 'extensions' ? 'marketplace' : 'fallback'
   const conversationUnreadCount = authState.auth?.status === 'authenticated'

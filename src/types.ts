@@ -1418,6 +1418,8 @@ export interface ArkmeProviderCapabilities {
     teamMembers?: true
     /** Explicit create and join-by-Jotmo-ID Team governance is available. */
     teamGovernance?: true
+    /** Private, local-only Codex task activity journal. */
+    teamCodexLocal?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
@@ -3162,7 +3164,19 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
+export interface ArkmeRecordingDailyMetrics {
+  /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
+  archiveBytes: number
+  archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
+  confirmedCount: number
+  pendingCount: number
+  unknownCount: number
+  /** Unicode code points in the final visible transcript, excluding whitespace. */
+  textCount: number
+}
+
 export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptItem> extends ArkmeRecordingSection<T> {
+  dailyMetrics?: ArkmeRecordingDailyMetrics
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
   processingCount: number
@@ -3801,6 +3815,11 @@ export type ArkmePluginOperation =
   | 'team.list'
   | 'team.resolve'
   | 'team.members.list'
+  | 'team.codex.state'
+  | 'team.codex.entry-availability'
+  | 'team.codex.invite'
+  | 'team.codex.events'
+  | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
   | 'remote.sessions.list'
