@@ -23,6 +23,7 @@ import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySur
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
+import { CodexConversationSurface } from './redesign/contacts/CodexConversationSurface.js'
 import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
@@ -230,7 +231,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode)
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
   const sidebarResizeRef = useRef<{
@@ -518,7 +519,8 @@ export function ArkmePersistentWorkspace({
   const contactsMode = ui.mode === 'source' && ui.productMode === 'contacts'
   const webLockedHarness = !startupAuthGateEnabled() && authState.auth?.status !== 'authenticated'
   const harnessVisible = ui.mode === 'harness' || webLockedHarness
-  const conversationHidden = harnessVisible || contactsMode
+  const codexVisible = ui.mode === 'codex' && ui.calendarOpen !== true && !webLockedHarness
+  const conversationHidden = harnessVisible || contactsMode || ui.mode === 'codex' && ui.calendarOpen !== true
   const conversationActive = !conversationHidden && ui.calendarOpen !== true
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
@@ -544,6 +546,9 @@ export function ArkmePersistentWorkspace({
       accountScope={contactsAccountKey}
       followSession={ui.mode === 'harness'}
     />
+    {contactsAccountKey && authenticatedUserId !== undefined && <div hidden={!codexVisible} style={{...styles.contactsLayer, display:codexVisible ? 'flex' : 'none'}}>
+      <CodexConversationSurface key={contactsAccountKey} accountKey={contactsAccountKey} userId={authenticatedUserId} active={codexVisible}/>
+    </div>}
     {!webLockedHarness && <div
         data-arkme-owned="arkme-conversation-layer"
         style={{

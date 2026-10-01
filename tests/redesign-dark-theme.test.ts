@@ -40,13 +40,13 @@ describe('Arkme redesign dark theme', () => {
     expect(directoryRule).toContain('overflow-y: auto')
   })
 
-  it('keeps Team identity fixed with one scrolling content owner and a natural-height member card', () => {
+  it('keeps Team identity and feature entry fixed with one scrolling member owner', () => {
     const teamDetailRule = redesignCss.match(/\.arkme-team-detail\s*\{([^{}]+)\}/)?.[1] ?? ''
     const teamHeaderMainRule = redesignCss.match(/\.arkme-team-detail-header-main\s*\{([^{}]+)\}/)?.[1] ?? ''
     const teamMembersRule = redesignCss.match(/\.arkme-team-members\s*\{([^{}]+)\}/)?.[1] ?? ''
     const memberListRule = redesignCss.match(/\.arkme-team-member-list\s*\{([^{}]+)\}/)?.[1] ?? ''
 
-    expect(teamDetailRule).toContain('grid-template-rows: auto minmax(0, 1fr)')
+    expect(teamDetailRule).toContain('grid-template-rows: auto auto minmax(0, 1fr)')
     expect(teamDetailRule).toContain('overflow: hidden')
     expect(teamHeaderMainRule).toContain('width: min(100%, 760px)')
     expect(teamMembersRule).toContain('overflow-y: auto')

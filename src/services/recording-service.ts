@@ -61,6 +61,7 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { projectRecordingCoverage, recordingBelongsToViewer } from '../recording-coverage.js'
+import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
 
@@ -1400,6 +1401,7 @@ export class RecordingService {
         items,
         message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? coverage.intervals.length > 0 ? '已有录音，暂无转写内容' : '当天无录音' : '暂无豆包转写内容',
         identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
+        dailyMetrics: projectRecordingDailyMetrics(response, items, session.userId, date, dayEnd.getTime()),
         totalDurationMillis, processingCount,
       }
     }

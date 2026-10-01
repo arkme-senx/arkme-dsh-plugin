@@ -204,7 +204,8 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
     expect(timelineSource).toContain('minHeight: 162')
-    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto'")
+    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto auto'")
+    expect(timelineSource).toContain('<RecordingDailyMetrics')
   })
 
   it('uses the desktop empty illustration instead of tabs and the legacy placeholder track', async () => {

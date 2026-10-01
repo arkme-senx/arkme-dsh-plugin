@@ -1,4 +1,4 @@
-import { tr, useArkmeLocale } from '../locale.js'
+import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -6,7 +6,9 @@ import { MagnifyingGlassMinus } from '@phosphor-icons/react/dist/icons/Magnifyin
 import { MagnifyingGlassPlus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassPlus'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
-import type { ArkmeRecordingCoverageInterval, ArkmeRecordingWorkbenchItem } from '../../types.js'
+import type { ArkmeRecordingCoverageInterval, ArkmeRecordingWorkbenchItem, ArkmeRecordingDailyMetrics } from '../../types.js'
+import { recordingTextCount } from '../../recording-daily-metrics.js'
+import { RecordingDailyMetrics } from './RecordingDailyMetrics.js'
 import { arkmeTheme } from '../arkme-theme.js'
 import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { recordingSpeakerColor } from './recording-speaker-presentation.js'
@@ -217,7 +219,7 @@ export function recordingTimelineTickTimes(windowStart: number, windowEnd: numbe
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { minHeight: 162, display: 'grid', gridTemplateRows: '25px 68px auto auto', gap: 6, padding: '16px 8px', boxSizing: 'border-box', background: desktop.base },
+  shell: { minHeight: 162, display: 'grid', gridTemplateRows: '25px 68px auto auto auto', gap: 6, padding: '16px 8px', boxSizing: 'border-box', background: desktop.base },
   overviewRow: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
   overviewColumn: { minWidth: 0, height: 25, position: 'relative' },
   overview: { position: 'relative', overflow: 'hidden', height: 10, marginTop: 4, touchAction: 'none', borderRadius: 10, background: desktop.surface, cursor: 'pointer' },
@@ -250,7 +252,7 @@ const styles: Record<string, CSSProperties> = {
   legendPanelList: { padding: '8px 0', display: 'grid' },
   legendPanelItem: { minWidth: 0, padding: '8px 12px' },
   legendPanelPrimary: { minWidth: 0, display: 'grid', gridTemplateColumns: '80px minmax(80px,1fr) 40px', alignItems: 'center' },
-  legendPanelMeta: { display: 'flex', alignItems: 'center', marginTop: 5 },
+  legendPanelMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 3, marginTop: 5 },
   legendPanelIdentity: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   legendPanelTimeline: { position: 'relative', height: 6, margin: '0 6px 0 10px', overflow: 'hidden', borderRadius: 11, background: desktop.surface },
   legendPanelTimelineSegment: { position: 'absolute', top: 0, bottom: 0, minWidth: 2, borderRadius: 3 },
@@ -264,10 +266,11 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dayStartMillis, playheadMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, dayStartMillis, playheadMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: ArkmeRecordingWorkbenchItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
+  dailyMetrics?: ArkmeRecordingDailyMetrics | undefined
   dayStartMillis?: number
   playheadMillis?: number
   isPlaying: boolean
@@ -590,6 +593,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       {coverageState !== 'ready' && <span role="status">{coverageState === 'error' ? '云端录音范围读取失败' : '部分录音范围待确认'}</span>}
       {coverage.some(range => range.status === 'processing' || range.status === 'submitted') && <span role="status">{tr("录音处理中，人声结果待更新")}</span>}
     </div>
+    <RecordingDailyMetrics metrics={dailyMetrics} loading={loading} localPending={coverage.some(range=>range.status==='recording'||range.status==='submitted'||range.status==='local')} />
     {loading ? <span style={styles.loadingControl} data-timeline-layer="loading" aria-label={tr("正在读取录音")} /> : showEmptyState ? <span style={styles.emptyControl} data-timeline-layer="empty">
       <span style={styles.emptyIndicator} aria-hidden />
       <span>{tr("无录音")}</span>
@@ -635,6 +639,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
                 <span style={styles.legendMetric}>{speaker.mergedSegments.length}{tr("个片段")}</span>
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
                 <span style={styles.legendMetric}>{tr("总时长:")} {speakerStatsDurationLabel(speaker.durationMillis)}</span>
+                <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
+                <span style={styles.legendMetric}>{tr('转写 {count} 字',{count:speaker.items.reduce((sum,item)=>sum+recordingTextCount(item.text),0).toLocaleString(arkmeIntlLocale())})}</span>
               </span>
             </span>
           })}
