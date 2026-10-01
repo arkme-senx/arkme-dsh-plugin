@@ -7,20 +7,21 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
+import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
 
 const teamRef=`team_v1_${'a'.repeat(32)}`
 const member:ArkmeTeamMember={userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1}
 const roots:string[]=[],services:TeamCodexService[]=[]
 afterEach(()=>{for(const s of services.splice(0))s.close();for(const path of roots.splice(0))rmSync(path,{recursive:true,force:true})})
 
-function fixture(){
+function fixture(cloud?:TeamCodexCloudPort){
   const root=mkdtempSync(join(tmpdir(),"arkme codex's machine-"));roots.push(root)
   const directory=join(root,'bridge'),codex=join(root,'codex'),project=join(root,'project-a')
   mkdirSync(codex);mkdirSync(project)
   let user:number|undefined=11,offset=0,installation=''
   const options={directory,codexHome:codex,currentUserId:async()=>user,
     profile:async()=>({profile:{userId:user,arkmeId:'my_user'}} as ArkmeUserProfileSnapshot),
-    teams:{listMembers:vi.fn(async()=>({team:{teamRef,name:'测试团队',jotmoId:'team_test',currentUserRole:'member' as const,createdAtMillis:1,updatedAtMillis:1},items:[member],totalCount:1,hasMore:false}))},now:()=>Date.now()+offset}
+    teams:{listMembers:vi.fn(async()=>({team:{teamRef,name:'测试团队',jotmoId:'team_test',currentUserRole:'member' as const,createdAtMillis:1,updatedAtMillis:1},items:[member],totalCount:1,hasMore:false}))},now:()=>Date.now()+offset,...(cloud?{cloud}:{})}
   const service=new TeamCodexService(options);services.push(service)
   const run=(args:string[],input?:object,env:Record<string,string>={})=>spawnSync('python3',[join(directory,'bridge.py'),...args],{
     env:{...process.env,CODEX_HOME:codex,CODEX_THREAD_ID:'',...env},...(input?{input:JSON.stringify(input)}:{}),encoding:'utf8',timeout:5000})
@@ -35,6 +36,37 @@ function fixture(){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it.each(['consent-first','hook-first'])('registers metadata only after consent AND a real isolated Hook, in either order: %s',async order=>{
+    const post=vi.fn(async(_owner:number,path:string,body:Record<string,unknown>)=>{
+      if(path.endsWith('list-mine')) return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+      if(path.endsWith('/confirm')) return {owner_ref:'11',source_id:body.source_id}
+      if(path.endsWith('/status')) return {owner_ref:'11',has_connected_codex:false,first_connected_at:null}
+      return {items:[],page:1,has_more:false}
+    })
+    const cloud={post,selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort
+    const f=fixture(cloud),invite=await f.enroll()
+    const confirms=()=>post.mock.calls.filter(c=>c[1].endsWith('/confirm'))
+    await f.service.tick();expect(confirms()).toHaveLength(0)
+    if(order==='consent-first') await f.service.change(teamRef,'cloud','enable-cloud',undefined,'测试来源')
+    await f.service.tick();expect(confirms()).toHaveLength(0)
+    if(order==='hook-first') {
+      expect(f.record().status).toBe(0);await f.service.tick()
+      expect((await f.service.entryAvailability(11)).visible).toBe(true)
+      expect(confirms()).toHaveLength(0)
+      // Pause all content before enabling cloud: metadata alone must still register.
+      await f.service.change(teamRef,invite.id,'pause')
+      await f.service.change(teamRef,'cloud','enable-cloud',undefined,'测试来源')
+    } else {
+      expect(f.record().status).toBe(0)
+      // Ingest without running a cloud pump until collection has been paused.
+      await f.service.tick()
+      await f.service.change(teamRef,invite.id,'pause')
+    }
+    f.advance(6000);await f.service.tick()
+    await vi.waitFor(()=>expect(confirms()).toHaveLength(1))
+    expect(confirms()[0]![2]).toMatchObject({source_name:'测试来源',team_ref:'101',expected_owner_ref:'11'})
+    expect(post.mock.calls.some(c=>c[1].endsWith('/sync'))).toBe(false)
+  })
   it('reveals the entry only after a real trusted event and keeps it when paused or disconnected',async()=>{
     const f=fixture()
     expect((await f.service.entryAvailability(11)).visible).toBe(false)

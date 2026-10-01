@@ -17,6 +17,7 @@ it('starts hidden, reveals a confirmed binding, and retains it during transient 
   await act(async()=>{await vi.advanceTimersByTimeAsync(5000)});expect(visible()).toBe(true)
   api.mockRejectedValue(new Error('offline'))
   await act(async()=>{await vi.advanceTimersByTimeAsync(5000)});expect(visible()).toBe(true)
+  expect(api).toHaveBeenCalledTimes(2)
 })
 it('does not flash the previous account or accept its delayed response',async()=>{
   let finish!:(value:unknown)=>void

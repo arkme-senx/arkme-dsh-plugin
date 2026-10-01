@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexInvitation, TeamCodexState, TeamCodexTask } from './team-codex-contract.js'
 import { ArkmePluginError } from './services/service.js'
-import { TeamCodexCloudJournal } from './team-codex-cloud-journal.js'
+import { DEFAULT_CODEX_SOURCE_NAME, TeamCodexCloudJournal, validCodexSourceName } from './team-codex-cloud-journal.js'
 
 export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
@@ -26,21 +26,28 @@ export class TeamCodexCloud {
   private readonly destinations = new Map<string, { id: string | null; until: number }>()
   private readonly failures = new Map<string, { state: CloudState; retryAt: number; attempts: number }>()
   private syncing = false
-  constructor(private readonly db: DatabaseSync, private readonly port: TeamCodexCloudPort, private readonly currentUser: () => Promise<number | undefined>, private readonly now = Date.now) {
+  private confirming = false
+  constructor(private readonly db: DatabaseSync, private readonly port: TeamCodexCloudPort, private readonly currentUser: () => Promise<number | undefined>, private readonly now = Date.now,
+    private readonly onConnectionEvidence: (owner:number) => void = () => undefined) {
     this.journal = new TeamCodexCloudJournal(db)
     db.exec(`CREATE TABLE IF NOT EXISTS codex_cloud_consent (owner INTEGER NOT NULL, local_team TEXT NOT NULL,
       team TEXT NOT NULL, enabled INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(owner,local_team))`)
+    if (!(db.prepare('PRAGMA table_info(codex_cloud_consent)').all() as {name:string}[]).some(column => column.name === 'source_name')) {
+      db.exec("ALTER TABLE codex_cloud_consent ADD COLUMN source_name TEXT NOT NULL DEFAULT '本机 Codex'")
+    }
   }
-  private consent(owner: number, team: string): {team:string;enabled:number}|undefined {
-    return this.db.prepare('SELECT team,enabled FROM codex_cloud_consent WHERE owner=? AND local_team=?').get(owner, team) as {team:string;enabled:number}|undefined
+  private consent(owner: number, team: string): {team:string;enabled:number;source_name:string}|undefined {
+    return this.db.prepare('SELECT team,enabled,source_name FROM codex_cloud_consent WHERE owner=? AND local_team=?').get(owner, team) as {team:string;enabled:number;source_name:string}|undefined
   }
-  async enable(owner: number, localTeam: string): Promise<void> {
+  async enable(owner: number, localTeam: string, sourceName = DEFAULT_CODEX_SOURCE_NAME): Promise<void> {
+    if (!validCodexSourceName(sourceName)) throw new ArkmePluginError('INVALID_PARAMETER', '来源名称需为 1–128 字节，且不能包含控制字符', false, 400)
     const signal = this.controller.signal
     const team = await this.destination(owner, localTeam, signal)
     if (!team) throw new ArkmePluginError('TEAM_FORBIDDEN', '本次云端试用仅面向即我团队', false, 403)
     await this.guard(owner, signal)
-    this.db.prepare('INSERT INTO codex_cloud_consent(owner,local_team,team,enabled,at) VALUES(?,?,?,1,?) ON CONFLICT(owner,local_team) DO UPDATE SET enabled=1,at=excluded.at WHERE team=excluded.team').run(owner, localTeam, team, this.now())
+    this.db.prepare('INSERT INTO codex_cloud_consent(owner,local_team,team,enabled,at,source_name) VALUES(?,?,?,1,?,?) ON CONFLICT(owner,local_team) DO UPDATE SET enabled=1,at=excluded.at,source_name=excluded.source_name WHERE team=excluded.team').run(owner, localTeam, team, this.now(),sourceName.trim())
     if (this.consent(owner, localTeam)?.team !== team) throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH', '云端目标已变化，未开启上传', false, 409)
+    this.journal.retryConfirmations(owner,localTeam)
   }
   disable(owner:number,team:string):void {
     this.fence()
@@ -76,6 +83,51 @@ export class TeamCodexCloud {
     const result = await this.port.post<T>(owner, path, body, signal)
     await this.guard(owner, signal)
     return result
+  }
+
+  /** Metadata only. Callers supply only source IDs with accepted local Hook evidence. */
+  async confirmSources(owner: number, localTeam: string, verifiedLocalSources: readonly string[]): Promise<void> {
+    const consent = this.consent(owner,localTeam)
+    if (!consent?.enabled || !verifiedLocalSources.length || this.confirming) return
+    const signal = this.controller.signal
+    this.confirming = true
+    try {
+      await this.guard(owner,signal)
+      let sent = 0
+      for (const localSource of new Set(verifiedLocalSources)) {
+        // Use the stored destination and UUID, never infer a replacement binding on retry.
+        const source = this.journal.source(owner,localTeam,consent.team,localSource,consent.source_name)
+        if (!this.journal.confirmationDue(source.id,this.now())) continue
+        if (sent++ >= 20) break
+        try {
+          const data = obj(await this.post(owner,'/api/v1/team-codex/sources/confirm',{
+            expected_owner_ref:String(owner),team_ref:source.team,source_id:source.id,source_name:source.name,
+          },signal))
+          if (typeof data.owner_ref !== 'string' || !decimal(data.owner_ref) || !validId(data.source_id)) return invalid()
+          if (data.owner_ref !== String(owner) || data.source_id !== source.id) {
+            throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH','来源确认身份不一致，已停止重试',false,409)
+          }
+          this.journal.confirmSource(source.id,this.now())
+          this.onConnectionEvidence(owner)
+        } catch (error) {
+          signal.throwIfAborted()
+          const code = error instanceof ArkmePluginError ? error.code : ''
+          const blocked = ['TEAM_FORBIDDEN','ACCOUNT_OR_DESTINATION_MISMATCH','INVALID_PARAMETER','PAYLOAD_TOO_LARGE'].includes(code) ? code : ''
+          this.journal.failConfirmation(source.id,this.now(),blocked)
+        }
+      }
+    } finally { this.confirming = false }
+  }
+
+  /** Account history, independent of current team permissions, tasks or collection consent. */
+  async connectionStatus(owner: number): Promise<boolean> {
+    const data = obj(await this.post(owner,'/api/v1/team-codex/connection/status',{},this.controller.signal))
+    if (data.owner_ref !== String(owner) || typeof data.has_connected_codex !== 'boolean'
+      || (data.has_connected_codex
+        ? !Number.isSafeInteger(data.first_connected_at) || Number(data.first_connected_at) <= 0
+        : data.first_connected_at !== null)) return invalid()
+    if (data.has_connected_codex) this.onConnectionEvidence(owner)
+    return data.has_connected_codex
   }
   private async destination(owner: number, localTeam: string, signal: AbortSignal): Promise<string | null> {
     await this.guard(owner, signal)
@@ -118,7 +170,7 @@ export class TeamCodexCloud {
       if (!destination) return
       if (destination !== consent.team) throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH', '已停止向变化后的团队上传', false, 409)
       const active = eligible(tasks)
-      this.journal.reconcile(owner, localTeam, destination, active, readEvents)
+      this.journal.reconcile(owner, localTeam, destination, active, readEvents,consent.source_name)
       const batch = this.journal.batch(owner, localTeam, new Set(active.map(t => t.id)))
       if (!batch) return
       const result = await this.post(owner, '/api/v1/team-codex/sync', batch, signal)
@@ -161,6 +213,7 @@ export class TeamCodexCloud {
           updatedAt: Number(row.latest_at), eventCount: Number(row.event_count), member, projectKey: str(row.project_key), projectName: str(row.project_name), branch: str(row.branch),
           cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true } })
       }
+      if ([...remote.values()].some(task => task.cloud?.ownerRef === String(owner))) this.onConnectionEvidence(owner)
       // Local pending/excluded records remain on page one, never overwrite another member/device.
       if (page === 1 && (!memberRef || memberRef === String(owner))) for (const task of local.tasks) {
         const mapping = this.journal.mapping(owner, localTeam, task.id)
@@ -171,27 +224,15 @@ export class TeamCodexCloud {
       return { ...local, localOnly: false, tasks: [...remote.values()].sort((a, b) => b.updatedAt - a.updatedAt),
         cloud: { ...(failure?.state ?? { status: 'ready' }), ...counts, page, hasMore: data.has_more,
           uploadEnabled: this.consent(owner,localTeam)?.enabled === 1,
+          sourceName: this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME,
           ...(counts.blocked ? { message: ambiguous ? '部分任务存在跨账号归属冲突，仅保留在本机，未继续上传。' : '部分记录存在版本冲突或被拒绝，已保留本地内容，未覆盖云端。' } : {}) } }
     } catch (error) {
       signal.throwIfAborted()
       await this.guard(owner, signal)
       return { ...local, tasks:page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : [],
-        cloud: { ...this.failure(owner, localTeam, error), ...counts, page, uploadEnabled:this.consent(owner,localTeam)?.enabled === 1 } }
+        cloud: { ...this.failure(owner, localTeam, error), ...counts, page, uploadEnabled:this.consent(owner,localTeam)?.enabled === 1,
+          sourceName:this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME } }
     }
-  }
-
-  /** Existing self view works on a reader-only computer without enrolling another collector. */
-  async hasPersonalTasks(owner: number): Promise<boolean> {
-    const signal = this.controller.signal
-    const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', {view:'self',page:1,limit:1}, signal))
-    if (!Array.isArray(data.items) || data.items.length > 1 || data.page !== 1 || typeof data.has_more !== 'boolean'
-      || (data.has_more && data.items.length === 0)) return invalid()
-    for (const value of data.items) {
-      const row = obj(value)
-      if (!validId(row.task_id) || !validId(row.source_id) || decimal(row.owner_ref) !== String(owner)
-        || !decimal(row.team_ref)) return invalid()
-    }
-    return data.items.length > 0
   }
 
   /** Bridge the verified public account ID to the numeric cloud identity, never by display name. */

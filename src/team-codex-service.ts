@@ -58,6 +58,7 @@ export class TeamCodexService {
   private readonly identities = new Map<string, { member: ArkmeTeamMember; team: ArkmeTeam; until: number }>()
   private readonly memberFilters = new Map<string, { ref:string; until:number }>()
   private readonly entryChecks = new Map<number, { until:number; checked:boolean }>()
+  private readonly entryRequests = new Map<number, Promise<TeamCodexEntryAvailability>>()
   private generation = 0
   private closed = false
   private ticking: Promise<void> | undefined
@@ -86,7 +87,7 @@ export class TeamCodexService {
       CREATE TABLE IF NOT EXISTS codex_entry_accounts (user_id INTEGER PRIMARY KEY, confirmed_at INTEGER NOT NULL);`)
     this.machine = new TeamCodexMachineJournal(this.db,options.directory,this.now,readJson,atomicJson,options.codexHome)
     this.titles = new TeamCodexDesktopTitleReader(options.codexHome)
-    this.cloud = options.cloud ? new TeamCodexCloud(this.db, options.cloud, options.currentUserId, this.now) : undefined
+    this.cloud = options.cloud ? new TeamCodexCloud(this.db, options.cloud, options.currentUserId, this.now, owner => this.rememberEntry(owner)) : undefined
     // The helper is copied into private runtime storage, not into Codex config.
     const helper = join(options.directory, 'bridge.py')
     if (existsSync(helper) && lstatSync(helper).isSymbolicLink()) throw new Error('Invalid team Codex helper')
@@ -108,6 +109,7 @@ export class TeamCodexService {
     this.identities.clear()
     this.memberFilters.clear()
     this.entryChecks.clear()
+    this.entryRequests.clear()
     rmSync(join(this.options.directory, 'active.json'), { force: true })
   }
 
@@ -134,30 +136,44 @@ export class TeamCodexService {
       if (await this.user() !== userId || generation !== this.generation) fail('账号已切换，请重试',409)
     }
     await assertCurrent()
-    const remembered = this.db.prepare('SELECT 1 FROM codex_entry_accounts WHERE user_id=?').get(userId)
-    // home_key is persisted only after an accepted real Hook event, not by copying/enrolling.
-    const local = this.db.prepare(`SELECT 1 FROM codex_installations WHERE user_id=? AND home_key IS NOT NULL
-      UNION SELECT 1 FROM connections c JOIN events e ON e.connection_id=c.id WHERE c.user_id=? LIMIT 1`).get(userId,userId)
     const confirm = ():TeamCodexEntryAvailability => {
-      this.db.prepare('INSERT OR IGNORE INTO codex_entry_accounts VALUES(?,?)').run(userId,this.now())
+      this.rememberEntry(userId)
       return {userId,visible:true,checked:true}
     }
-    if (remembered) return {userId,visible:true,checked:true}
-    if (local) return confirm()
+    if (this.hasEntryEvidence(userId)) return confirm()
     if (!this.cloud) return {userId,visible:false,checked:true}
+    const pending = this.entryRequests.get(userId)
+    if (pending) return pending
     const cached = this.entryChecks.get(userId)
     if (cached && cached.until > this.now()) return {userId,visible:false,checked:cached.checked}
-    try {
-      const hasTasks = await this.cloud.hasPersonalTasks(userId)
-      await assertCurrent()
-      if (hasTasks) return confirm()
-      this.entryChecks.set(userId,{until:this.now()+30_000,checked:true})
-      return {userId,visible:false,checked:true}
-    } catch {
-      await assertCurrent()
-      this.entryChecks.set(userId,{until:this.now()+30_000,checked:false})
-      return {userId,visible:false,checked:false}
+    const query = async ():Promise<TeamCodexEntryAvailability> => {
+      try {
+        const connected = await this.cloud!.connectionStatus(userId)
+        await assertCurrent()
+        if (connected || this.hasEntryEvidence(userId)) return confirm()
+        this.entryChecks.set(userId,{until:this.now()+30_000,checked:true})
+        return {userId,visible:false,checked:true}
+      } catch {
+        await assertCurrent()
+        if (this.hasEntryEvidence(userId)) return confirm()
+        this.entryChecks.set(userId,{until:this.now()+30_000,checked:false})
+        return {userId,visible:false,checked:false}
+      }
     }
+    const request = query().finally(() => { if (this.entryRequests.get(userId) === request) this.entryRequests.delete(userId) })
+    this.entryRequests.set(userId,request)
+    return request
+  }
+
+  private rememberEntry(userId:number):void {
+    this.db.prepare('INSERT OR IGNORE INTO codex_entry_accounts VALUES(?,?)').run(userId,this.now())
+  }
+
+  private hasEntryEvidence(userId:number):boolean {
+    // home_key is persisted only after an accepted real Hook, not by copying/enrolling.
+    return !!this.db.prepare(`SELECT 1 FROM codex_entry_accounts WHERE user_id=?
+      UNION SELECT 1 FROM codex_installations WHERE user_id=? AND home_key IS NOT NULL
+      UNION SELECT 1 FROM connections c JOIN events e ON e.connection_id=c.id WHERE c.user_id=? LIMIT 1`).get(userId,userId,userId)
   }
 
   private async self(teamRef: string, userId: number): Promise<ArkmeTeamMember> {
@@ -296,13 +312,13 @@ export class TeamCodexService {
     }
   }
 
-  async change(teamRef: string, id: string, action: string, projectKey?:string): Promise<void> {
+  async change(teamRef: string, id: string, action: string, projectKey?:string, sourceName?:string): Promise<void> {
     const userId = await this.user()
     if (action === 'enable-cloud' || action === 'disable-cloud') {
       if (!this.cloud || !TEAM.test(teamRef)) fail('当前环境未启用云端同步', 403)
       if (action === 'enable-cloud') {
         await this.self(teamRef,userId)
-        await this.cloud.enable(userId,teamRef)
+        await this.cloud.enable(userId,teamRef,sourceName)
       } else this.cloud.disable(userId,teamRef)
       this.nextCloudPump=0
       return
@@ -383,9 +399,14 @@ export class TeamCodexService {
   }
 
   private async pumpCloud(user: number, generation: number): Promise<void> {
-    const teams = this.db.prepare(`SELECT team_ref FROM codex_installations WHERE user_id=? AND status='active'
-      UNION SELECT team_ref FROM connections WHERE user_id=? AND status='active'`).all(user, user) as { team_ref: string }[]
+    const teams = this.db.prepare(`SELECT team_ref FROM codex_installations WHERE user_id=? AND (status='active' OR home_key IS NOT NULL)
+      UNION SELECT team_ref FROM connections c WHERE user_id=? AND (status='active' OR EXISTS(SELECT 1 FROM events e WHERE e.connection_id=c.id))`).all(user, user) as { team_ref: string }[]
     for (const { team_ref: team } of teams) {
+      if (this.closed || generation !== this.generation || await this.options.currentUserId() !== user) return
+      const sources = this.db.prepare(`SELECT id FROM codex_installations WHERE user_id=? AND team_ref=? AND home_key IS NOT NULL
+        UNION SELECT id FROM connections c WHERE user_id=? AND team_ref=? AND EXISTS(SELECT 1 FROM events e WHERE e.connection_id=c.id)`)
+        .all(user,team,user,team) as {id:string}[]
+      await this.cloud?.confirmSources(user,team,sources.map(source=>source.id))
       if (this.closed || generation !== this.generation || await this.options.currentUserId() !== user) return
       await this.cloud?.sync(user, team, this.localState(user, team, null).tasks, task => {
         const rows = this.db.prepare(task.installationId

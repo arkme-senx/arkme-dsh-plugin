@@ -7,6 +7,7 @@ export async function teamCodexPost<T>(runtime: TeamCodexRuntime, owner: number,
   if (runtime.config.environment !== 'prod' || ![
     '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team-codex/sync',
     '/api/v1/team-codex/tasks/list', '/api/v1/team-codex/events/list',
+    '/api/v1/team-codex/sources/confirm', '/api/v1/team-codex/connection/status',
   ].includes(path)) throw new ArkmePluginError('team-codex-disabled', '当前环境未配置团队云端同步', false, 403)
   const assertOwner = async () => {
     const session = await runtime.requireSession()

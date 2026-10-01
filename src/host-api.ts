@@ -1124,7 +1124,7 @@ export async function dispatchArkmeHostOperation(
       if (operation === 'team.codex.invite') return await teamCodex.invite(teamRef)
       const id = stringParam(params, 'id')
       if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'))
-      await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'))
+      await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
       return { ok: true }
     }
     case 'team.list': {

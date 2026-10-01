@@ -27,6 +27,20 @@ describe('Team Codex activity UI',()=>{
   const click=async(label:string)=>{await act(async()=>{const b=renderer!.root.findAllByType('button').find(b=>text(b)===label);expect(b).toBeDefined();b!.props.onClick();await tick()})}
   const selectTask=async()=>{await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})}
   const taskMenu=async()=>{await act(async()=>{renderer!.root.findByProps({'aria-label':'任务信息与操作'}).props.onClick();await tick()})}
+  it('asks for a compact source alias inside existing cloud consent, validates bytes, and passes it only on confirmation',async()=>{
+    mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,cloud:{status:'ready',pending:0,blocked:0,page:1,uploadEnabled:false}}:{ok:true})
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} managementOnly/>);await tick()})
+    await click('开启云端同步')
+    const input=()=>renderer!.root.findByProps({className:'arkme-codex-source-name'}).findByType('input')
+    expect(input().props.value).toBe('本机 Codex')
+    expect(mocks.callArkme.mock.calls.some(c=>c[0]==='team.codex.change')).toBe(false)
+    await act(async()=>{input().props.onChange({target:{value:'中'.repeat(43)}})})
+    expect(renderer!.root.findAllByType('button').find(b=>text(b)==='确认开启云端同步')!.props.disabled).toBe(true)
+    await act(async()=>{input().props.onChange({target:{value:'工作电脑'}})})
+    await click('确认开启云端同步')
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:'cloud',action:'enable-cloud',sourceName:'工作电脑'},expect.any(AbortSignal))
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-source-name'})).toHaveLength(0)
+  })
   it('renders only sync controls in management mode even with existing tasks',async()=>{
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} managementOnly/>);await tick()})
     expect(text(renderer!.root)).toContain('接入本机 Codex')

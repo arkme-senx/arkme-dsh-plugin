@@ -142,18 +142,19 @@ function cloudFixture() {
   return { cloud, post, selectedTeam, local, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
 }
 describe('cloud coordinator account/team boundaries', () => {
-  it('checks only the authenticated self view for reader-only computers',async()=>{
+  it('checks only account connection status for reader-only computers',async()=>{
     const f=cloudFixture()
-    expect(await f.cloud.hasPersonalTasks(11)).toBe(false)
-    expect(f.post).toHaveBeenCalledExactlyOnceWith(11,'/api/v1/team-codex/tasks/list',{view:'self',page:1,limit:1},expect.any(AbortSignal))
+    f.post.mockResolvedValue({owner_ref:'11',has_connected_codex:false,first_connected_at:null} as never)
+    expect(await f.cloud.connectionStatus(11)).toBe(false)
+    expect(f.post).toHaveBeenCalledExactlyOnceWith(11,'/api/v1/team-codex/connection/status',{},expect.any(AbortSignal))
     expect(f.selectedTeam).not.toHaveBeenCalled()
-    f.post.mockResolvedValue({items:[{task_id:'22222222-2222-4222-8222-222222222222',source_id:'11111111-1111-4111-8111-111111111111',owner_ref:'11',team_ref:'101'}],page:1,has_more:true})
-    expect(await f.cloud.hasPersonalTasks(11)).toBe(true)
+    f.post.mockResolvedValue({owner_ref:'11',has_connected_codex:true,first_connected_at:1000} as never)
+    expect(await f.cloud.connectionStatus(11)).toBe(true)
   })
-  it.each(['foreign-owner','invalid-source','missing-page','empty-more'])('rejects unsafe entry evidence: %s',async kind=>{
+  it.each(['foreign-owner','missing-time','invalid-flag'])('rejects unsafe entry evidence: %s',async kind=>{
     const f=cloudFixture()
-    f.post.mockResolvedValue({items:kind==='empty-more'?[]:[{task_id:'22222222-2222-4222-8222-222222222222',source_id:kind==='invalid-source'?'bad':'11111111-1111-4111-8111-111111111111',owner_ref:kind==='foreign-owner'?'22':'11',team_ref:'101'}],page:kind==='missing-page'?undefined:1,has_more:kind==='empty-more'})
-    await expect(f.cloud.hasPersonalTasks(11)).rejects.toThrow()
+    f.post.mockResolvedValue({owner_ref:kind==='foreign-owner'?'22':'11',has_connected_codex:kind==='invalid-flag'?'true':true,first_connected_at:kind==='missing-time'?null:1000} as never)
+    await expect(f.cloud.connectionStatus(11)).rejects.toThrow()
   })
   it('resolves member identity across directory pages by public ID, never by nickname',async()=>{
     const f=cloudFixture(), original=f.post.getMockImplementation()!

@@ -1738,6 +1738,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-team-codex-task-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
 .arkme-team-codex-confirm { padding:12px; border:1px solid var(--arkme-line); border-radius:8px; margin-bottom:12px; }
 .arkme-team-codex-confirm button + button { margin-left:8px; }
+.arkme-codex-source-name { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:12px 0; }
+.arkme-codex-source-name input { flex:1; min-width:100px; max-width:280px; padding:6px 10px; color:var(--dsw-alias-label-primary,#17191c); background:var(--dsw-alias-bg-layer-1,#fff); border:1px solid var(--arkme-line); border-radius:6px; font:inherit; }
 .arkme-team-codex .arkme-team-codex-error { color:var(--dsw-alias-state-error-primary,#b42318); }
 .arkme-team-codex-scope { margin:0; font-size:11px; color:var(--dsw-alias-label-secondary,#68707c); overflow-wrap:anywhere; }
 .arkme-team-codex-management { padding:12px 0; border-block:1px solid var(--arkme-line); margin-bottom:16px; }

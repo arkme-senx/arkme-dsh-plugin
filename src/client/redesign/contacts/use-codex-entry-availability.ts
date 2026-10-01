@@ -10,12 +10,14 @@ export function useCodexEntryAvailability(accountKey:string|undefined, userId:nu
     if (!active) return
     const controller = new AbortController()
     let busy = false
+    let confirmed = false
     const refresh = async () => {
-      if (busy || controller.signal.aborted || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+      if (confirmed || busy || controller.signal.aborted || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
       busy = true
       try {
         const value = await callArkme<TeamCodexEntryAvailability>('team.codex.entry-availability',{expectedUserId:userId},controller.signal)
         if (controller.signal.aborted || value.userId !== userId || typeof value.visible !== 'boolean' || value.checked !== true) return
+        confirmed = value.visible
         setSnapshot(previous => previous?.accountKey === accountKey && previous.visible === value.visible ? previous : {accountKey,visible:value.visible})
       } catch { /* Unknown/offline is not activation; retain only this account's last confirmed result. */ }
       finally { busy = false }

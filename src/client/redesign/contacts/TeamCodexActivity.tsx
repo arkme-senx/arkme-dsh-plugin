@@ -53,6 +53,9 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const [confirm, setConfirm] = useState<{ id:string; action:'disconnect'|'delete'; teamRef?:string }>()
   const [manage, setManage] = useState(false)
   const [cloudConfirm,setCloudConfirm]=useState(false)
+  const [sourceName,setSourceName]=useState('本机 Codex')
+  const validSourceName = sourceName.trim().length > 0 && new TextEncoder().encode(sourceName).length <= 128
+    && !/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(sourceName)
   const [project, setProject] = useState(target?.project ?? '')
   const [member, setMember] = useState(target?.member ?? (conversation ? selfMember : ''))
   const [page, setPage] = useState(target?.page ?? 1)
@@ -155,8 +158,8 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const change = async (id: string, action: string, projectKey?:string, mutationTeamRef = teamRef) => {
     setBusy(true)
     try {
-      await request('team.codex.change',{ teamRef:mutationTeamRef,id,action,...(projectKey ? {projectKey} : {}) })
-      if (alive.current) { setError(''); setConfirm(undefined); setInvitation(undefined); setCopied(false); await refresh() }
+      await request('team.codex.change',{ teamRef:mutationTeamRef,id,action,...(projectKey ? {projectKey} : {}),...(action==='enable-cloud'?{sourceName}: {}) })
+      if (alive.current) { setError(''); setConfirm(undefined); if(action==='enable-cloud') setCloudConfirm(false); setInvitation(undefined); setCopied(false); await refresh() }
     } catch (error) { if (alive.current) setError(errorText(error)) }
     finally { if (alive.current) setBusy(false) }
   }
@@ -296,10 +299,13 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       {state?.cloud?.status==='ready' && state.cloud.message && ` · ${tr(state.cloud.message)}`}
     </p>
     </div>
-    {state?.cloud && state.cloud.status!=='unsupported' && !state.cloud.uploadEnabled && !cloudConfirm && <button type="button" disabled={busy} onClick={()=>setCloudConfirm(true)}>{tr('开启云端同步')}</button>}
+    {state?.cloud && state.cloud.status!=='unsupported' && !state.cloud.uploadEnabled && !cloudConfirm && <button type="button" disabled={busy} onClick={()=>{setSourceName(state.cloud?.sourceName ?? tr('本机 Codex'));setCloudConfirm(true)}}>{tr('开启云端同步')}</button>}
     {cloudConfirm && <div className="arkme-team-codex-confirm" role="alert">
       <p>{tr('将账号「{account}」在团队「{team}」下未暂停、未排除的本地记录及后续输入输出上传，团队成员可见。排队请求暂不上云。', {account:state?.self ? `${state.self.displayName} · @${state.self.jotmoId ?? ''}` : tr('当前账号'),team:team ? `${team.name} · @${team.jotmoId}` : tr('当前团队')})}</p>
-      <button type="button" disabled={busy} onClick={()=>{setCloudConfirm(false);void change('cloud','enable-cloud')}}>{tr('确认开启云端同步')}</button>
+      <label className="arkme-codex-source-name">{tr('来源名称')}<input value={sourceName} disabled={busy} maxLength={128} aria-invalid={!validSourceName} onChange={event=>setSourceName(event.target.value)} /></label>
+      <p>{tr('真实接入后登记来源，方便同账号在其他电脑显示 Codex 入口；不自动读取电脑名称。已有来源保留原名称。')}</p>
+      {!validSourceName && <p role="alert">{tr('来源名称需为 1–128 字节，且不能包含控制字符')}</p>}
+      <button type="button" disabled={busy || !validSourceName} onClick={()=>{void change('cloud','enable-cloud')}}>{tr('确认开启云端同步')}</button>
       <button type="button" onClick={()=>setCloudConfirm(false)}>{tr('取消')}</button>
     </div>}
     {manage && <div className="arkme-team-codex-management">

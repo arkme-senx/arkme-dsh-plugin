@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeService } from '../src/arkme-service.js'
-import { ArkmePluginError } from '../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime } from '../src/services/service.js'
 
 function fixture() {
   let owner=11,accessToken='test-jwt'
@@ -12,6 +12,33 @@ function fixture() {
   return {runtime,target,call,setOwner:(id:number)=>{owner=id}}
 }
 describe('team cloud JWT transport',()=>{
+  it.each(['SERVICE_UNAVAILABLE','TEAM_FORBIDDEN'])('rejects HTTP 200 business failures without recording success: %s',async code=>{
+    const f=fixture()
+    const transport=Object.assign(Object.create(ServiceRuntime.prototype),{
+      config:{requestTimeoutMs:500},
+      fetchImpl:vi.fn(async()=>new Response(JSON.stringify({code:1002,message:'失败',data:{error_code:code}}),{status:200})),
+    }) as ServiceRuntime
+    f.runtime.postDirect.mockImplementation(transport.postDirect.bind(transport) as never)
+    await expect(f.call(11,'/api/v1/team-codex/sources/confirm')).rejects.toMatchObject({code})
+    expect(f.runtime.refreshAccessToken).not.toHaveBeenCalled()
+  })
+  it('handles a non-JSON HTTP 403 through the existing one-time JWT refresh',async()=>{
+    const f=fixture()
+    const transport=Object.assign(Object.create(ServiceRuntime.prototype),{
+      config:{requestTimeoutMs:500},fetchImpl:vi.fn(async()=>new Response('Forbidden',{status:403})),
+    }) as ServiceRuntime
+    f.runtime.postDirect.mockImplementation(transport.postDirect.bind(transport) as never)
+    await expect(f.call(11,'/api/v1/team-codex/connection/status')).rejects.toMatchObject({code:'auth-http-403'})
+    expect(f.runtime.refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(f.runtime.postDirect).toHaveBeenCalledTimes(2)
+  })
+  it.each(['/api/v1/team-codex/sources/confirm','/api/v1/team-codex/connection/status'])('allows the new contract route without changing the JWT boundary: %s',async path=>{
+    const f=fixture();await f.call(11,path)
+    expect(f.runtime.postDirect).toHaveBeenCalledWith('https://team.jotmo.cc',path,{},'test-jwt',[200],expect.any(AbortSignal),true)
+    f.target.config.environment='test'
+    await expect(f.call(11,path)).rejects.toThrow('当前环境未配置')
+    expect(f.runtime.postDirect).toHaveBeenCalledTimes(1)
+  })
   it('uses the login JWT only on the exact team service allowlist',async()=>{
     const f=fixture();await f.call()
     expect(f.runtime.postDirect).toHaveBeenCalledWith('https://team.jotmo.cc','/api/v1/team-codex/tasks/list',{},'test-jwt',[200],expect.any(AbortSignal),true)

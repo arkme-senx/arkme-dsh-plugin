@@ -1,5 +1,12 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '当天录音统计': 'Daily recording metrics',
+  '人声存储 {size}': 'Speech storage {size}',
+  '转写 {count} 字': 'Transcript {count} characters',
+  '（已确认）': ' (confirmed)',
+  '处理中，统计待更新': 'Processing; metrics will update',
+  '部分大小暂不可确认': 'Some archive sizes are not yet confirmed',
+  '人声存储仅统计归属于本人的录音，不包含原始文件或转写切片，跨日主档不估算分摊；字数按当天最终转写去除空白后计算。': 'Speech storage includes only recordings attributed to you, excluding source files and transcript slices. Cross-day archive sizes are not prorated. Character counts exclude whitespace in the final daily transcript.',
   'Codex 任务列表': 'Codex tasks',
   'Codex 对话阅读区': 'Codex conversation',
   '任务对话记录': 'Task conversation',
@@ -263,6 +270,9 @@ export const actionEnglish: Record<string,string> = {
   "云端可读 · 本机尚未开启上传": "Cloud records available · Uploads from this computer are off",
   "开启云端同步": "Enable cloud sync",
   "确认开启云端同步": "Confirm cloud sync",
+  "来源名称": "Source name",
+  "来源名称需为 1–128 字节，且不能包含控制字符": "Use a source name of 1–128 UTF-8 bytes without control characters.",
+  "真实接入后登记来源，方便同账号在其他电脑显示 Codex 入口；不自动读取电脑名称。已有来源保留原名称。": "After a verified connection, register this source so your account can show Codex on other computers. Your computer name is not read automatically. Existing sources keep their original names.",
   "停止云端上传（保留本机采集）": "Stop cloud uploads (keep local collection)",
   "将当前账号在即我团队下未暂停、未排除的本地记录及后续输入输出上传，团队成员可见。排队请求暂不上云。": "Upload this account's existing and future inputs and outputs bound to the Jiwo team, except paused or excluded records. Team members can see them. Queued requests stay local.",
   "搜索仅筛选当前页已加载的任务": "Search filters tasks loaded on this page only",

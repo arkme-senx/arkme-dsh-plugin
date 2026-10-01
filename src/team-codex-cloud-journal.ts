@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { hostname } from 'node:os'
 import type { DatabaseSync } from 'node:sqlite'
 import type { TeamCodexEvent, TeamCodexTask } from './team-codex-contract.js'
 
@@ -13,7 +12,12 @@ export interface CloudTask {
 export interface CloudBatch extends Record<string, unknown> {
   expected_owner_ref: string; team_ref: string; source_id: string; source_name: string; tasks: CloudTask[]
 }
-interface Source { id: string; owner: number; local_team: string; team: string; name: string }
+interface Source { id: string; owner: number; local_team: string; local_source: string; team: string; name: string }
+export const DEFAULT_CODEX_SOURCE_NAME = '本机 Codex'
+export function validCodexSourceName(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value, 'utf8') <= 128
+    && !/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(value)
+}
 interface TaskRow { id: string; local_id: string; source: string; payload: string; version: number; ack: number; blocked: string }
 interface EventRow { id: string; task: string; slot: string; payload: string; version: number; ack: number; blocked: string }
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8')
@@ -44,18 +48,46 @@ export class TeamCodexCloudJournal {
       CREATE TABLE IF NOT EXISTS codex_cloud_events (
       id TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES codex_cloud_tasks(id), slot TEXT NOT NULL,
       payload TEXT NOT NULL, version INTEGER NOT NULL, ack INTEGER NOT NULL DEFAULT 0, blocked TEXT NOT NULL DEFAULT '',
-      UNIQUE(task,slot));`)
+      UNIQUE(task,slot));
+      CREATE TABLE IF NOT EXISTS codex_cloud_source_confirmations (
+      source TEXT PRIMARY KEY REFERENCES codex_cloud_sources(id), confirmed_at INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, blocked TEXT NOT NULL DEFAULT '');`)
   }
 
-  private source(owner: number, localTeam: string, team: string, localSource: string): Source {
+  source(owner: number, localTeam: string, team: string, localSource: string, sourceName = DEFAULT_CODEX_SOURCE_NAME): Source {
     const existing = this.db.prepare('SELECT * FROM codex_cloud_sources WHERE owner=? AND local_team=? AND local_source=?').get(owner, localTeam, localSource) as unknown as Source | undefined
     if (existing) {
       if (existing.team !== team) throw new Error('ACCOUNT_OR_DESTINATION_MISMATCH')
       return existing
     }
-    const row: Source = { id: randomUUID(), owner, local_team: localTeam, team, name: metadata(hostname(), 128) || 'Codex' }
+    if (!validCodexSourceName(sourceName)) throw new Error('INVALID_PARAMETER')
+    const row: Source = { id: randomUUID(), owner, local_team: localTeam, local_source:localSource, team, name: sourceName.trim() }
     this.db.prepare('INSERT INTO codex_cloud_sources(id,owner,local_team,local_source,team,name) VALUES(?,?,?,?,?,?)').run(row.id, owner, localTeam, localSource, team, row.name)
     return row
+  }
+
+  confirmationDue(source: string, now: number): boolean {
+    const row = this.db.prepare('SELECT * FROM codex_cloud_source_confirmations WHERE source=?').get(source) as
+      {confirmed_at:number;retry_at:number;blocked:string}|undefined
+    return !row || !row.confirmed_at && !row.blocked && row.retry_at <= now
+  }
+
+  confirmSource(source: string, now: number): void {
+    this.db.prepare(`INSERT INTO codex_cloud_source_confirmations(source,confirmed_at) VALUES(?,?)
+      ON CONFLICT(source) DO UPDATE SET confirmed_at=excluded.confirmed_at,retry_at=0,blocked=''`).run(source,now)
+  }
+
+  failConfirmation(source: string, now: number, blocked: string): void {
+    const row = this.db.prepare('SELECT attempts FROM codex_cloud_source_confirmations WHERE source=?').get(source) as {attempts:number}|undefined
+    const attempts = (row?.attempts ?? 0) + 1
+    const retryAt = now + Math.min(300_000,30_000 * 2 ** Math.min(attempts-1,4))
+    this.db.prepare(`INSERT INTO codex_cloud_source_confirmations(source,attempts,retry_at,blocked) VALUES(?,?,?,?)
+      ON CONFLICT(source) DO UPDATE SET attempts=excluded.attempts,retry_at=excluded.retry_at,blocked=excluded.blocked`).run(source,attempts,retryAt,blocked)
+  }
+
+  retryConfirmations(owner: number, localTeam: string): void {
+    this.db.prepare(`UPDATE codex_cloud_source_confirmations SET attempts=0,retry_at=0,blocked=''
+      WHERE confirmed_at=0 AND source IN (SELECT id FROM codex_cloud_sources WHERE owner=? AND local_team=?)`).run(owner,localTeam)
   }
 
   mapping(owner: number, team: string, localId: string): { taskId: string; sourceId: string; sourceName: string } | undefined {
@@ -76,7 +108,7 @@ export class TeamCodexCloudJournal {
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
 
-  reconcile(owner: number, localTeam: string, team: string, tasks: readonly TeamCodexTask[], events: (task: TeamCodexTask) => TeamCodexEvent[]): void {
+  reconcile(owner: number, localTeam: string, team: string, tasks: readonly TeamCodexTask[], events: (task: TeamCodexTask) => TeamCodexEvent[], sourceName = DEFAULT_CODEX_SOURCE_NAME): void {
     this.db.exec('BEGIN IMMEDIATE')
     try {
       for (const task of tasks) {
@@ -87,7 +119,7 @@ export class TeamCodexCloudJournal {
         if(migrated) this.db.prepare('UPDATE codex_cloud_tasks SET local_id=? WHERE id=?').run(task.id,migrated.id)
         const retained = this.db.prepare(`SELECT s.* FROM codex_cloud_tasks c JOIN codex_cloud_sources s ON s.id=c.source
           WHERE c.local_id=? AND s.owner=? AND s.local_team=?`).get(task.id,owner,localTeam) as unknown as Source|undefined
-        const source = retained ?? this.source(owner, localTeam, team, task.installationId ?? task.id)
+        const source = retained ?? this.source(owner, localTeam, team, task.installationId ?? task.id, sourceName)
         if(source.team!==team) throw new Error('ACCOUNT_OR_DESTINATION_MISMATCH')
         let row = this.db.prepare('SELECT * FROM codex_cloud_tasks WHERE local_id=? AND source=?').get(task.id, source.id) as unknown as TaskRow | undefined
         const payload = JSON.stringify({ project_key: metadata(task.projectKey || 'unknown', 1024), project_name: metadata(task.projectName, 256), task_title: metadata(task.title, 1024), branch: metadata(task.branch, 256) })

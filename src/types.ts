@@ -3164,7 +3164,19 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
+export interface ArkmeRecordingDailyMetrics {
+  /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
+  archiveBytes: number
+  archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
+  confirmedCount: number
+  pendingCount: number
+  unknownCount: number
+  /** Unicode code points in the final visible transcript, excluding whitespace. */
+  textCount: number
+}
+
 export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptItem> extends ArkmeRecordingSection<T> {
+  dailyMetrics?: ArkmeRecordingDailyMetrics
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
   processingCount: number
