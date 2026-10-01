@@ -23,7 +23,7 @@ export function SpeakerSelfGuide({ onOpenRecordings, readVoiceprint = loadVoicep
   if (state.loading) return null
   const pending = state.value?.enrollmentPending === true
   const hasVoiceprint = state.value?.hasVoiceprint === true
-  const title = pending ? '你的声纹正在处理中'
+  const title = state.value === undefined ? '声纹状态暂不可用' : pending ? '你的声纹正在处理中'
     : hasVoiceprint ? '已录入声纹，暂未在录音中匹配到你' : '还没有标记你的声音'
   const actionStyle = { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 12 }
   return <aside aria-label={tr('识别我的声音')} style={{ padding: '12px 14px', marginBottom: 16, borderRadius: 10, background: arkmeTheme.layer1, fontSize: 13 }}>

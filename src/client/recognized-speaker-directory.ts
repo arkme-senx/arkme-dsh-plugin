@@ -1,197 +1,256 @@
-import type { ArkmeDirectoryPage, ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence } from '../types.js'
+import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryListInput, SpeakerDirectoryPage, SpeakerDirectoryQuery, SpeakerDirectorySeen, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { loadSpeakerCandidateSnapshot, type SpeakerCandidateSnapshot } from './recognized-speaker-order.js'
 
-export const readSpeakerOptions = (signal: AbortSignal) => callArkme<ArkmeRecordingSpeakerCandidate[]>('recordings.speaker.options', {}, signal)
-export const readSpeakerPresence = (signal: AbortSignal) => callArkme<ArkmeRecordingSpeakerPresence>('recordings.speaker.presence', {}, signal)
-export const readSpeakerPage = (cursor: string, signal: AbortSignal) => callArkme<ArkmeDirectoryPage>('directory.list', {
-  section: 'unmarked-speakers', limit: 50, ...(cursor === '' ? {} : { cursor }),
-}, signal)
-
+export interface DirectoryLoaders {
+  summary(input: { snapshotVersion?: string; seenVersion?: number }, signal: AbortSignal): Promise<SpeakerDirectorySummary>
+  list(input: SpeakerDirectoryListInput, signal: AbortSignal): Promise<SpeakerDirectoryPage>
+  seen(throughCursor: string, signal: AbortSignal): Promise<SpeakerDirectorySeen>
+  open(detailRef: string, signal: AbortSignal): Promise<SpeakerDirectoryDetail>
+  avatars(detailRefs: string[], signal: AbortSignal): Promise<SpeakerDirectoryAvatar[]>
+}
+const loaders: DirectoryLoaders = {
+  summary: (input, signal) => callArkme('speaker-directory.summary', input, signal),
+  list: (input, signal) => callArkme('speaker-directory.list', { ...input }, signal),
+  seen: (throughCursor, signal) => callArkme('speaker-directory.seen', { throughCursor }, signal),
+  open: (detailRef, signal) => callArkme('speaker-directory.open', { detailRef }, signal),
+  avatars: (detailRefs, signal) => callArkme('speaker-directory.avatars', { detailRefs }, signal),
+}
 export class SpeakerReadDeferred extends Error {
-  constructor(readonly retryAt: number, cause: unknown) {
-    super(cause instanceof Error ? cause.message : '说话人列表暂时无法加载', { cause })
-  }
+  constructor(readonly retryAt: number, cause: unknown) { super(cause instanceof Error ? cause.message : '说话人目录暂不可用', { cause }) }
+}
+export function directoryErrorCode(error: unknown): string {
+  const value = error as { code?: string; body?: { code?: string } } | undefined
+  return value?.body?.code ?? value?.code ?? ''
 }
 export function speakerRetryDelay(error: unknown): number | undefined {
-  return error instanceof SpeakerReadDeferred ? Math.max(1_000, error.retryAt - Date.now()) : undefined
+  if (error instanceof SpeakerReadDeferred) return Math.max(1_000, error.retryAt - Date.now())
+  const value = error as { body?: { retryable?: boolean; retryAfterMillis?: number }; retryable?: boolean; retryAfterMillis?: number } | undefined
+  if (directoryErrorCode(error) === 'arkme-code-1001' || value?.body?.retryable === false || value?.retryable === false) return undefined
+  return Math.max(1_000, value?.body?.retryAfterMillis ?? value?.retryAfterMillis ?? 15_000)
+}
+export const directoryVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+export const normalizeDirectoryQuery = (query: string) => query.trim().toLowerCase()
+export function directoryQueryValid(query: string) { return new TextEncoder().encode(normalizeDirectoryQuery(query)).length <= 256 }
+const queryKey = (query: SpeakerDirectoryQuery) => JSON.stringify([query.filter, query.sort, normalizeDirectoryQuery(query.query)])
+const empty = Object.freeze({})
+export interface DirectorySnapshot { summary?: SpeakerDirectorySummary; error?: string }
+export interface DirectoryList extends SpeakerDirectoryPage { query: SpeakerDirectoryQuery; requestedCursors: string[] }
+interface Account {
+  controller: AbortController
+  snapshot: DirectorySnapshot
+  summaryAt: number
+  retryAt: number
+  failures: number
+  flights: Map<string, Promise<unknown>>
+  lists: Map<string, DirectoryList>
+  pendingSeen: Set<string>
+  confirmedSeen: Set<string>
+  expiredSeen: Set<string>
+  revision: number
 }
 
-/** Per-account shared read. A short release grace lets entry -> list hand off the same
- * request; leaving both cancels it. A late/aborted response can never update the cache.
- */
-class SharedRead<T> {
-  value: T | undefined
-  freshUntil = 0
-  private retryAt = 0
-  private failures = 0
-  private error: unknown
-  private pending: { controller: AbortController; promise: Promise<T> } | undefined
-  private listeners = new Set<(value: T) => void>()
-  private releaseTimer: ReturnType<typeof setTimeout> | undefined
-  constructor(private readonly ttl: number, private readonly load: (signal: AbortSignal, emit: (value: T) => void) => Promise<T>, private readonly now: () => number) {}
-
-  read(signal: AbortSignal, progress: (value: T) => void = () => {}): Promise<T> {
-    signal.throwIfAborted()
-    if (this.value !== undefined) progress(this.value)
-    if (this.now() < this.retryAt) return Promise.reject(new SpeakerReadDeferred(this.retryAt, this.error))
-    if (this.value !== undefined && this.now() < this.freshUntil) return Promise.resolve(this.value)
-    clearTimeout(this.releaseTimer)
-    if (this.pending?.controller.signal.aborted) this.pending = undefined
-    if (this.pending === undefined) {
-      const controller = new AbortController()
-      const emit = (value: T) => {
-        controller.signal.throwIfAborted()
-        this.value = value
-        for (const listener of this.listeners) listener(value)
-      }
-      const promise = Promise.resolve().then(async () => {
-        controller.signal.throwIfAborted()
-        const value = await this.load(controller.signal, emit)
-        controller.signal.throwIfAborted()
-        emit(value)
-        this.freshUntil = this.now() + this.ttl
-        this.failures = 0; this.retryAt = 0; this.error = undefined
-        return value
-      }).catch(error => {
-        if (controller.signal.aborted) throw error
-        this.failures += 1
-        const limited = /(?:\b429\b|rate.?limit|too many requests)/i.test(error instanceof Error ? error.message : String(error))
-        this.retryAt = this.now() + Math.min(5 * 60_000, (limited ? 60_000 : 15_000) * 2 ** Math.min(4, this.failures - 1))
-        this.error = error
-        throw new SpeakerReadDeferred(this.retryAt, error)
-      }).finally(() => { if (this.pending?.controller === controller) this.pending = undefined })
-      this.pending = { controller, promise }
-    }
-    const pending = this.pending
-    return new Promise<T>((resolve, reject) => {
-      const listener = (value: T) => { if (!signal.aborted) progress(value) }
-      this.listeners.add(listener)
-      const cleanup = () => {
-        signal.removeEventListener('abort', abort)
-        this.listeners.delete(listener)
-        if (this.listeners.size === 0 && this.pending === pending) {
-          this.releaseTimer = setTimeout(() => { if (this.listeners.size === 0 && this.pending === pending) pending.controller.abort() }, 250)
-        }
-      }
-      const abort = () => { cleanup(); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')) }
-      signal.addEventListener('abort', abort, { once: true })
-      pending.promise.then(value => { cleanup(); if (!signal.aborted) resolve(value) }, error => { cleanup(); if (!signal.aborted) reject(error) })
-    })
-  }
-
-  invalidate(): void {
-    // Manual refresh/mutations may refresh data, but never bypass server backoff.
-    clearTimeout(this.releaseTimer)
-    this.pending?.controller.abort()
-    this.pending = undefined
-    this.freshUntil = 0
-  }
-  dispose(): void { this.invalidate(); this.listeners.clear(); this.value = undefined }
-}
-
-function pause(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (milliseconds <= 0) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    const abort = () => { clearTimeout(timer); reject(signal.reason) }
-    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, milliseconds)
-    signal.addEventListener('abort', abort, { once: true })
-    if (signal.aborted) abort()
-  })
-}
-
-export interface SharedSpeakerSnapshot extends SpeakerCandidateSnapshot { total?: number | undefined }
-interface AccountDirectory {
-  marked: SharedRead<ArkmeRecordingSpeakerCandidate[]>
-  presence: SharedRead<ArkmeRecordingSpeakerPresence>
-  candidates: SharedRead<SharedSpeakerSnapshot>
-  pages: Map<string, ArkmeDirectoryPage>
-}
-
+/** Shared summary and immutable same-version pages. No traversal or local new-person inference. */
 export class RecognizedSpeakerDirectory {
-  private readonly accounts = new Map<string, AccountDirectory>()
-  constructor(
-    private readonly loaders = { marked: readSpeakerOptions, page: readSpeakerPage, presence: readSpeakerPresence },
-    private readonly pageGapMs = 750,
-    private readonly now = Date.now,
-  ) {}
-
-  private account(account: string): AccountDirectory {
-    const found = this.accounts.get(account)
-    if (found !== undefined) return found
-    const pages = new Map<string, ArkmeDirectoryPage>()
-    let startedAt = 0, lastRequestAt = 0, completed = false
-    let state!: AccountDirectory
-    state = {
-      pages,
-      marked: new SharedRead(60_000, signal => this.loaders.marked(signal), this.now),
-      presence: new SharedRead(60_000, signal => this.loaders.presence(signal), this.now),
-      candidates: new SharedRead(5 * 60_000, async (signal, emit) => {
-        // A failed/interrupted traversal reuses its successful pages for up to five
-        // minutes. A finished traversal is replaced as one snapshot, never mixed.
-        if (completed || this.now() - startedAt >= 5 * 60_000) pages.clear()
-        if (pages.size === 0) startedAt = this.now()
-        completed = false
-        let total: number | undefined
-        const result = await loadSpeakerCandidateSnapshot(async cursor => {
-          const cached = pages.get(cursor)
-          if (cached !== undefined) return cached
-          await pause(Math.max(0, lastRequestAt + this.pageGapMs - this.now()), signal)
-          signal.throwIfAborted()
-          lastRequestAt = this.now()
-          const page = await this.loaders.page(cursor, signal)
-          signal.throwIfAborted()
-          if (page.cursorStale) { pages.clear(); startedAt = this.now() }
-          else if (page.projectionState === undefined || page.projectionState === 'fresh') pages.set(cursor, page)
-          return page
-        }, signal, snapshot => {
-          const first = pages.get('')
-          total = first?.coverage !== 'partial' ? first?.total : undefined
-          // Keep a previously complete list visible while a new snapshot builds.
-          if (!state.candidates.value?.complete || snapshot.complete) emit({ ...snapshot, total })
-        })
-        completed = result.complete
-        if (!result.complete) {
-          // Incomplete/stale results must not be cached as fresh for five minutes.
-          if (!state.candidates.value?.complete) emit({ ...result, total })
-          throw new Error('说话人列表尚未完整，请稍后重试')
-        }
-        return { ...result, total }
-      }, this.now),
+  private accounts = new Map<string, Account>()
+  private listeners = new Set<() => void>()
+  constructor(private readonly api: DirectoryLoaders = loaders, private readonly now = Date.now) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
+  get = (account?: string): DirectorySnapshot => account === undefined ? empty : this.accounts.get(account)?.snapshot ?? empty
+  private emit() { this.listeners.forEach(listener => listener()) }
+  private account(key: string) {
+    let found = this.accounts.get(key)
+    if (!found) {
+      found = { controller: new AbortController(), snapshot: empty, summaryAt: 0, retryAt: 0, failures: 0,
+        flights: new Map(), lists: new Map(), pendingSeen: new Set(), confirmedSeen: new Set(), expiredSeen: new Set(), revision: 0 }
+      this.accounts.set(key, found)
     }
-    this.accounts.set(account, state)
-    return state
+    return found
   }
-
-  peekMarked(account: string) { return this.accounts.get(account)?.marked.value }
-  peekPresence(account: string) { return this.accounts.get(account)?.presence.value }
-  peekCandidates(account: string) { return this.accounts.get(account)?.candidates.value }
-  readMarked(account: string, signal: AbortSignal) { return this.account(account).marked.read(signal) }
-  readPresence(account: string, signal: AbortSignal) { return this.account(account).presence.read(signal) }
-  refreshPresence(account: string, signal: AbortSignal) {
-    this.account(account).presence.invalidate()
-    return this.readPresence(account, signal)
+  private current(account: string, value: Account) {
+    value.controller.signal.throwIfAborted()
+    if (this.accounts.get(account) !== value) throw new DOMException('账号已切换', 'AbortError')
   }
-  readCandidates(account: string, signal: AbortSignal, progress: (value: SharedSpeakerSnapshot) => void) { return this.account(account).candidates.read(signal, progress) }
-  invalidate(account: string): void {
+  private async request<T>(account: string, key: string, load: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const value = this.account(account)
+    this.current(account, value)
+    key = `${value.revision}:${key}`
+    const pending = value.flights.get(key)
+    if (pending) return pending as Promise<T>
+    if (this.now() < value.retryAt) throw new SpeakerReadDeferred(value.retryAt, new Error('请求较频繁或网络暂不可用，请稍后重试'))
+    const promise = Promise.resolve().then(() => load(value.controller.signal)).then(result => {
+      this.current(account, value); value.failures = 0; return result
+    }).catch(error => {
+      this.current(account, value)
+      const delay = speakerRetryDelay(error)
+      if (delay !== undefined) {
+        value.failures += 1
+        value.retryAt = this.now() + Math.max(delay, Math.min(300_000, 1_000 * 2 ** Math.min(8, value.failures)))
+        throw new SpeakerReadDeferred(value.retryAt, error)
+      }
+      throw error
+    }).finally(() => { if (value.flights.get(key) === promise) value.flights.delete(key) })
+    value.flights.set(key, promise)
+    return promise
+  }
+  async summary(account: string, force = false): Promise<SpeakerDirectorySummary> {
+    const state = this.account(account), cached = state.snapshot.summary, revision = state.revision
+    if (!force && cached && (cached.state === 'disabled' || this.now() < state.summaryAt)) return cached
+    try {
+      const result = await this.request(account, 'summary', signal => this.api.summary(cached && cached.snapshotVersion
+        ? { snapshotVersion: cached.snapshotVersion, seenVersion: cached.seenVersion } : {}, signal))
+      this.current(account, state)
+      if (revision !== state.revision) return this.summary(account, force)
+      state.snapshot = { summary: result }
+      state.summaryAt = this.now() + (result.retryAfterMs > 0 ? result.retryAfterMs : 30_000)
+      this.emit()
+      return result
+    } catch (error) {
+      this.current(account, state)
+      state.snapshot = { ...state.snapshot, error: error instanceof Error ? error.message : '目录暂不可用' }
+      this.emit(); throw error
+    }
+  }
+  peek(account: string, query: SpeakerDirectoryQuery): DirectoryList | undefined {
+    return this.accounts.get(account)?.lists.get(queryKey(query))
+  }
+  async first(account: string, query: SpeakerDirectoryQuery, signal: AbortSignal, force = false): Promise<DirectoryList> {
+    if (!directoryQueryValid(query.query)) throw new Error('搜索内容过长，请缩短至 256 字节以内')
+    signal.throwIfAborted()
+    const state = this.account(account), revision = state.revision
+    const summary = await this.summary(account, force)
+    signal.throwIfAborted()
+    const key = queryKey(query), cached = state.lists.get(key)
+    if (!force && cached && cached.snapshotVersion === summary.snapshotVersion && !state.expiredSeen.has(cached.throughCursor)) return cached
+    const input = { ...query, query: normalizeDirectoryQuery(query.query), cursor: '', snapshotVersion: summary.snapshotVersion, limit: 50 }
+    const page = summary.state === 'disabled' || summary.coverage !== 'complete'
+      ? { ...summary, items: [], hasMore: false, nextCursor: '', throughCursor: '' } as SpeakerDirectoryPage
+      : await this.request(account, `list:${JSON.stringify(input)}`, inner => this.api.list(input, inner))
+    signal.throwIfAborted(); this.current(account, state)
+    if (revision !== state.revision) throw new DOMException('目录已更新', 'AbortError')
+    if (page.state === 'snapshot_expired') {
+      state.summaryAt = 0; state.lists.delete(key)
+      if (page.retryAfterMs > 0) { state.retryAt = Math.max(state.retryAt, this.now() + page.retryAfterMs); throw new SpeakerReadDeferred(state.retryAt, new Error('目录正在更新，请稍后重试')) }
+      if (force) throw new Error('目录正在更新，请稍后刷新')
+      return this.first(account, query, signal, true)
+    }
+    if (page.state === 'disabled') { state.snapshot = { summary: { ...summary, state: 'disabled' } }; this.emit() }
+    const result: DirectoryList = { ...page, query: { ...query, query: input.query }, requestedCursors: [''] }
+    if (page.coverage === 'complete' && page.state !== 'disabled') {
+      state.lists.delete(key); state.lists.set(key, result)
+      // Cache a bounded number of queries, with no cap on an individual directory's pagination.
+      while (state.lists.size > 12) state.lists.delete(state.lists.keys().next().value!)
+    }
+    return result
+  }
+  async more(account: string, previous: DirectoryList, signal: AbortSignal): Promise<DirectoryList> {
+    signal.throwIfAborted()
+    if (!previous.hasMore) return previous
+    const state = this.account(account), revision = state.revision
+    if (!state.lists.has(queryKey(previous.query))) return this.first(account, previous.query, signal, true)
+    const input = { ...previous.query, limit: 50, cursor: previous.nextCursor, snapshotVersion: previous.snapshotVersion }
+    const page = await this.request(account, `list:${JSON.stringify(input)}`, inner => this.api.list(input, inner))
+    signal.throwIfAborted(); this.current(account, state)
+    if (revision !== state.revision) throw new DOMException('目录已更新', 'AbortError')
+    if (page.state === 'snapshot_expired') {
+      state.lists.delete(queryKey(previous.query)); state.summaryAt = 0
+      if (page.retryAfterMs > 0) { state.retryAt = Math.max(state.retryAt, this.now() + page.retryAfterMs); throw new SpeakerReadDeferred(state.retryAt, new Error('目录正在更新，请稍后刷新')) }
+      return this.first(account, previous.query, signal, true)
+    }
+    if (page.state === 'disabled') {
+      const summary = state.snapshot.summary
+      if (summary) { state.snapshot = { summary: { ...summary, state: 'disabled' } }; this.emit() }
+      return { ...previous, state: 'disabled', hasMore: false }
+    }
+    if (page.snapshotVersion !== previous.snapshotVersion || page.coverage !== 'complete'
+      || (page.hasMore && (page.nextCursor === previous.nextCursor || previous.requestedCursors.includes(page.nextCursor)))) throw new Error('目录版本已变化，请刷新列表')
+    const keys = new Set(previous.items.map(item => item.personKey))
+    const result = { ...page, query: previous.query, requestedCursors: [...previous.requestedCursors, previous.nextCursor], items: [...previous.items, ...page.items.filter(item => { if (keys.has(item.personKey)) return false; keys.add(item.personKey); return true })] }
+    state.lists.set(queryKey(previous.query), result)
+    return result
+  }
+  async confirmDisplayed(account: string, list: DirectoryList): Promise<void> {
+    if (!directoryVisible() || list.query.filter !== 'all' || list.query.query !== '' || list.coverage !== 'complete'
+      || !['fresh', 'stale', 'failed'].includes(list.state) || !list.throughCursor) return
+    const state = this.account(account)
+    if (state.confirmedSeen.has(list.throughCursor) || state.expiredSeen.has(list.throughCursor) || state.snapshot.summary?.state === 'disabled') return
+    state.pendingSeen.add(list.throughCursor)
+    await this.flushSeen(account)
+  }
+  private async flushSeen(account: string): Promise<void> {
+    const state = this.account(account)
+    if (!directoryVisible() || state.snapshot.summary?.state === 'disabled') return
+    for (const cursor of state.pendingSeen) {
+      let result: SpeakerDirectorySeen
+      try { result = await this.request(account, `seen:${cursor}`, signal => this.api.seen(cursor, signal)) }
+      catch (error) {
+        if (directoryErrorCode(error) === 'arkme-code-1001') {
+          state.pendingSeen.delete(cursor); state.expiredSeen.add(cursor); state.lists.clear(); state.summaryAt = 0; this.emit(); continue
+        }
+        throw error
+      }
+      this.current(account, state)
+      if (result.success) { state.pendingSeen.delete(cursor); state.confirmedSeen.add(cursor); await Promise.allSettled([...state.flights.entries()].filter(([key]) => key.endsWith(':summary')).map(([, promise]) => promise)); await this.summary(account, true) }
+      else if (result.state === 'snapshot_expired') {
+        state.pendingSeen.delete(cursor); state.expiredSeen.add(cursor); state.lists.clear(); state.summaryAt = 0
+        if (result.retryAfterMs > 0) state.retryAt = Math.max(state.retryAt, this.now() + result.retryAfterMs)
+        this.emit()
+      } else {
+        state.pendingSeen.clear()
+        if (state.snapshot.summary) state.snapshot = { summary: { ...state.snapshot.summary, state: 'disabled' } }
+        this.emit(); return
+      }
+    }
+  }
+  hasPendingSeen(account: string) { return (this.accounts.get(account)?.pendingSeen.size ?? 0) > 0 }
+  needsReload(account: string, list: DirectoryList) { return this.accounts.get(account)?.expiredSeen.has(list.throughCursor) === true }
+  open(account: string, ref: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    return this.request(account, `open:${ref}`, inner => this.api.open(ref, inner)).then(value => { signal.throwIfAborted(); return value })
+  }
+  async avatars(account: string, detailRefs: string[], signal: AbortSignal) {
+    const state = this.account(account)
+    const result = await this.api.avatars(detailRefs, AbortSignal.any([state.controller.signal, signal]))
+    signal.throwIfAborted(); this.current(account, state)
+    return result
+  }
+  /** Visible consumers share one lightweight summary request, including online/focus recovery. */
+  watch(account: string, changed: () => void = () => {}): () => void {
+    let disposed = false, busy = false, timer: ReturnType<typeof setTimeout> | undefined
+    const run = async () => {
+      if (disposed || busy || !directoryVisible()) return
+      busy = true
+      let delay = 30_000
+      try {
+        const summary = await this.summary(account)
+        if (summary.state === 'disabled') { changed(); return }
+        await this.flushSeen(account)
+        changed(); delay = summary.retryAfterMs > 0 ? summary.retryAfterMs : 30_000
+      } catch (error) { delay = speakerRetryDelay(error) ?? 0; changed() }
+      finally {
+        busy = false
+        if (!disposed && delay > 0 && this.get(account).summary?.state !== 'disabled') {
+          clearTimeout(timer); timer = setTimeout(() => { void run() }, Math.max(1_000, delay))
+        }
+      }
+    }
+    const wake = () => { if (directoryVisible()) { const value = this.account(account); value.summaryAt = 0; void run() } }
+    void run()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
+    if (typeof window !== 'undefined') { window.addEventListener('online', wake); window.addEventListener('focus', wake) }
+    return () => { disposed = true; clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
+      if (typeof window !== 'undefined') { window.removeEventListener('online', wake); window.removeEventListener('focus', wake) } }
+  }
+  invalidate(account: string) {
     const state = this.accounts.get(account)
-    if (state === undefined) return
-    state.pages.clear(); state.marked.invalidate(); state.presence.invalidate(); state.candidates.invalidate()
+    if (!state) return
+    state.revision += 1; state.summaryAt = 0; state.lists.clear()
+    // Keep server cooldown and pending confirmations for versions actually displayed.
+    this.emit()
   }
-  clear(): void {
-    for (const state of this.accounts.values()) { state.marked.dispose(); state.presence.dispose(); state.candidates.dispose() }
-    this.accounts.clear()
-  }
+  clear() { this.accounts.forEach(state => state.controller.abort()); this.accounts.clear(); this.emit() }
 }
-
 export const recognizedSpeakerDirectory = new RecognizedSpeakerDirectory()
-const accountKey = () => {
-  const auth = arkmeAuthStore.getSnapshot().auth
-  return auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
-}
-let activeAccount = accountKey()
-arkmeAuthStore.subscribe(() => {
-  const next = accountKey()
-  if (next !== activeAccount) { activeAccount = next; recognizedSpeakerDirectory.clear() }
-})
+const currentAccount = () => { const auth = arkmeAuthStore.getSnapshot().auth; return auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '' }
+let account = currentAccount()
+arkmeAuthStore.subscribe(() => { const next = currentAccount(); if (next !== account) { account = next; recognizedSpeakerDirectory.clear() } })

@@ -647,7 +647,14 @@ export class ServiceRuntime {
         throw new ArkmePluginError(`auth-http-${response.status}`, 'Arkme 登录凭据已失效', false, response.status)
       }
       if (!response.ok) {
-        const retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        let retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        if (path.startsWith('/api/v1/audio/speaker-directory/') && response.status === 429) {
+          try {
+            const envelope = objectValue(await response.clone().json())
+            const milliseconds = objectValue(envelope.data).retry_after_ms
+            if (typeof milliseconds === 'number' && Number.isFinite(milliseconds) && milliseconds >= 0) retryAfter = Math.max(retryAfter ?? 0, milliseconds)
+          } catch { /* A non-JSON limit response still honors Retry-After. */ }
+        }
         if (preserveHttpError) {
           let errorEnvelope: ArkmeEnvelope<unknown> | undefined
           try { errorEnvelope = await response.json() as ArkmeEnvelope<unknown> }
