@@ -352,11 +352,13 @@ function NotificationBell({ size = 22 }: { size?: number }) {
   </svg>
 }
 
-export function useArkmeNotificationSummary(): { unreadCount: number; preview: string; atMillis: number } {
+export function useArkmeNotificationSummary(): { ready: boolean; hasNotifications: boolean; unreadCount: number; preview: string; atMillis: number } {
   const { items, snapshot } = useNotificationItems()
   const unread = items.filter(item => item.unread)
   const latest = items[0]
   return {
+    ready: snapshot.scope !== undefined && !snapshot.loading,
+    hasNotifications: items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
     unreadCount: unread.length + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
     preview: latest === undefined ? tr('安排、互动和表态通知') : `${latest.title}：${latest.preview}`,
     atMillis: latest?.atMillis ?? 0,

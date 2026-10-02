@@ -515,6 +515,7 @@ function NotificationAvatar() {
 export function ArkmeNotificationsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   useArkmeLocale()
   const summary = useArkmeNotificationSummary()
+  if (!summary.ready || !summary.hasNotifications) return null
   const time = timeLabel(summary.atMillis)
   return <button
     type="button" role="treeitem" aria-selected={selected}
