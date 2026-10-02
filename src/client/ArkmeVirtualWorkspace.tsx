@@ -2170,9 +2170,9 @@ export function ArkmeNavigation({
       role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
       aria-label={directory === 'send_to_self' ? '发给自己分类' : tr("Arkme 会话")}
     >
+      {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
       {authenticated && <ArkmeNotificationsRow selected={ui.mode === 'notifications'} onClick={showNotifications} />}
       {directory === 'root' && <>
-        {authenticated && <ArkmeNotificationPermissionBanner />}
         {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
           accountScope={currentAccountKey}
