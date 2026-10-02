@@ -885,8 +885,34 @@ export interface ArkmeWorldInteractionPage {
   nextOffset?: number
 }
 
+/** Server-owned aggregate read state for the current account's World interactions. */
+export interface ArkmeWorldInteractionSummary {
+  unreadCount: number
+  seenThroughSequence: number
+  authoritative: boolean
+}
+
 export interface ArkmeWorldInteractionCreateResult {
   interaction: ArkmeWorldInteractionItem
+}
+
+/** Browser-safe AI letter projection used by the unified notification inbox. */
+export interface ArkmeAiLetterItem {
+  letterId: string
+  title: string
+  summary: string
+  createdAtMillis: number
+  unread: boolean
+}
+
+export interface ArkmeAiLetterPage {
+  items: ArkmeAiLetterItem[]
+  nextCursor: number
+}
+
+export interface ArkmeAiLetterUnread {
+  unreadCount: number
+  latestUnread?: ArkmeAiLetterItem
 }
 
 export type ArkmeArrangementStatus = 'identified' | 'following' | 'completed' | 'unknown'
@@ -3910,7 +3936,12 @@ export type ArkmePluginOperation =
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
   | 'world.interactions.list'
+  | 'world.interactions.summary'
+  | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'
+  | 'ai-letter.list'
+  | 'ai-letter.unread'
+  | 'ai-letter.mark-read'
   | 'world.image.read'
   | 'world.publish-text'
   | 'world.publish-file-assets'

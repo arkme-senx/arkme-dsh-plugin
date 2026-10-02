@@ -44,7 +44,7 @@ export interface ArkmeUiState {
   chatRevision: number
   recordRevision: number
   topicDirectoryRevision: number
-  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness' | 'codex'
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
@@ -350,6 +350,16 @@ export class ArkmeUiController {
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
+  }
+
+  showNotifications(): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, selectedBot: _selectedBot, recordingTarget: _recordingTarget,
+      calendarOpen: _calendarOpen, productMode: _productMode, conversationTarget: _conversationTarget,
+      extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction,
+      extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter,
+      webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'notifications' })
   }
 
   locateNextUnreadConversation(): void {

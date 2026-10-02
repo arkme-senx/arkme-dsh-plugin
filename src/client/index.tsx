@@ -487,7 +487,7 @@ export {
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeCallSurface } from './ArkmeCallSurface.js'
-export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeNotificationsRow, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export { ArkmeLayoutController } from './redesign/layout-controller.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps, ArkmeSendToSelfEntryOwnerProps, ArkmeTopicActionsOwnerProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
