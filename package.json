@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.88",
+  "version": "0.1.89",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -73,10 +73,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.88 更新",
-      "summary": "# feat(desktop): 接入 Codex 团队云端同步与录音每日统计",
-      "publishedAt": "2026-10-01T05:20:28.833Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.88"
+      "title": "Arkme 插件 0.1.89 更新",
+      "summary": "fix(desktop): 修复打开通知中心时会话目录消失",
+      "publishedAt": "2026-10-03T00:18:53.591Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.89"
     }
   },
   "scripts": {
