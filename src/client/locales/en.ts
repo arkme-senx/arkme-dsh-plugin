@@ -77,6 +77,27 @@ AI识别中…|AI recognition in progress…
 返回日历|Back to calendar
 通知时间|Notification time
 未设置通知时间|No notification time set
+通知|Notifications
+通知类型|Notification types
+全部已读|Mark all as read
+暂时没有通知|No notifications yet
+切换其他类型查看通知|Switch to another type to view notifications
+安排、互动和表态会集中显示在这里|Arrangements, interactions, and reactions appear here
+安排、互动和表态通知|Arrangement, interaction, and reaction notifications
+安排提醒|Arrangement reminder
+表态|Reactions
+收到表态|Received a reaction
+新通知|New notification
+点击查看原消息|Click to view the original message
+世界互动暂时无法加载|World interactions are temporarily unavailable
+部分世界互动暂时无法加载|Some world interactions are temporarily unavailable
+查看世界互动|View world interactions
+AI 来信|AI letters
+AI 来信暂时无法加载|AI letters are temporarily unavailable
+查看 AI 来信|View AI letters
+正在加载通知…|Loading notifications…
+通知暂时无法加载|Notifications are temporarily unavailable
+未读|Unread
 安排加载失败|Unable to load arrangements
 暂无安排，可将其他区块的安排拖到这里|No arrangements. Drag one here from another column.
 安排未能完成移动，已重新读取实际状态；请确认后重试。|The move could not be completed. Review the refreshed status and try again.

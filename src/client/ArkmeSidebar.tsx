@@ -191,6 +191,7 @@ import {
   downloadArkmeConversationMarkdown,
 } from './conversation-export.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
+import { ArkmeNotificationCenter } from './ArkmeNotificationCenter.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { betaCommunityWelcomeStore, welcomeDraft, welcomeMatchesSource } from './beta-community-welcome.js'
@@ -7525,13 +7526,14 @@ export function ArkmeSurface({
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '市集'
+    : ui.mode === 'notifications' ? '通知'
     : ui.mode === 'voiceprint' ? '声纹管理'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
+    && (ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
@@ -8550,6 +8552,7 @@ export function ArkmeSurface({
           onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? null
+          : ui.mode === 'notifications' ? <ArkmeNotificationCenter />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface
             active={active}
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}

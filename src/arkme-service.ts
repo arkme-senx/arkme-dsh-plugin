@@ -68,6 +68,7 @@ import {
   WORLD_VOICEPRINT_INVITE_VARIANT_COUNT,
 } from './world-voiceprint-copy.js'
 import { AiVideoService } from './services/ai-video-service.js'
+import { AiLetterService } from './services/ai-letter-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
@@ -149,6 +150,8 @@ import type {
 } from './tools/ports/bots.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from './types.js'
 import type {
+  ArkmeAiLetterPage,
+  ArkmeAiLetterUnread,
   ArkmeAiVideoJob,
   ArkmeAiVideoJobStatus,
   ArkmeAiVideoListResult,
@@ -306,6 +309,7 @@ import type {
   ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldPublishFileAssetsInput, ArkmeWorldPublishResult, ArkmeWorldPublishTextInput,
   ArkmeWorldRecordList,
 } from './types.js'
@@ -331,6 +335,7 @@ export class ArkmeService {
   readonly accountScope: ReturnType<typeof createArkmeAccountSessionOwner>
   private readonly billingGateway: ArkmeBillingGateway
   private readonly aiVideo: AiVideoService
+  private readonly aiLetter: AiLetterService
   private readonly arrangement: ArrangementService
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
@@ -400,6 +405,7 @@ export class ArkmeService {
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
+    this.aiLetter = new AiLetterService(this.runtime)
     this.arrangement = new ArrangementService(this.runtime)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
@@ -1212,6 +1218,18 @@ export class ArkmeService {
 
   async aiVideoResolveSelection(recordingUid: string, utterances: readonly ArkmeRecordingMaterialUtterance[], signal?: AbortSignal): Promise<ArkmeAiVideoSegmentSelector[]> {
     return await this.aiVideo.aiVideoResolveSelection(recordingUid, utterances, signal)
+  }
+
+  async listAiLetters(options: { periodType?: number; cursorStartAt?: number; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeAiLetterPage> {
+    return await this.aiLetter.listLetters(options)
+  }
+
+  async aiLetterUnread(signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    return await this.aiLetter.unread(signal)
+  }
+
+  async markAiLettersRead(letterIds: readonly string[], signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    return await this.aiLetter.markRead(letterIds, signal)
   }
 
   async aiVideoPreflight(
@@ -2678,6 +2696,14 @@ export class ArkmeService {
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldInteractionPage> {
     return await this.world.listWorldInteractions(recordRef, options)
+  }
+
+  async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    return await this.world.worldInteractionSummary(signal)
+  }
+
+  async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    return await this.world.markWorldInteractionsViewed(seenThroughSequence, signal)
   }
 
   /** Publish a text-only comment or reply while keeping its stable record UID inside the Provider. */

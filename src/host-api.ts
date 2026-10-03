@@ -1591,6 +1591,17 @@ export async function dispatchArkmeHostOperation(
         ? {}
         : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
     })
+    case 'ai-letter.list': return await service.listAiLetters({
+      periodType: numberParam(params, 'periodType', 0),
+      cursorStartAt: numberParam(params, 'cursorStartAt', 0),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
+    case 'ai-letter.unread': return await service.aiLetterUnread(requestSignal)
+    case 'ai-letter.mark-read': {
+      const letterIds = [...new Set(stringListParam(params, 'letterIds').map(value => value.trim()).filter(value => value !== ''))].slice(0, 50)
+      return await service.markAiLettersRead(letterIds, requestSignal)
+    }
     case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.session': return await service.arkoEnsureSession()
@@ -1814,6 +1825,12 @@ export async function dispatchArkmeHostOperation(
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
       },
     )
+    case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
+    case 'world.interactions.mark-viewed': {
+      const sequence = Math.max(0, Math.trunc(numberParam(params, 'seenThroughSequence', 0)))
+      if (sequence <= 0) throw new ArkmePluginError('world-interaction-sequence-invalid', '世界互动已读位置无效', false, 400)
+      return await service.markWorldInteractionsViewed(sequence, requestSignal)
+    }
     case 'world.interactions.create-text': return await service.createWorldTextInteraction({
       targetRef: stringParam(params, 'targetRef'),
       textContent: stringParam(params, 'textContent'),

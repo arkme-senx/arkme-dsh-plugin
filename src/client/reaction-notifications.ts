@@ -27,6 +27,7 @@ export class ReactionNotifications {
  getSnapshot = () => this.version
  private publish() { this.version++; for (const fn of this.listeners) fn() }
  forSource(scope: string | undefined, sourceKey: string | undefined) { return scope === this.scope && sourceKey ? this.rows.filter(row => row.sourceKey === sourceKey) : [] }
+ forAccount(scope: string | undefined) { return scope === this.scope ? [...this.rows] : [] }
  beginViewing(sourceKey: string, itemUid: string) {
   clearTimeout(this.highlightTimer); this.highlightTimer = undefined
   this.highlight = { revision: ++this.highlightRevision, sourceKey, itemUid, rows: this.rows.filter(row => row.sourceKey === sourceKey && row.itemUid === itemUid), active: false }

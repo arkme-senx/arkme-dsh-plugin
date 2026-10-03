@@ -53,6 +53,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
+import { useArkmeNotificationSummary } from './ArkmeNotificationCenter.js'
 import { startEmbeddedHarnessSession } from './harness-new-session.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
@@ -499,6 +500,40 @@ export function ArkmeSearchRow({ selected, onClick }: { selected: boolean; onCli
     <span data-arkme-conversation-content style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.chatName}>{tr("搜索")}</span></span>
       <span style={styles.chatBottom}><span style={styles.preview}>{tr("快记、主题、录音与 AI 视频")}</span></span>
+    </span>
+  </button>
+}
+
+function NotificationAvatar() {
+  return <span style={{ ...styles.extensionAvatar, borderRadius: 11 }} aria-hidden>
+    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" />
+    </svg>
+  </span>
+}
+
+export function ArkmeNotificationsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  useArkmeLocale()
+  const summary = useArkmeNotificationSummary()
+  if (!summary.ready || !summary.hasNotifications) return null
+  const time = timeLabel(summary.atMillis)
+  return <button
+    type="button" role="treeitem" aria-selected={selected}
+    aria-label={summary.unreadCount > 0 ? tr("通知，{v0} 条未读", { v0: String(summary.unreadCount) }) : tr("通知")}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick}
+  >
+    <span style={{ ...styles.sourceAvatarWrap, overflow: 'visible' }}>
+      <NotificationAvatar />
+      {summary.unreadCount > 0 && <span style={styles.mentionUnread}>{summary.unreadCount > 99 ? '99+' : summary.unreadCount}</span>}
+    </span>
+    <span data-arkme-conversation-content style={styles.chatContent}>
+      <span style={styles.chatTop}>
+        <span style={styles.entryName}>{tr('通知')}</span>
+        <ArkmeTopicTagBadge label={tr('通知')} selected={selected} />
+        <span aria-hidden style={{ flex: 1 }} />
+        {time !== '' && <span style={styles.chatTime}>{time}</span>}
+      </span>
+      <span style={styles.chatBottom}><span style={styles.preview}>{summary.preview}</span></span>
     </span>
   </button>
 }
@@ -1705,6 +1740,17 @@ export function ArkmeNavigation({
   const showCalls = () => { activateNativeEntry(); arkmeUi.showCalls(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
+  const showNotifications = () => {
+    activateNativeEntry()
+    if (directory !== 'root') {
+      directoryRequestAbortRef.current?.abort()
+      setDirectory('root')
+      setSources(cacheRef.current?.sources.root ?? [])
+      persistCache({ directory: 'root' })
+    }
+    arkmeUi.showNotifications()
+    onActivateSurface?.()
+  }
   const showContactAdd = () => { activateNativeEntry(); arkmeUi.showContactAdd(); onActivateSurface?.() }
   const showArko = () => { activateNativeEntry(); arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -2125,8 +2171,9 @@ export function ArkmeNavigation({
       role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
       aria-label={directory === 'send_to_self' ? '发给自己分类' : tr("Arkme 会话")}
     >
+      {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
+      {authenticated && <ArkmeNotificationsRow selected={ui.mode === 'notifications'} onClick={showNotifications} />}
       {directory === 'root' && <>
-        {authenticated && <ArkmeNotificationPermissionBanner />}
         {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
           accountScope={currentAccountKey}

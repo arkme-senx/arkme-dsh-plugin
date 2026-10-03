@@ -18,6 +18,9 @@ import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js
 export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
+  ArkmeAiLetterItem,
+  ArkmeAiLetterPage,
+  ArkmeAiLetterUnread,
   ArkmeArrangementReorderInput,
   ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
@@ -136,6 +139,7 @@ import type {
   ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishResult,
   ArkmeWorldPublishTextInput,
@@ -167,6 +171,9 @@ import type { ArkmeLinkMetadata } from '../link-metadata.js'
 export type { ArkmeLinkMetadata } from '../link-metadata.js'
 
 export type {
+  ArkmeAiLetterItem,
+  ArkmeAiLetterPage,
+  ArkmeAiLetterUnread,
   ArkmeArrangementDetail,
   ArkmeArrangementItem,
   ArkmeArrangementListStatus,
@@ -326,6 +333,7 @@ export type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintAvailabilityItem,
@@ -1251,6 +1259,47 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
     }, options.signal)
+  }
+
+  /** Read AI letters for the current account. */
+  async aiLetters(options: {
+    periodType?: number
+    cursorStartAt?: number
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeAiLetterPage> {
+    return await this.call<ArkmeAiLetterPage>('ai-letter.list', {
+      ...(options.periodType === undefined ? {} : { periodType: options.periodType }),
+      ...(options.cursorStartAt === undefined ? {} : { cursorStartAt: options.cursorStartAt }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Read the AI letter unread badge and latest unread item. */
+  async aiLetterUnread(signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    return await this.call<ArkmeAiLetterUnread>('ai-letter.unread', undefined, signal)
+  }
+
+  /** Mark AI letters read. */
+  async markAiLettersRead(letterIds: readonly string[], signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    const ids = [...new Set(letterIds.map(value => value.trim()).filter(value => value !== ''))].slice(0, 50)
+    return await this.call<ArkmeAiLetterUnread>('ai-letter.mark-read', { letterIds: ids }, signal)
+  }
+
+  /** Read the server-owned aggregate unread state for World interactions. */
+  async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    return await this.call<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, signal)
+  }
+
+  /** Advance the server-owned World interaction read cursor. */
+  async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const sequence = Math.trunc(seenThroughSequence)
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new TypeError('Arkme World interaction read sequence must be a positive integer')
+    }
+    return await this.call<ArkmeWorldInteractionSummary>('world.interactions.mark-viewed', {
+      seenThroughSequence: sequence,
+    }, signal)
   }
 
   /** Publish a text comment or reply using a caller-stable mutation id. */
@@ -2379,6 +2428,7 @@ export class ArkmeSdk {
         retryable: true,
       })
     }
+
     if (!body.ok) throw new ArkmeClientError(body.error)
     return body.value
   }
