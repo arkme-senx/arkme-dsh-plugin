@@ -231,7 +231,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode || ui.mode === 'codex')
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
   const sidebarResizeRef = useRef<{
