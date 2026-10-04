@@ -513,12 +513,20 @@ function NotificationAvatar() {
 }
 
 export function ArkmeNotificationsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
-  useArkmeLocale()
   const summary = useArkmeNotificationSummary()
+  return <ArkmeNotificationRowContent selected={selected} onClick={onClick} summary={summary} />
+}
+
+function ArkmeNotificationRowContent({ selected, onClick, summary }: {
+  selected: boolean
+  onClick(): void
+  summary: ReturnType<typeof useArkmeNotificationSummary>
+}) {
+  useArkmeLocale()
   if (!summary.ready || !summary.hasNotifications) return null
   const time = timeLabel(summary.atMillis)
   return <button
-    type="button" role="treeitem" aria-selected={selected}
+    type="button" role="treeitem" aria-selected={selected} data-arkme-directory-row="notifications"
     aria-label={summary.unreadCount > 0 ? tr("通知，{v0} 条未读", { v0: String(summary.unreadCount) }) : tr("通知")}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick}
   >
@@ -966,6 +974,8 @@ export function ArkmeNavigation({
   const authState = useSyncExternalStore(
     arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot,
   )
+  // The directory owns the subscription, so moving/windowing a row cannot refresh it.
+  const notificationSummary = useArkmeNotificationSummary()
   const chatDirectory = useSyncExternalStore(
     arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot,
   )
@@ -1199,6 +1209,11 @@ export function ArkmeNavigation({
     scope: currentAccountKey,
     enabled: active && directory === 'root',
   })
+  const rootDirectoryRows: Array<(typeof rootConversationRows)[number] | { kind: 'notifications' }> = [...removalFeedback.rows]
+  if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
+    const index = removalFeedback.rows.findIndex(row => !row.pinned && row.activeAtMillis < notificationSummary.atMillis)
+    rootDirectoryRows.splice(index < 0 ? rootDirectoryRows.length : index, 0, { kind: 'notifications' })
+  }
   const directoryContextMenu = useMemo(() => {
     if (directoryContextTarget === undefined) return undefined
     const row = rootConversationRows.find(row => row.kind === directoryContextTarget.kind
@@ -2172,7 +2187,9 @@ export function ArkmeNavigation({
       aria-label={directory === 'send_to_self' ? '发给自己分类' : tr("Arkme 会话")}
     >
       {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
-      {authenticated && <ArkmeNotificationsRow selected={ui.mode === 'notifications'} onClick={showNotifications} />}
+      {directory !== 'root' && authenticated && <ArkmeNotificationRowContent
+        selected={ui.mode === 'notifications'} onClick={showNotifications} summary={notificationSummary}
+      />}
       {directory === 'root' && <>
         {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
@@ -2223,7 +2240,11 @@ export function ArkmeNavigation({
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{removalFeedback.rows.map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.map(row => {
+          if (row.kind === 'notifications') return <ArkmeNotificationRowContent key="notifications"
+            selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
+            onClick={showNotifications} summary={notificationSummary}
+          />
           if (row.kind === 'bot') {
             const { bot } = row
             const removalPhase = removalFeedback.phases.get(`bot:${conversationBotVisibilityKey(bot)}`)

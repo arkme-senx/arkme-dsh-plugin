@@ -289,6 +289,7 @@ describe('Arkme product navigation', () => {
   })
 
   it('keeps the conversation visible under the calendar overlay and removes it from standalone utility pages', () => {
+    arkmeUi.focusSendToSelf()
     arkmeUi.showSearch()
     const searchMarkup = renderToStaticMarkup(<ArkmeSurface
       initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}
