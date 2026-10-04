@@ -13,9 +13,9 @@ import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
-const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload }) }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload, fileCapabilities:async()=>({maxAttachments:9}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
 import { TeamMessagingPanel, TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
 
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
@@ -24,6 +24,11 @@ const conversation: TeamConversation = { ref: 'conv', key: 'key', channel: { tea
 const storageKey = 'arkme.team.draft:account:key'
 let renderer: ReactTestRenderer | undefined
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
+
+function accepted(overrides: Record<string, unknown> = {}) {
+  const command = mocks.call.mock.calls.filter(v=>v[0]==='team.app.send.enqueue').at(-1)![1]
+  return {...command,taskRef:'task',conversationKey:'key',createdAtMillis:Date.now(),state:'queued',files:[],attempts:0,nextAttemptAt:0,...overrides}
+}
 
 describe('Team send UI recovery', () => {
   beforeEach(() => {
@@ -47,29 +52,29 @@ describe('Team send UI recovery', () => {
     let release!: (value: unknown) => void
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
-      if (op === 'team.app.send') return new Promise(resolve => { release = resolve })
+      if (op === 'team.app.send.enqueue') return new Promise(resolve => { release = resolve })
       return {}
     })
     await act(async () => { window.dispatchEvent(new Event('online')); window.dispatchEvent(new Event('focus')); await tick() })
-    const sends = mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')
+    const sends = mocks.call.mock.calls.filter(call => call[0] === 'team.app.send.enqueue')
     expect(sends).toHaveLength(2)
     expect(sends.map(call => call[1].clientUid)).toEqual([original.uid, original.uid])
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.createdAt).toBe(original.createdAt)
     await act(async () => {
-      release({message:{key:'sent',ref:'sent',seq:1,state:'published',sender:{nickname:'我'},own:true,media:[],version:0}})
+      release(accepted())
       await tick()
     })
     expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
   })
 
-  it.each(['reply_conflict', 'idempotency_conflict', 'not_accessible'])('does not automatically retry %s after reconnect', async reason => {
+  it.each(['idempotency_conflict', 'not_accessible'])('does not automatically retry %s after reconnect', async reason => {
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
       throw Object.assign(new Error(reason), {body:{code:`team-${reason}`}})
     })
     await mount(); await send()
     await act(async () => { window.dispatchEvent(new Event('online')); await tick() })
-    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')).toHaveLength(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send.enqueue')).toHaveLength(1)
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.reason).toBe(reason)
   })
 
@@ -94,26 +99,21 @@ describe('Team send UI recovery', () => {
     await mount(); await send()
     mocks.call.mockRejectedValue(new Error('still offline'))
     await act(async () => { window.dispatchEvent(new Event('online')); await tick() })
-    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send')).toHaveLength(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'team.app.send.enqueue')).toHaveLength(1)
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeDefined()
   })
 
-  it('uses the shared attachment tile preview and releases removed upload previews', async () => {
-    const createUrl = vi.fn(() => 'blob:team-upload')
-    const revokeUrl = vi.fn()
-    vi.stubGlobal('URL', class extends URL { static createObjectURL=createUrl; static revokeObjectURL=revokeUrl })
-    mocks.upload.mockResolvedValue({fileAssetUid:'asset',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10})
+  it('stages attachments locally through the SDK and restores their shared preview without uploading', async () => {
+    mocks.stage.mockResolvedValue({fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10})
     await mount()
-    const input = renderer!.root.findByProps({type:'file'})
-    await act(async () => {
-      input.props.onChange({target:{files:[new File(['image'], 'image.png', {type:'image/png'})],value:''}})
-      await tick()
-    })
-    expect(renderer!.root.findByType(ArkmeAttachmentDraftTile).props.previewUrl).toBe('blob:team-upload')
-    expect(createUrl).toHaveBeenCalledTimes(1)
-    expect(revokeUrl).not.toHaveBeenCalled()
-    await act(async () => { renderer!.root.findByType(ArkmeAttachmentDraftTile).props.onRemove(); await tick() })
-    expect(revokeUrl).toHaveBeenCalledExactlyOnceWith('blob:team-upload')
+    const picker=renderer!.root.findByProps({type:'file'})
+    await act(async()=>{picker.props.onChange({target:{files:[new File(['image'],'image.png',{type:'image/png'})],value:''}});await tick()})
+    expect(renderer!.root.findByType(ArkmeAttachmentDraftTile).props.previewUrl).toBe('/local/local-image')
+    expect(mocks.upload).not.toHaveBeenCalled()
+    await act(async()=>renderer!.unmount());await mount()
+    expect(renderer!.root.findByType(ArkmeAttachmentDraftTile).props.previewUrl).toBe('/local/local-image')
+    await act(async()=>{renderer!.root.findByType(ArkmeAttachmentDraftTile).props.onRemove();await tick()})
+    expect(JSON.parse(localStorage.getItem(storageKey)!).localFiles).toEqual([])
   })
 
   it('shows an accepted row immediately, permits the next draft and retains an acknowledged body through refresh failure', async () => {
@@ -124,7 +124,7 @@ describe('Team send UI recovery', () => {
         if (refreshFails) throw new Error('刷新失败')
         return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
       }
-      if (op === 'team.app.send') return new Promise(resolve => {release=resolve})
+      if (op === 'team.app.send.enqueue') return new Promise(resolve => {release=resolve})
       return {}
     })
     await mount(); await send()
@@ -134,7 +134,7 @@ describe('Team send UI recovery', () => {
     await act(async () => {editor.props.onTextChange('下一条'); await tick()})
     refreshFails = true
     await act(async () => {
-      release({message:{key:'sent',ref:'sent',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0}})
+      release(accepted({state:'sent',message:{key:'sent',ref:'sent',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}}))
       await tick()
     })
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
@@ -144,6 +144,28 @@ describe('Team send UI recovery', () => {
     refreshFails = false
     await act(async () => {invalidateTeamMessages('account');await tick()})
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+  })
+
+  it('keeps staged image bytes visible when a minimal published ACK is followed by a failed refresh',async()=>{
+    const file={fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10}
+    localStorage.setItem(storageKey,JSON.stringify({text:'图片',assets:[],localFiles:[file]}))
+    let refreshFails=false
+    mocks.call.mockImplementation(async(op:string)=>{
+      if(op==='team.app.timeline'){
+        if(refreshFails)throw new Error('刷新失败')
+        return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      }
+      if(op==='team.app.send.enqueue'){
+        refreshFails=true
+        return accepted({state:'sent',createdAtMillis:Date.now()-8*86400000,completedAtMillis:Date.now(),files:[file],message:{key:'image-ack',ref:'image-ack',seq:1,revision:1,side:'external',own:true,sender:{nickname:'我'},state:'published',createdAt:1,version:0,contentStatus:'',media:[]}})
+      }
+      throw new Error(op)
+    })
+    await mount();await send()
+    const shown=renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(shown.contentStatus).toBe('available')
+    expect(shown.content.text_content).toBe('图片')
+    expect(shown.media[0].url).toBe('/local/local-image')
   })
 
   it('retains the live editor DOM and selection on background invalidation', async () => {
@@ -241,7 +263,7 @@ describe('Team send UI recovery', () => {
     let release!: (value: unknown) => void
     mocks.call.mockImplementation(async (op: string, payload: { clientUid?: string }) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
-      if (op === 'team.app.send') {
+      if (op === 'team.app.send.enqueue') {
         expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.uid).toBe(payload.clientUid)
         return await new Promise(resolve => { release = resolve })
       }
@@ -252,20 +274,20 @@ describe('Team send UI recovery', () => {
       const submit = renderer!.root.findByType(ArkmeComposerSendButton).props.onClick
       submit({ preventDefault() {} }); submit({ preventDefault() {} }); await tick()
     })
-    const first = mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')
+    const first = mocks.call.mock.calls.filter(v => v[0] === 'team.app.send.enqueue')
     expect(first).toHaveLength(1)
     await act(async () => { renderer?.unmount(); release({ reason: 'dependency_unavailable' }); await tick() })
     await mount(); await send()
-    const sends = mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')
+    const sends = mocks.call.mock.calls.filter(v => v[0] === 'team.app.send.enqueue')
     expect(sends[1]?.[1].clientUid).toBe(first[0]?.[1].clientUid)
-    await act(async () => { release({ message: { key:'sent',ref:'sent',seq:1,state:'published',sender:{nickname:'我'},own:true,media:[],version:0 } }); await tick() })
+    await act(async () => { release(accepted()); await tick() })
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
   })
   it.each(['team-invalid_request', 'team-channel_paused', 'team-conversation_blocked'])('restores both drafts after a pre-admission rejection: %s', async code => {
     let reject!: (error: unknown) => void
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
-      if (op === 'team.app.send') return new Promise((_, fail) => { reject = fail })
+      if (op === 'team.app.send.enqueue') return new Promise((_, fail) => { reject = fail })
       return {}
     })
     await mount(); await send()
@@ -275,36 +297,31 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题\n\n下一条')
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
-    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')).toHaveLength(1)
+    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send.enqueue')).toHaveLength(1)
   })
-  it('unlocks a definitive invalid request but retains a cancellable accepted operation', async () => {
-    mocks.call.mockImplementation(async (op: string) => {
-      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
-      throw Object.assign(new Error('请求内容无效'), { body: { code: 'team-invalid_request' } })
+  it('shows durable failed tasks after remount and cancels through the Host owner', async () => {
+    const task={conversationRef:conversation.ref,clientUid:'client',content:{text_content:'未发出',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],taskRef:'failed-task',conversationKey:'key',createdAtMillis:Date.now(),state:'failed',attempts:1,nextAttemptAt:0,error:'无权发送'}
+    let tasks=[task]
+    mocks.call.mockImplementation(async(op:string)=>{
+      if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.tasks')return tasks
+      if(op==='team.app.send.cancel-task'){tasks=[{...task,state:'cancelled'}];return tasks[0]}
+      throw new Error(op)
     })
-    await mount(); await send()
-    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt).toBeUndefined()
-    mocks.call.mockImplementation(async (op: string) => {
-      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
-      if (op === 'team.app.send') return { reason: 'invalid_request', message: { ref: 'accepted', state: 'preparing' } }
-      return {}
-    })
-    await send()
-    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.message.ref).toBe('accepted')
-    const cancel = renderer!.root.findAllByType('button').find(v => v.children.join('') === '取消本次发送，保留草稿')!
-    await act(async () => { cancel.props.onClick(); await tick() })
-    expect(mocks.call.mock.calls.find(v => v[0] === 'team.app.cancel')?.[1]).toEqual({ messageRef: 'accepted' })
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({ text: '问题', assets: [] })
+    await mount()
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('未发出')
+    const cancel=renderer!.root.findAllByType('button').find(v=>v.children.join('')==='取消发送')!
+    await act(async()=>{cancel.props.onClick();await tick()})
+    expect(mocks.call.mock.calls.find(v=>v[0]==='team.app.send.cancel-task')?.[1]).toEqual({conversationRef:conversation.ref,taskRef:'failed-task'})
+    expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.cancel')).toBe(false)
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
   })
-  it.each(['cancelled'])('unlocks a %s send without losing draft or sending a new request', async state => {
-    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
-      ? { conversation, messages: [], hasMore: false, beforeSeq: 0 }
-      : { message: { state } })
-    await mount(); await send()
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({ text: '问题', assets: [] })
-    expect(renderer!.root.findAllByType(ArkmeRichComposerInput).find(v=>v.props.ariaLabel==='团队消息内容')!.props.disabled).toBe(false)
-    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿已保留')
-    expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send')).toHaveLength(1)
+
+  it('keeps a plain draft unsent across remount and reconnect',async()=>{
+    await mount();await act(async()=>renderer!.unmount());await mount()
+    await act(async()=>{window.dispatchEvent(new Event('online'));await tick()})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
   })
   it('keeps an edit draft and requires reading the new version before explicit overwrite', async () => {
     let message: TeamMessage = { ref: 'message', key: 'message', seq: 1, revision: 1, side: 'team', sender: { nickname: '成员' }, own: true, state: 'published', createdAt: 1, canEdit: true, canDelete: true, content: { text_content: '原内容', template_kind: 1 }, version: 1, contentStatus: 'available', media: [] }
@@ -393,7 +410,41 @@ describe('Team send UI recovery', () => {
     await mount()
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
     await send()
-    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send')).toBe(false)
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send.enqueue')).toBe(false)
     expect(JSON.stringify(renderer!.toJSON())).toContain('无法保存发送请求')
+  })
+  it('keeps Host admission authoritative when browser draft cleanup fails', async () => {
+    let task: ReturnType<typeof accepted> | undefined
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.tasks') return task ? [task] : []
+      if (op === 'team.app.send.enqueue') {
+        task = accepted()
+        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+        return task
+      }
+      throw new Error(op)
+    })
+    await mount(); await send()
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(1)
+    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('发送')
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.uid).toBe(task!.clientUid)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿未能')
+  })
+  it('retains the original request if browser storage also fails during a lost acceptance response', async () => {
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.enqueue') {
+        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+        throw new Error('connection lost')
+      }
+      return []
+    })
+    await mount(); await send()
+    const request = mocks.call.mock.calls.find(call => call[0] === 'team.app.send.enqueue')![1]
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.uid).toBe(request.clientUid)
+    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('使用原请求重试')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿未能保存到本机')
   })
 })

@@ -106,9 +106,9 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         await new Promise(resolve=>setTimeout(resolve,150))
         value={base64:fixtureImage.toString('base64'),mimeType:'image/png'}
       }
-      else if(op === 'team.app.send') {
+      else if(op === 'team.app.send.enqueue') {
         const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
-        messages.push(m);value={message:m}
+        messages.push(m);value={...params,taskRef:`task-${params.clientUid}`,conversationKey:conversation().key,createdAtMillis:Date.now(),state:'sent',files:[],fileRefs:[],attempts:0,nextAttemptAt:0,message:m}
       }
       else if(op === 'team.app.receipts') value={teamRead:true,visitorRead:true,hasMore:false,members:[
         {nickname:'Loki1999',read:true,readAt:Date.now(),imageKey:'receipt-avatar',imageRef:'receipt-avatar'},

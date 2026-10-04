@@ -2314,7 +2314,9 @@ describe('conversation send directory projection', () => {
       expect(ancestor.props['data-arkme-message-direction']).toBeUndefined()
       ancestor = ancestor.parent
     }
-    expect(status.parent!.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
+    let statusContainer = status.parent!
+    while (typeof statusContainer.type !== 'string') statusContainer = statusContainer.parent!
+    expect(statusContainer.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
     expect(status.findAllByType('button').map(button => button.children.join(''))).toEqual(
       state === 'failed' ? ['重试', '清除'] : state === 'uncertain' ? ['核对发送结果', '清除'] : [])
     if (state === 'failed') {

@@ -52,6 +52,10 @@ export class TeamAppService {
     if (decoded.viewer !== actor) throw invalid()
     return decoded
   }
+  async conversationKey(ref: string, actor: number): Promise<string> {
+    const context = await this.open('conversation', ref, actor)
+    return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
+  }
   private async key(value: string, actor: number): Promise<string> {
     return createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`team:${actor}:${value}`).digest('hex')
   }

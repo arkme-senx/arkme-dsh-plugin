@@ -68,16 +68,16 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   const second = { ...first, key: 'visitor-b', ref: 'visitor-b', visitor: { nickname: '来访者乙' }, unread: 0 }
   const elsewhere = { ...first, key: 'other-team', ref: 'other-team', channel: { ...channel, teamRef: 'another-studio', jotmoId: 'another_studio', name: '其他团队' }, visitor: { nickname: '其他团队来访者' } }
   const messages: TeamMessage[] = []
-  mocks.call.mockImplementation(async (op: string, params: { side?: string; conversationRef?: string; content?: { text_content: string } }) => {
+  mocks.call.mockImplementation(async (op: string, params: { side?: string; conversationRef?: string; clientUid?: string; content?: { text_content: string } }) => {
     if (op === 'team.app.attention') return {team: false, external: false, applications: false}
     if (op === 'team.app.channel') return {...channel, teamRef:'fresh-encrypted-channel-reference'}
     if (op === 'team.app.conversations') return {items: params.side === 'team' ? [first, second, elsewhere] : [], hasMore: false}
     if (op === 'team.app.timeline') return {conversation: params.conversationRef === first.ref ? first : second, messages: params.conversationRef === first.ref ? messages : [], hasMore: false, beforeSeq: 0}
-    if (op === 'team.app.send') {
+    if (op === 'team.app.send.enqueue') {
       const message: TeamMessage = {key:'sent', ref:'sent', seq:1, revision:1, side:'team', sender:{nickname:'我'}, own:true, state:'published', createdAt:Date.now(), canEdit:true, canDelete:true, media:[], version:1, contentStatus:'available', content:params.content!}
       messages.push(message)
       first.preview = {status:'available', text: params.content!.text_content, hasMedia:false}
-      return {message}
+      return {...params,taskRef:'task',conversationKey:first.key,createdAtMillis:Date.now(),state:'sent',files:[],fileRefs:[],attempts:0,nextAttemptAt:0,message}
     }
     if (op === 'team.app.read') return {}
     throw new Error(op)

@@ -30,6 +30,19 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('keeps a real minimal send ACK distinct from a hydrated timeline and binds durable task scope to its viewer', async () => {
+    const f=fixture((path,body)=>path.endsWith('/messages/send')
+      ? {message_uid:body.client_message_uid,seq:3,state:'published',side:'external',own:true,sender:{nickname:'我'},created_at:1,revision:1}
+      : {channel,conversation,messages:[]})
+    const a=await open(f), b=await open(f)
+    expect(a.conversation!.ref).not.toBe(b.conversation!.ref)
+    expect(await f.service.conversationKey(a.conversation!.ref,90)).toBe(await f.service.conversationKey(b.conversation!.ref,90))
+    await expect(f.service.conversationKey(a.conversation!.ref,91)).rejects.toMatchObject({code:'team-reference-invalid'})
+    const result=await f.service.execute('team.app.send',{conversationRef:a.conversation!.ref,clientUid:'stable',expectedReplySeq:0,content:{text_content:'hello',template_kind:1}}) as TeamSendResult
+    expect(result.message).toMatchObject({own:true,state:'published',version:0,contentStatus:'',media:[]})
+    expect(result.message!.content).toBeUndefined()
+  })
+
   it('resolves Record origin under current Team authority and seals its navigation reference', async () => {
     const f = fixture(path => path.endsWith('/context')
       ? { conversation_uid: conversation.conversation_uid, side: 'external', team_name: '新团队名' }

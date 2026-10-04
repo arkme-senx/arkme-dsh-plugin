@@ -1,3 +1,6 @@
+import { useTeamSendTasks } from './team-send-tasks.js'
+import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
+import type { TeamSendTask } from '../team-send-contract.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-cache.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -22,7 +25,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeUploadedAsset } from '../types.js'
-import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamReceipts, TeamSendResult, TeamTimeline } from '../team-app-contract.js'
+import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamReceipts, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
@@ -51,10 +54,10 @@ function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media:
     sender: sender ?? { nickname: '' }, own: true, state: 'sending',
     createdAt: attempt.createdAt ?? Date.now(), canEdit: false, canDelete: false, version: 0,
     contentStatus: 'available', content: attempt.content,
-    media: draft.assets.map(asset => ({
+    media: [...draft.assets.map(asset => ({
       ref: asset.fileAssetUid, key: asset.fileAssetUid, url: media.get(asset.fileAssetUid) ?? '',
       name: asset.fileName, mimeType: asset.mimeType, size: asset.size, kind: asset.fileKind,
-    })),
+    })), ...(draft.localFiles ?? []).map(file => ({ ref: file.fileRef, key: file.fileRef, url: createArkmeSdk().localFileUrl(file.fileRef), name: file.fileName, mimeType: file.mimeType, size: file.size, kind: file.fileKind }))],
   }
 }
 
@@ -167,6 +170,7 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets'>): TeamCon
 export function TeamConversationPane({ conversation, accountKey, onChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onAccessLost?(): void }) {
   useArkmeLocale()
   const [composerFocused, setComposerFocused] = useState(false)
+  const delivery = useTeamSendTasks(conversation.ref, accountKey)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
@@ -268,10 +272,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     try {
       do {
         recoverAgain.current = false
+        delivery.refresh()
         const fresh = await refresh()
         const attempt = draftRef.current.attempt
         if (fresh && attempt && fresh.conversation.channel.enabled && !fresh.conversation.blocked
-          && ['', 'network_unavailable', 'dependency_unavailable', 'preparing'].includes(attempt.reason ?? '')) {
+          && ['', 'network_unavailable', 'dependency_unavailable', 'preparing', 'reply_conflict'].includes(attempt.reason ?? '')) {
           await resumeSend.current()
         }
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
@@ -295,7 +300,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       ...(offset === undefined ? {} : { anchorOffset: offset }),
     })
     viewport.current = arkmeConversationViewport(node)
-  }, [timeline, outgoing])
+  }, [timeline, outgoing, delivery.tasks])
   const advance = useCallback(() => {
     const current = latest.current
     if (!current || !visible.current || document.visibilityState !== 'visible' || !document.hasFocus()) return
@@ -310,92 +315,87 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     window.addEventListener('focus', advance); document.addEventListener('visibilitychange', advance); advance()
     return () => { observer.disconnect(); window.removeEventListener('focus', advance); document.removeEventListener('visibilitychange', advance) }
   }, [advance, timeline])
-  const send = async (confirm = false) => {
+  const observedCompletions = useRef(new Set<string>())
+  useLayoutEffect(() => {
+    let changed = false
+    for (const task of delivery.tasks) {
+      if (task.state !== 'sent' || !task.message || observedCompletions.current.has(task.taskRef)) continue
+      observedCompletions.current.add(task.taskRef)
+      changed = true
+      if (Date.now() - (task.completedAtMillis ?? task.createdAtMillis) > ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4) continue
+      confirmed.current.retain(conversation.key, { ...task.message, content: task.message.content ?? task.sendContent ?? task.content, contentStatus: task.message.contentStatus || 'available',
+        media: task.message.contentStatus ? task.message.media : task.files.map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})) })
+    }
+    if (changed) {
+      const old = latest.current
+      if (old) {
+        const next = { ...old, messages: confirmed.current.merge(conversation.key, old.messages) }
+        latest.current = next; setTimeline(next)
+      }
+      void refresh(); onChanged()
+    }
+  }, [delivery.tasks, conversation.key, refresh, onChanged])
+  const send = async () => {
     const timeline = latest.current, draft = draftRef.current
     if (!timeline || sendBusy.current || uploading || busy) return
-    if (!draft.attempt && (!draft.text.trim() && !draft.assets.length || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
-    if (draft.attempt?.reason === 'reply_conflict' && !confirm) return
-    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq }
+    if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
+    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
     const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', attempt }
-    try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr("无法保存发送请求，请释放本机存储后再发送")); return }
+    try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
-    const pending = outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender)!
-    setOutgoing(pending)
-    let published = false
+    setOutgoing(outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender))
     try {
-      const result = confirm && attempt.message
-        ? await callArkme<TeamSendResult>('team.app.send.confirm', { messageRef: attempt.message.ref, expectedReplySeq: timeline.conversation.latestTeamReplySeq }, ctrl.current.signal)
-        : await callArkme<TeamSendResult>('team.app.send', { conversationRef: conversation.ref, clientUid: attempt.uid, content: attempt.content, expectedReplySeq: attempt.expectedReplySeq }, ctrl.current.signal)
+      const task = await callArkme<TeamSendTask>('team.app.send.enqueue', { conversationRef: conversation.ref, clientUid: attempt.uid, content: attempt.content, expectedReplySeq: attempt.expectedReplySeq, fileRefs: attempt.fileRefs ?? [] }, ctrl.current.signal)
       if (ctrl.current.signal.aborted) return
-      let notice = ''
-      if (result.message?.state === 'published') {
-        published = true
-        // The acknowledgment can contain metadata only. Preserve the author's
-        // accepted body until an authorized timeline replaces this projection.
-        const message = {
-          ...result.message, own: true, content: result.message.content ?? attempt.content,
-          contentStatus: 'available',
-          media: result.message.media?.length ? result.message.media : pending.media,
-          createdAt: result.message.createdAt || pending.createdAt,
-        }
-        confirmed.current.retain(conversation.key, message)
-        const current = latest.current
-        if (current) {
-          ++generation.current
-          const next = { ...current, messages: confirmed.current.merge(conversation.key, current.messages) }
-          latest.current = next
-          setTimeline(next)
-        }
-        setOutgoing(undefined)
-        const nextDraft = { text: draftRef.current.text, assets: [] }
-        persistTeamDraft(localStorage, storageKey, nextDraft)
-        draftRef.current = nextDraft
-        setDraft(nextDraft)
-        onChanged()
-      }
-      else if (result.message?.state === 'cancelled') { setOutgoing(undefined); const kept = { text: restoreTeamDraftText(attempt.content.text_content ?? '', draftRef.current.text), assets: draft.assets }; persistTeamDraft(localStorage, storageKey, kept); setDraft(kept); notice = tr("原发送已取消，草稿已保留，可修改后重新发送") }
-      else {
-        const next = { ...draftRef.current, attempt: { ...attempt, ...(result.message ? { message: result.message } : {}), reason: result.reason ?? '' } }
-        persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
-        notice = result.reason === 'reply_conflict' ? tr("其他成员刚刚回复。请阅读新消息，再确认是否仍需发送。") : tr("消息正在处理中，请使用原请求重试。")
-      }
-      await refresh()
-      if (!ctrl.current.signal.aborted && notice) setError(notice)
+      if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送任务响应无效，请使用原请求重试'))
+      delivery.accept(task)
+      const next = { text: draftRef.current.text, assets: [] }
+      // Host admission is durable even if browser draft cleanup fails. The old
+      // on-disk attempt keeps its UID so a remount can only replay the same send.
+      try { persistTeamDraft(localStorage, storageKey, next) }
+      catch { setError(tr('消息已加入发送队列，草稿未能更新到本机')) }
+      draftRef.current = next; setDraft(next); setOutgoing(undefined)
     } catch (e) {
       if (!ctrl.current.signal.aborted) {
-        if (published) { setError(errorText(e)); return }
+        setError(errorText(e))
         const code = (e as { body?: { code?: string } })?.body?.code
-        const failed = { ...draftRef.current, attempt: { ...attempt, reason: code?.replace(/^team-/, '') ?? 'network_unavailable' } }
+        const failed = {...draftRef.current, attempt:{...attempt, reason:code?.replace(/^team-/, '') ?? 'network_unavailable'}}
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
-        if (code === 'team-reply_conflict') await refresh()
-        // A validated pre-admission rejection has no accepted operation.
-        // Unknown transport outcomes must retain the original request key.
-        if (['team-invalid_request', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '') && !attempt.message) {
-          setOutgoing(undefined)
-          const kept = { text: restoreTeamDraftText(attempt.content.text_content ?? '', draftRef.current.text), assets: draft.assets }
-          try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept) }
-          catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")); return }
+        // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
+        if (['team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
+          const kept = { text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
+          try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
+          catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
         }
-        if (code === 'team-channel_paused' || code === 'team-conversation_blocked') await refresh()
-        if (!ctrl.current.signal.aborted) setError(errorText(e))
       }
-    }
-    finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
+    } finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
-  resumeSend.current = () => send()
+  resumeSend.current = send
   const upload = async (files: FileList | null) => {
     if (!files || editing || busy || uploading || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
     setUploading(true)
-    try { for (const file of [...files]) { const asset = await createArkmeSdk().upload(file, { signal: ctrl.current.signal }); if (!ctrl.current.signal.aborted) { if (!localMedia.current.has(asset.fileAssetUid)) localMedia.current.set(asset.fileAssetUid, URL.createObjectURL(file)); setDraft(v => ({ ...v, assets: [...v.assets, asset] })) } } }
-    catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
+    try {
+      const sdk = createArkmeSdk(), policy = await sdk.fileCapabilities()
+      const userId = Number(accountKey.split(':').at(-1))
+      for (const file of [...files]) {
+        if (draftRef.current.assets.length + (draftRef.current.localFiles?.length ?? 0) >= policy.maxAttachments) throw new Error(tr('最多添加 9 个附件'))
+        const local = await sdk.stageFile(file, { signal: ctrl.current.signal, ...(userId > 0 ? {expectedUserId:userId} : {}) })
+        if (ctrl.current.signal.aborted) return
+        const next = { ...draftRef.current, localFiles: [...(draftRef.current.localFiles ?? []), local] }
+        persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
+      }
+    } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
     finally { if (!ctrl.current.signal.aborted) setUploading(false) }
   }
-  const cancelAccepted = async () => {
-    if (!draft.attempt?.message) return
-    setBusy(true)
-    try { await callArkme('team.app.cancel', { messageRef: draft.attempt.message.ref }, ctrl.current.signal); const next={text:restoreTeamDraftText(draft.attempt.content.text_content ?? '', draftRef.current.text),assets:draft.assets};persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);setOutgoing(undefined);setError(''); await refresh() }
-    catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  const actOnTask = async (task: TeamSendTask, action: 'retry' | 'confirm' | 'cancel') => {
+    try {
+      const result = await callArkme<TeamSendTask>(action === 'cancel' ? 'team.app.send.cancel-task' : 'team.app.send.retry-task', {
+        conversationRef: conversation.ref, taskRef: task.taskRef,
+        ...(action === 'confirm' ? { confirmReplySeq: latest.current?.conversation.latestTeamReplySeq ?? 0 } : {}),
+      }, ctrl.current.signal)
+      if (!ctrl.current.signal.aborted) { delivery.accept(result); setError('') }
+    } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
   }
   const mutateMessage = async () => {
     if (busy || editing?.needsReload || (editing && (!latest.current?.conversation.channel.enabled || latest.current.conversation.blocked || (!editing.text.trim() && !editing.message.media.length)))) return
@@ -428,6 +428,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
     finally { if (!ctrl.current.signal.aborted) setBusy(false) }
   }
+  const taskRows = delivery.tasks.filter(task => !['sent', 'cancelled'].includes(task.state))
+  const visibleMessages = [...(timeline?.messages ?? [])]
+  for (const task of taskRows) {
+    if (visibleMessages.some(message => message.key === task.message?.key)) continue
+    visibleMessages.push({
+      key: task.message?.key ?? task.clientUid, ref: task.message?.ref ?? '', seq: 0, revision: 0,
+      side: conversation.side, sender: timeline?.messages.findLast(message => message.own)?.sender ?? {nickname:''},
+      own: true, state: 'sending', createdAt: task.createdAtMillis, canEdit:false, canDelete:false, version:0,
+      contentStatus:'available', content:task.sendContent ?? task.content,
+      media: task.files.map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})),
+    })
+  }
+  if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
   const current = timeline?.conversation ?? conversation
   return <section className="team-conversation-pane">
     <header style={messageLayout.header}>
@@ -438,13 +451,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     {error && <div role="alert" className="team-error">{error}</div>}
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
-      {[...(timeline?.messages ?? []), ...(outgoing ? [outgoing] : [])].map((m, index) => <Fragment key={m.key}>
-        {(index === 0 || dayKey(m.createdAt) !== dayKey((timeline?.messages[index - 1] ?? outgoing)!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
+      {visibleMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
+        {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
         <TeamConversationMessage message={m} avatar={<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
           onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
+        {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
+          {tr(task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
+          {task.state === 'retrying' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
+          {task.reason === 'reply_conflict' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'confirm')}}>{tr('已读新回复，仍要发送')}</button>}
+          {['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
+        </ArkmeSendTaskStatus>)}
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
     </div>
@@ -475,14 +494,15 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send() } }}
           onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload(event.clipboardData.files) } }} />
         {!editing && !draft.attempt && draft.assets.length > 0 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>{draft.assets.map((asset, index) => <ArkmeAttachmentDraftTile key={`${asset.fileAssetUid}:${index}`} asset={asset} {...(localMedia.current.has(asset.fileAssetUid) ? {previewUrl: localMedia.current.get(asset.fileAssetUid)!} : {})} disabled={!!draft.attempt || busy} onRemove={() => setDraft(value => ({ ...value, assets: value.assets.filter((_, i) => i !== index) }))} />)}</div>}
+        {!editing && !draft.attempt && (draft.localFiles?.length ?? 0) > 0 && <div style={{display:'flex',gap:8,overflowX:'auto'}}>{draft.localFiles!.map(file => <ArkmeAttachmentDraftTile key={file.fileRef} asset={file} previewUrl={createArkmeSdk().localFileUrl(file.fileRef)} disabled={busy || uploading} onRemove={() => setDraft(value => ({...value,localFiles:value.localFiles?.filter(item=>item.fileRef!==file.fileRef) ?? []}))} />)}</div>}
         <div style={composerLayout.tools}>
           {!editing && <><ArkmeComposerToolButton title={tr('添加附件')} aria-label={tr('添加附件')} disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onClick={() => fileInput.current?.click()}><Paperclip size={20} aria-hidden /></ArkmeComposerToolButton>
           <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onChange={e => { void upload(e.target.files); e.target.value = '' }} /></>}
-          {uploading && <span role="status">{tr('正在上传…')}</span>}
+          {uploading && <span role="status">{tr('正在准备附件…')}</span>}
           {editing && !editing.needsReload && <span />}
           {editing?.needsReload && <ArkmeComposerToolButton disabled={busy} onClick={() => { void reloadEdit() }}>{tr('读取最新版本')}</ArkmeComposerToolButton>}
-          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : draft.attempt?.reason === 'reply_conflict' ? <><button type="button" disabled={busy} onClick={() => { void send(true) }}>{tr('已读新回复，仍要发送')}</button><button type="button" disabled={busy} onClick={() => { void cancelAccepted() }}>{tr('取消本次发送，保留草稿')}</button></> : <ArkmeComposerSendButton ariaLabel={draft.attempt ? tr('使用原请求重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
-          {!editing && draft.attempt?.message?.state === 'preparing' && draft.attempt.reason !== 'reply_conflict' && <button type="button" disabled={busy} onClick={() => { void cancelAccepted() }}>{tr('取消本次发送，保留草稿')}</button>}
+          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton ariaLabel={draft.attempt ? tr('使用原请求重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
+
         </div>
       </div>
     </div>
