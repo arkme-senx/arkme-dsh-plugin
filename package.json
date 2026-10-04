@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.89",
+  "version": "0.1.90",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -73,10 +73,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.89 更新",
-      "summary": "fix(desktop): 修复打开通知中心时会话目录消失",
-      "publishedAt": "2026-10-03T00:18:53.591Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.89"
+      "title": "Arkme 插件 0.1.90 更新",
+      "summary": "fix(ui): 修复通知列表稳定性、排序与会话恢复",
+      "publishedAt": "2026-10-04T00:52:35.868Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.90"
     }
   },
   "scripts": {
