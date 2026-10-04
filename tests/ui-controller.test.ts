@@ -12,6 +12,71 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  describe('restores the last conversation after visiting another product page', () => {
+    const source = { sourceRef: 'retained-chat', kind: 'private_chat' as const, displayName: '保留的对话', activeAtMillis: 1, unreadCount: 0 }
+    const bot = { botRef: 'retained-bot', name: '保留的 Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true }
+    const entries: Array<[string, (controller: ArkmeUiController) => void]> = [
+      ['notifications', controller => controller.showNotifications()],
+      ['arko', controller => controller.showArko()],
+      ['source', controller => controller.selectSource(source)],
+      ['bot', controller => controller.openBotConversation(bot)],
+      ['harness', controller => controller.showHarness()],
+      ['codex', controller => controller.showCodex()],
+      ['send_to_self', controller => controller.focusSendToSelf()],
+    ]
+    const pages: Array<[string, (controller: ArkmeUiController) => void]> = [
+      ['world', controller => controller.showWorld('mine')],
+      ['contacts', controller => controller.showContacts()],
+      ['recordings', controller => controller.showRecordings()],
+      ['calls', controller => controller.showCalls()],
+      ['calendar', controller => controller.showCalendar()],
+      ['extensions', controller => controller.showExtensions()],
+    ]
+
+    describe.each(entries)('%s', (_entry, select) => {
+      it.each(pages)('returns from %s to the same selection', (_page, leave) => {
+        const controller = new ArkmeUiController()
+        controller.selectSource({ ...source, sourceRef: 'earlier-chat' })
+        select(controller)
+        const before = controller.getViewSnapshot()
+        leave(controller)
+        controller.showConversations()
+        const after = controller.getViewSnapshot()
+        expect(after.mode).toBe(before.mode)
+        expect(after.selectedSource).toEqual(before.selectedSource)
+        expect(after.selectedBot).toEqual(before.selectedBot)
+        expect(after.calendarOpen).toBeUndefined()
+        expect(after.productMode).toBeUndefined()
+      })
+    })
+
+    it.each(entries.slice(0, 2))('replaces %s when the user explicitly selects another conversation', (_entry, select) => {
+      const controller = new ArkmeUiController()
+      select(controller)
+      controller.showWorld()
+      controller.showConversations()
+      controller.selectSource(source)
+      controller.showRecordings()
+      controller.showConversations()
+      expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    })
+
+    it.each(entries.slice(0, 2))('clears the remembered %s on account replacement and logout', (_entry, select) => {
+      const controller = new ArkmeUiController()
+      select(controller)
+      controller.showWorld()
+      controller.authChanged(true, true)
+      controller.showConversations()
+      expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+      expect(controller.getSnapshot().selectedSource).toBeUndefined()
+      select(controller)
+      controller.authChanged(false)
+      controller.authChanged(true)
+      controller.showConversations()
+      expect(controller.getSnapshot().mode).toBe('harness')
+    })
+  })
+
   it('opens personal Codex explicitly without retaining a colleague target', () => {
     const controller = new ArkmeUiController()
     controller.showCodex({accountKey:'prod:11',team:{teamRef:'team-a',name:'Team A',jotmoId:'a'},member:'22'})

@@ -35,6 +35,7 @@ export interface ArkmeNotificationItem {
 interface NotificationSnapshot {
   scope: string | undefined
   revision: number
+  ready: boolean
   loading: boolean
   error: string | undefined
   arrangementItems: ArkmeArrangementReminderEvent[]
@@ -51,6 +52,7 @@ interface NotificationSnapshot {
 const EMPTY_SNAPSHOT: NotificationSnapshot = {
   scope: undefined,
   revision: 0,
+  ready: false,
   loading: false,
   error: undefined,
   arrangementItems: [],
@@ -165,20 +167,15 @@ class ArkmeNotificationStore {
     this.controller?.abort()
     const controller = new AbortController()
     this.controller = controller
+    // Same-account refreshes keep their last projection; another account starts empty.
+    const previous = this.snapshot.scope === scope ? this.snapshot : EMPTY_SNAPSHOT
     const operation = (async () => {
       this.publish({
-        ...this.snapshot,
+        ...previous,
         scope,
         loading: true,
         error: undefined,
         worldError: undefined,
-        arrangementItems: [],
-        worldItems: [],
-        worldUnreadCount: 0,
-        worldSeenThroughSequence: 0,
-        aiItems: [],
-        aiUnreadCount: 0,
-        aiLatestUnread: undefined,
         aiError: undefined,
       })
       const [arrangementsResult, worldSummaryResult, worldFeedResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
@@ -192,15 +189,15 @@ class ArkmeNotificationStore {
       ])
       if (controller.signal.aborted || this.controller !== controller) return
 
-      let arrangementItems: ArkmeArrangementReminderEvent[] = []
+      let arrangementItems = this.snapshot.arrangementItems
       let error: string | undefined
       if (arrangementsResult.status === 'fulfilled') {
         arrangementItems = Array.isArray(arrangementsResult.value?.items) ? arrangementsResult.value.items : []
       }
       else error = arrangementsResult.reason instanceof Error ? arrangementsResult.reason.message : tr('通知暂时无法加载')
 
-      let worldUnreadCount = 0
-      let worldSeenThroughSequence = 0
+      let worldUnreadCount = this.snapshot.worldUnreadCount
+      let worldSeenThroughSequence = this.snapshot.worldSeenThroughSequence
       let worldError: string | undefined
       if (worldSummaryResult.status === 'fulfilled') {
         worldUnreadCount = Math.max(0, Math.trunc(worldSummaryResult.value.unreadCount))
@@ -209,7 +206,7 @@ class ArkmeNotificationStore {
         worldError = worldSummaryResult.reason instanceof Error ? worldSummaryResult.reason.message : tr('世界互动暂时无法加载')
       }
 
-      const worldItems: ArkmeNotificationItem[] = []
+      let worldItems: ArkmeNotificationItem[] = []
       if (worldFeedResult.status === 'fulfilled') {
         const feedItems = Array.isArray(worldFeedResult.value?.items) ? worldFeedResult.value.items.slice(0, 10) : []
         const interactionResults = await Promise.allSettled(feedItems.map(feedItem => callArkme<ArkmeWorldInteractionPage>(
@@ -232,15 +229,18 @@ class ArkmeNotificationStore {
           })
         })
         worldItems.sort((left, right) => right.atMillis - left.atMillis)
-        if (interactionResults.some(result => result.status === 'rejected') && worldError === undefined) {
-          worldError = tr('部分世界互动暂时无法加载')
+        if (interactionResults.some(result => result.status === 'rejected')) {
+          worldError ??= tr('部分世界互动暂时无法加载')
+          // Keep the last complete bounded page rather than accumulating partial pages.
+          if (this.snapshot.worldItems.length > 0) worldItems = this.snapshot.worldItems
         }
-      } else if (worldError === undefined) {
-        worldError = worldFeedResult.reason instanceof Error ? worldFeedResult.reason.message : tr('世界互动暂时无法加载')
+      } else {
+        worldItems = this.snapshot.worldItems
+        worldError ??= worldFeedResult.reason instanceof Error ? worldFeedResult.reason.message : tr('世界互动暂时无法加载')
       }
 
-      let aiUnreadCount = 0
-      let aiLatestUnread: ArkmeAiLetterItem | undefined
+      let aiUnreadCount = this.snapshot.aiUnreadCount
+      let aiLatestUnread = this.snapshot.aiLatestUnread
       let aiError: string | undefined
       if (aiUnreadResult.status === 'fulfilled') {
         aiUnreadCount = Math.max(0, Math.trunc(aiUnreadResult.value.unreadCount))
@@ -250,7 +250,7 @@ class ArkmeNotificationStore {
       }
       let aiItems = aiListResult.status === 'fulfilled'
         ? (Array.isArray(aiListResult.value?.items) ? aiListResult.value.items : []).map(aiLetterItem).sort((left, right) => right.atMillis - left.atMillis)
-        : []
+        : this.snapshot.aiItems
       if (aiItems.length === 0 && aiLatestUnread !== undefined) aiItems = [aiLetterItem(aiLatestUnread)]
       if (aiListResult.status === 'rejected' && aiError === undefined) {
         aiError = aiListResult.reason instanceof Error ? aiListResult.reason.message : tr('AI 来信暂时无法加载')
@@ -259,6 +259,7 @@ class ArkmeNotificationStore {
       this.publish({
         ...this.snapshot,
         scope,
+        ready: true,
         loading: false,
         error,
         arrangementItems,
@@ -327,11 +328,11 @@ function useNotificationItems(): {
 } {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
-  const snapshot = useSyncExternalStore(arkmeNotificationStore.subscribe, arkmeNotificationStore.getSnapshot, arkmeNotificationStore.getSnapshot)
+  const storedSnapshot = useSyncExternalStore(arkmeNotificationStore.subscribe, arkmeNotificationStore.getSnapshot, arkmeNotificationStore.getSnapshot)
+  const snapshot = storedSnapshot.scope === scope ? storedSnapshot : EMPTY_SNAPSHOT
   const reactionRevision = useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   useEffect(() => {
-    if (scope === undefined) return
-    const release = reactionNotifications.acquire(scope)
+    const release = scope === undefined ? undefined : reactionNotifications.acquire(scope)
     void arkmeNotificationStore.refresh(scope)
     return release
   }, [scope])
@@ -357,7 +358,7 @@ export function useArkmeNotificationSummary(): { ready: boolean; hasNotification
   const unread = items.filter(item => item.unread)
   const latest = items[0]
   return {
-    ready: snapshot.scope !== undefined && !snapshot.loading,
+    ready: snapshot.scope !== undefined && snapshot.ready,
     hasNotifications: items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
     unreadCount: unread.length + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
     preview: latest === undefined ? tr('安排、互动和表态通知') : `${latest.title}：${latest.preview}`,
@@ -368,7 +369,6 @@ export function useArkmeNotificationSummary(): { ready: boolean; hasNotification
 const styles: Record<string, CSSProperties> = {
   shell: { display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: arkmeTheme.base, color: arkmeTheme.text },
   header: { display: 'flex', alignItems: 'center', gap: 10, minHeight: 64, padding: '0 20px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` },
-  back: { width: 32, height: 32, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 22, cursor: 'pointer' },
   title: { margin: 0, flex: 1, fontSize: 20, lineHeight: '28px', fontWeight: 650 },
   action: { border: 0, borderRadius: 8, padding: '6px 8px', background: 'transparent', color: arkmeTheme.secondary, font: 'inherit', fontSize: 12, cursor: 'pointer' },
   filterBar: { display: 'flex', gap: 6, overflowX: 'auto', padding: '10px 14px 8px', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, scrollbarWidth: 'none' },
@@ -455,7 +455,6 @@ export function ArkmeNotificationCenter() {
   }, [scope, unreadCount])
   return <section style={styles.shell} aria-label={tr('通知')}>
     <header style={styles.header}>
-      <button type="button" style={styles.back} aria-label={tr('返回 Arkme 会话列表')} onClick={() => { arkmeUi.showConversations() }}>‹</button>
       <span style={{ color: arkmeTheme.accent }}><NotificationBell size={21} /></span>
       <h2 style={styles.title}>{tr('通知')}{unreadCount > 0 ? ` (${unreadCount})` : ''}</h2>
       <button type="button" style={styles.action} disabled={unreadCount === 0} onClick={() => { void markAll() }}>{tr('全部已读')}</button>
