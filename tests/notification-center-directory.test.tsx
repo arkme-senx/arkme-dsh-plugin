@@ -19,6 +19,7 @@ import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { socialAccessStore } from '../src/client/social-access-store.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -41,9 +42,9 @@ const sources: ArkmeSourceItem[] = [
 let renderer: ReactTestRenderer | undefined
 let notices: ArkmeArrangementReminderEvent[]
 
-function Workspace() {
+function Workspace({ showHarnessEntry = false }: { showHarnessEntry?: boolean } = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
-  return <><ArkmeNavigation embeddedProductShell />{ui.mode === 'notifications' && <ArkmeNotificationCenter />}</>
+  return <><ArkmeNavigation embeddedProductShell showHarnessEntry={showHarnessEntry} />{ui.mode === 'notifications' && <ArkmeNotificationCenter />}</>
 }
 
 function notificationRows() {
@@ -94,6 +95,7 @@ afterEach(async () => {
   renderer = undefined
   arkmeChatDirectory.activateAccount(undefined)
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
+  socialAccessStore.activate(undefined)
   await arkmeNotificationStore.refresh()
   arkmeUi.showLogin()
   vi.unstubAllGlobals()
@@ -101,6 +103,32 @@ afterEach(async () => {
 })
 
 describe('notification directory stability', () => {
+  it('preserves notifications and Codex while social conversations hide and return after binding', async () => {
+    let phoneMasked: string | undefined
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') {
+        return { profile: { userId: 7001, contact: { phoneMasked } } }
+      }
+      if (operation === 'team.codex.entry-availability') return { userId: 7001, visible: true, checked: true }
+      return original(operation, ...args)
+    })
+    await act(async () => { renderer = create(<Workspace showHarnessEntry />) })
+    expect(conversationOrder()).toEqual(['通知'])
+    expect(renderer!.root.findAllByProps({ role: 'treeitem', 'aria-label': 'Codex' })).toHaveLength(1)
+    const before = notificationRows()[0]!
+    await act(async () => { before.props.onClick() })
+    expect(renderer!.root.findAllByProps({ role: 'listitem' })).toHaveLength(1)
+
+    phoneMasked = '138****0000'
+    await act(async () => { await socialAccessStore.refresh() })
+    expect(conversationOrder()).toEqual(['置顶对话', '较新对话', '通知', '较早对话'])
+    expect(notificationRows()[0]).toBe(before)
+    expect(notificationRows()[0]!.props['aria-selected']).toBe(true)
+    expect(renderer!.root.findAllByProps({ role: 'treeitem', 'aria-label': 'Codex' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ role: 'listitem' })).toHaveLength(1)
+  })
+
   it('restores the selected notification row and center after opening World from a notification', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
