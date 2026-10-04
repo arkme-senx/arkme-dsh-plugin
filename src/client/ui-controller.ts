@@ -97,6 +97,8 @@ export type ArkmeWorldViewTarget = ArkmeWorldTarget | ArkmeContactWorldTarget
 type ArkmeConversationDestination =
   | { kind: 'harness' }
   | { kind: 'codex' }
+  | { kind: 'notifications' }
+  | { kind: 'arko' }
   | { kind: 'send_to_self' }
   | { kind: 'source'; source: ArkmeSourceItem }
   | { kind: 'bot'; bot: ArkmeBotSummary }
@@ -346,7 +348,7 @@ export class ArkmeUiController {
     const destination = this.lastConversationDestination
     this.publish({
       ...rest,
-      mode: destination?.kind === 'codex' ? 'codex' : destination?.kind === 'harness' ? 'harness' : destination?.kind === 'bot' ? 'bot' : 'source',
+      mode: destination === undefined || destination.kind === 'send_to_self' ? 'source' : destination.kind,
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
@@ -354,6 +356,7 @@ export class ArkmeUiController {
 
   showNotifications(): void {
     this.leaveContacts()
+    this.lastConversationDestination = { kind: 'notifications' }
     const { selectedSource: _selectedSource, selectedBot: _selectedBot, recordingTarget: _recordingTarget,
       calendarOpen: _calendarOpen, productMode: _productMode, conversationTarget: _conversationTarget,
       extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction,
@@ -380,6 +383,7 @@ export class ArkmeUiController {
 
   showArko(): void {
     this.leaveContacts()
+    this.lastConversationDestination = { kind: 'arko' }
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'arko' })
   }
