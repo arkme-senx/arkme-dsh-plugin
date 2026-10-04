@@ -46,6 +46,8 @@ describe('independent Team channel, installed artifact on official DSH', () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme team acceptance '))
     let scaffold, browser, page
     const failures = [], upstreamRequests = []
+    let retryMarker
+    const retriedCommands = [], sendFaults = []
     const identity = value => ({ user_id: value, nick_name: names.get(value), jotmo_id: `fixture_${value}`, head_img: '', identity_ready: true })
     const handler = async (req, res) => {
       try {
@@ -61,8 +63,21 @@ describe('independent Team channel, installed artifact on official DSH', () => {
           result = { code: 200, data: { ...identity(id), phone: '13800000000' } }
         } else if (/^\/api\/(v1|public\/v1)\/team\//.test(path) || /^\/api\/v1\/(records|files)\//.test(path)) {
           upstreamRequests.push(path)
+          const trackedSend = path.endsWith('/conversations/messages/send') && input.content?.text_content === retryMarker
+          const fault = trackedSend ? sendFaults.shift() : undefined
+          if (trackedSend) retriedCommands.push(input)
+          if (fault === 'before') {
+            res.writeHead(503, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ code: 503, message: 'isolated transport unavailable' })); return
+          }
           const origin = path.includes('/team/') ? teamOrigin : recordOrigin
           const upstream = await fetch(`${origin}${req.url}`, { method: req.method, headers: req.headers, body: req.method === 'GET' ? undefined : body })
+          if (fault === 'after') {
+            // The real service has committed; the client loses only its ACK.
+            await upstream.arrayBuffer()
+            res.writeHead(503, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ code: 503, message: 'isolated response lost' })); return
+          }
           res.writeHead(upstream.status, Object.fromEntries([...upstream.headers].filter(([key]) => !['transfer-encoding', 'content-encoding', 'content-length'].includes(key))))
           res.end(Buffer.from(await upstream.arrayBuffer())); return
         } else result = { code: 200, data: { items: [], users: [], sources: [], has_more: false } }
@@ -127,32 +142,26 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect(await panel.getByRole('button',{name:'对话选项',exact:true}).count()).toBe(0)
       expect(await page.getByRole('menuitem',{name:'快记不显示在首页',exact:true}).count()).toBe(0)
       const reply = `插件真实回复 ${randomUUID()}`
+      retryMarker = reply
+      sendFaults.push('before', 'after')
       await panel.getByRole('textbox', { name: '团队消息内容' }).fill(reply)
-      // Another member replies after this screen loaded. The accepted draft
-      // must have a stable operation, display the fresh reply, and require consent.
+      // Independent replies are appends, even when another member sends after
+      // this editor loaded. Only edits of the same Record require CAS consent.
       const concurrentReply = `并发回复 ${randomUUID()}`
       const head = await teamCall(users.owner, 'conversations/timeline/page', { conversation_uid: uid, side: 'team' })
-      const otherReply = await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: head.conversation.latest_team_reply_seq, content: { text_content: concurrentReply, template_kind: 1 } })
+      await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: head.conversation.latest_team_reply_seq, content: { text_content: concurrentReply, template_kind: 1 } })
       await panel.getByRole('button', { name: '发送', exact: true }).click()
-      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).waitFor()
-      // The accepted command is visible as a pending row; the editor belongs to
-      // the next draft, just as it does during an ordinary conversation send.
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('')
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).getAttribute('contenteditable')).toBe('true')
-      await panel.locator('article').getByText(reply, { exact: true }).waitFor()
-      await panel.getByRole('textbox', { name: '团队消息内容' }).fill('并发处理期间的下一条草稿')
+      await expect.poll(() => panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('')
+      await panel.getByRole('textbox', { name: '团队消息内容' }).fill('发送期间的下一条草稿')
+      await expect.poll(async () => (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.filter(item => item.record?.text_content === reply).length, { timeout: 20000 }).toBe(1)
       await panel.locator('article').getByText(concurrentReply, { exact: true }).waitFor()
-      // A second race during explicit confirmation must refresh again, never loop
-      // forever on the stale expected sequence or silently publish.
-      const newerReply = `确认前的新回复 ${randomUUID()}`
-      await teamCall(users.owner, 'conversations/messages/send', { conversation_uid: uid, side: 'team', client_message_uid: randomUUID(), expected_reply_seq: otherReply.seq, content: { text_content: newerReply, template_kind: 1 } })
-      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
-      await panel.locator('article').getByText(newerReply, { exact: true }).waitFor()
-      expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.some(item => item.record?.text_content === reply)).toBe(false)
-      await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).click()
-      await expect.poll(async () => (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.some(item => item.record?.text_content === reply)).toBe(true)
+      expect(await panel.getByRole('button', { name: '已读新回复，仍要发送', exact: true }).count()).toBe(0)
       expect(await panel.locator('article').getByText(reply, { exact: true }).count()).toBe(1)
-      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('并发处理期间的下一条草稿')
+      expect(await panel.getByRole('textbox', { name: '团队消息内容' }).textContent()).toBe('发送期间的下一条草稿')
+      await expect.poll(() => retriedCommands.length, { timeout: 20000 }).toBeGreaterThanOrEqual(3)
+      expect(retriedCommands.every(command => JSON.stringify(command) === JSON.stringify(retriedCommands[0]))).toBe(true)
+      expect(sendFaults).toEqual([])
+      expect((await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.filter(item => item.record?.text_content === reply)).toHaveLength(1)
       const published = (await teamCall(users.visitor, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' })).messages.find(item => item.record?.text_content === reply)
       expect(published.sender.nickname).toBe('验收-member')
       expect(published.actor_user_id).toBeUndefined()
@@ -290,7 +299,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await settings.getByRole('button',{name:'拒绝',exact:true}).waitFor()
       if(process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-owner.png')})
       await settings.getByRole('button',{name:'拒绝',exact:true}).click()
-      await settings.getByText('没有待处理申请',{exact:true}).waitFor()
+      await expect.poll(() => settings.getByText('加入申请',{exact:true}).count()).toBe(0)
       expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'rejected'})
       await teamCall(users.stranger,'join-requests/create',{team_id:team.team_id,request_uid:randomUUID()})
       // This fixture runs without IM. Re-enter the page to read the new request;
@@ -301,7 +310,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await ownerTeams.getByRole('button', { name: new RegExp(team.name) }).click()
       await settings.getByRole('button',{name:'同意',exact:true}).click()
       await settings.getByRole('button',{name:'确认',exact:true}).click()
-      await settings.getByText('没有待处理申请',{exact:true}).waitFor()
+      await expect.poll(() => settings.getByText('加入申请',{exact:true}).count()).toBe(0)
       expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'joined'})
       expect(await teamCall(users.owner,'conversations/attention')).toMatchObject({applications:false})
 

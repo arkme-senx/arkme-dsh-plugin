@@ -206,6 +206,9 @@ describe('Team App owner adapter', () => {
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(members.items[0]?.canRemove).toBe(true)
+    const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(refreshed.items[0]?.userRef).not.toBe(members.items[0]?.userRef)
+    expect(refreshed.items[0]?.key).toBe(members.items[0]?.key)
     expect(JSON.stringify(members)).not.toContain('user_id')
     await f.service.execute('team.app.member.remove', { userRef: members.items[0]!.userRef })
     expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })

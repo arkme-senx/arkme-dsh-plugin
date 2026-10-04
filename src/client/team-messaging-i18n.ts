@@ -1,5 +1,7 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '团队身份已变化，请重新打开团队': 'Team access has changed. Please reopen the team.',
+  '团队列表未完整加载，请重试': 'The team list is incomplete. Please retry.',
   '暂时无法打开团队对话，请稍后重试': 'Unable to open the team conversation. Please try again.',
   '来源：{v0}': 'Source: {v0}',
   '创建未完成，请检查团队名称和即我号后重试': 'Could not create the team. Check its name and Arkme ID, then retry.',

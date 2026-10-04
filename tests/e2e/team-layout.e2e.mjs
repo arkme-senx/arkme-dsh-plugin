@@ -51,7 +51,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
     page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
-    const teamRef = `team_v1_${'a'.repeat(32)}`, publicRef = 'b'.repeat(32)
+    const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
     const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'鲨鱼辣椒1998'}, preview:{status:'available',text:'请问可以修改吗？',hasMedia:false}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
     const secondConversation = () => ({...conversation(), ref:'second-ref', key:'second-key', visitor:{nickname:'第二位来访者'}, preview:{status:'available',text:'我想了解一下团队功能',hasMedia:false}})
@@ -90,7 +90,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if (op === 'team.app.source') value = await hostOwner.executeTeamApp(op, params)
       else if (op === 'team.app.channel' || op === 'team.app.official') value = {...channel(), teamRef:`refreshed-channel-${randomUUID()}`}
       else if (op === 'team.app.channel.configure') { enabled = params.enabled; value = channel() }
-      else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ userRef: `usr_v1_${String(i).repeat(32)}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
+      else if (op === 'team.app.members') value = { team: { teamRef, name: channel().name, jotmoId: channel().jotmoId, currentUserRole: owner ? 'owner' : 'member', createdAtMillis: 1, updatedAtMillis: 1 }, items: ['Loki1999', 'Jotmoer', '设计讨论小组', '510'].map((name, i) => ({ key: `member-${i}`, userRef: `team-app-member.${i}`, displayName: name, jotmoId: `member_${i}`, identityState: 'ready', role: i === 0 ? 'owner' : 'member', joinedAtMillis: 1, canRemove: owner && i > 0 })), totalCount: 4, hasMore: false }
       else if (op === 'team.app.directory') value = { section: 'teams', items: params.countOnly ? [] : [{ kind: 'team', teamRef, displayName: channel().name, publicId: 'arkme_cn', role: owner ? 'owner' : 'member' }], total: 1, hasMore: false }
       else if (op === 'directory.list') value = { section: params.section, items: [], total: 0, hasMore: false }
       else if(op === 'team.app.open') value={channel:channel(),conversation:conversation()}
@@ -140,7 +140,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       const header = node.querySelector('.arkme-team-detail-header').getBoundingClientRect()
       const members = node.querySelector('.arkme-team-members').getBoundingClientRect()
       const settings = node.querySelector('.team-settings').getBoundingClientRect()
-      return { memberGap: members.top - header.bottom, settingsTop: settings.top, membersBottom: members.bottom, overflow: getComputedStyle(node).overflowY }
+      return { memberGap: members.top - node.querySelector('.arkme-team-features').getBoundingClientRect().bottom, settingsTop: settings.top, membersBottom: members.bottom, overflow: getComputedStyle(node).overflowY }
     })
     expect(geometry.memberGap).toBeLessThan(40)
     expect(geometry.settingsTop).toBeGreaterThanOrEqual(geometry.membersBottom - 1)
@@ -220,6 +220,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await teamDirectory.getByRole('button',{name:/第二位来访者/}).waitFor()
     await capture('plugin-team-conversation-list')
     await page.setViewportSize({width:640,height:800})
+    await teamDirectory.getByRole('button',{name:/第二位来访者/}).waitFor({state:'visible'})
     expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false)
     const rowBounds = await teamDirectory.getByRole('button',{name:/第二位来访者/}).boundingBox()
     expect(rowBounds.x + rowBounds.width).toBeLessThanOrEqual(640)
@@ -311,13 +312,13 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(flashCheck.flashes).toBe(0)
     expect(calls.filter(op=>op==='team.app.image').length).toBe(avatarRequests)
     if(output) await writeFile(join(output,'avatar-refresh-evidence.json'),JSON.stringify({signatureRevision,avatarRequests,afterSend:calls.filter(op=>op==='team.app.image').length,...flashCheck},null,2))
-    await expect.poll(() => page.locator('[data-team-side="team"]').getByText('外部用户 · Arkme Internal Interview',{exact:true}).count()).toBe(2)
-    await page.locator('[data-team-side="external"]').getByText('团队',{exact:true}).waitFor()
+    await expect.poll(() => page.locator('[data-team-side="team"]').getByText('Arkme Internal Interview · 外部用户',{exact:true}).count()).toBe(2)
+    await page.locator('[data-team-side="external"]').getByText('设计团队',{exact:true}).last().waitFor()
     await page.locator('[data-team-side="team"]').getByText('鲨鱼辣椒1998', { exact: true }).waitFor()
-    await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).waitFor()
+    await page.locator('[data-team-side="external"]').getByText('设计团队', { exact: true }).first().waitFor()
     const memberRow = page.locator('[data-team-side="team"]').filter({hasText:'鲨鱼辣椒1998'})
     expect(await memberRow.locator('[data-arkme-conversation-content] > span').nth(1).textContent()).toBe('请问可以修改吗？')
-    const contextBox = await memberRow.getByText('外部用户 · Arkme Internal Interview', {exact:true}).boundingBox()
+    const contextBox = await memberRow.getByText('Arkme Internal Interview · 外部用户', {exact:true}).boundingBox()
     expect(contextBox.width).toBeGreaterThan(20)
     await capture('plugin-team-conversation-roles')
     expect(mediaRequests.length).toBe(readsBefore)

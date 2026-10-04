@@ -190,6 +190,7 @@ export class TeamAppService {
         return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true,
           ...(data.next_page_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_page_cursor }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
+            key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
             identityState: v.identity_state === 'ready' ? 'ready' as const : v.identity_state === 'unavailable' ? 'unavailable' as const : 'incomplete' as const,

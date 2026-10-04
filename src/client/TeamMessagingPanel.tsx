@@ -84,7 +84,7 @@ export function TeamConversationRow({ conversation: c, selected = false, showTea
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
       <span style={directoryStyles.chatTop}>
         <span style={directoryStyles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
-        <ArkmeTopicTagBadge label={c.side === 'team' ? `${tr('外部用户')}${showTeamName ? ` · ${c.channel.name}` : ''}` : tr('团队')} selected={selected} truncate />
+        <ArkmeTopicTagBadge label={c.side === 'team' ? `${showTeamName ? `${c.channel.name} · ` : ''}${tr('外部用户')}` : c.channel.name} selected={selected} truncate />
         <span style={{ ...directoryStyles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(c.updatedAt)}</span>
       </span>
       <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}>{preview}</span></span>

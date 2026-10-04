@@ -32,7 +32,7 @@ export interface TeamTimeline { conversation: TeamConversation; messages: TeamMe
 export interface TeamOpen { channel: TeamChannel; openInbox: boolean; conversation?: TeamConversation }
 export interface TeamSendResult { message?: TeamMessage; reason?: string }
 export interface TeamReceipts { hasMore?: boolean; nextCursor?: string; teamRead: boolean; visitorRead: boolean; members: Array<TeamIdentity & { read: boolean; readAt: number }> }
-export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
+export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }
