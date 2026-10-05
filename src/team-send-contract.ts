@@ -14,15 +14,16 @@ export interface TeamSendTask extends TeamSendInput {
   conversationKey: string
   createdAtMillis: number
   completedAtMillis?: number
-  state: 'queued' | 'uploading' | 'sending' | 'retrying' | 'sent' | 'failed' | 'cancelled'
+  state: 'queued' | 'uploading' | 'sending' | 'retrying' | 'cancelling' | 'sent' | 'failed' | 'cancelled'
   files: ArkmeFileSendTask['files']
   attempts: number
   nextAttemptAt: number
   sendContent?: TeamContent
   confirmReplySeq?: number
+  cancelRequested?: boolean
   message?: TeamMessage
   reason?: string
   error?: string
 }
-export const teamTaskActive = (task: TeamSendTask): boolean => ['queued', 'uploading', 'sending', 'retrying'].includes(task.state)
+export const teamTaskActive = (task: TeamSendTask): boolean => ['queued', 'uploading', 'sending', 'retrying', 'cancelling'].includes(task.state)
 export const teamTaskFiles = (files: readonly ArkmeLocalFile[]): TeamSendTask['files'] => files.map(file => ({ ...file, progress: { phase: 'preparing', sentBytes: 0, totalBytes: file.size } }))

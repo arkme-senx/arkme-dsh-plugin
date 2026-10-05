@@ -146,6 +146,7 @@ const english: Record<string,string> = {
   "确认覆盖最新版本": "Confirm overwrite",
   "修改": "Edit",
   "取消": "Cancel",
+  "取消发送待确认": "Confirming cancellation",
   "此对话已被屏蔽，双方暂时不能发送或编辑消息": "This conversation is blocked. Neither side can send or edit messages.",
   "团队已暂停接收新消息": "The team has paused new messages",
   "团队消息内容": "Team message content",

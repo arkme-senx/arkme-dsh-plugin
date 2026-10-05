@@ -30,6 +30,19 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('cancels by original send identity using current conversation authority without sending content', async () => {
+    const f=fixture((path,body)=>path.endsWith('/messages/cancel')
+      ? {message_uid:body.client_message_uid,seq:0,state:'cancelled',side:'external',own:true,revision:1}
+      : {channel,conversation,messages:[]})
+    const opened=await open(f)
+    const result=await f.service.execute('team.app.cancel',{conversationRef:opened.conversation!.ref,clientUid:'original-command'}) as TeamSendResult
+    expect(result.message?.state).toBe('cancelled')
+    expect(f.requests.at(-1)?.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',client_message_uid:'original-command'})
+    expect(f.requests.some(r=>r.path.endsWith('/messages/send'))).toBe(false)
+    f.changeAccount()
+    await expect(f.service.execute('team.app.cancel',{conversationRef:opened.conversation!.ref,clientUid:'original-command'})).rejects.toMatchObject({code:'team-reference-invalid'})
+    expect(f.requests).toHaveLength(2)
+  })
   it('keeps a real minimal send ACK distinct from a hydrated timeline and binds durable task scope to its viewer', async () => {
     const f=fixture((path,body)=>path.endsWith('/messages/send')
       ? {message_uid:body.client_message_uid,seq:3,state:'published',side:'external',own:true,sender:{nickname:'我'},created_at:1,revision:1}

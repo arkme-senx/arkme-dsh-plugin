@@ -93,11 +93,13 @@ export class TeamSendQueue {
         const task = tasks.find(task => task.taskRef === taskRef && task.conversationKey === key)
         if (!task) throw fail('task-missing', '发送任务不存在')
         if (['sent', 'cancelled'].includes(task.state)) return
-        if (task.reason === 'reply_conflict') {
+        if (task.cancelRequested) {
+          delete task.confirmReplySeq
+        } else if (task.reason === 'reply_conflict') {
           if (!Number.isSafeInteger(confirmReplySeq) || confirmReplySeq! < 0) throw fail('reply_conflict', '请阅读新回复后确认是否发送')
           task.confirmReplySeq = confirmReplySeq!
         } else if (task.state === 'failed') throw fail(task.reason ?? 'send-rejected', task.error ?? '此发送已被拒绝')
-        task.state = 'queued'; task.nextAttemptAt = 0
+        task.state = task.cancelRequested ? 'cancelling' : 'queued'; task.nextAttemptAt = 0
       })
       this.wake(0)
       return { ...tasks.find(task => task.taskRef === taskRef)!, conversationRef }
@@ -113,23 +115,40 @@ export class TeamSendQueue {
       if (!task) throw fail('task-missing', '发送任务不存在')
       if (['sent', 'cancelled'].includes(task.state)) return task
       await this.guard(user, epoch, controller.signal)
-      // An interrupted request may already have published. Resolve its original identity before cancellation.
-      if (task.sendContent && !task.message) {
-        const result = await this.ports.execute('team.app.send', this.command(task), controller.signal) as TeamSendResult
-        if (result.message) task.message = result.message
-        if (!task.message) throw fail('send-uncertain', '发送结果待确认，请稍后重试')
-      }
-      if (task.message?.state === 'published') task.state = 'sent'
-      else {
-        if (task.message) await this.ports.execute('team.app.cancel', { messageRef: task.message.ref }, controller.signal)
-        task.state = 'cancelled'
-      }
-      task.completedAtMillis = Date.now()
-      await this.guard(user, epoch, controller.signal)
+      // Persist the user's new intent before I/O. Recovery must never send after
+      // a cancellation response is lost, including across Host restarts.
+      // Older clients do not drain this new state, so a rollback cannot turn
+      // an offline cancellation back into an automatic send.
+      task.cancelRequested = true; task.state = 'cancelling'; task.nextAttemptAt = 0
       await this.save(user, task)
-      this.wake(0)
+      try {
+        await this.completeCancellation(task, controller.signal)
+        await this.guard(user, epoch, controller.signal)
+        await this.save(user, task)
+      } catch (error) {
+        if (!controller.signal.aborted && !this.closed && epoch === this.epoch) {
+          await this.guard(user, epoch)
+          this.failed(task, error)
+          await this.save(user, task)
+        }
+        throw error
+      }
       return { ...task, conversationRef }
-    } finally { this.active.delete(lane) }
+    } finally { this.active.delete(lane); this.wake(0) }
+  }
+  private async completeCancellation(task: TeamSendTask, signal: AbortSignal): Promise<void> {
+    if (task.sendContent || task.message) {
+      const result = await this.ports.execute('team.app.cancel', {
+        conversationRef: task.conversationRef, clientUid: task.clientUid,
+      }, signal) as TeamSendResult
+      if (!result?.message || !['published', 'cancelled'].includes(result.message.state)) {
+        throw fail('cancel-uncertain', '取消结果待确认，请稍后重试')
+      }
+      task.message = result.message
+    }
+    task.state = task.message?.state === 'published' ? 'sent' : 'cancelled'
+    task.completedAtMillis = Date.now()
+    delete task.error; delete task.reason
   }
   private command(task: TeamSendTask): Record<string, unknown> {
     return { conversationRef: task.conversationRef, clientUid: task.clientUid,
@@ -181,6 +200,12 @@ export class TeamSendQueue {
     this.active.set(lane, controller)
     try {
       await this.guard(user, epoch, controller.signal)
+      if (task.cancelRequested) {
+        await this.completeCancellation(task, controller.signal)
+        await this.guard(user, epoch, controller.signal)
+        await this.save(user, task)
+        return
+      }
       const timeline = await this.ports.execute('team.app.timeline', { conversationRef: task.conversationRef, limit: 1 }, controller.signal) as TeamTimeline
       if (!task.sendContent && (!timeline.conversation.channel.enabled || timeline.conversation.blocked)) throw fail(timeline.conversation.blocked ? 'conversation_blocked' : 'channel_paused', '此对话暂时不能发送消息')
       if (!task.sendContent) {
@@ -218,12 +243,15 @@ export class TeamSendQueue {
       await this.guard(user, epoch)
       // Preserve an observed ACK even if its disk checkpoint temporarily fails.
       if (task.state === 'sent') { await this.save(user, task); return }
-      task.reason = reason(error)
-      task.error = error instanceof Error ? error.message : '发送失败，请重试'
-      task.state = transient(error) ? 'retrying' : 'failed'
-      if (task.state === 'retrying') this.backoff(task)
+      this.failed(task, error)
       await this.save(user, task)
     } finally { this.active.delete(lane); this.progress.delete(`${user}:${task.taskRef}`) }
+  }
+  private failed(task: TeamSendTask, error: unknown): void {
+    task.reason = reason(error)
+    task.error = error instanceof Error ? error.message : '发送失败，请重试'
+    task.state = transient(error) ? (task.cancelRequested ? 'cancelling' : 'retrying') : 'failed'
+    if (task.state === 'retrying' || task.state === 'cancelling') this.backoff(task)
   }
   private backoff(task: TeamSendTask): void {
     task.attempts += 1

@@ -272,7 +272,15 @@ export class TeamAppService {
         return { message: await this.message(data, actor, m) }
       }
       case 'team.app.edit': { const m = await message(); return await post('conversations/messages/update', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version), content: obj(p.content) }) }
-      case 'team.app.cancel': { const m = await message(); return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side }) }
+      case 'team.app.cancel': {
+        if (p.conversationRef !== undefined) {
+          const context = await conversation()
+          const data = await post('conversations/messages/cancel', { ...context, client_message_uid: str(p.clientUid) })
+          return { message: await this.message(data, actor, context) }
+        }
+        const m = await message()
+        return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side })
+      }
       case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
       case 'team.app.home.visibility': {
         const data = await post('conversations/home-visibility', { ...await conversation(), expected_version: num(p.version), ...(typeof p.showInHome === 'boolean' ? {show_in_home:p.showInHome} : {}) })

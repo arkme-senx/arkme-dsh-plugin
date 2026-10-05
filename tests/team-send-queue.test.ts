@@ -21,7 +21,7 @@ const input = (overrides: Partial<TeamSendInput> = {}): TeamSendInput => ({conve
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'arkme team delivery ')); directories.push(directory)
   let user = 42, online = true, paused = false, denied = false, lostAck = false
-  const published = new Map<string, TeamMessage>()
+  const published = new Map<string, TeamMessage>(), cancelled = new Map<string, TeamMessage>()
   const upload = vi.fn<FileTransferPorts['upload']>(async (_path, metadata, progress) => {
     if (!online) throw offline()
     progress({phase:'uploading',sentBytes:metadata.size,totalBytes:metadata.size})
@@ -35,8 +35,15 @@ async function fixture() {
     if (!online) throw offline()
     if (denied) throw new ArkmePluginError('team-not_accessible','无权访问',false,403)
     if (op === 'team.app.timeline') return {conversation:{channel:{enabled:!paused},blocked:false},messages:[]}
+    if (op === 'team.app.cancel') {
+      const uid = String(p.clientUid)
+      const message = published.get(uid) ?? cancelled.get(uid) ?? {key:uid,ref:uid,seq:0,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'cancelled',createdAt:Date.now(),canEdit:false,canDelete:false,version:0,contentStatus:'',media:[]} as TeamMessage
+      if (message.state === 'cancelled') cancelled.set(uid, message)
+      return {message}
+    }
     if (op === 'team.app.send') {
       const uid = String(p.clientUid)
+      if (cancelled.has(uid)) return {message:cancelled.get(uid)}
       let message = published.get(uid)
       if (!message) {
         message = {key:uid,ref:uid,seq:published.size+1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:Date.now(),canEdit:true,canDelete:true,content:p.content as TeamMessage['content'],version:1,contentStatus:'available',media:[]}
@@ -160,7 +167,51 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     f.loseAck();await f.queue.recover()
     expect((await f.queue.cancel(command.conversationRef,task.taskRef)).state).toBe('sent')
     expect(f.published.size).toBe(1)
-    expect(f.execute.mock.calls.some(([op])=>op==='team.app.cancel')).toBe(false)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.cancel')).toHaveLength(1)
+  })
+  it('cancels an unknown request without publishing a send that never reached the owner',async()=>{
+    const f=await fixture(),command=input(),task=await f.queue.enqueue(command)
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{if(op==='team.app.send')throw offline();return original(op,p,signal)})
+    await f.queue.recover()
+    expect((await f.queue.cancel(command.conversationRef,task.taskRef)).state).toBe('cancelled')
+    expect(f.published.size).toBe(0)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
+    expect(f.execute.mock.calls.at(-1)?.slice(0,2)).toEqual(['team.app.cancel',{conversationRef:command.conversationRef,clientUid:command.clientUid}])
+  })
+  it.each([false,true])('persists cancellation through restart even when cancellation ACK was lost: %s',async(cancelAckLost)=>{
+    const f=await fixture(),command=input(),task=await f.queue.enqueue(command)
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{if(op==='team.app.send')throw offline();return original(op,p,signal)})
+    await f.queue.recover()
+    f.execute.mockImplementation(async(op,p,signal)=>{
+      if(op==='team.app.cancel'){if(cancelAckLost)await original(op,p,signal);throw offline()}
+      return original(op,p,signal)
+    })
+    await expect(f.queue.cancel(command.conversationRef,task.taskRef)).rejects.toThrow()
+    expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({cancelRequested:true,state:'cancelling'})
+    f.restart();f.execute.mockImplementation(original);vi.setSystemTime(Date.now()+5000)
+    await f.queue.recover()
+    expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'cancelled',clientUid:command.clientUid})
+    expect(f.published.size).toBe(0)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.cancel')).toHaveLength(2)
+  })
+  it('does not resume sending if an old server cannot confirm identity-based cancellation',async()=>{
+    const f=await fixture(),command=input(),task=await f.queue.enqueue(command)
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{if(op==='team.app.send')throw offline();return original(op,p,signal)})
+    await f.queue.recover()
+    f.execute.mockImplementation(async(op,p,signal)=>op==='team.app.cancel'?{}:original(op,p,signal))
+    await expect(f.queue.cancel(command.conversationRef,task.taskRef)).rejects.toMatchObject({code:'team-cancel-uncertain'})
+    f.restart();await f.queue.recover()
+    expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({cancelRequested:true,state:'failed'})
+    expect(f.published.size).toBe(0)
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
+    f.execute.mockImplementation(original)
+    await f.queue.retry(command.conversationRef,task.taskRef);await f.queue.recover()
+    expect((await f.queue.list(command.conversationRef))[0]?.state).toBe('cancelled')
   })
   it('cannot send the previous account tasks or inspect them under another account',async()=>{
     const f=await fixture(),command=input();await f.queue.enqueue(command)

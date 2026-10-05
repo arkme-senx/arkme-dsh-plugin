@@ -459,10 +459,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
           onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
-          {tr(task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
-          {task.state === 'retrying' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
-          {task.reason === 'reply_conflict' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'confirm')}}>{tr('已读新回复，仍要发送')}</button>}
-          {['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
+          {tr(task.cancelRequested ? '取消发送待确认' : task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
+          {(task.state === 'retrying' || task.state === 'cancelling' || (task.state === 'failed' && task.cancelRequested)) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
+          {!task.cancelRequested && task.reason === 'reply_conflict' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'confirm')}}>{tr('已读新回复，仍要发送')}</button>}
+          {!task.cancelRequested && ['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
         </ArkmeSendTaskStatus>)}
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />

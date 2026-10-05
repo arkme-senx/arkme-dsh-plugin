@@ -47,7 +47,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
     let scaffold, browser, page
     const failures = [], upstreamRequests = []
     let retryMarker
-    const retriedCommands = [], sendFaults = []
+    const retriedCommands = [], sendFaults = [], cancellationAcks = []
     const identity = value => ({ user_id: value, nick_name: names.get(value), jotmo_id: `fixture_${value}`, head_img: '', identity_ready: true })
     const handler = async (req, res) => {
       try {
@@ -79,7 +79,9 @@ describe('independent Team channel, installed artifact on official DSH', () => {
             res.end(JSON.stringify({ code: 503, message: 'isolated response lost' })); return
           }
           res.writeHead(upstream.status, Object.fromEntries([...upstream.headers].filter(([key]) => !['transfer-encoding', 'content-encoding', 'content-length'].includes(key))))
-          res.end(Buffer.from(await upstream.arrayBuffer())); return
+          const responseBody = Buffer.from(await upstream.arrayBuffer())
+          if (path.endsWith('/conversations/messages/cancel')) cancellationAcks.push(JSON.parse(responseBody.toString()))
+          res.end(responseBody); return
         } else result = { code: 200, data: { items: [], users: [], sources: [], has_more: false } }
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result))
       } catch (error) { res.writeHead(500); res.end(JSON.stringify({ error: String(error) })) }
@@ -218,6 +220,31 @@ describe('independent Team channel, installed artifact on official DSH', () => {
         await page.setViewportSize({width:1440,height:1000})
         await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
       }
+      // Cancellation must never turn an unknown request into a new publication.
+      // Exercise the real UI -> Host queue -> authenticated adapter -> Team owner.
+      for (const acceptedBeforeCancel of [false, true]) {
+        const cancelledText = `取消边界 ${acceptedBeforeCancel} ${randomUUID()}`
+        retryMarker = cancelledText
+        retriedCommands.length = 0
+        sendFaults.push(acceptedBeforeCancel ? 'after' : 'before', ...Array(20).fill('before'))
+        const cancellationsBefore = cancellationAcks.length
+        await panel.getByRole('textbox', {name:'团队消息内容'}).fill(cancelledText)
+        await panel.getByRole('button', {name:'发送', exact:true}).click()
+        await expect.poll(() => retriedCommands.length).toBeGreaterThan(0)
+        await panel.getByRole('button', {name:'取消发送', exact:true}).click()
+        // The shared HTTP coordinator cools down Team writes for 5s after 503.
+        await expect.poll(() => cancellationAcks.length, {timeout:20000}).toBe(cancellationsBefore + 1)
+        expect(cancellationAcks.at(-1)).toMatchObject({code:200,data:{state:acceptedBeforeCancel ? 'published' : 'cancelled'}})
+        await expect.poll(() => panel.getByRole('button', {name:'取消发送', exact:true}).count()).toBe(0)
+        expect(retriedCommands.length).toBeGreaterThan(0)
+        const original = retriedCommands[0]
+        const terminal = await teamCall(users.member, 'conversations/messages/send', original)
+        expect(terminal.state).toBe(acceptedBeforeCancel ? 'published' : 'cancelled')
+        const messages = (await teamCall(users.visitor, 'conversations/timeline/page', {conversation_uid:uid,side:'external'})).messages
+        expect(messages.filter(item=>item.record?.text_content===cancelledText)).toHaveLength(acceptedBeforeCancel ? 1 : 0)
+        sendFaults.length = 0
+      }
+      retryMarker = undefined
       await teamCall(users.owner, 'members/remove', { team_id: team.team_id, target_user_id: users.member })
       await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
       await panel.getByRole('alert').filter({ hasText: /权限|访问|不可/ }).waitFor()
@@ -316,6 +343,10 @@ describe('independent Team channel, installed artifact on official DSH', () => {
 
     } catch (error) {
       failures.push(error)
+      if (process.env.ARKME_E2E_SCREENSHOT) {
+        const state = JSON.parse(await readFile(join(root,'state','files',String(users.member),'state.json'),'utf8').catch(()=> '{}'))
+        await writeFile(`${process.env.ARKME_E2E_SCREENSHOT}.tasks.json`,JSON.stringify({cancellationAcks,retriedCommands,tasks:state.teamSends},null,2))
+      }
       if (page && process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png` }).catch(() => {})
     } finally {
       const cleanup = async action => { try { await action() } catch (error) { failures.push(error) } }
