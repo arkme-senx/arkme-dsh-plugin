@@ -305,6 +305,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     await this.stopLifecycle(false)
   }
 
+  cancelPendingConnection(): void {
+    // A registration failure can itself be waiting for the account close
+    // barrier. Release start() before its queued suspend() is allowed to run.
+    this.connectionController?.abort()
+  }
+
   private async stopLifecycle(flushPending: boolean): Promise<void> {
     if (!this.started) return
     this.stopApiProxyEvents()
