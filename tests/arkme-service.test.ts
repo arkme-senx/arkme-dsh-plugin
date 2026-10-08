@@ -173,6 +173,7 @@ function userInfo(userId: number, phone = '13800138000'): Record<string, unknown
     name_slug: `arkme-${userId}`,
     type: 1,
     create_at: 123,
+    phone_binding_policy: { mode: phone === '' ? 'required' : 'none' },
     phone,
     email: '',
     has_bind_apple: false,
@@ -1302,7 +1303,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       userId: 10009,
     })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
     await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
 
     const prodService = new ArkmeService({ ...config, environment: 'prod' }, sessions, state, async () => {
@@ -1395,7 +1396,7 @@ describe('ArkmeService', () => {
       userId: 10012,
     })
     await expect(recreated.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
   })
 
   it('demotes a legacy active session when the profile still requires phone binding', async () => {
@@ -4522,7 +4523,15 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     let attempts = 0
     const bodies: Record<string, unknown>[] = []
-    const service = new ArkmeService(config, sessions, state, async (_input, init) => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const path = new URL(String(input)).pathname
+      // Profile reads are not create attempts and must not consume the simulated
+      // first write failure used to verify durable outbox retry behavior.
+      if (path === '/api/v1/auth/get-user-info') {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '发送者' } })
+      }
+      if (path === '/api/v1/auth/get-public-users-by-ids') return json({ code: 200, data: { items: [] } })
+      expect(path).toBe('/api/v1/records/create')
       state.events.push('remote-create')
       attempts += 1
       bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
@@ -4545,6 +4554,8 @@ describe('ArkmeService', () => {
     expect(bodies).toHaveLength(2)
     expect(bodies[0]?.record_uid).toBe(recordUid)
     expect(bodies[1]?.record_uid).toBe(recordUid)
+    expect(bodies[0]?.sender_snapshot).toEqual({ nickname: '发送者' })
+    expect(bodies[1]?.sender_snapshot).toEqual(bodies[0]?.sender_snapshot)
     expect(await service.pendingWrites()).toEqual([])
   })
 
@@ -4823,7 +4834,7 @@ describe('ArkmeService', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push({ url, body })
       if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
-        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, start_at: 200, snippet: '北京复盘', score: 0.8 }],
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, score: 0.8, match: { session_id: 'session-1', child_id: 'child-1', item_index: 0, transcript_source: 'system', transcript_version: 'v1', start_at: 200, end_at: 300, text: '北京复盘' } }],
         has_more: false, query_guard: { state: 'complete' },
       } })
       return json({ code: 0, data: {
@@ -4866,7 +4877,7 @@ describe('ArkmeService', () => {
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
       { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
       { scene_kind: 3, limit: 10, search_scope: 'global' },
-      { keyword: '北京', limit: 9 },
+      { keyword: '北京', result_mode: 'segments', limit: 9 },
     ])
   })
 

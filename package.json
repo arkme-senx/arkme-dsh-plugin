@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.76",
+  "version": "0.1.90",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -40,6 +40,7 @@
     "lib",
     "assets/desktop_call",
     "assets/licenses/MaterialIcons_LICENSE.txt",
+    "assets/licenses/DSH_QueueDock_LICENSE.txt",
     "assets/windows/arkme-credential-helper.exe",
     "assets/windows/manifest.json",
     "cordis.patch.yml",
@@ -72,10 +73,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.76 更新",
-      "summary": "0921-1824",
-      "publishedAt": "2026-09-21T10:25:07.671Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.76"
+      "title": "Arkme 插件 0.1.90 更新",
+      "summary": "fix(ui): 修复通知列表稳定性、排序与会话恢复",
+      "publishedAt": "2026-10-04T00:52:35.868Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.90"
     }
   },
   "scripts": {
@@ -118,7 +119,10 @@
     "unified": "^11.0.5",
     "ws": "8.18.3",
     "yaml": "2.9.0",
-    "@sentry/node": "10.73.0"
+    "@sentry/node": "10.73.0",
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/utilities": "3.2.2"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

@@ -77,3 +77,28 @@ it('materializes an unread jump chunk without changing or unmounting the active 
   expect(view!.root.findAllByType('button').some(row => row.props.children[1] === 201)).toBe(true)
   act(() => { view!.unmount() })
 })
+
+it('uses the owning scroll container so overscan works inside a drawer', () => {
+  const roots: (Element | Document | null | undefined)[] = []
+  const margins: (string | undefined)[] = []
+  const disconnect = vi.fn()
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(_callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      roots.push(options?.root); margins.push(options?.rootMargin)
+    }
+    observe() {}
+    disconnect = disconnect
+  })
+  const drawer = {} as HTMLDivElement
+  const tree = {} as HTMLElement
+  const scrollRootRef = { current: drawer }
+  let view: ReturnType<typeof create>
+  act(() => { view = create(<ArkmeDirectoryWindow scrollRootRef={scrollRootRef}>{Array.from({ length: 45 }, (_, i) => <button key={i}>Row {i}</button>)}</ArkmeDirectoryWindow>, {
+    createNodeMock: () => ({ closest: () => tree }),
+  }) })
+  expect(roots).toHaveLength(3)
+  for (const root of roots) expect(root).toBe(drawer)
+  expect(margins).toEqual(['600px', '600px', '600px'])
+  act(() => { view!.unmount() })
+  expect(disconnect).toHaveBeenCalledTimes(3)
+})

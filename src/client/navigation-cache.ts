@@ -99,6 +99,9 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.parentTopicHierarchyKey === 'string' && item.parentTopicHierarchyKey !== ''
       ? { parentTopicHierarchyKey: item.parentTopicHierarchyKey }
       : {}),
+    ...(typeof item.siblingOrder === 'number' && Number.isSafeInteger(item.siblingOrder) && item.siblingOrder > 0
+      ? { siblingOrder: item.siblingOrder }
+      : {}),
     kind: item.kind,
     ...(topicKind === undefined ? {} : { topicKind }),
     displayName: arkmeTopicDisplayName(item.displayName, topicKind),

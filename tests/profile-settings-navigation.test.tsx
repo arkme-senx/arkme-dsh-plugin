@@ -41,10 +41,11 @@ describe('profile/settings navigation', () => {
     expect(selectArkmeSettingsSection('arkme-data')).toBe(false)
     host.innerHTML = ''
   })
-  it('registers usage immediately after account and has no profile usage modal', () => {
+  it('keeps data and usage next to account without a second profile usage modal', () => {
     const index = readFileSync(`${process.cwd()}/src/client/index.tsx`, 'utf8')
     expect(index).toMatch(/id: 'arkme-account',\s+order: -3/)
     expect(index).toContain("id: 'arkme-usage', order: -2")
+    expect(index).toContain("id: 'arkme-data', order: -2.5")
     const nav = readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')
     expect(nav.indexOf('className="arkme-member-entry"')).toBeGreaterThan(nav.indexOf('className="arkme-profile-identity-row"'))
     const trigger = nav.slice(nav.indexOf('<button ref={profileTriggerRef}'))
@@ -56,7 +57,7 @@ describe('profile/settings navigation', () => {
   it('shows data entries without requesting or mutating data on entry', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     expect(mocks.call).not.toHaveBeenCalled()
-    expect([...host.querySelectorAll('button')].map(b => b.textContent)).toEqual(['最近删除', '导入数据', '导出数据'])
+    expect([...host.querySelectorAll('button')].map(b => b.textContent)).toEqual(['已归档主题', '最近删除', '导入数据', '导出数据'])
     await act(async () => button('导入数据').click())
     expect(host.querySelector('a')?.href).toBe('https://jiwo.cc/import')
     expect(host.querySelector('a')?.rel).toContain('noopener')

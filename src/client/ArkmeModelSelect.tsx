@@ -2,7 +2,8 @@ import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import { ArkmeBillingSettings, formatArkmeNanoCny } from './ArkmeBillingSettings.js'
+import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
+import { ArkmeModelPricing } from './ArkmeModelPricing.js'
 import css from './arkme-model-select.css?inline'
 
 /** The public ModelDirectory face; DSH remains the sole directory and selection owner. */
@@ -58,7 +59,7 @@ export function ArkmeModelSelect({ directory, locked, available }: {
     if (pane === null) return
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const items = [...(root.current?.querySelectorAll<HTMLButtonElement>('[role="menu"] button:not(:disabled)') ?? [])]
+    const items = [...(root.current?.querySelectorAll<HTMLElement>('[role="menu"] button:not(:disabled), [role="menu"] summary') ?? [])]
     if (items.length === 0) return
     event.preventDefault()
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
@@ -98,8 +99,8 @@ export function ArkmeModelSelect({ directory, locked, available }: {
             <div className="arkme-model-group-heading">
               <span id={`${id}-${provider.id}`}>{provider.id === 'arkme-managed' ? 'Arkme' : provider.name}
                 {provider.id === 'arkme-managed' && <span aria-live="polite"> · {quotaState.kind === 'ready'
-                  ? formatArkmeNanoCny(quotaState.quota.availableNanoCny)
-                  : quotaState.kind === 'loading' ? '余额加载中…' : '余额读取失败'}</span>}
+                  ? formatArkmePoints(quotaState.quota.availableNanoCny)
+                  : quotaState.kind === 'loading' ? '积分加载中…' : '积分读取失败'}</span>}
               </span>
               {provider.id === 'arkme-managed' && <span className="arkme-model-balance-actions">
                 {quotaState.kind === 'error' && <button type="button" onClick={onRefresh}>{tr("重试")}</button>}
@@ -108,12 +109,14 @@ export function ArkmeModelSelect({ directory, locked, available }: {
             </div>
             {provider.models.map(item => {
               const selected = state.current?.provider === provider.id && state.current.model === item.id
-              return <button type="button" role="menuitemradio" key={item.id} className="arkme-model-option"
+              return <div key={item.id}><button type="button" role="menuitemradio" className="arkme-model-option"
                 aria-checked={selected} disabled={busy} onClick={() => selected ? close(true) : choose({ provider: provider.id, model: item.id })}>
-                <span>{item.name}{item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
+                <span>{item.name}{provider.id !== 'arkme-managed' && item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
               </button>
+              </div>
             })}
           </section>)}
+          <ArkmeModelPricing models={state.groups.filter(provider => provider.id === 'arkme-managed').flatMap(provider => provider.models)} />
           {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">{tr("暂无可用模型")}</div>}
         </>}
         {(state.error || state.failures.length > 0) && <div className="arkme-model-error" role="alert">

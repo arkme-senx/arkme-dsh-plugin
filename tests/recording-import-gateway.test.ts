@@ -722,6 +722,41 @@ describe('AudioRecordingImportGateway', () => {
     expect(page.tasks.map(task => task.progress?.displayStatus)).toEqual(['completed', 'failed', 'partial'])
   })
 
+  it.each([false, true])('stops upload on reservation renewal failure with signal=%s', async withSignal => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error('reservation expired')
+      let renewals = 0
+      const runtime = {
+        config: { environment: 'test' },
+        async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async authenticatedAudioPost(path: string) {
+          if (path.endsWith('renew-upload') && ++renewals > 1) throw failure
+          if (path.endsWith('get-sts-token')) return {
+            access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
+            expiration: '2099-01-01T00:00:00.000Z',
+          }
+          return { err_flag: 0 }
+        },
+      } as unknown as ServiceRuntime
+      const cancel = vi.fn()
+      const multipartUpload = vi.fn(() => new Promise<void>(() => {}))
+      const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
+      const upload = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), vi.fn(async () => {}), withSignal ? new AbortController().signal : undefined)
+      const rejected = expect(upload).rejects.toBe(failure)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(multipartUpload).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      await rejected
+      expect(cancel).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      expect(renewals).toBe(2)
+      expect(multipartUpload).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses the desktop Audio owner contract and keeps STS inside the Host', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {

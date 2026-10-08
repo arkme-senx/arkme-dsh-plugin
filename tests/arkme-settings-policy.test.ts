@@ -59,7 +59,7 @@ describe('Arkme settings policy', () => {
     expect(source).toContain('const [notificationBusy, setNotificationBusy] = useState(false)')
     expect(source).toContain("{logoutBusy ? '正在退出…' : '退出登录'}</button>")
     expect(source).toContain('disabled={notificationBusy}')
-    expect(source).not.toContain('const [busy, setBusy] = useState(false)')
+    expect(source.slice(source.indexOf('export function ArkmeSettingsSurface('))).not.toContain('const [busy, setBusy] = useState(false)')
   })
 
   it('shows a read-only plugin version without exposing update controls or polling', () => {

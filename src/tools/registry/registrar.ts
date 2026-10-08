@@ -14,9 +14,12 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_reactions_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
   'arkme_topic_home_visibility',
+  'arkme_archive_set',
+  'arkme_official_notifications_read',
   'arkme_background_sound_disable',
   'arkme_file_prepare',
   'arkme_files_send',
@@ -78,12 +81,25 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
+  if (name === 'arkme_reactions_write') {
+    const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
+    if (request.action === 'history-policy-set') return request.locked === true
+      ? '是否确认锁定自己的表态操作记录？锁定后时间轴、数据管理和 AI 都不能读取这些记录。'
+      : '是否确认解锁自己的表态操作记录，恢复时间轴、数据管理和 AI 的读取？'
+    if (request.action === 'notifications-read') return '是否将刚才指定的表态提醒标记为已查看？'
+    if (request.action === 'library-set') return '是否确认保存刚才指定的短语、颜色和顺序？这不会发送表态。'
+    return request.active === true ? '是否确认给刚才指定的消息添加这个表态？' : '是否确认取消刚才指定的表态？'
+  }
   if (name === 'arkme_direct_message_refusal_set') return args.refused === true
     ? '是否确认拒收这个私聊用户的消息？拒收期间双方都无法发送新消息，历史记录保留。'
     : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
   if (name === 'arkme_recording_import') return args.action === 'retry'
     ? '是否确认重试这条失败的录音上传任务？'
     : `是否确认按指定的开始时间导入所选录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？`
+  if (name === 'arkme_archive_set') return args.self_archived === true
+    ? '是否确认归档此主题及其子主题？内容仍可搜索和引用，可在已归档中恢复。'
+    : '是否确认取消此主题的单独归档？独立归档的子主题会保留；如果父级仍归档，此主题仍随父级归档。'
   if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
     ? '是否确认将这个主题的快记展示在首页？'
     : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'

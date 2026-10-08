@@ -45,3 +45,17 @@
 @media (prefers-reduced-motion: reduce) {
   [data-arkme-feedback] { transition: none !important; }
 }
+
+/* Dark recording actions need an opaque dark hover fill, not the neutral light overlay. */
+[data-arkme-feedback="recording-action"] {
+  --arkme-control-hover: #34383f;
+  --arkme-control-pressed: #34383f;
+}
+@media (hover: hover) {
+  [data-arkme-feedback="recording-action"]:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):hover {
+    color: #fff !important;
+  }
+}
+[data-arkme-feedback="recording-action"]:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):active {
+  color: #fff !important;
+}

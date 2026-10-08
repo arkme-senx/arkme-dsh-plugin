@@ -4,6 +4,7 @@ import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Prohibit } from '@phosphor-icons/react/dist/csr/Prohibit'
 import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
+import { UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import type { ArkmeSourceItem } from '../types.js'
 import type { useDirectMessageAdmission } from './direct-message-admission.js'
@@ -86,8 +87,10 @@ export function conversationExportActionItem(action: ConversationExportAction): 
 /** Ordered business declarations; adding an item never changes the menu's cache or event machinery. */
 export function privateChatActionItems(actions: ReturnType<typeof usePrivateChatActions>,
   admission: ReturnType<typeof useDirectMessageAdmission>, openRelated: () => void,
-  exportAction?: ConversationExportAction): ConversationActionItem[] {
+  exportAction?: ConversationExportAction, openCommonGroups?: () => void): ConversationActionItem[] {
   const items: ConversationActionItem[] = []
+  if (openCommonGroups !== undefined) items.push({ id: 'common-groups', label: '共同群聊',
+    icon: <UsersThree size={20} weight="light" aria-hidden />, invoke: openCommonGroups })
   if (actions.relatedAllowed) items.push({ id: 'related', label: '相关录音', icon: <Waveform size={20} aria-hidden />, invoke: openRelated,
     error: actions.relatedError === undefined ? '' : '暂时无法更新相关录音资格' })
   else if (actions.relatedError !== undefined) items.push({ id: 'related', label: '重新检查相关录音', icon: <Waveform size={20} aria-hidden />, invoke: actions.refreshRelated })

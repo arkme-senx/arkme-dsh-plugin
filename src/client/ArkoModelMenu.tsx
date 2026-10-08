@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check'
 import type { ArkmeArkoModelCatalog } from '../types.js'
 import { tr } from './locale.js'
+import { ArkmeModelPricing } from './ArkmeModelPricing.js'
 import css from './arkme-model-select.css?inline'
 
 export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose }: {
@@ -57,7 +58,7 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
   const keyboard = (event: KeyboardEvent) => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const items = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+    const items = Array.from(menu.current?.querySelectorAll<HTMLElement>('button:not(:disabled), summary') ?? [])
     if (!items.length) return
     event.preventDefault()
     event.stopPropagation()
@@ -71,7 +72,7 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
     <div ref={menu} className="arkme-model-menu" style={position} role="menu" tabIndex={-1} aria-label={tr('模型选择')} aria-busy={busy} onKeyDown={keyboard}>
       {catalog.options.map(option => {
         const selected = option.routeKey === catalog.effectiveRouteKey
-        return <button key={option.routeKey} type="button" className="arkme-model-option" role="menuitemradio"
+        return <div key={option.routeKey}><button type="button" className="arkme-model-option" role="menuitemradio"
           aria-checked={selected} disabled={busy} onClick={() => {
             if (selected) { close(true); return }
             void onSelect(option.routeKey).then(success => { if (success && mounted.current) close(true) })
@@ -79,7 +80,9 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
           <span>{option.displayName}{option.description && <small>{option.description}</small>}</span>
           {selected && <CheckIcon size={18} style={{ flex: 'none' }} aria-hidden />}
         </button>
+        </div>
       })}
+      <ArkmeModelPricing models={catalog.options.map(option => ({ id: option.routeKey, name: option.displayName, description: option.costDescription }))} />
       {busy && <div className="arkme-model-status" role="status">{tr('正在切换模型')}</div>}
       {error && <div className="arkme-model-error" role="alert">{error}</div>}
     </div>

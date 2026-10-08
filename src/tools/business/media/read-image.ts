@@ -6,6 +6,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { defineArkmeContextToolModule } from '../../contract/module.js'
+import { ArkmePluginError } from '../../../services/service.js'
 import type { ArkmeMediaToolPort } from '../../ports/media.js'
 
 export type ArkmeImageReadService = ArkmeMediaToolPort
@@ -63,6 +64,7 @@ export function createArkmeImageToolDefinition(ctx: Context, service: ArkmeImage
     name: 'arkme_image_read',
     description: 'Read an image reference returned by the Arkme Provider and return the image itself. This includes image-library items, the signed-in profile avatar, and authorized private/group chat avatars. The Provider refreshes Arkme authorization without exposing signed OSS URLs and rejects guessed or cross-account references. Requires the current model to accept image input.',
     parameters: {
+      cache_only: { type: 'boolean', description: 'Only read locally cached immutable file-asset bytes; never query or download upstream. A miss returns image-cache-miss.' },
       image_ref: {
         type: 'string',
         required: true,
@@ -103,7 +105,13 @@ export function createArkmeImageToolDefinition(ctx: Context, service: ArkmeImage
       }
       await assertImageCapableRoute(ctx, exec)
       const byteCap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
-      const resolved = await service.readImage(imageRef, { maxBytes: byteCap, signal: exec.signal })
+      const resolved = await service.readImage(imageRef, { maxBytes: byteCap, signal: exec.signal, ...(args.cache_only === true ? { cacheOnly: true } : {}) }).catch(error => {
+        // DSH serializes only Error.message; preserve the cache-miss discriminator.
+        if (args.cache_only === true && error instanceof ArkmePluginError && error.code === 'image-cache-miss') {
+          throw new Error(`[image-cache-miss] ${error.message}`, { cause: error })
+        }
+        throw error
+      })
       if (!attachments.imageLimits.mediaTypes.includes(resolved.mediaType)) {
         throw new Error(`cannot read the Arkme image: ${resolved.mediaType} is not accepted by this deployment`)
       }

@@ -10,6 +10,7 @@ vi.mock('react-dom', () => ({ createPortal: (node: React.ReactNode) => node }))
 vi.mock('../src/client/api.js', async () => { const { memberPageFixture } = await import('./helpers/member-page-fixture.js'); return ({ callArkme: memberPageFixture(mocks.callArkme) }) })
 
 import { ArkmeGroupChatControls } from '../src/client/ArkmeGroupChatControls.js'
+import { ArkmeDshMenu } from '../src/client/ArkmeDshMenu.js'
 import { arkmeSourceIdentityKey } from '../src/client/source-identity.js'
 
 const source: ArkmeSourceItem = {
@@ -62,6 +63,11 @@ function controls(currentSource: ArkmeSourceItem, options: {
 describe('group settings menu', () => {
   let renderer: ReactTestRenderer | undefined
 
+  const menuItem = (label: string) => renderer!.root.findAllByProps({ role: 'menuitem' })
+    .find(node => node.findAll(child => child.children.includes(label)).length > 0)!
+  const openManagement = async () => { await act(async () => { menuItem('群管理').props.onClick() }) }
+  const menuIds = () => renderer!.root.findByType(ArkmeDshMenu).props.items.map((item: { id: string }) => item.id)
+
   beforeEach(() => {
     arkmeConversationMembers.activateAccount('test:42')
     vi.stubGlobal('window', {
@@ -90,6 +96,59 @@ describe('group settings menu', () => {
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
     expect(JSON.stringify(renderer!.toJSON())).toContain('修改群昵称')
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改群名称')
+  })
+
+  it('opens the nickname editor immediately even while group settings are unavailable', async () => {
+    const onError = vi.fn()
+    let rejectSettings!: (error: Error) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return await new Promise((_resolve, reject) => { rejectSettings = reject })
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      if (operation === 'group.self-nickname') return { sourceRef: source.sourceRef, memberRef: 'self', nickname: '我的昵称' }
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source, { onError })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const initialIds = menuIds()
+    expect(menuItem('修改群昵称').props.disabled).not.toBe(true)
+    await act(async () => { rejectSettings(new Error('群设置读取失败')) })
+    expect(menuIds()).toEqual(initialIds)
+    expect(menuItem('群管理').props.disabled).toBe(true)
+    await act(async () => { menuItem('修改群昵称').props.onClick() })
+    expect(renderer!.root.findByProps({ 'aria-label': '我在本群聊的昵称' }).props.value).toBe('我的昵称')
+    expect(onError).toHaveBeenCalledWith('群设置读取失败')
+  })
+
+  it('keeps primary menu rows stable when owner permissions arrive and refreshes without clearing them', async () => {
+    let resolveSettings!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return await new Promise(resolve => { resolveSettings = resolve })
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source)) })
+    const toggle = () => renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+    await act(async () => { toggle() })
+    const initialIds = menuIds()
+    expect(menuItem('群管理').props.disabled).toBe(true)
+    await act(async () => { resolveSettings({ target: source, selfRole: 'owner', selfStatus: 'active',
+      canRename: true, canDissolve: true, canLeave: false, messageDnd: false }) })
+    expect(menuIds()).toEqual(initialIds)
+    expect(menuItem('群管理').props.disabled).toBe(false)
+    await openManagement()
+    expect(menuItem('修改群名称').props.disabled).toBe(false)
+    expect(menuItem('禁止加入名单').props.disabled).toBe(false)
+    await act(async () => { menuItem('返回群聊设置').props.onClick() })
+    expect(menuIds()).toEqual(initialIds)
+    await act(async () => { toggle() })
+    await act(async () => { toggle() })
+    expect(menuItem('群管理').props.disabled).toBe(false)
+    expect(menuIds()).toEqual(initialIds)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'group.settings')).toHaveLength(2)
+    await act(async () => { resolveSettings({ target: source, selfRole: 'member', selfStatus: 'active',
+      canRename: false, canDissolve: false, canLeave: true, messageDnd: false }) })
+    expect(menuItem('群管理').props.disabled).toBe(true)
+    expect(menuIds()).toEqual(initialIds)
   })
 
   it('exports the current group from the shared three-dot menu', async () => {
@@ -356,7 +415,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('群管理')).length > 0 && node.props.disabled === false)).toBe(true)
 
     await act(async () => {
       renderer!.update(controls(rotatedSource))
@@ -393,6 +452,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    await openManagement()
     const entry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('禁止加入名单')).length > 0)!
     await act(async () => {
@@ -448,6 +508,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    await openManagement()
     const entry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('禁止加入名单')).length > 0)!
     await act(async () => {
@@ -501,6 +562,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    await openManagement()
     const renameEntry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('修改群名称')).length > 0)
     expect(renameEntry).toBeDefined()
@@ -553,7 +615,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('群管理')).length > 0 && node.props.disabled === false)).toBe(true)
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
 
     await act(async () => {

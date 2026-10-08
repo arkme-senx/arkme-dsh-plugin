@@ -19,6 +19,7 @@ import type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldPublishResult,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishTextInput,
@@ -334,6 +335,15 @@ function worldImageAssetIdentity(raw: string): string {
 }
 
 export class WorldService {
+  /** Called only for a Record-owner-authorized received-reaction response. */
+  async reactionReference(recordUid: string): Promise<string> {
+    const session = await this.runtime.requireSession()
+    return this.worldRecordRef(session.userId, recordUid, { ownerUserId: session.userId })
+  }
+  async reactionTarget(recordRef: string): Promise<import('./reaction-service.js').ReactionWireTarget> {
+    const session = await this.runtime.requireSession()
+    return { record_uid: this.openWorldRecordRef(recordRef, session.userId).recordUid }
+  }
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
   private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
   private readonly extensionPublicationShareCache = new Map<string, ArkmeWorldExtensionShareCacheEntry>()
@@ -876,6 +886,30 @@ export class WorldService {
     const nextOffset = offset + directCount
     const hasMore = data.has_more === true || (directCount > 0 && nextOffset < total)
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/world-interaction/summary', {}, session, signal,
+    )
+    const unreadCount = Math.max(0, Math.trunc(numberValue(data.unread_count ?? data.unreadCount)))
+    const seenThroughSequence = Math.max(0, Math.trunc(numberValue(data.seen_through_sequence ?? data.seenThroughSequence)))
+    return { unreadCount, seenThroughSequence, authoritative: true }
+  }
+
+  async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const session = await this.runtime.requireSession()
+    const sequence = Math.max(0, Math.trunc(seenThroughSequence))
+    if (sequence <= 0) return { unreadCount: 0, seenThroughSequence: 0, authoritative: true }
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/world-interaction/mark-viewed', { seen_through_sequence: sequence }, session, signal,
+    )
+    return {
+      unreadCount: Math.max(0, Math.trunc(numberValue(data.unread_count ?? data.unreadCount))),
+      seenThroughSequence: Math.max(sequence, Math.trunc(numberValue(data.seen_through_sequence ?? data.seenThroughSequence))),
+      authoritative: true,
+    }
   }
 
   async createWorldTextInteraction(input: {

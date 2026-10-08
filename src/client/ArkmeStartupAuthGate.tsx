@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ArkmeAuthSnapshot } from '../types.js'
-import { ArkmeAuthChecking, useArkmeAuthFlow, type ArkmeAuthFlowController, type ArkmePhoneBindingGate } from './arkme-auth-flow.js'
+import { ArkmeAuthChecking, useArkmeAuthFlow, type ArkmeAuthFlowController } from './arkme-auth-flow.js'
 import { ArkmeLogin } from './ArkmeLogin.js'
 import { arkmeTheme } from './arkme-theme.js'
 import {
@@ -59,16 +59,10 @@ export function startupAuthGateEnabled(
 
 export function startupAuthGateScreen(
   auth: ArkmeAuthSnapshot | undefined,
-  phoneBindingGate: ArkmePhoneBindingGate,
   error: string,
   loginRequested = false,
 ): ArkmeStartupGateScreen {
-  if (auth?.status === 'authenticated') {
-    if (phoneBindingGate === 'ready') return 'authenticated'
-    if (phoneBindingGate === 'required') return 'login'
-    if (error === '') return 'checking'
-    return loginRequested ? 'login' : 'error'
-  }
+  if (auth?.status === 'authenticated') return 'authenticated'
   if (loginRequested) return 'login'
   if (auth === undefined) return error === '' ? 'checking' : 'error'
   return 'login'
@@ -169,7 +163,7 @@ export type ArkmeStartupAuthGateProps = PropsLocale<typeof ARKME_LOGIN_LOCALE_NA
 export function ArkmeStartupAuthGate({ t }: ArkmeStartupAuthGateProps) {
   const flow = useArkmeAuthFlow({}, t)
   const [loginRequested, setLoginRequested] = useState(false)
-  const screen = startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error, loginRequested)
+  const screen = startupAuthGateScreen(flow.auth, flow.error, loginRequested)
   const rootRef = useRef<HTMLDivElement>(null)
   const gateActiveRef = useRef(false)
 

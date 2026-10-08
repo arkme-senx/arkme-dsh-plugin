@@ -1,4 +1,5 @@
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
+import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
 import { DshNativeTransport } from './dsh-remote/native-transport.js'
 import { DshAccountSessions } from './dsh-remote/account-sessions.js'
@@ -35,7 +36,7 @@ import {
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler } from './rich-media-routes.js'
+import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -59,6 +60,7 @@ import {
 } from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { TeamCodexService } from './team-codex-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeDesktopExtensionQuarantine } from './extensions/desktop-quarantine.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
@@ -313,6 +315,24 @@ export function apply(ctx: Context, config: Config): void {
     service,
     service.ownerReads,
   )
+  const teamCodex = new TeamCodexService({
+    directory: join(stateDirectory, 'team-codex'),
+    currentUserId: async () => {
+      await service.accountScope.start()
+      return (await service.accountScope.scopedSession())?.userId
+    },
+    profile: () => service.cachedProfile(),
+    teams: teamService,
+    ...(config.environment === 'prod' ? { cloud: {
+      post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
+      selectedTeam: async (teamRef: string, signal: AbortSignal) => (await teamService.listMembers(teamRef, { limit: 1, signal })).team,
+    } } : {}),
+  })
+  ctx.effect(() => {
+    const stop = teamCodex.start()
+    const unsubscribe = service.accountScope.subscribe(() => { teamCodex.fence() })
+    return () => { unsubscribe(); stop() }
+  }, 'dsh-arkme: local Codex team activity')
   ctx.provide('arkmeDirectory', { list: (section, options) => readDirectoryPage(service, teamService, section, options) })
   sessionStore.attach(openApiMcpController)
   ctx.effect(
@@ -434,10 +454,12 @@ export function apply(ctx: Context, config: Config): void {
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
   ctx.inject(['llm'], modelCtx => {
+    const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,
       resolveAttachmentReader: () => modelCtx.get('attachments'),
+      prepareOperation: (request, bearer) => funding.prepare(request, bearer),
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
@@ -638,6 +660,7 @@ export function apply(ctx: Context, config: Config): void {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
         directory.close()
+        if (!service.accountScope.ready()) host.cancelPendingConnection()
         lifecycleTail = lifecycleTail.then(
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
@@ -692,6 +715,7 @@ export function apply(ctx: Context, config: Config): void {
     desktopQuarantine,
     openApiMcpController,
     teamService,
+    teamCodex,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -701,6 +725,7 @@ export function apply(ctx: Context, config: Config): void {
     maxUploadBytes: config.maxUploadBytes,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
+  const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)
   const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
   const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
@@ -802,6 +827,8 @@ export function apply(ctx: Context, config: Config): void {
       external: ['react'],
     },
     sessionClient: {
+      // The desktop supervisor launches DSH in its configured default workspace.
+      defaultWorkspacePath: process.cwd(),
       revision: createHash('sha256').update(sessionClient.source).digest('hex').slice(0, 12),
       ...('apiPath' in sessionClient ? { apiPath: sessionClient.apiPath } : {}),
     },
@@ -837,6 +864,10 @@ export function apply(ctx: Context, config: Config): void {
     openApiMcpController.start()
     return async () => { await openApiMcpController.dispose() }
   }, 'dsh-arkme: managed OpenAPI credential and MCP lifecycle')
+  ctx.effect(async () => {
+    await service.resumeRecordingPresence().catch(() => undefined)
+    return () => undefined
+  }, 'dsh-arkme: recording presence recovery')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
@@ -891,6 +922,11 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/upload`,
     handler: uploadHandler,
   }), 'dsh-arkme: rich content upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/self-role-avatar`,
+    handler: selfRoleAvatarHandler,
+  }), 'dsh-arkme: local self-role avatar route')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
@@ -1080,6 +1116,9 @@ export type {
   ArkmeImagePayload,
   ArkmeFileAssetDisplayItem,
   ArkmeRecordSearchResult,
+  ArkmeRecordingSearchIdentity,
+  ArkmeRecordingSearchSegment,
+  ArkmeRecordingTarget,
   ArkmeRecordingSearchItem,
   ArkmeRecordingSearchResult,
   ArkmeSearchQueryGuard,
@@ -1180,3 +1219,5 @@ export type {
 } from './outgoing-call-contract.js'
 export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'
+
+export type { ArkmeCommonGroupPage } from './common-groups.js'

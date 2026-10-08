@@ -1,10 +1,16 @@
 import type {Rect} from './screenshot-editor-model.js'
 import type { ArkmeDesktopScreenshotResult } from '../desktop-screenshot-contract.js'
+export interface ScreenshotAskRequest { requestId:string; operationId:string; contentBase64:string; fileName:string }
 export interface NativeScreenshotBridge {
+ askDsh?(png:string):Promise<boolean>
+ askDshResult?(reply:{requestId:string;ok:boolean;error?:string}):Promise<boolean>
+ onAskDsh?(listener:(request:ScreenshotAskRequest)=>void):()=>void
+ onAskDshCancel?(listener:(request:{requestId:string})=>void):()=>void
+ onAskDshActivate?(listener:(request:{requestId:string})=>void):()=>void
  version:1
  capture(requestId:string):Promise<ArkmeDesktopScreenshotResult>
  cancel(requestId:string):Promise<void>
- context():Promise<{contentBase64:string;width:number;height:number;windows?:Rect[]}|null>
+ context():Promise<{contentBase64:string;width:number;height:number;windows?:Rect[];destination?:'attachment'|'clipboard'}|null>
  ready():Promise<boolean>;select():Promise<boolean>;close():Promise<void>
  complete(png:string):Promise<boolean>;save(png:string):Promise<boolean>
 }

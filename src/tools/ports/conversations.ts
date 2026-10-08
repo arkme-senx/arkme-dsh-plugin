@@ -11,6 +11,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  reactions(input: import('../../reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown>
   privateInteractionSummary(sourceRef: string, options?: Pick<import('../../types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'>): Promise<import('../../types.js').ArkmePrivateInteractionSummary>
   queryPrivateInteractions(options?: import('../../types.js').ArkmePrivateInteractionQueryOptions): Promise<import('../../types.js').ArkmePrivateInteractionPage>
 

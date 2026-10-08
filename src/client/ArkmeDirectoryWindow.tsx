@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react'
+import { useEffect, useRef, useState, isValidElement, type ReactNode, type RefObject } from 'react'
 import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 
 /** Keep nearby directory chunks mounted; measured spacers preserve the scroll range. */
-function DirectoryChunk({ children, count, initial, selected }: { children: ReactNode; count: number; initial: boolean; selected: boolean }) {
+function DirectoryChunk({ children, count, initial, selected, scrollRootRef }: { children: ReactNode; count: number; initial: boolean; selected: boolean; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
   const element = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(initial || typeof IntersectionObserver === 'undefined')
   const [focused, setFocused] = useState(false)
@@ -20,10 +20,10 @@ function DirectoryChunk({ children, count, initial, selected }: { children: Reac
         if (measured > 0) height.current = measured
         setVisible(false)
       }
-    }, { root: target.closest('[role="tree"]'), rootMargin: '600px' })
+    }, { root: scrollRootRef?.current ?? target.closest('[role="tree"]'), rootMargin: '600px' })
     observer.observe(target)
     return () => { observer.disconnect() }
-  }, [])
+  }, [scrollRootRef])
   return <div ref={element} role="none" onFocusCapture={() => { setFocused(true) }}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false) }}
     style={visible || selected || focused ? undefined : { height: height.current }} data-arkme-directory-chunk>
@@ -31,11 +31,11 @@ function DirectoryChunk({ children, count, initial, selected }: { children: Reac
   </div>
 }
 
-export function ArkmeDirectoryWindow({ children, activeKey, revealKey }: { children: ReactNode[]; activeKey?: string | undefined; revealKey?: string | undefined }) {
+export function ArkmeDirectoryWindow({ children, activeKey, revealKey, scrollRootRef }: { children: ReactNode[]; activeKey?: string | undefined; revealKey?: string | undefined; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
   const chunks: ReactNode[] = []
   for (let offset = 0; offset < children.length; offset += 20) {
     const items = children.slice(offset, offset + 20)
-    chunks.push(<DirectoryChunk key={offset} count={items.length} initial={offset === 0} selected={items.some(item => isValidElement(item) && (item.key === activeKey || item.key === revealKey))}>{items}</DirectoryChunk>)
+    chunks.push(<DirectoryChunk key={offset} count={items.length} initial={offset === 0} scrollRootRef={scrollRootRef} selected={items.some(item => isValidElement(item) && (item.key === activeKey || item.key === revealKey))}>{items}</DirectoryChunk>)
   }
   return <>{chunks}</>
 }

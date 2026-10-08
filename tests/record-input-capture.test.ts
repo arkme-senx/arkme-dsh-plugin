@@ -1368,3 +1368,18 @@ describe('shared input support and coarse capture context', () => {
     })
   })
 })
+
+it('prewarms context without microphone permission, shares the fresh sample and refreshes after five seconds', async () => {
+ let now = 1000
+ const recorder = new FakeRecorder(), captureContext = vi.fn(async () => ({clientName:'device'}))
+ const owner = createOwner({recorder,enabled:()=>false,now:()=>now,captureContext})
+ owner.beginUserInput('draft'); await Promise.resolve()
+ expect(captureContext).toHaveBeenCalledTimes(1)
+ await owner.finishForSubmit('draft')
+ expect(captureContext).toHaveBeenCalledTimes(1)
+ expect(recorder.startCalls).toBe(0)
+ now += 5000
+ await owner.finishForSubmit('draft')
+ expect(captureContext).toHaveBeenCalledTimes(2)
+ await owner.dispose()
+})

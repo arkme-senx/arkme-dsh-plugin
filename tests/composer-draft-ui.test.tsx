@@ -283,6 +283,25 @@ describe('composer draft UI projection', () => {
     } finally { act(() => { renderer.unmount() }) }
   })
 
+  it('preserves native text nodes when committed plain text already matches the editor', () => {
+    stubComposerDom()
+    const root = new FakeComposerElement()
+    function Harness() {
+      const [value, setValue] = useState('')
+      return <ArkmeRichComposerInput value={value} mentions={[]} emojis={[]} maxLength={20000}
+        placeholder="消息" ariaLabel="消息" disabled={false} style={{}} onTextChange={setValue} />
+    }
+    let renderer: ReactTestRenderer
+    act(() => { renderer = create(<Harness />, {createNodeMock: element => element.props['data-arkme-rich-composer'] ? root : null}) })
+    const node = new FakeComposerNode(FakeComposerNode.TEXT_NODE, '中文输入')
+    root.replaceChildren(node)
+    const replace = vi.spyOn(root, 'replaceChildren')
+    act(() => { renderer.root.findByProps({'data-arkme-rich-composer':'true'}).props.onInput({currentTarget:root,nativeEvent:{isComposing:false}}) })
+    expect(root.childNodes[0]).toBe(node)
+    expect(replace).not.toHaveBeenCalled()
+    act(() => { renderer.unmount() })
+  })
+
   it('treats the browser empty-editor BR filler as empty after clearing committed text', () => {
     stubComposerDom()
 

@@ -51,6 +51,10 @@ import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 import { ArkmeDshMenu } from './ArkmeDshMenu.js'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
+import { arkmeGroupBotAvatarIdentity, arkmeInvalidateBotAvatarResolution, type ArkmeBotAvatarIdentity } from './ArkmeBotAvatarActions.js'
+import { useGroupBots, arkmeGroupBotsChanged } from './use-group-bots.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -379,6 +383,43 @@ export const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpe
   </button>
 })
 
+type GroupBotActions = {
+  onBotOpen?: ((bot: ArkmeBotAvatarIdentity) => void) | undefined
+  onBotContextMenu?: ((bot: ArkmeBotAvatarIdentity, rect: DOMRect) => void) | undefined
+  onBotHover?: ((bot: ArkmeBotAvatarIdentity, anchor: HTMLElement, side: 'left') => void) | undefined
+}
+
+export const GroupBotRow = memo(function GroupBotRow({ bot, onBotOpen, onBotContextMenu, onBotHover }: {
+  bot: ArkmeGroupBotItem
+} & GroupBotActions) {
+  useArkmeLocale()
+  const identity = arkmeGroupBotAvatarIdentity(bot)
+  return <button data-arkme-feedback="neutral" type="button" style={styles.memberRow}
+    data-arkme-group-bot-row={bot.directoryKey || bot.botRef}
+    onClick={() => { onBotOpen?.(identity) }}
+    onPointerEnter={event => {
+      if (event.pointerType === 'mouse' && event.buttons === 0) onBotHover?.(identity, event.currentTarget, 'left')
+    }}
+    onKeyDown={event => {
+      if (event.key !== 'ArrowDown') return
+      event.preventDefault()
+      onBotContextMenu?.(identity, event.currentTarget.getBoundingClientRect())
+    }}
+    onContextMenu={event => {
+      event.preventDefault()
+      onBotContextMenu?.(identity, event.currentTarget.getBoundingClientRect())
+    }}>
+    <ArkmeUserAvatar senderKind="bot" size={32} {...(bot.avatarRef === undefined ? {} : { avatarRef: bot.avatarRef })} />
+    <span style={styles.memberMain}>
+      <span style={styles.memberNameLine}>
+        <span style={styles.memberName}>{bot.name}</span>
+        <span style={styles.badge}>BOT</span>
+      </span>
+      <span aria-hidden style={{ display: 'block', minHeight: 16 }} />
+    </span>
+  </button>
+})
+
 export function GroupMembersDrawer(props: {
   source: ArkmeSourceItem
   open: boolean
@@ -389,11 +430,12 @@ export function GroupMembersDrawer(props: {
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
   onError: (message: string) => void
-}) {
+} & GroupBotActions) {
   useArkmeLocale()
   const panelRef = useRef<HTMLElement>(null)
   const resize = useResizableNoteDetail(panelRef, 'arkme:group-members-width:v1', '调整群成员宽度', 262)
   const snapshot = useConversationMembers(props.accountScope, props.source, props.open)
+  const bots = useGroupBots(props.accountScope, props.source.sourceRef, props.open)
   const loading = snapshot.refreshing
   useEffect(() => {
     if (!props.open) return
@@ -411,7 +453,9 @@ export function GroupMembersDrawer(props: {
     <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
     <aside ref={panelRef} style={{ ...styles.drawer, ...resize.style }} aria-label={tr("群成员")}>
     {resize.handle}
-    <ArkmeRightPanelHeader title={<>{tr("群成员")}{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</>}
+    <ArkmeRightPanelHeader title={<>{tr("群成员")}{visibleSnapshot !== undefined && <span style={{ fontSize: 12, fontWeight: 400, whiteSpace: 'nowrap' }}>
+      {`（${bots.ready ? tr('{v0}人 · {v1} Bot', { v0: items.length, v1: bots.items.length }) : tr('{v0}人', { v0: items.length })}）`}
+    </span>}</>}
       onClose={props.onClose} closeLabel={tr("关闭群成员")}
       actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>{tr("添加")}</button>} />
     <div style={styles.drawerBody}>
@@ -419,9 +463,14 @@ export function GroupMembersDrawer(props: {
       {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
         onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
       >{snapshot.error}{tr("，点击重试")}</button>}
-      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
+      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 && bots.ready && bots.items.length === 0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
       {items.map(member => <GroupMemberRow key={member.memberRef} member={member}
         onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} onMemberHover={props.onMemberHover} />)}
+      {bots.items.map(bot => <GroupBotRow key={bot.directoryKey || bot.botRef} bot={bot}
+        onBotOpen={props.onBotOpen} onBotContextMenu={props.onBotContextMenu} onBotHover={props.onBotHover} />)}
+      {bots.loading && !bots.ready && <div style={styles.loading}>{tr('正在读取群 Bot…')}</div>}
+      {bots.error !== undefined && <button type="button" role="alert" style={styles.restrictionRetry}
+        title={bots.error} onClick={bots.refresh}>{tr('Bot 列表加载失败，点击重试')}</button>}
     </div>
     </aside>
   </>
@@ -1160,6 +1209,11 @@ function GroupSettingsMenu(props: {
 }) {
   useArkmeLocale()
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
+  const [managementOpen, setManagementOpen] = useState(false)
+  const managementFocusRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    managementFocusRef.current?.closest('button')?.focus({ preventScroll: true })
+  }, [managementOpen])
   const [notification, setNotification] = useState<ArkmeGroupNotificationResult>({
     messageDnd: props.source.isMuted === true,
     chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
@@ -1174,7 +1228,6 @@ function GroupSettingsMenu(props: {
     if (!props.open) return
     const controller = new AbortController()
     let active = true
-    setSnapshot(undefined)
     void callArkme<ArkmeGroupSettingsSnapshot>('group.settings', {
       sourceRef: props.source.sourceRef,
     }, controller.signal)
@@ -1185,7 +1238,10 @@ function GroupSettingsMenu(props: {
           ? current : { messageDnd: value.messageDnd, chatNotificationPolicyUpdatedAtMillis: value.chatNotificationPolicyUpdatedAtMillis ?? 0 })
       })
       .catch(caught => {
-        if (active && !isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught))
+        if (active && !isArkmeRequestAbort(caught, controller.signal)) {
+          setSnapshot(undefined)
+          props.onError(errorMessage(caught))
+        }
       })
     return () => {
       active = false
@@ -1195,7 +1251,7 @@ function GroupSettingsMenu(props: {
 
   useEffect(() => {
     if (props.open) return
-    setSnapshot(undefined)
+    setManagementOpen(false)
     setNotification({
       messageDnd: props.source.isMuted === true,
       chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
@@ -1290,8 +1346,8 @@ function GroupSettingsMenu(props: {
   }
   const entries: MenuEntry[] = [
     { type: 'label', id: 'personal-label', text: '个人设置' },
+    { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
-  if (effective.selfStatus === 'active') entries.push({ id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> })
   entries.push({
     id: 'message-dnd',
     label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1314,16 +1370,21 @@ function GroupSettingsMenu(props: {
         close()
         props.onAiPolishOpen()
       }}
-    ><span>{tr("AI 表达润色")}</span><span style={{ marginLeft: 'auto', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} aria-hidden /></span>,
+    ><span style={{ flexShrink: 0 }}>{tr("AI 表达润色")}</span><span style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} style={{ flexShrink: 0 }} aria-hidden /></span>,
     icon: <MagicWandIcon />,
   })
-  if (effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) {
-    entries.push({ type: 'separator', id: 'management-separator' }, { type: 'label', id: 'management-label', text: '群管理' })
-    if (effective.canRename) entries.push({ id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} /> })
-    if (effective.selfRole === 'owner' && effective.selfStatus === 'active') {
-      entries.push({ id: 'restrictions', label: <span style={{ display: 'flex', alignItems: 'center' }}>{tr("禁止加入名单")}<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>, icon: <Prohibit size={16} aria-hidden /> })
-    }
-  }
+  const canManage = effective.selfRole === 'owner' && effective.selfStatus === 'active'
+  entries.push(
+    { type: 'separator', id: 'management-separator' },
+    { id: 'management', label: <span ref={managementFocusRef} style={{ display: 'flex', alignItems: 'center' }}>{tr('群管理')}<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>,
+      icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename && !canManage },
+  )
+  const managementEntries: MenuEntry[] = [
+    { id: 'back', label: <span ref={managementFocusRef}>{tr('返回群聊设置')}</span>, icon: <CaretRight size={16} style={{ transform: 'rotate(180deg)' }} aria-hidden /> },
+    { type: 'separator', id: 'management-separator' },
+    { id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename },
+    { id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage },
+  ]
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
@@ -1349,9 +1410,11 @@ function GroupSettingsMenu(props: {
     conversationAppearance
     align="end"
     portal
-    items={entries}
+    items={managementOpen ? managementEntries : entries}
     onClose={close}
     onSelect={id => {
+      if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
+      if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'message-dnd') {
@@ -1360,8 +1423,14 @@ function GroupSettingsMenu(props: {
         return
       }
       if (id === 'ai-polish') { close(); props.onAiPolishOpen(); return }
-      if (id === 'rename') { close(); props.onRename(actionTarget); return }
-      if (id === 'restrictions') { close(); props.onRestrictionsOpen(); return }
+      if (id === 'rename') {
+        if (effective.canRename) { close(); props.onRename(actionTarget) }
+        return
+      }
+      if (id === 'restrictions') {
+        if (canManage) { close(); props.onRestrictionsOpen() }
+        return
+      }
       if (id === 'leave') { close(); void leaveOrDissolve() }
     }}
     anchor={<ArkmeConversationHeaderIconButton
@@ -1624,7 +1693,7 @@ export function ArkmeGroupChatControls(props: {
   onExport?: () => void
   exportBusy?: boolean
   exportProcessed?: number
-}) {
+} & GroupBotActions) {
   useArkmeLocale()
   const [localMembersOpen, setLocalMembersOpen] = useState(false)
   const membersOpen = props.membersOpen ?? localMembersOpen
@@ -1690,6 +1759,7 @@ export function ArkmeGroupChatControls(props: {
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label={tr("查看群成员")} onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
       <GroupSettingsMenu
+        key={JSON.stringify([props.accountScope, props.source.sourceRef])}
         source={props.source}
         open={settingsOpen}
         buttonRef={settingsButtonRef}
@@ -1737,6 +1807,9 @@ export function ArkmeGroupChatControls(props: {
         onMemberOpen={props.onMemberOpen}
         onMemberContextMenu={props.onMemberContextMenu}
         onMemberHover={props.onMemberHover}
+        onBotOpen={props.onBotOpen}
+        onBotContextMenu={props.onBotContextMenu}
+        onBotHover={props.onBotHover}
         onError={reportError}
       />}
       <InviteCollaboratorsDialog
@@ -1752,6 +1825,8 @@ export function ArkmeGroupChatControls(props: {
         onClose={() => { setAddMembersOpen(false) }}
         onAdded={() => {
           arkmeConversationMembers.invalidate(props.accountScope, props.source)
+          if (props.accountScope !== undefined) arkmeInvalidateBotAvatarResolution(props.accountScope, props.source.sourceRef)
+          arkmeGroupBotsChanged(props.accountScope, props.source.sourceRef)
         }}
         onError={reportError}
       />

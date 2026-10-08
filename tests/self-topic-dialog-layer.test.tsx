@@ -36,9 +36,18 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
   resetSelfTopicDirectories(); localStorage.clear()
   selected.mockReset(); rename.mockReset(); dissolve.mockReset()
-  vi.mocked(callArkme).mockReset().mockImplementation(async method => {
-    if (method === 'sources.list') return { items: sources, hasMore: false }
-    if (method === 'topic.create') return { source: { ...topic, sourceRef: 'new', displayName: '测试主题' } }
+  let created: ArkmeSourceItem | undefined
+  vi.mocked(callArkme).mockReset().mockImplementation(async (method, params) => {
+    if (method === 'sources.list') return { items: [...sources, ...(created ? [created] : [])], hasMore: false }
+    if (method === 'topic.create') {
+      created = { ...topic, sourceRef: 'new', topicHierarchyKey: 'new-key', displayName: '测试主题',
+        ...(params?.parentSourceRef ? { parentSourceRef: 'parent', parentTopicHierarchyKey: 'parent-key' } : {}) }
+      return { source: created }
+    }
+    if (method === 'topic.hierarchy.move') {
+      created!.siblingOrder = 1024
+      return { sourceRef: 'new', siblingOrder: 1024 }
+    }
     throw new Error(`Unexpected API: ${method}`)
   })
   host = document.createElement('div'); anchor = document.createElement('button')
@@ -112,7 +121,7 @@ it.each(['新主题', '新建子主题'])('creates once from the visible form an
   await act(async () => dialog.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
   expect(vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'topic.create')).toEqual([
     ['topic.create', { title: '测试主题', contextSourceRef: action === '新主题' ? 'self' : 'parent',
-      ...(action === '新主题' ? {} : { parentSourceRef: 'parent' }) }],
+      ...(action === '新主题' ? {} : { parentSourceRef: 'parent' }) }, expect.any(AbortSignal)],
   ])
   expect(selected).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ sourceRef: 'new' }))
   expect(document.querySelector('[role="dialog"]')).toBeNull()

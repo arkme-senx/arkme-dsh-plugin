@@ -54,7 +54,7 @@ beforeEach(() => {
     if (operation === 'search.conversations') return { items: [], hasMore: false }
     if (operation === 'search.history') return { items: [], hasMore: false }
     if (operation === 'search.records') return arkmeResults()
-    if (operation === 'search.recordings') return { items: [{ sessionId: 'recording-1', dateStamp: 1, startAtMillis: 2, snippet: '发布会录音转写', score: 1 }], hasMore: false, queryGuard: { state: 'ok' } }
+    if (operation === 'search.recordings') return { items: [{ sessionId: 'recording-1', dateStamp: 1, startAtMillis: 2, snippet: '发布会录音转写', score: 1, highlightRanges: [], match: {sessionId:'recording-1',childId:'c',itemIndex:0,transcriptSource:'system',transcriptVersion:'v',startAtMillis:2,endAtMillis:3,text:'发布会录音转写'} }], hasMore: false, queryGuard: { state: 'ok' } }
     if (operation === 'search.history.create') return { created: true }
     throw new Error(`unexpected Arkme call: ${operation}`)
   })
@@ -66,6 +66,53 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
+  it('continues empty segment pages and retries a failed next page without losing results', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let failed = false
+    mocks.callArkme.mockImplementation(async (op,params,signal) => {
+      if (op !== 'search.recordings') return original(op,params,signal)
+      if (!params.cursor) return {items:[],hasMore:true,nextCursor:'page2'}
+      if (params.cursor === 'page3') { const page=await original(op,params,signal);return {...page,items:page.items.map((item: any)=>({...item,match:{...item.match,childId:'second-child',text:'后续条目'}}))} }
+      if (!failed) {failed=true;throw new Error('temporary')}
+      return {...await original(op,params,signal),hasMore:true,nextCursor:'page3'}
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async()=>{renderer=create(<ArkmeSearchSurface />)})
+      act(()=>renderer.root.findByProps({'aria-label':'搜索'}).props.onChange({target:{value:'测试'}}))
+      await act(async()=>{await vi.advanceTimersByTimeAsync(300)})
+      act(()=>renderer.root.findAllByType('button').find(b=>content(b.props.children)==='录音·转写')!.props.onClick())
+      await act(async()=>renderer.root.findByProps({'aria-label':'加载更多录音转写'}).props.onClick())
+      expect(content(renderer.toJSON())).toContain('temporary')
+      await act(async()=>renderer.root.findByProps({'aria-label':'重试录音转写'}).props.onClick())
+      expect(content(renderer.toJSON())).toContain('发布会录音转写')
+      expect(renderer.root.findByProps({'aria-label':'加载更多录音转写'})).toBeDefined()
+      expect(mocks.callArkme.mock.calls.filter(([op,p])=>op==='search.recordings' && p.cursor==='page2')).toHaveLength(2)
+      await act(async()=>renderer.root.findByProps({'aria-label':'加载更多录音转写'}).props.onClick())
+      expect(content(renderer.toJSON())).toContain('发布会录音转写')
+      expect(content(renderer.toJSON())).toContain('后续条目')
+      expect(renderer.root.findAllByProps({'aria-label':'加载更多录音转写'})).toHaveLength(0)
+    } finally {renderer.unmount()}
+  })
+  it('aborts a pending recording page immediately when the keyword changes', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let signal: AbortSignal | undefined
+    mocks.callArkme.mockImplementation(async (op,params,s) => {
+      if(op==='search.recordings' && params.cursor) {signal=s;return await new Promise(()=>{})}
+      const result = await original(op,params,s)
+      return op==='search.recordings'?{...result,hasMore:true,nextCursor:'page2'}:result
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async()=>{renderer=create(<ArkmeSearchSurface />)})
+      act(()=>renderer.root.findByProps({'aria-label':'搜索'}).props.onChange({target:{value:'旧词'}}))
+      await act(async()=>{await vi.advanceTimersByTimeAsync(300)})
+      act(()=>renderer.root.findAllByType('button').find(b=>content(b.props.children)==='录音·转写')!.props.onClick())
+      act(()=>{renderer.root.findByProps({'aria-label':'加载更多录音转写'}).props.onClick()})
+      act(()=>renderer.root.findByProps({'aria-label':'搜索'}).props.onChange({target:{value:'新词'}}))
+      expect(signal?.aborted).toBe(true)
+    } finally {renderer.unmount()}
+  })
   it('finds a name on a later directory page and opens it without requiring a content hit', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     const target = { sourceRef: 'private-ref', kind: 'private_chat', displayName: '周鹏', privateNickname: '狗才', activeAtMillis: 1, unreadCount: 0 }
@@ -776,7 +823,7 @@ describe('Arkme search surface', () => {
       if (operation === 'search.history.create') return { created: true }
       if (operation === 'search.records' && params?.query === '第一条') return arkmeResults()
       if (operation === 'search.recordings' && params?.query === '第一条') return {
-        items: [{ sessionId: 'old-recording', dateStamp: 1, startAtMillis: 2, snippet: '旧录音结果', score: 1 }],
+        items: [{ sessionId: 'old-recording', dateStamp: 1, startAtMillis: 2, snippet: '旧录音结果', score: 1, highlightRanges: [], match: {sessionId:'old-recording',childId:'c',itemIndex:0,transcriptSource:'system',transcriptVersion:'v',startAtMillis:2,endAtMillis:3,text:'旧录音结果'} }],
         hasMore: false, queryGuard: { state: 'ok' },
       }
       if (operation === 'search.records' && params?.query === '第二条') {
@@ -824,7 +871,7 @@ describe('Arkme search surface', () => {
 
     await act(async () => {
       resolveRecordings({
-        items: [{ sessionId: 'new-recording', dateStamp: 1, startAtMillis: 3, snippet: '新录音结果', score: 1 }],
+        items: [{ sessionId: 'new-recording', dateStamp: 1, startAtMillis: 3, snippet: '新录音结果', score: 1, highlightRanges: [], match: {sessionId:'new-recording',childId:'c',itemIndex:0,transcriptSource:'system',transcriptVersion:'v',startAtMillis:3,endAtMillis:4,text:'新录音结果'} }],
         hasMore: false, queryGuard: { state: 'ok' },
       })
       await Promise.resolve()

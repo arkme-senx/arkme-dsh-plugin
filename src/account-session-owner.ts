@@ -51,9 +51,10 @@ export class ArkmeAccountSessionOwner {
     this.scopeCloseBarrier = barrier
   }
 
-  async write(session: ArkmeSessionCredentials): Promise<void> {
+  async write(session: ArkmeSessionCredentials, shouldWrite?: () => Promise<boolean>): Promise<void> {
     await this.start()
     await this.serial(async () => {
+      if (await shouldWrite?.() === false) return
       const current = await this.store.read()
       if (current?.userId === session.userId) {
         await this.store.write(session)
@@ -65,6 +66,7 @@ export class ArkmeAccountSessionOwner {
         userId: session.userId,
         ...(claimCurrentGuest === undefined ? {} : { claimCurrentGuest }),
       }, async () => {
+        if (await shouldWrite?.() === false) return
         await this.store.write(session)
       })
     })
@@ -86,11 +88,11 @@ export class ArkmeAccountSessionOwner {
     await this.clearSession()
   }
 
-  async deleteIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
-    return await this.clearSession(expected)
+  async deleteIfCurrent(expected: ArkmeSessionCredentials, beforeDelete?: (current: ArkmeSessionCredentials) => Promise<void>): Promise<boolean> {
+    return await this.clearSession(expected, beforeDelete)
   }
 
-  private async clearSession(expected?: ArkmeSessionCredentials): Promise<boolean> {
+  private async clearSession(expected?: ArkmeSessionCredentials, beforeDelete?: (current: ArkmeSessionCredentials) => Promise<void>): Promise<boolean> {
     await this.start()
     let deleted = false
     await this.serial(async () => {
@@ -98,6 +100,9 @@ export class ArkmeAccountSessionOwner {
       if (current === undefined || expected !== undefined
         && (current.userId !== expected.userId || current.refreshToken !== expected.refreshToken)) return
       await this.transition({ kind: 'guest' }, async () => {
+        // Persist any required handoff while the same credential mutation
+        // queue is held; failure must leave the active credentials intact.
+        await beforeDelete?.(current)
         await this.store.delete()
       })
       deleted = true

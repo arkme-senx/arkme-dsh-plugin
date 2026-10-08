@@ -305,6 +305,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     await this.stopLifecycle(false)
   }
 
+  cancelPendingConnection(): void {
+    // A registration failure can itself be waiting for the account close
+    // barrier. Release start() before its queued suspend() is allowed to run.
+    this.connectionController?.abort()
+  }
+
   private async stopLifecycle(flushPending: boolean): Promise<void> {
     if (!this.started) return
     this.stopApiProxyEvents()
@@ -985,7 +991,15 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (unregistered) await this.options.realtime.disconnect()
     this.connected = false
     this.serviceLeaseGeneration = 0
-    this.ledger?.close()
+    const ledgerCloseErrors: unknown[] = []
+    try {
+      this.ledger?.close()
+    } catch (error) {
+      // Keep an actually open database available for cleanup retry. A closed
+      // ledger must never survive an ACL failure and be reused by this account.
+      if (this.ledger?.isOpen) throw error
+      ledgerCloseErrors.push(error)
+    }
     this.ledger = undefined
     await this.turnUpload?.close()
     this.turnUpload = undefined
@@ -1006,6 +1020,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.lastProjectionSyncAttemptMillis = 0
     this.projectionVersion = 0
     this.clearPendingSessionEventBatches()
+    if (ledgerCloseErrors.length > 0) throw ledgerCloseErrors[0]
   }
 
   private startApiProxyEvents(): void {

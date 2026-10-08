@@ -24,6 +24,9 @@ const localDateKey = (date: Date) => [
 ].join('-')
 
 beforeEach(() => {
+  // Keep another past day selectable in the current month, even when run on the 1st.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 8, 15, 12))
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div')
   anchor = document.createElement('button')
@@ -41,6 +44,7 @@ afterEach(async () => {
   anchor.remove()
   api.call.mockReset()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 it('reuses the counted month calendar and resolves a populated day before navigation', async () => {

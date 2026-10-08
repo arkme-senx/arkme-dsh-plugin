@@ -1,3 +1,4 @@
+import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
 import { retryAfterMillis } from '../http-retry-after.js'
@@ -29,6 +30,10 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>
+  readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
+  writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
+  readonly commonGroups?: import('../common-groups.js').CommonGroupStore
   readRecordingSpeakerCache?(scope: string, userId: number): Promise<import('../types.js').ArkmeRecordingSpeakerCandidate[] | undefined>
   writeRecordingSpeakerCache?(scope: string, userId: number, candidates: import('../types.js').ArkmeRecordingSpeakerCandidate[]): Promise<void>
   clearRecordingSpeakerCache?(scope: string, userId: number): Promise<void>
@@ -36,6 +41,7 @@ export interface StateStore extends RecentEmojiStore {
   writeDirectoryCache?(userId: number, page: import('../types.js').ArkmeSourceList): Promise<void>
   readAvatarCache?(userId: number, imageRef: string): Promise<import('../types.js').ArkmeImageBytes | undefined>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
+  selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
   cachedConversationMembers?(userId: number, group: string): Promise<import('../types.js').ArkmeConversationMemberCache | undefined>
   mergeConversationMembers?(userId: number, group: string, page: import('../types.js').ArkmeConversationMemberUpdate): Promise<void>
@@ -270,6 +276,26 @@ export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, '')}${path}`
 }
 
+/** Detach a stopped consumer without cancelling another caller's shared refresh. */
+function waitForRefresh<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => {
+      signal.removeEventListener('abort', aborted)
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    promise.then(value => {
+      signal.removeEventListener('abort', aborted)
+      resolve(value)
+    }, error => {
+      signal.removeEventListener('abort', aborted)
+      reject(error)
+    })
+    if (signal.aborted) aborted()
+    else signal.addEventListener('abort', aborted, { once: true })
+  })
+}
+
 export class ServiceRuntime {
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
@@ -301,6 +327,27 @@ export class ServiceRuntime {
   }
   async writeSession(session: ArkmeSessionCredentials): Promise<void> { await this.accountSessions.write(session) }
   async deleteSession(): Promise<void> { await this.accountSessions.delete() }
+  async deleteSessionIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.accountSessions.deleteIfCurrent(expected)
+  }
+  async activatePendingBindingSession(expected: ArkmeSessionCredentials): Promise<void> {
+    await this.accountSessions.write(expected, async () => {
+      const current = await this.sessionStore.read()
+      // Concurrent status readers may already have activated this exact login.
+      if (current?.userId === expected.userId && current.refreshToken === expected.refreshToken) return false
+      if (!this.isPendingBindingSession(expected) || current !== undefined) {
+        throw new ArkmePluginError('login-context-changed', '登录账号已变化，请重试当前操作', true, 409)
+      }
+      return true
+    })
+    if (this.isPendingBindingSession(expected)) await this.clearPendingBindingSession()
+  }
+
+  async moveSessionToPendingBinding(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.accountSessions.deleteIfCurrent(expected, async current => {
+      await this.writePendingBindingSession(current)
+    })
+  }
 
   requestStats(): Record<string, ArkmeRequestStats> {
     return this.requestCoordinator.snapshotStats()
@@ -431,8 +478,8 @@ export class ServiceRuntime {
   }
 
   async writePendingBindingSession(session: ArkmeSessionCredentials): Promise<void> {
-    this.pendingBindingSession = session
     await this.pendingSessionStore?.write(session)
+    this.pendingBindingSession = session
   }
 
   async clearPendingBindingSession(): Promise<void> {
@@ -444,9 +491,10 @@ export class ServiceRuntime {
     this.refreshInFlightByUserId.delete(userId)
   }
 
-  async refreshAccessToken(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials> {
+  async refreshAccessToken(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeSessionCredentials> {
+    signal?.throwIfAborted()
     const existing = this.refreshInFlightByUserId.get(session.userId)
-    if (existing?.refreshToken === session.refreshToken) return await existing.promise
+    if (existing?.refreshToken === session.refreshToken) return await waitForRefresh(existing.promise, signal)
     const pendingBinding = this.isPendingBindingSession(session)
     const contextChanged = () => new ArkmePluginError('login-context-changed', '登录账号或凭据已变化，请重试当前操作', false, 409)
     const refresh = (async () => {
@@ -490,15 +538,15 @@ export class ServiceRuntime {
         }
         throw error
       }
-    })()
-    this.refreshInFlightByUserId.set(session.userId, { refreshToken: session.refreshToken, promise: refresh })
-    try {
-      return await refresh
-    } finally {
+    })().finally(() => {
       if (this.refreshInFlightByUserId.get(session.userId)?.promise === refresh) {
         this.refreshInFlightByUserId.delete(session.userId)
       }
-    }
+    })
+    this.refreshInFlightByUserId.set(session.userId, { refreshToken: session.refreshToken, promise: refresh })
+    // Account cleanup may need this consumer to stop before deleting credentials.
+    // Keep the refresh/cleanup owned by the shared flight, not its first waiter.
+    return await waitForRefresh(refresh, signal)
   }
 
   private requestService(baseUrl: string): ArkmeRequestService {
@@ -531,7 +579,13 @@ export class ServiceRuntime {
   private registeredRead(baseUrl: string, path: string): boolean {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
-      '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list',
+      '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
+    ]).has(path)) return true
+    if (baseUrl === this.config.recordBaseUrl && new Set([
+      '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
+      '/api/v1/reactions/actors/query', '/api/v1/reactions/groups/query',
+      '/api/v1/reactions/history/query', '/api/v1/reactions/received/query',
+      '/api/v1/reactions/history-policy/query', '/api/v1/reactions/library/query',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
@@ -552,7 +606,8 @@ export class ServiceRuntime {
   ): Promise<T> {
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
-    return await this.requestCoordinator.run<T>({
+    const onQueue = reactionQueueObserver(path)
+    return await measureReaction('upstream-total', { route: path }, () => this.requestCoordinator.run<T>({
       scope: options.scope ?? 'public',
       lane: options.lane ?? 'write',
       service: options.service ?? this.requestService(baseUrl),
@@ -563,7 +618,7 @@ export class ServiceRuntime {
       ...(options.cancelWhenUnobserved === undefined ? {} : { cancelWhenUnobserved: options.cancelWhenUnobserved }),
       ...(signal === undefined ? {} : { signal }),
       ...(read ? {
-        lane: options.lane === 'background-read' ? 'background-read' as const : 'interactive-read' as const,
+        lane: options.lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
         route,
         key: `owner-read:${route}:${stableReadParameters(body)}`,
         cacheMs: 0,
@@ -575,11 +630,12 @@ export class ServiceRuntime {
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
-      operation: async coordinatedSignal => await this.postDirect<T>(
+      ...(onQueue ? { onQueue } : {}),
+      operation: bindReactionTrace(async coordinatedSignal => await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
-      ),
-    }).catch((error): never => {
+      ))),
+    })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
       }
@@ -625,7 +681,14 @@ export class ServiceRuntime {
         throw new ArkmePluginError(`auth-http-${response.status}`, 'Arkme 登录凭据已失效', false, response.status)
       }
       if (!response.ok) {
-        const retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        let retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        if (path.startsWith('/api/v1/audio/speaker-directory/') && response.status === 429) {
+          try {
+            const envelope = objectValue(await response.clone().json())
+            const milliseconds = objectValue(envelope.data).retry_after_ms
+            if (typeof milliseconds === 'number' && Number.isFinite(milliseconds) && milliseconds >= 0) retryAfter = Math.max(retryAfter ?? 0, milliseconds)
+          } catch { /* A non-JSON limit response still honors Retry-After. */ }
+        }
         if (preserveHttpError) {
           let errorEnvelope: ArkmeEnvelope<unknown> | undefined
           try { errorEnvelope = await response.json() as ArkmeEnvelope<unknown> }
@@ -829,7 +892,7 @@ export class ServiceRuntime {
       return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
     }
   }
@@ -851,6 +914,11 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
+    } finally {
+      if (['/api/v1/reactions/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
+        // Even an unknown write outcome must not join a read started before it.
+        this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${this.config.recordBaseUrl.replace(/\/+$/, '')}/api/v1/reactions/`)
+      }
     }
   }
 
@@ -977,7 +1045,7 @@ export class ServiceRuntime {
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     }
   }
@@ -1155,7 +1223,7 @@ export class ServiceRuntime {
     try {
       return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403', 'invalid_access_token'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)

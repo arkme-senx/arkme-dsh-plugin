@@ -54,7 +54,7 @@ describe('compact conversation directory styles', () => {
         const shared = rules.find(rule => rule.style.position === 'absolute')!
         expect(shared, 'navigation and conversation rows must use one marker rule').toBeDefined()
         const railMarker = document.querySelector('[data-arkme-selection-marker]')!
-        const selectors = shared.selectorText.split(',').map(selector => selector.trim())
+        const selectors = shared.selectorText.split(/,(?![^()]*\))/).map(selector => selector.trim())
         expect(selectors.some(selector => railMarker.matches(selector))).toBe(true)
         expect(shared.style.width).toBe('2px')
         expect(shared.style.height).toBe('33px')
@@ -65,7 +65,7 @@ describe('compact conversation directory styles', () => {
         expect(shared.style.getPropertyValue('pointer-events')).toBe('none')
         expect(shared.style.background).toBe('var(--arkme-directory-accent)')
         expect(rules.find(rule => rule.selectorText === ':root')!.style.getPropertyValue('--arkme-directory-accent')).toBe('#9eadff')
-        const rows = [...document.querySelectorAll('button[role="treeitem"]')]
+        const rows = [...document.querySelectorAll('[role="treeitem"]')]
         // jsdom cannot compute pseudo-elements; match their originating rows.
         const marked = rows.filter(row => selectors.some(selector => selector.endsWith('::before')
           && row.matches(selector.replace(/::before$/, ''))))
@@ -130,7 +130,7 @@ describe('compact conversation directory styles', () => {
       const { document } = dom.window
       const directory = document.querySelector('[aria-label="Arkme 会话列表"]')!
       expect(directory.getAttribute('data-arkme-directory-compact')).toBe(compactDirectory ? 'true' : null)
-      const rows = Array.from(directory.querySelectorAll<HTMLButtonElement>('button[role="treeitem"]'))
+      const rows = Array.from(directory.querySelectorAll<HTMLElement>('[role="treeitem"]'))
       const ordinary = rows.find(row => row.getAttribute('aria-label')?.startsWith('普通私聊'))!
       expect(ordinary.closest('[data-arkme-directory-chunk]')).not.toBeNull()
       expect(ordinary.getAttribute('aria-selected')).toBe('true')
@@ -139,7 +139,7 @@ describe('compact conversation directory styles', () => {
       for (const label of ['DeepSeek Harness', '发给自己', 'Arko', '普通私聊', '免打扰群聊']) {
         const row = rows.find(row => row.textContent?.includes(label))!
         expect(row, label).toBeDefined()
-        expect(row.disabled).toBe(false)
+        expect(row.getAttribute('aria-disabled')).not.toBe('true')
         expect(row.style.padding).toBe(ordinary.style.padding)
         expect(row.style.gap).toBe(ordinary.style.gap)
         expect(row.style.paddingLeft).toBe('10px')

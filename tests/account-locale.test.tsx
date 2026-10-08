@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { connectArkmeLocale, tr, calendarWeekdays, arkmeIntlLocale } from '../src/client/locale.js'
 import { ArkmeProfileEditor } from '../src/client/ArkmeProfileEditor.js'
 import { ArkmeAboutDetails, ArkmeAboutProduct } from '../src/client/ArkmeAboutDetails.js'
-import { WechatBindingSettingsRow } from '../src/client/ArkmeSettingsSurface.js'
+import { PhoneBindDialog, WechatBindingSettingsRow } from '../src/client/ArkmeSettingsSurface.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import type { ArkmeUserProfile } from '../src/types.js'
 const mock = vi.hoisted(() => ({ call: vi.fn() }))
@@ -21,6 +21,24 @@ beforeEach(() => {
 afterEach(() => { act(() => { active = 'zh'; callback() }); cleanup() })
 const switchEnglish = () => act(() => { active = 'en'; callback() })
 describe('account UI language and editing', () => {
+  it('keeps the unbind dialog and verification input when language switches', async () => {
+    mock.call.mockResolvedValue({ allowed: true })
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    await act(async () => root.render(<PhoneBindDialog config={undefined} profile={{ ...profile, contact: { phoneMasked: '138****0000' } }} onClose={() => {}} onUpdated={() => {}} />))
+    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '解绑手机号')!.click())
+    const input = host.querySelector('input') as HTMLInputElement
+    switchEnglish()
+    expect(host.querySelector('input')).toBe(input)
+    expect(host.textContent).toContain('Disconnect phone number')
+    expect(host.textContent).toContain('Back to changing phone number')
+    expect(host.textContent).toContain('Confirm disconnect')
+    expect(host.textContent).toContain('138****0000')
+    expect(host.querySelector('button[type="submit"]')?.getAttribute('data-arkme-feedback')).toBe('primary')
+    expect(mock.call).toHaveBeenCalledTimes(1)
+    expect(mock.call).toHaveBeenCalledWith('auth.phone.unbind.check', { expectedUserId: 42 })
+    expect(host.textContent).not.toContain('A phone number is still required')
+    await act(async () => root.unmount()); host.remove()
+  })
   it('switches copy without changing interpolation values', () => {
     switchEnglish()
     expect(tr('我的账户')).toBe('My account')

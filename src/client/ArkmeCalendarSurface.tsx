@@ -13,6 +13,7 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
+import { arkmeSelfRoleAvatarFallback } from './self-role-presentation.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
@@ -32,6 +33,7 @@ import type { SelfCalendarDateSelection } from './use-self-calendar-navigation.j
 import type { CalendarMonthSnapshot } from './calendar-month-cache.js'
 import { CALENDAR_MIN_HEIGHT, useCalendarPopoverLayout } from './use-calendar-popover-layout.js'
 import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -106,6 +108,7 @@ const styles: Record<string, CSSProperties> = {
   },
   blank: { height: 45 },
   dayButton: {
+    position: 'relative',
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
@@ -128,7 +131,6 @@ const styles: Record<string, CSSProperties> = {
   error: { color: colors.danger },
   loadingStatus: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary, fontSize: 12, lineHeight: '18px', padding: '12px 0' },
   initialLoading: { minHeight: '100%', boxSizing: 'border-box' },
-  topicBadge: { display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%', marginTop: 10, padding: '2px 6px', minHeight: 24, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 8, color: colors.tertiary, fontSize: 12, lineHeight: '18px' },
   recordsPanel: {
     position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
     display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
@@ -636,11 +638,11 @@ function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem
   if (isDshAgentInputCreationSource(item)) return null
   const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
-  return <button data-arkme-feedback="neutral" type="button" style={{ ...styles.topicBadge, background: 'transparent', cursor: item.source ? 'pointer' : 'default', textAlign: 'left' }}
+  return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
     aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}
     onClick={event => { event.stopPropagation(); if (item.source !== undefined) onSelect(item.source) }}>
     {item.source !== undefined && item.source.kind !== 'topic' ? <ArkmeDirectorySourceAvatar source={item.source} size={16} />
-      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <NotePencil size={14} aria-hidden />}
+      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <ArkmeTopicSourceIcon />}
     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
     {item.source !== undefined && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
   </button>
@@ -648,13 +650,14 @@ function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem
 
 function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   const sourceLabel = arkmeCalendarRecordSourceLabel(item)
-  return <article style={styles.recordRow}>
-    <div style={styles.recordStack}>
-      <div style={styles.recordHeader}>
-        <h3 style={styles.recordTitle}>{tr("你")}</h3>
+  const role = !item.protected && (item.sourceKind === 'self' || item.sourceKind === 'topic') ? item.content?.selfRole : undefined
+  return <article data-arkme-calendar-role={role?.roleId} style={{ ...styles.recordRow, ...(role === undefined ? {} : { flexDirection: 'row-reverse', justifyContent: 'flex-end' }) }}>
+    <div style={{ ...styles.recordStack, ...(role === undefined ? {} : { alignItems: 'flex-start' }) }}>
+      <div style={{ ...styles.recordHeader, ...(role === undefined ? {} : { justifyContent: 'flex-start' }) }}>
+        <h3 style={styles.recordTitle}>{role?.name ?? tr("你")}</h3>
         <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
       </div>
-      <div style={{ ...styles.recordBubble, cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
+      <div style={{ ...styles.recordBubble, ...(role === undefined ? {} : { borderRadius: '5px 16px 16px 16px', background: arkmeTheme.subtle }), cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
         onKeyDown={event => {
           if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
           event.preventDefault(); onOpen()
@@ -673,7 +676,8 @@ function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCal
         />}
       </div>
     </div>
-    <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+    {role === undefined ? <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+      : <ArkmeUserAvatar {...(role.avatarRef ? { avatarRef: role.avatarRef } : {})} fallback={arkmeSelfRoleAvatarFallback(role)} size={30} label={`${role.name}的头像`} />}
   </article>
 }
 
@@ -714,7 +718,6 @@ export function ArkmeCalendarCell({
     disabled={disabled}
     style={{
       ...styles.dayButton,
-      ...(hasRecordingIndex ? { position: 'relative' } : {}),
       ...(showCountLabel && count > 0 ? { background: colors.bubble } : {}),
       ...(today ? { borderColor: colors.selected } : {}),
       ...(disabled ? styles.dayDisabled : {}),
@@ -928,7 +931,7 @@ export function ArkmeCalendarSurface({
               <NotePencil size={23} style={styles.emptyIcon} aria-hidden />
               <strong>{tr("这一天还没有快记")}</strong>
             </div>
-              : <ArkmeDirectoryWindow activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
+              : <ArkmeDirectoryWindow scrollRootRef={listRef} activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
                 onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource}
                 {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}</ArkmeDirectoryWindow>}
           {records?.hasMore === true && records.nextCursor !== undefined && <div ref={loadMoreSentinel} style={{ minHeight: 1 }}>
@@ -941,7 +944,7 @@ export function ArkmeCalendarSurface({
           {detailItem.forwardRecords !== undefined
             ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem}
               onPrivateChatOpened={selectSource} onClose={() => setSelectedRecord(undefined)} />
-            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} key={detailItem.itemUid} item={detailItem} canExtend={false}
+            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} {...(detailItem.selfRole === undefined ? {} : selectedItem?.sourceKind === 'self' ? { sourceKind: 'send_to_self' as const } : selectedItem?.sourceKind === 'topic' ? { sourceKind: 'topic' as const } : {})} key={detailItem.itemUid} item={detailItem} canExtend={false}
               showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(value => !value)}
               onClose={() => setSelectedRecord(undefined)} />}
         </div>

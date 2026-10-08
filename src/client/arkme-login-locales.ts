@@ -4,6 +4,12 @@ export const ARKME_LOGIN_LOCALE_NAMESPACE = 'arkme.login'
 
 export const arkmeLoginZh = {
   'locale.id': 'zh',
+  'cancellation.title': '账号正在注销',
+  'cancellation.days': '距离账号注销还剩 {days} 天。继续使用将撤销注销申请；继续注销将退出本次登录。',
+  'cancellation.cancel': '继续注销',
+  'cancellation.continue': '继续使用',
+  'cancellation.done': '账号已注销',
+  'cancellation.waiting': '注销申请已提交',
   'story.aria': '即我产品定义',
   'story.title.first': '即我，',
   'story.title.second': '你的数字自我',
@@ -95,6 +101,12 @@ export type ArkmeLoginLocaleKey = keyof typeof arkmeLoginZh
 
 export const arkmeLoginEn: Record<ArkmeLoginLocaleKey, string> = {
   'locale.id': 'en',
+  'cancellation.title': 'Account deletion pending',
+  'cancellation.days': 'Your account will be deleted in {days} days. Keep using your account to cancel deletion, or continue deletion to exit sign-in.',
+  'cancellation.cancel': 'Continue deletion',
+  'cancellation.continue': 'Keep using account',
+  'cancellation.done': 'Account deleted',
+  'cancellation.waiting': 'Account deletion requested',
   'story.aria': 'About Arkme',
   'story.title.first': 'Arkme,',
   'story.title.second': 'Digital ark, true me',

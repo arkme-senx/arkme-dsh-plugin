@@ -23,6 +23,7 @@ import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySur
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
+import { CodexConversationSurface } from './redesign/contacts/CodexConversationSurface.js'
 import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
@@ -35,13 +36,17 @@ import { arkmeUi } from './ui-controller.js'
 import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 import { ArkmeExtensionRecoveryNotice } from './ArkmeExtensionRecoveryNotice.js'
 import { ARKME_NAVIGATION_WIDTH } from './arkme-layout.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
     position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    display: 'flex', overflow: 'hidden', background: '#fff',
+    display: 'flex', overflow: 'hidden', background: arkmeTheme.sidebar,
   },
-  taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
+  taskDirectory: {
+    minWidth: 0, flex: 1, overflow: 'hidden',
+    borderLeft: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.layer1,
+  },
   sidebarResizeHandle: {
     // Share the 4px divider budget with taskDirectory's 1px border. Keeping
     // this in the flex layout leaves the native scrollbar fully hit-testable.
@@ -50,7 +55,7 @@ const styles: Record<string, CSSProperties> = {
   },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    overflow: 'hidden', background: '#fff', position: 'relative',
+    overflow: 'hidden', background: arkmeTheme.base, position: 'relative',
   },
   conversationLayer: {
     position: 'absolute', inset: 0, minWidth: 0, minHeight: 0,
@@ -226,7 +231,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode)
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
   const sidebarResizeRef = useRef<{
@@ -514,7 +519,8 @@ export function ArkmePersistentWorkspace({
   const contactsMode = ui.mode === 'source' && ui.productMode === 'contacts'
   const webLockedHarness = !startupAuthGateEnabled() && authState.auth?.status !== 'authenticated'
   const harnessVisible = ui.mode === 'harness' || webLockedHarness
-  const conversationHidden = harnessVisible || contactsMode
+  const codexVisible = ui.mode === 'codex' && ui.calendarOpen !== true && !webLockedHarness
+  const conversationHidden = harnessVisible || contactsMode || ui.mode === 'codex' && ui.calendarOpen !== true
   const conversationActive = !conversationHidden && ui.calendarOpen !== true
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
@@ -540,6 +546,9 @@ export function ArkmePersistentWorkspace({
       accountScope={contactsAccountKey}
       followSession={ui.mode === 'harness'}
     />
+    {contactsAccountKey && authenticatedUserId !== undefined && <div hidden={!codexVisible} style={{...styles.contactsLayer, display:codexVisible ? 'flex' : 'none'}}>
+      <CodexConversationSurface key={contactsAccountKey} accountKey={contactsAccountKey} userId={authenticatedUserId} active={codexVisible}/>
+    </div>}
     {!webLockedHarness && <div
         data-arkme-owned="arkme-conversation-layer"
         style={{

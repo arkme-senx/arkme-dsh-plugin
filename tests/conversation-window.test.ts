@@ -18,9 +18,9 @@ it('synchronizes text, attachments and clears by key without echo or deleting ot
  const bridge = (id: number): any => ({snapshot: async () => [...states.values()], onEvent: (fn: Function) => {listeners.set(id,fn); return () => listeners.delete(id)}, publish: async (event: any) => {states.set(event.key,event); for (const [key, fn] of listeners) if(key !== id) fn(event); return true}})
  const key = 'arkme-composer:7:source:private_chat:chat%3A1';
  const stopA = await connectConversationDrafts(bridge(1),a,7,'prod:7'), stopB = await connectConversationDrafts(bridge(2),b,7,'prod:7');
- a.setText(key,'hello'); expect(b.get(key).text).toBe('hello');
+ a.setText(key,'hello'); await vi.waitFor(() => expect(b.get(key).text).toBe('hello')); expect(b.get(key).text).toBe('hello');
  b.setText('arkme-composer:7:source:group_chat:chat%3A2','group');
- a.clear(key); expect(b.get(key).text).toBe(''); expect(b.get('arkme-composer:7:source:group_chat:chat%3A2').text).toBe('group');
+ a.clear(key); await vi.waitFor(() => expect(b.get(key).text).toBe('')); await vi.waitFor(() => expect(b.get('arkme-composer:7:source:group_chat:chat%3A2').text).toBe('group')); expect(b.get('arkme-composer:7:source:group_chat:chat%3A2').text).toBe('group');
  stopA(); stopB();
 })
 it('replicates replacement and removal of a cached long-article card', async () => {
@@ -76,4 +76,96 @@ describe('navigation from a conversation window', () => {
   await expect(navigateConversationWindow(source)).rejects.toThrow()
   expect(bridge.open).not.toHaveBeenCalled(); expect(bridge.focusMain).not.toHaveBeenCalled()
  })
+})
+
+it('coalesces a typing burst and flushes the final draft when disconnecting', async () => {
+ const store = new ArkmeComposerDraftStore(), publish = vi.fn(async () => true)
+ const bridge: any = { snapshot: async () => [], onEvent: () => () => {}, publish }
+ const stop = await connectConversationDrafts(bridge, store, 7, 'prod:7')
+ const key = 'arkme-composer:7:source:private_chat:chat%3A1'
+ for (let i = 1; i <= 20; i++) store.setText(key, 'x'.repeat(i))
+ expect(publish).not.toHaveBeenCalled()
+ await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1))
+ expect(publish.mock.calls[0]?.[0]).toMatchObject({ key, value: { text: 'x'.repeat(20) } })
+ store.take(key); stop()
+ expect(publish).toHaveBeenLastCalledWith({ kind: 'draft', key, value: null }, 'prod:7')
+})
+
+it('keeps a local unflushed edit when an older remote snapshot arrives', async () => {
+ const store = new ArkmeComposerDraftStore(), publish = vi.fn(async () => true)
+ let receive!: (event: any) => void
+ const bridge: any = {snapshot:async()=>[],onEvent:(fn:any)=>{receive=fn;return()=>{}},publish}
+ const stop = await connectConversationDrafts(bridge,store,7,'prod:7')
+ const key = 'arkme-composer:7:source:private_chat:chat%3A1'
+ store.setText(key,'new local draft')
+ receive({kind:'draft',key,value:{text:'old remote',attachments:[],mentions:[],emojis:[]}})
+ expect(store.get(key).text).toBe('new local draft')
+ stop()
+ expect(publish).toHaveBeenLastCalledWith(expect.objectContaining({value:expect.objectContaining({text:'new local draft'})}),'prod:7')
+})
+
+it('flushes the last key before acquiring send ownership and keeps concurrent submits single', async () => {
+ const {arkmeAuthStore} = await import('../src/client/auth-store.js')
+ const {arkmeComposerDraftStore: store} = await import('../src/client/composer-draft-store.js')
+ const {withConversationSend} = await import('../src/client/conversation-window-sync.js')
+ arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42})
+ const key = 'arkme-composer:42:source:private_chat:chat%3A1'
+ let current: any = null, owned = false, releaseSend!: () => void
+ const hold = new Promise<void>(resolve => { releaseSend = resolve })
+ const order: string[] = []
+ const bridge: any = {version:1,onEvent:()=>()=>{},snapshot:async()=>current ? [current] : [],
+  publish:async(event:any)=>{if(event.kind==='draft') { current=event;order.push('publish') };return true},
+  acquire:async()=>{order.push('acquire');if(owned)return false;owned=true;return true},
+  consumed:async()=>{},release:async()=>{owned=false},
+ }
+ vi.stubGlobal('arkmeConversation',bridge)
+ const stop = await connectConversationDrafts(bridge,store,42,'test:42')
+ store.setText(key,'最后一个字')
+ const sent: string[] = []
+ const send = async (consumed:()=>Promise<void>) => {sent.push(store.take(key).text);await consumed();await hold}
+ const first = withConversationSend(key,send), second = withConversationSend(key,send)
+ await vi.waitFor(()=>expect(sent).toEqual(['最后一个字']))
+ expect(order.indexOf('publish')).toBeLessThan(order.indexOf('acquire'))
+ releaseSend(); await Promise.all([first,second]);stop();store.clearAccount(42)
+})
+
+
+it.each([['acquire', false], ['snapshot', false], ['acquire', true], ['snapshot', true]] as const)('protects drafts while awaiting %s, account change=%s', async (phase, accountChanged) => {
+ const {arkmeAuthStore} = await import('../src/client/auth-store.js')
+ const {arkmeComposerDraftStore: store} = await import('../src/client/composer-draft-store.js')
+ const {withConversationSend} = await import('../src/client/conversation-window-sync.js')
+ vi.useFakeTimers()
+ arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42})
+ const key = 'arkme-composer:42:source:private_chat:send-race'
+ let current: any, inSend = false, release!: () => void, entered!: () => void
+ const waiting = new Promise<void>(resolve => { entered = resolve })
+ const hold = new Promise<void>(resolve => { release = resolve })
+ const bridge: any = {version:1,onEvent:()=>()=>{},
+  snapshot:async()=>{
+   const snapshot = current ? [current] : []
+   if (phase === 'snapshot' && inSend) { inSend = false; entered(); await hold }
+   return snapshot
+  },
+  publish:async(event:any)=>{if(event.kind==='draft')current=event;return true},
+  acquire:async()=>{inSend=true;if(phase==='acquire'){entered();await hold}return true},
+  consumed:vi.fn(async()=>{}),release:vi.fn(async()=>{}),
+ }
+ vi.stubGlobal('arkmeConversation',bridge)
+ const stop = await connectConversationDrafts(bridge,store,42,'test:42')
+ try {
+  store.setText(key,'A')
+  let sent = ''
+  const work = withConversationSend(key,async consumed=>{
+   sent = store.take(key).text
+   store.setText(key,'next draft')
+   await consumed()
+  })
+  await waiting;store.setText(key,'AB')
+  if(accountChanged)arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:43})
+  release();await work
+  expect(sent).toBe(accountChanged ? '' : 'AB')
+  expect(store.get(key).text).toBe(accountChanged ? 'AB' : 'next draft')
+  expect(bridge.consumed).toHaveBeenCalledTimes(accountChanged ? 0 : 1)
+  expect(bridge.release).toHaveBeenCalledOnce()
+ } finally {release();stop();store.clearAccount(42);vi.useRealTimers()}
 })

@@ -1,3 +1,4 @@
+import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
@@ -43,6 +44,7 @@ import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-bac
 import { parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
 import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 import type { TeamServicePort } from './services/team-service.js'
+import type { TeamCodexService } from './team-codex-service.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
@@ -880,6 +882,7 @@ export interface ArkmeHostApiOptions {
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
   teamService?: TeamServicePort
+  teamCodex?: TeamCodexService
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -911,6 +914,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('team.codex.')) {
+        if (!isLoopback(req.socket.remoteAddress) || origin === undefined || !['http:','https:'].includes(new URL(origin).protocol)) {
+          throw new ArkmePluginError('origin-required', '本地工作动态只能从当前本机页面访问', false, 403)
+        }
+        if (new URL(origin).host !== req.headers.host) {
+          throw new ArkmePluginError('origin-rejected', '本地工作动态必须从当前页面访问', false, 403)
+        }
+      }
       if (request.operation === 'user.profile.update' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
         throw new ArkmePluginError('origin-required', '资料修改必须从本机设置页面发起', false, 403)
       }
@@ -922,16 +933,19 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         const url = new URL(origin)
         if (!['http:', 'https:'].includes(url.protocol) || url.host !== req.headers.host) throw new ArkmePluginError('origin-rejected', '截屏必须从当前 DSH 页面发起', false, 403)
       }
-      if (request.operation === 'link.metadata' && origin === undefined) {
+      if (['link.metadata', 'share.preview'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
       }
+      if (request.operation.startsWith('self-roles.') && request.operation !== 'self-roles.list' && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '角色修改必须从当前 DSH 页面发起', false, 403)
+      }
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -967,6 +981,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamService,
         options.remoteUnavailableReason,
         options.accountSessions?.(),
+        options.teamCodex,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -1014,11 +1029,13 @@ export async function dispatchArkmeHostOperation(
   teamService?: TeamServicePort,
   remoteUnavailableReason?: () => string,
   accountSessions?: DshAccountSessions,
+  teamCodex?: TeamCodexService,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
       if (accountSessions) capabilities.features = { ...capabilities.features, dshAccountSessions: true }
+      if (teamCodex) capabilities.features = { ...capabilities.features, teamCodexLocal: true }
       return teamService === undefined ? capabilities : {
         ...capabilities,
         features: {
@@ -1035,6 +1052,7 @@ export async function dispatchArkmeHostOperation(
     case 'link.metadata': return await resolveArkmeLinkMetadata(
       service, stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
     )
+    case 'share.preview': return await service.resolveSharePreview(stringParam(params, 'url'), requestSignal)
     case 'source.link-metadata.resolve': {
       const url = stringParam(params, 'url')
       return await resolveArkmeLinkMetadata(
@@ -1060,14 +1078,22 @@ export async function dispatchArkmeHostOperation(
     case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
+    case 'auth.email.send': return await service.sendEmailBindCode(numberParam(params, 'expectedUserId', 0), stringParam(params, 'email'))
+    case 'auth.email.bind': return await service.bindEmail(numberParam(params, 'expectedUserId', 0), stringParam(params, 'email'), stringParam(params, 'code'))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
       captchaParam(params),
     )
+    case 'auth.phone.unbind.check': return await service.checkPhoneUnbindEligibility(numberParam(params, 'expectedUserId', 0))
+    case 'auth.phone.unbind.send': return await service.sendPhoneUnbindCode(captchaParam(params))
+    case 'auth.phone.unbind': return await service.unbindPhone(stringParam(params, 'code'))
     case 'auth.phone.verify': return await service.verifyPhoneCode(
       stringParam(params, 'phone'),
       stringParam(params, 'code'),
     )
+    case 'auth.cancellation.preview': return await service.previewCancellation(numberParam(params, 'expectedUserId', 0))
+    case 'auth.cancellation.submit': return await service.submitCancellation(numberParam(params, 'expectedUserId', 0), stringParam(params, 'expectedMode'))
+    case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
@@ -1084,6 +1110,23 @@ export async function dispatchArkmeHostOperation(
     ))
     case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
     case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
+    case 'team.codex.entry-availability': {
+      if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
+      return await teamCodex.entryAvailability(numberParam(params,'expectedUserId',-1))
+    }
+    case 'team.codex.state':
+    case 'team.codex.invite':
+    case 'team.codex.events':
+    case 'team.codex.change': {
+      if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
+      const teamRef = stringParam(params, 'teamRef')
+      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'))
+      if (operation === 'team.codex.invite') return await teamCodex.invite(teamRef)
+      const id = stringParam(params, 'id')
+      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'))
+      await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
+      return { ok: true }
+    }
     case 'team.list': {
       const limit = optionalNumberParam(params, 'limit')
       const pageCursor = optionalTeamStringParam(params, 'pageCursor')
@@ -1162,6 +1205,8 @@ export async function dispatchArkmeHostOperation(
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
+    case 'account.points.query': return await service.aiPointsAccount(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.points.consumption': return await service.aiPointsConsumption({ month: stringParam(params, 'month'), ...(typeof params.beforeId === 'string' && params.beforeId ? { beforeId: params.beforeId } : {}) }, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.storage': return await service.accountStorageUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.voice': return await service.accountVoiceUsage(stringParam(params, 'expectedAccountScope'))
@@ -1365,6 +1410,13 @@ export async function dispatchArkmeHostOperation(
     case 'bots.private-chat.notification.update': return await service.updateBotNotificationPreference(
       stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'recordings.history': return await service.recordingHistory({ cursor: stringParam(params, 'cursor') }, requestSignal)
+    case 'recordings.presence': return await service.recordingPresence(requestSignal)
+    case 'recordings.presence.capture': return await service.reportRecordingPresence(
+      stringParam(params, 'accountKey'), { operation: stringParam(params, 'operation') as 'start' | 'update' | 'stop',
+        recordingId: stringParam(params, 'recordingId'), startedAt: numberParam(params, 'startedAt', 0),
+        elapsedMillis: numberParam(params, 'elapsedMillis', 0), reason: stringParam(params, 'reason') },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
@@ -1433,7 +1485,16 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
     case 'recordings.speaker.cached-options': return await service.cachedRecordingSpeakerOptions(requestSignal)
+    case 'speaker-directory.summary': return await service.speakerDirectorySummary(params, requestSignal)
+    case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
+    case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
+    case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
+    case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
+    case 'recordings.speaker.members': return await service.recordingSpeakerMembers(
+      stringParam(params, 'speakerRef').trim(), requestSignal, stringParam(params, 'expectedVersion').trim() || undefined,
+    )
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
@@ -1537,6 +1598,21 @@ export async function dispatchArkmeHostOperation(
         ? {}
         : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
     })
+    case 'official-notifications.list': return service.listOfficialNotifications(stringParam(params, 'cursor'), requestSignal)
+    case 'official-notifications.summary': return service.officialNotificationSummary(requestSignal)
+    case 'official-notifications.detail': return service.officialNotificationDetail(stringParam(params, 'id'), requestSignal)
+    case 'official-notifications.read': return service.readOfficialNotifications({ accountKey: stringParam(params, 'accountKey'), ...(params?.all === true ? { all: true } : { ids: stringListParam(params, 'ids') }) }, requestSignal)
+    case 'ai-letter.list': return await service.listAiLetters({
+      periodType: numberParam(params, 'periodType', 0),
+      cursorStartAt: numberParam(params, 'cursorStartAt', 0),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
+    case 'ai-letter.unread': return await service.aiLetterUnread(requestSignal)
+    case 'ai-letter.mark-read': {
+      const letterIds = [...new Set(stringListParam(params, 'letterIds').map(value => value.trim()).filter(value => value !== ''))].slice(0, 50)
+      return await service.markAiLettersRead(letterIds, requestSignal)
+    }
     case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.session': return await service.arkoEnsureSession()
@@ -1570,6 +1646,28 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'sessionId', 0),
       numberParam(params, 'assistantMsgId', 0),
       stringParam(params, 'runUid'),
+    )
+    case 'self-roles.list': return await service.listSelfRoles(numberParam(params, 'expectedUserId', 0))
+    case 'self-roles.create': return await service.createSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'name'),
+      params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
+    )
+    case 'self-roles.update': return await service.updateSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'), params.name === undefined ? undefined : stringParam(params, 'name'),
+      params.avatarRef === undefined ? undefined : stringParam(params, 'avatarRef'),
+    )
+    case 'self-roles.delete': return await service.deleteSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.bind': return await service.bindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'sourceRef'),
+      stringParam(params, 'recordUid'), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.unbind': return await service.unbindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'recordUid'), stringParam(params, 'roleId'),
+    )
+    case 'self-roles.rebind': return await service.rebindSelfRole(
+      numberParam(params, 'expectedUserId', 0), stringParam(params, 'recordUid'), stringParam(params, 'newRecordUid'),
     )
     case 'records.cache': return await service.cachedSnapshot()
     case 'records.refresh': return await service.refreshSnapshot()
@@ -1623,18 +1721,47 @@ export async function dispatchArkmeHostOperation(
     case 'user.arkme-id.check': return await service.checkArkmeIdAvailability(stringParam(params, 'arkmeId'))
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
-      const image = await service.readImage(stringParam(params, 'imageRef'))
+      const image = params.cacheOnly === true
+        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true })
+        : await service.readImage(stringParam(params, 'imageRef'))
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'arrangements.board-cache': {
+      let pages
+      if (Object.hasOwn(params, 'pages')) {
+        try { pages = parseArrangementBoardCachePages(params.pages) }
+        catch { throw new ArkmePluginError('invalid-params', '安排看板缓存格式无效', false, 400) }
+      }
+      return await service.arrangementBoardCache(stringParam(params, 'accountScope'), pages)
+    }
+    case 'arrangements.create': {
+      if (!Array.isArray(params.texts) || params.texts.some(text => typeof text !== 'string')) throw new ArkmePluginError('arrangement-create-invalid', '安排输入无效', false, 400)
+      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[] })
+    }
+    case 'arrangements.recognition': {
+      if (!Array.isArray(params.arrangementRefs) || params.arrangementRefs.some(ref => typeof ref !== 'string')) throw new ArkmePluginError('arrangement-read-invalid', '安排引用无效', false, 400)
+      return service.arrangementRecognition(params.arrangementRefs as string[])
+    }
     case 'arrangements.list': return await service.listArrangements({
       status: arrangementListStatusParam(params),
+      ...(params.order === 'board' ? { order: 'board' as const, ...(stringParam(params, 'boardVersion') ? { boardVersion: stringParam(params, 'boardVersion') } : {}) } : {}),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.reorder': {
+      const status = arrangementListStatusParam(params)
+      if (status === 'all') throw new ArkmePluginError('arrangement-order-invalid', '安排排序状态无效', false, 400)
+      return await service.reorderArrangement({
+        arrangementRef: stringParam(params, 'arrangementRef'), status,
+        ...(stringParam(params, 'beforeRef') ? { beforeRef: stringParam(params, 'beforeRef') } : {}),
+        ...(stringParam(params, 'afterRef') ? { afterRef: stringParam(params, 'afterRef') } : {}),
+        boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
+      })
+    }
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
@@ -1709,6 +1836,12 @@ export async function dispatchArkmeHostOperation(
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
       },
     )
+    case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
+    case 'world.interactions.mark-viewed': {
+      const sequence = Math.max(0, Math.trunc(numberParam(params, 'seenThroughSequence', 0)))
+      if (sequence <= 0) throw new ArkmePluginError('world-interaction-sequence-invalid', '世界互动已读位置无效', false, 400)
+      return await service.markWorldInteractionsViewed(sequence, requestSignal)
+    }
     case 'world.interactions.create-text': return await service.createWorldTextInteraction({
       targetRef: stringParam(params, 'targetRef'),
       textContent: stringParam(params, 'textContent'),
@@ -1745,6 +1878,14 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'title'),
     )
+    case 'archives.list': return service.listArchives(stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'archives.state': return service.getArchiveStates(stringListParam(params, 'sourceRefs'), requestSignal)
+    case 'archives.set': {
+      if (typeof params.selfArchived !== 'boolean' || !Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0) {
+        throw new ArkmePluginError('archive-input-invalid', '归档参数不完整，请刷新重试', false, 400)
+      }
+      return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
+    }
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
@@ -1864,6 +2005,12 @@ export async function dispatchArkmeHostOperation(
       requiredInterwovenParam(params, 'sourceRef'),
       requiredInterwovenParam(params, 'momentRef'),
     )
+    case 'source.interwoven-read-receipts': {
+      if (!Array.isArray(params.momentRefs) || !params.momentRefs.every(ref => typeof ref === 'string')) {
+        throw new ArkmePluginError('interwoven-param-invalid', '群互动已读查询参数无效', false, 400)
+      }
+      return await service.interwovenReadReceipts(requiredInterwovenParam(params, 'sourceRef'), params.momentRefs, requestSignal)
+    }
     case 'source.related-quick-notes.from-message': return await service.relatedQuickNotesFromMessage(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
       requiredRelatedQuickNoteParam(params, 'messageActionRef', MAX_MESSAGE_ACTION_REF_CHARS),
@@ -1950,6 +2097,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'recordUid'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.message-extension.parent': return await service.sourceMessageExtensionParent(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
@@ -1975,7 +2126,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-snapshot.detail': return await service.messageSnapshotDetail(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'actionRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(requestSignal === undefined ? {} : { signal: requestSignal }), includeAttachments: params.includeAttachments === true },
     )
     case 'source.message-location.set': {
       await service.saveMessageLocation(
@@ -2108,6 +2259,10 @@ export async function dispatchArkmeHostOperation(
     case 'source.ai-polish.retry': return await service.retryGroupAiPolish(
       stringParam(params, 'retryRef'),
     )
+    case 'group.common.list': return await service.listCommonGroups(stringParam(params, 'sourceRef'), {
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}),
+    })
+    case 'group.common.sync': return await service.syncCommonGroups(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.members': return await service.listGroupMembers(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
@@ -2177,7 +2332,12 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'botRef'),
     )
-    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
+    case 'group.bot.remove': return await service.removeGroupBot(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'botRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'), requestSignal)
     case 'group.notification.set': return await service.setGroupMessageDnd(
       stringParam(params, 'sourceRef'),
       params.enabled === true,
@@ -2257,6 +2417,7 @@ export async function dispatchArkmeHostOperation(
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
+    case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(
       stringParam(params, 'sourceRef'),

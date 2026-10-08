@@ -1,5 +1,7 @@
+import { measureReaction } from '../reaction-host-diagnostics.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
+import { currentProfileRecordSnapshot } from '../record-sender-snapshot.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeEnvironment,
@@ -327,7 +329,7 @@ export class ProfileService {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new ArkmePluginError('user-card-target-invalid', '用户信息参数无效', false)
     }
-    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal)).get(userId)
+    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal, 0)).get(userId)
     const displayName = profile?.displayName ?? '群成员'
     return {
       displayName,
@@ -349,6 +351,12 @@ export class ProfileService {
       return persisted
     }
     return await this.refreshProfileForSession(session)
+  }
+
+  /** Capture the author's presentation at creation time; never persist a mutable signed profile ref. */
+  async recordSenderSnapshot(session: ArkmeSessionCredentials): Promise<{ avatar?: string; nickname?: string } | undefined> {
+    const profile = (await this.profileForSession(session).catch(() => undefined))?.profile
+    return currentProfileRecordSnapshot(profile)
   }
 
   async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
@@ -397,6 +405,8 @@ export class ProfileService {
         ...(googleName === '' ? {} : { google: googleName }),
       }
       const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
+      const phoneBindingRequired = typeof data.phone === 'string'
+        ? phoneBindingRequirement(data.phone_binding_policy) : undefined
       const profile: ArkmeUserProfile = {
         userId,
         displayName,
@@ -406,6 +416,7 @@ export class ProfileService {
         ...(avatarUrl === undefined ? {} : { avatarUrl }),
         arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
         ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
+        ...(phoneBindingRequired === undefined ? {} : { phoneBindingRequired }),
         accountType: numberValue(data.type),
         createdAt: numberValue(data.create_at),
         bindings: {
@@ -420,7 +431,12 @@ export class ProfileService {
           ...(email === undefined ? {} : { emailMasked: email }),
         },
       }
-      const snapshot = await this.runtime.stateStore.cacheProfile(userId, profile)
+      const persisted = await this.runtime.stateStore.cacheProfile(userId, profile)
+      // Login policy is a fresh owner decision, not a local database column.
+      // Keep it with the existing short-lived profile cache after persistence.
+      const snapshot: ArkmeUserProfileSnapshot = phoneBindingRequired === undefined || persisted.profile === null
+        ? persisted
+        : { ...persisted, profile: { ...persisted.profile, phoneBindingRequired } }
       this.profileCache.set(userId, { value: snapshot, expiresAtMillis: Date.now() + PROFILE_CACHE_TTL_MS })
       return snapshot
     })()
@@ -501,6 +517,7 @@ export class ProfileService {
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    maxAgeMillis = PUBLIC_PROFILE_CACHE_TTL_MS,
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
       .sort((left, right) => left - right)
@@ -512,12 +529,14 @@ export class ProfileService {
     }
     for (const userId of normalized) {
       const cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
-      if (cached === undefined || cached.expiresAtMillis <= now) {
+      if (cached === undefined || cached.expiresAtMillis <= now
+        || cached.expiresAtMillis - (cached.value === null ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS : PUBLIC_PROFILE_CACHE_TTL_MS) + maxAgeMillis <= now) {
         missing.push(userId)
         continue
       }
       if (cached.value !== null) profiles.set(userId, cached.value)
     }
+    await measureReaction('profile-cache', { requested: normalized.length, hits: normalized.length - missing.length, misses: missing.length }, async () => undefined)
     for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
       const startedAtMillis = Date.now()
@@ -784,4 +803,12 @@ export class ProfileService {
       revision: snapshot.revision,
     }
   }
+}
+
+// Dates and account age are evaluated by the account service, never by the plugin.
+export function phoneBindingRequirement(value: unknown): boolean | undefined {
+  const mode = value !== null && typeof value === 'object' && 'mode' in value ? value.mode : undefined
+  if (mode === 'none' || mode === 'remind') return false
+  if (mode === 'required') return true
+  return undefined
 }

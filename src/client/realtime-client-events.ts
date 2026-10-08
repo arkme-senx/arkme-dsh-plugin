@@ -1,3 +1,4 @@
+import { officialNotifications } from './official-notification-store.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
@@ -246,6 +247,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
@@ -285,10 +287,19 @@ export function useArkmeRealtimeClientEvents(
           if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
           return
         }
+        if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
+          if (update.projection === 'topic-directory') {
+            invalidateSelfTopicDirectories()
+            arkmeUi.topicDirectoryChanged()
+            return
+          }
           if (update.projection !== 'record') return
-          invalidateSelfTopicDirectories(update.retainTopicCounts !== true)
+          // A metadata-only hint does not identify a removed/locked topic. Reconcile
+          // the existing directory atomically; account changes and access errors still clear it.
+          invalidateSelfTopicDirectories()
           arkmeInterwovenInvalidation.invalidate()
           // Includes privacy/hierarchy changes: never retain an old visible count.
           arkmeCalendarInvalidations.publishAll({ hard: true })
@@ -344,7 +355,9 @@ export function useArkmeRealtimeClientEvents(
           browserDocument?.visibilityState,
           browserDocument?.hasFocus?.() ?? true,
         )
-        if (foreground && timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        // Retain delivered bodies in the bounded account cache even while unfocused.
+        // Read acknowledgement has its own visible/focused conversation guard.
+        if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
         for (const dateStamp of arkmeChatDeltaCalendarDateStamps(update)) {
           arkmeCalendarInvalidations.publish({ dateStamp })
         }

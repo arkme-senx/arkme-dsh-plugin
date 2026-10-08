@@ -27,7 +27,7 @@ function sameSelection(left: ArkmeDirectorySelection, right: ArkmeDirectorySelec
       || (left.kind === 'group' && right.kind === 'group' && left.sourceRef === right.sourceRef)
       || (left.kind === 'bot' && right.kind === 'bot' && left.bot.botRef === right.bot.botRef)
       || (left.kind === 'contact' && right.kind === 'contact' && left.contactRef === right.contactRef)
-      || (left.kind === 'team' && right.kind === 'team' && left.teamRef === right.teamRef)
+      || (left.kind === 'team' && right.kind === 'team' && left.teamRef === right.teamRef && left.view === right.view)
       || (left.kind === 'unmarked-speaker' && right.kind === 'unmarked-speaker'
         && left.candidateRef === right.candidateRef))
 }

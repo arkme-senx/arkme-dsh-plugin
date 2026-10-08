@@ -106,6 +106,7 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    interwovenReadReceipts: vi.fn(async () => ({ items: [] })),
     relatedQuickNotesFromMessage: vi.fn(async (sourceRef: string, messageActionRef: string) => ({ sourceRef, messageActionRef })),
     relatedQuickNotesFromMoment: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     relatedQuickNoteDetail: vi.fn(async (sourceRef: string, relatedRef: string) => ({ sourceRef, relatedRef })),
@@ -127,6 +128,7 @@ function fakeService() {
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
     sourceMessageExtensionContext: vi.fn(async (sourceRef: string, messageActionRef: string, options: unknown) => ({ sourceRef, messageActionRef, options })),
+    sourceMessageExtensionParent: vi.fn(async (sourceRef: string, messageActionRef: string, options: unknown) => ({ sourceRef, messageActionRef, options })),
     extendSourceMessage: vi.fn(async (sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: unknown, options: unknown) => ({ sourceRef, messageActionRef, textContent, recordUid, fileRefs, options })),
     sharedRecordingDetail: vi.fn(async (detailRef: string, options: unknown) => ({ detailRef, options })),
     forwardSourceMessages: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
@@ -169,6 +171,7 @@ function fakeService() {
     groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
+    removeGroupBot: vi.fn(async (sourceRef: string, botRef: string, options: unknown) => ({ sourceRef, botRef, options, installed: false })),
     generateGroupAiPolishRuleForSource: vi.fn(async () => ({ confirmationRef: 'confirm-1' })),
     prepareEnableGroupAiPolishRuleForSource: vi.fn(async () => ({ confirmationRef: 'confirm-2' })),
     listMyWorldFeed: vi.fn(async (input: unknown) => input),
@@ -409,6 +412,12 @@ describe('favorite sticker Host API dispatch', () => {
 })
 
 describe('link metadata Host API dispatch', () => {
+  it('dispatches bounded share preview without invoking message detail', async () => {
+    const service = { resolveSharePreview: vi.fn(async () => ({ kind: 'message', state: 'ready', author: '原作者' })) }
+    const controller = new AbortController()
+    await expect(dispatchArkmeHostOperation(service as never, 'share.preview', { url: 'https://jiwo.cc/s/Abcdef1234567890' }, undefined, undefined, undefined, undefined, controller.signal)).resolves.toMatchObject({ author: '原作者' })
+    expect(service.resolveSharePreview).toHaveBeenCalledWith('https://jiwo.cc/s/Abcdef1234567890', controller.signal)
+  })
   it('dispatches link title resolution through its dedicated infrastructure owner', async () => {
     const service = fakeService()
     const request = new AbortController()
@@ -709,12 +718,14 @@ describe('group member Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'group.bots', { sourceRef: 'group-ref', userId: 999 })
     await dispatchArkmeHostOperation(service as never, 'group.bot.add', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'group.bot.remove', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
     expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { query: '林', limit: 12.8 })
     expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { limit: 20, groupSourceRefs: ['peer-group-ref'] })
     expect(service.addGroupMembers).toHaveBeenCalledWith('group-ref', ['candidate-1'])
     expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
     expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')
     expect(service.addGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref')
+    expect(service.removeGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref', {})
   })
 })
 
@@ -897,7 +908,7 @@ describe('conversation member Host API dispatch', () => {
 })
 
 describe('message snapshot Host API dispatch', () => {
-  it('forwards only the opaque source/action identity and request lifecycle signal', async () => {
+  it('forwards only the opaque source/action identity, request lifecycle signal and default attachment option', async () => {
     const service = fakeService()
     const signal = new AbortController().signal
     await dispatchArkmeHostOperation(service as never, 'source.message-snapshot.detail', {
@@ -910,7 +921,29 @@ describe('message snapshot Host API dispatch', () => {
     expect(service.messageSnapshotDetail).toHaveBeenCalledWith(
       'source-ref',
       'arkme-message-action-v1.payload.signature',
-      { signal },
+      { signal, includeAttachments: false },
+    )
+  })
+
+  it.each([
+    { input: true, expected: true },
+    { input: false, expected: false },
+    { input: 'true', expected: false },
+    { input: 1, expected: false },
+  ])('enables attachments only for explicit boolean true (input: $input)', async ({ input, expected }) => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.message-snapshot.detail', {
+      sourceRef: 'source-ref',
+      actionRef: 'arkme-message-action-v1.payload.signature',
+      includeAttachments: input,
+      recordUid: 'must-not-forward',
+      userId: 999,
+    })
+
+    expect(service.messageSnapshotDetail).toHaveBeenCalledWith(
+      'source-ref',
+      'arkme-message-action-v1.payload.signature',
+      { includeAttachments: expected },
     )
   })
 })
@@ -977,6 +1010,10 @@ describe('message action Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'source.message-extension.context', {
       sourceRef: 'source-ref', messageActionRef: 'action-1', sid: 'must-not-forward',
     })
+    const parentReadController = new AbortController()
+    await dispatchArkmeHostOperation(service as never, 'source.message-extension.parent', {
+      sourceRef: 'source-ref', messageActionRef: 'action-1', recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, parentReadController.signal)
     await dispatchArkmeHostOperation(service as never, 'source.message-extension.extend', {
       sourceRef: 'source-ref', messageActionRef: 'action-1', textContent: ' 附件延展 ', recordUid: 'record-2',
       relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
@@ -995,6 +1032,7 @@ describe('message action Host API dispatch', () => {
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
     expect(service.sourceMessageExtensionContext).toHaveBeenCalledWith('source-ref', 'action-1', expect.any(Object))
+    expect(service.sourceMessageExtensionParent).toHaveBeenCalledWith('source-ref', 'action-1', { signal: parentReadController.signal })
     expect(service.extendSourceMessage).toHaveBeenCalledWith(
       'source-ref', 'action-1', ' 附件延展 ', 'record-2', ['file-1', 'file-2'], {
         title: '', textContent: ' 附件延展 ', displayKind: 0, assets: [],
@@ -1287,6 +1325,14 @@ describe('outgoing call Host API dispatch', () => {
 
     expect(service.interwovenMoments).toHaveBeenCalledWith('source-ref')
     expect(service.interwovenMomentDetail).toHaveBeenCalledWith('source-ref', 'moment-ref')
+    const controller = new AbortController()
+    await dispatchArkmeHostOperation(service as never, 'source.interwoven-read-receipts', {
+      sourceRef: 'source-ref', momentRefs: ['moment-ref'], recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(service.interwovenReadReceipts).toHaveBeenCalledWith('source-ref', ['moment-ref'], controller.signal)
+    await expect(dispatchArkmeHostOperation(service as never, 'source.interwoven-read-receipts', {
+      sourceRef: 'source-ref', momentRefs: ['moment-ref', 1],
+    })).rejects.toMatchObject({ code: 'interwoven-param-invalid' })
   })
 
   it('dispatches record calendar operations without forwarding raw scope fields', async () => {
@@ -1761,4 +1807,34 @@ describe('call sharing host cancellation', () => {
     expect(service.callShareLink).toHaveBeenCalledWith('ref', signal)
     expect(service.callShareViewers).toHaveBeenCalledWith('ref', '10:2', signal)
   })
+})
+
+
+it('routes common-group list and sync to one owner, without caller-owned viewer identity', async () => {
+  const service = {listCommonGroups:vi.fn(),syncCommonGroups:vi.fn()}
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service as never,'group.common.list',{sourceRef:'p',cursor:'c',userId:999},undefined,undefined,undefined,undefined,signal)
+  await dispatchArkmeHostOperation(service as never,'group.common.sync',{sourceRef:'p',userId:999},undefined,undefined,undefined,undefined,signal)
+  expect(service.listCommonGroups).toHaveBeenCalledExactlyOnceWith('p',{cursor:'c',signal})
+  expect(service.syncCommonGroups).toHaveBeenCalledExactlyOnceWith('p',signal)
+})
+
+it('cancels the live membership check when a common-group panel closes', async () => {
+  const controller = new AbortController()
+  const service = { groupSettings: vi.fn(async (_ref: string, signal?: AbortSignal) => {
+    expect(signal).toBe(controller.signal)
+    controller.abort()
+    signal!.throwIfAborted()
+  }) }
+  await expect(dispatchArkmeHostOperation(service as never, 'group.settings', { sourceRef: 'group' },
+    undefined, undefined, undefined, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+})
+
+it('forwards cache-only image probes without changing ordinary reads or trusting a supplied user ID', async () => {
+ const image={mediaType:'image/png',data:Uint8Array.from([1,2,3]),bytes:3}
+ const service={readImage:vi.fn(async()=>image)}
+ await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar',cacheOnly:true,userId:999})
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar',{cacheOnly:true})
+ await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
 })

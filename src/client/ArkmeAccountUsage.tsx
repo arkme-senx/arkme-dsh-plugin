@@ -1,17 +1,22 @@
+import { pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
+import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage } from '../account-usage.js'
+import type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountVoiceUsage } from '../account-usage.js'
 import { callArkme } from './api.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
-import { ArkmeBillingSettings, formatArkmeNanoCny, type ArkmeQuotaViewState } from './ArkmeBillingSettings.js'
-import { ArkmeStorageUsageBreakdown, ArkmeTokenUsageBreakdown } from './ArkmeUsageBreakdown.js'
+import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
+import { ArkmeStorageUsageBreakdown } from './ArkmeUsageBreakdown.js'
 
 type ReadState<T> = { status: 'loading' | 'error'; unavailable?: boolean } | { status: 'ready'; value: T }
-type UsageValue = ArkmeAccountRecordingUsage | ArkmeAccountStorageUsage | ArkmeAccountTokenUsage | ArkmeAccountVoiceUsage
-function useUsage<T extends UsageValue>(operation: 'account.usage.recording' | 'account.usage.tokens' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
+type UsageValue = ArkmeAccountRecordingUsage | ArkmeAccountStorageUsage | ArkmeAiPointsAccount | ArkmeAccountVoiceUsage
+// Floor only the overview labels; keep the exact account values for billing and details.
+function formatWholePoints(value: string): string {
+  return (pointsUnits(value) / 10_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+function useUsage<T extends UsageValue>(operation: 'account.usage.recording' | 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
   const [result, setResult] = useState<{ scope: string; revision: number; state: ReadState<T> }>()
   useEffect(() => {
     let active = true
@@ -65,8 +70,8 @@ function UsageBar({ used, total, label, description }: { used: number; total: nu
     <span style={{ width: `${percent}%` }} />
   </span>
 }
-function Pending({ status }: { status: 'loading' | 'error'; unavailable?: boolean }) {
-  return <p className="arkme-usage-muted">{status === 'loading' ? tr("读取中…") : tr("暂时无法读取，请刷新重试")}</p>
+function Pending({ status, onRetry }: { status: 'loading' | 'error'; onRetry: () => void }) {
+  return <p className="arkme-usage-muted">{status === 'loading' ? tr("读取中…") : <>{tr('暂时无法读取')} <button type="button" onClick={onRetry}>{tr('重试')}</button></>}</p>
 }
 
 function UsageSummaryRow({ label, kind, measurement, pending, description }: {
@@ -89,7 +94,7 @@ function UsageSummaryRow({ label, kind, measurement, pending, description }: {
 /** Four compact rows; only authoritative measured quantities get progress values. */
 export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScope: string; onOpenDetails: () => void }) {
   useArkmeLocale()
-  const tokens = useUsage<ArkmeAccountTokenUsage>('account.usage.tokens', accountScope, 0)
+  const points = useUsage<ArkmeAiPointsAccount>('account.points.query', accountScope, 0)
   const storage = useUsage<ArkmeAccountStorageUsage>('account.usage.storage', accountScope, 0)
   const voice = useUsage<ArkmeAccountVoiceUsage>('account.usage.voice', accountScope, 0)
   const recording = useUsage<ArkmeAccountRecordingUsage>('account.usage.recording', accountScope, 0)
@@ -97,11 +102,10 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
   return <button type="button" className="arkme-usage-summary" aria-label={tr("查看用量与额度详情")} onClick={onOpenDetails}>
     <span className="arkme-usage-summary-heading"><strong>{tr("用量与额度")}</strong><span>{tr("详情 ›")}</span></span>
     <span className="arkme-usage-summary-rows" aria-live="polite">
-      <UsageSummaryRow label={tr("月度 Token")} kind="tokens" pending={status(tokens)} measurement={tokens.status === 'ready' ? {
-        used: tokens.value.used, total: tokens.value.used + tokens.value.remaining,
-        totalText: formatCompactTokens(tokens.value.used + tokens.value.remaining),
-        description: tr("本月已用 {v0} / 剩余 {v1} / 共 {v2} Token", { v0: numberFormat.format(tokens.value.used), v1: numberFormat.format(tokens.value.remaining), v2: numberFormat.format(tokens.value.used + tokens.value.remaining) }),
-      } : undefined} />
+      <span className="arkme-usage-summary-row" data-usage-kind="ai-points">
+        <span className="arkme-usage-summary-label">{tr('AI 额度')}</span>
+        <strong className="arkme-usage-summary-total">{points.status === 'ready' ? `${formatWholePoints(points.value.availablePoints)} ${tr('积分')}` : status(points)}</strong>
+      </span>
       <UsageSummaryRow label={tr("云端存储")} kind="storage" pending={status(storage)} measurement={storage.status === 'ready' ? {
         used: storage.value.usedBytes, total: storage.value.totalBytes, totalText: formatUsageBytes(storage.value.totalBytes),
         description: tr("已用 {v0} / 剩余 {v1} / 共 {v2}", { v0: formatUsageBytes(storage.value.usedBytes), v1: formatUsageBytes(Math.max(0, storage.value.totalBytes - storage.value.usedBytes)), v2: formatUsageBytes(storage.value.totalBytes) }),
@@ -123,74 +127,58 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
 interface UsageDetailsProps {
   accountScope: string
   onViewMembership: () => void
-  onRefreshMembership: () => void
 }
 export function ArkmeAccountUsageDetails(props: UsageDetailsProps) {
-  return <ArkmeBillingSettings key={props.accountScope} modal renderTrigger={({ quotaState, onOpen, onRefresh }) =>
-    <UsageDetailsContent {...props} balance={quotaState} onRecharge={onOpen} onRefreshBalance={onRefresh} />
+  const [creditsRevision, setCreditsRevision] = useState(0)
+  const onCreditsChanged = useCallback(() => setCreditsRevision(value => value + 1), [])
+  return <ArkmeBillingSettings key={props.accountScope} active={false} modal onCreditsChanged={onCreditsChanged} renderTrigger={({ onOpen }) =>
+    <UsageDetailsContent {...props} creditsRevision={creditsRevision} onRecharge={onOpen} />
   } />
 }
-function UsageDetailsContent({ accountScope, onViewMembership, onRefreshMembership, balance, onRecharge, onRefreshBalance }: UsageDetailsProps & {
-  balance: ArkmeQuotaViewState
+function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, creditsRevision }: UsageDetailsProps & {
   onRecharge: () => void
-  onRefreshBalance: () => void
+  creditsRevision: number
 }) {
   useArkmeLocale()
   const [revision, setRevision] = useState(0)
-  const [tokensOpen, setTokensOpen] = useState(false), [storageOpen, setStorageOpen] = useState(false)
-  const tokensId = useId(), storageId = useId()
-  const tokens = useUsage<ArkmeAccountTokenUsage>('account.usage.tokens', accountScope, revision)
+  const [pointsOpen, setPointsOpen] = useState(false), [storageOpen, setStorageOpen] = useState(false)
+  const pointsId = useId(), storageId = useId()
+  const points = useUsage<ArkmeAiPointsAccount>('account.points.query', accountScope, revision + creditsRevision)
   const storage = useUsage<ArkmeAccountStorageUsage>('account.usage.storage', accountScope, revision)
   const voice = useUsage<ArkmeAccountVoiceUsage>('account.usage.voice', accountScope, revision)
   const recording = useUsage<ArkmeAccountRecordingUsage>('account.usage.recording', accountScope, revision)
   const [recordingOpen, setRecordingOpen] = useState(false)
   const recordingId = useId()
-  const loading = recording.status === 'loading' || tokens.status === 'loading' || storage.status === 'loading' || voice.status === 'loading' || balance.kind === 'loading'
-  const tokenTotal = tokens.status === 'ready' ? tokens.value.used + tokens.value.remaining : 0
-  const tokenLevel = tokens.status === 'ready' ? usageLevel(tokens.value.used, tokenTotal) : 'normal'
+  const retry = () => setRevision(value => value + 1)
   const storageLevel = storage.status === 'ready' ? usageLevel(storage.value.usedBytes, storage.value.totalBytes) : 'normal'
   const voiceTotal = voice.status === 'ready' ? voice.value.usedSeconds + voice.value.remainingSeconds : 0
   const voiceLevel = voice.status === 'ready' ? usageLevel(voice.value.usedSeconds, voiceTotal) : 'normal'
   return <section className="arkme-account-usage" aria-label={tr("用量与额度")}>
-    <header><h3>{tr("用量与额度")}</h3><button type="button" aria-label={tr("刷新用量与额度")} disabled={loading} onClick={() => {
-      setRevision(value => value + 1); onRefreshMembership(); onRefreshBalance()
-    }}><ArrowsClockwise size={13} aria-hidden />{loading ? tr("读取中") : tr("刷新")}</button></header>
-    <div className="arkme-usage-metric" data-usage-level={tokenLevel} aria-live="polite">
-      <div className="arkme-usage-label"><strong>{tr("月度赠送 Token")}</strong><span className="arkme-usage-label-actions">
-        {tokens.status === 'ready' && <span>{tr(tokenLevel === 'exhausted' ? '暂无可用额度' : tokenLevel === 'low' ? '余量较少' : '可用')}</span>}
-        <button type="button" aria-expanded={tokensOpen} aria-controls={tokensId} onClick={() => setTokensOpen(value => !value)}>{tr(tokensOpen ? '收起 Token 明细' : '查看 Token 明细')} <span aria-hidden>{tokensOpen ? '⌄' : '›'}</span></button>
-      </span></div>
-      {tokens.status !== 'ready' ? <Pending status={tokens.status} /> : <>
-        <p>{tr("已用")} {numberFormat.format(tokens.value.used)} {tr("/ 剩余")} {numberFormat.format(tokens.value.remaining)}</p>
-        <UsageBar used={tokens.value.used} total={tokenTotal} label={tr("Token 额度已用比例")} />
-        {tokenLevel !== 'normal' && <button type="button" className="arkme-usage-action" onClick={onViewMembership}>{tr("查看会员 Token 权益 ›")}</button>}
+    <header><h3>{tr("用量与额度")}</h3></header>
+    <div className="arkme-usage-metric" data-usage-kind="ai-points" aria-live="polite">
+      <div className="arkme-usage-label"><strong>{tr('AI 额度')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
+      {points.status !== 'ready' ? <Pending status={points.status} onRetry={retry} /> : <>
+        <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatWholePoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatWholePoints(points.value.grantedPoints), v1: formatWholePoints(points.value.purchasedPoints) })}</span></p>
+        {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
       </>}
-      <small>{tr("月度额度与充值余额分开计量，不合并折算")}</small>
-      {tokensOpen && <div id={tokensId}><ArkmeTokenUsageBreakdown key={accountScope} scope={accountScope} revision={revision} /></div>}
-    </div>
-    <div className="arkme-usage-metric" data-usage-kind="ai-balance" aria-live="polite">
-      <div className="arkme-usage-label"><strong>{tr("AI 充值余额")}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr("充值 ›")}</button></div>
-      {balance.kind !== 'ready' ? <Pending status={balance.kind} /> : <>
-        <p className="arkme-usage-balance-amount">{tr("可用")} <strong>{formatArkmeNanoCny(balance.quota.availableNanoCny)}</strong></p>
-        {BigInt(balance.quota.reservedNanoCny) > 0n && <small>{tr("任务预占")} {formatArkmeNanoCny(balance.quota.reservedNanoCny)}{tr("，结算后释放未用部分")}</small>}
-      </>}
-      <small>{tr("用于按余额计费的 AI 功能，不代表月度 Token 用尽后自动接续")}</small>
+      <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
+      {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
     </div>
     <div className="arkme-usage-metric" data-usage-level={storageLevel} aria-live="polite">
       <div className="arkme-usage-label"><strong>{tr("云端存储")}</strong><span className="arkme-usage-label-actions">
         {storage.status === 'ready' && <span>{storageLevel === 'exhausted' ? tr('空间已用满') : storageLevel === 'low' ? tr('空间不足 10%') : tr("剩余 {v0}", { v0: formatUsageBytes(Math.max(0, storage.value.totalBytes - storage.value.usedBytes)) })}</span>}
         <button type="button" aria-expanded={storageOpen} aria-controls={storageId} onClick={() => setStorageOpen(value => !value)}>{tr(storageOpen ? '收起空间构成' : '空间构成')} <span aria-hidden>{storageOpen ? '⌄' : '›'}</span></button>
       </span></div>
-      {storage.status !== 'ready' ? <Pending status={storage.status} /> : <>
+      {storage.status !== 'ready' ? <Pending status={storage.status} onRetry={retry} /> : <>
         <p>{tr("已用")} {formatUsageBytes(storage.value.usedBytes)} {tr("/ 共")} {formatUsageBytes(storage.value.totalBytes)}</p>
         <UsageBar used={storage.value.usedBytes} total={storage.value.totalBytes} label={tr("云端存储已用比例")} />
         {storageLevel !== 'normal' && <button type="button" className="arkme-usage-action" onClick={onViewMembership}>{tr("查看存储权益 ›")}</button>}
       </>}
-      {storageOpen && <div id={storageId}>{storage.status === 'ready' ? <ArkmeStorageUsageBreakdown usage={storage.value} formatBytes={formatUsageBytes} /> : <Pending status={storage.status} />}</div>}
+      {storageOpen && <div id={storageId}>{storage.status === 'ready' ? <ArkmeStorageUsageBreakdown usage={storage.value} formatBytes={formatUsageBytes} /> : <Pending status={storage.status} onRetry={retry} />}</div>}
     </div>
     <div className="arkme-usage-metric" data-usage-kind="voice-transcription" data-usage-level={voiceLevel} aria-live="polite">
       <div className="arkme-usage-label"><strong>{tr("语音转文字")}</strong>{voice.status === 'ready' && <span>{voiceLevel === 'exhausted' ? '本月额度已用尽' : voiceLevel === 'low' ? '余量较少' : tr("每月 {v0}", { v0: formatUsageSeconds(voiceTotal) })}</span>}</div>
-      {voice.status !== 'ready' ? <Pending status={voice.status} /> : <>
+      {voice.status !== 'ready' ? <Pending status={voice.status} onRetry={retry} /> : <>
         <p>{tr("已用")} {formatUsageSeconds(voice.value.usedSeconds)} {tr("/ 剩余")} {formatUsageSeconds(voice.value.remainingSeconds)}</p>
         <UsageBar used={voice.value.usedSeconds} total={voiceTotal} label={tr("语音转文字已用比例")} />
         {voiceLevel !== 'normal' && <button type="button" className="arkme-usage-action" onClick={onViewMembership}>{tr("查看语音转文字权益 ›")}</button>}
@@ -203,7 +191,7 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRefreshMembersh
         {recording.value.totalSeconds !== null && <span>{tr("每月 {v0}", { v0: formatUsageSeconds(recording.value.totalSeconds) })}</span>}
         <button type="button" aria-expanded={recordingOpen} aria-controls={recordingId} onClick={() => setRecordingOpen(value => !value)}>{tr(recordingOpen ? '收起来源明细' : '来源明细')} <span aria-hidden>{recordingOpen ? '⌄' : '›'}</span></button>
       </span>}</div>
-      {recording.status !== 'ready' ? recording.unavailable ? <p className="arkme-usage-muted">{tr("录音转写统计尚未启用")}</p> : <Pending status={recording.status} /> : <>
+      {recording.status !== 'ready' ? recording.unavailable ? <p className="arkme-usage-muted">{tr("录音转写统计尚未启用")}</p> : <Pending status={recording.status} onRetry={retry} /> : <>
         <p>{tr("已用")} {formatRecordingQuotaMinutes(recording.value.usedSeconds)}{recording.value.remainingSeconds !== null && <> {tr("/ 剩余")} {formatRecordingQuotaMinutes(recording.value.remainingSeconds)}</>}</p>
         {recording.value.totalSeconds !== null && <UsageBar used={recording.value.usedSeconds} total={recording.value.totalSeconds} label={tr("录音转写已用比例")} />}
         {recording.value.pendingChildCount > 0 && <small>{tr("还有 {v0} 段录音待结算，当前用量仅含已结算部分", { v0: recording.value.pendingChildCount })}</small>}
@@ -221,10 +209,9 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRefreshMembersh
   </section>
 }
 
-export function ArkmeAccountUsageDialog({ accountScope, onViewMembership, onRefreshMembership, onClose, returnFocusRef }: {
+export function ArkmeAccountUsageDialog({ accountScope, onViewMembership, onClose, returnFocusRef }: {
   accountScope: string
   onViewMembership: () => void
-  onRefreshMembership: () => void
   onClose: () => void
   returnFocusRef?: RefObject<HTMLElement>
 }) {
@@ -255,6 +242,6 @@ export function ArkmeAccountUsageDialog({ accountScope, onViewMembership, onRefr
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
     }}>
     <button type="button" autoFocus className="arkme-usage-close" aria-label={tr("关闭用量与额度详情")} onClick={onClose}><X size={18} aria-hidden /></button>
-    <ArkmeAccountUsageDetails accountScope={accountScope} onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} />
+    <ArkmeAccountUsageDetails accountScope={accountScope} onViewMembership={onViewMembership} />
   </dialog>, document.body)
 }

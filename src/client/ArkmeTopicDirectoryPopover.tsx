@@ -1,17 +1,21 @@
 import { tr, useArkmeLocale } from './locale.js'
+import type { ArkmeArchiveState } from '../archive-contract.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
-  ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
+  ArkmeEnvironment, ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeUi } from './ui-controller.js'
+import { createSelfTopic } from './create-self-topic.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,
   canCreateChildTopicAtParentLevel,
-  expandAncestorsForReveal, expandTopicFromRowClick, mergeCreatedTopicSource,
+  expandAncestorsForReveal, expandTopicFromRowClick,
   toggleTopicCollapsedState,
 } from './ArkmeVirtualWorkspace.js'
 import {
@@ -19,7 +23,7 @@ import {
   type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import {
-  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -165,6 +169,8 @@ export function ArkmeTopicDirectoryPopover({
   userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   useArkmeLocale()
+  const topicDirectoryRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getTopicDirectoryRevision, arkmeUi.getTopicDirectoryRevision)
+  const recordRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision)
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
   const resolvedRoots = useRef<{ directory: typeof directory; aggregateSource: ArkmeSourceItem; defaultCategorySource: ArkmeSourceItem }>()
@@ -195,28 +201,43 @@ export function ArkmeTopicDirectoryPopover({
   const firstLoad = useRef(true)
   useEffect(() => {
     let disposed = false
+    const controller = new AbortController()
     const force = !firstLoad.current
     firstLoad.current = false
-    void directory.ensure(force).then(() => {
+    void directory.ensure(force).then(async () => {
       if (disposed) return
-      const result = directory.getSnapshot()
+      const result = directory.getConfirmedSnapshot()
       if (!result.complete || result.error) return
       const loaded = result.sources
-      const reconciliation = reconcileArkmeTopicSelection(selectedSourceRef.current, loaded)
+      const currentSelected = selectedSourceRef.current
+      const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
         onSelectionRefreshed(reconciliation.source)
         persist(loaded, reconciliation.source.sourceRef)
       } else if (reconciliation.status === 'invalid') {
-        selectedSourceRef.current = undefined
-        onSelectionInvalidated()
-        persist(loaded, null)
+        // Directory absence is not deletion: an archived UID remains a valid
+        // content destination, and must not clear the open scene or its draft.
+        const states = currentSelected?.kind === 'topic'
+          ? await withArkmeReadDeadline(signal => callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, signal), controller.signal)
+          : []
+        if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
+        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
+          persist(loaded, currentSelected!.sourceRef)
+        } else {
+          selectedSourceRef.current = undefined
+          onSelectionInvalidated()
+          persist(loaded, null)
+        }
       } else {
         persist(loaded, null)
       }
+    }).catch(() => {
+      // An unavailable archive read cannot prove deletion or discard a draft.
+      // The next directory refresh retries this owner check.
     })
-    return () => { disposed = true }
-  }, [directory, retryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
+    return () => { disposed = true; controller.abort() }
+  }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
@@ -285,7 +306,7 @@ export function ArkmeTopicDirectoryPopover({
     [cardMode, directorySources, sourceSort],
   )
   const rows = useMemo(
-    () => flattenVisibleArkmeSourceTree(buildArkmeSourceTree(filteredSources), collapsedSourceRefs),
+    () => flattenVisibleArkmeSourceTree(sortArkmeSourceTree(buildArkmeSourceTree(filteredSources), 'custom'), collapsedSourceRefs),
     [collapsedSourceRefs, filteredSources],
   )
 
@@ -334,15 +355,14 @@ export function ArkmeTopicDirectoryPopover({
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
-      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+      const result = await createSelfTopic({
         title,
         contextSourceRef: contextSource.sourceRef,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
-      })
+      }, directory)
       if (createRequestRef.current !== request) return
-      const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
+      const nextSources = directory.getConfirmedSnapshot().sources
       sourcesRef.current = nextSources
-      directory.upsert(result.source)
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)

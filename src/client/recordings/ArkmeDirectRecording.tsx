@@ -67,7 +67,7 @@ export function ArkmeDirectRecordingButton({ onStart }: { onStart(): void }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const recording = state.phase === 'recording'
   const breathStyle = useRecordingBreathStyle(recording, state.startedAt)
-  return <button type="button" data-arkme-feedback="neutral" style={{ ...primary, ...breathStyle, opacity: state.phase === 'idle' ? 1 : .65 }}
+  return <button type="button" data-arkme-feedback="recording-action" style={{ ...primary, ...breathStyle, opacity: state.phase === 'idle' ? 1 : .65 }}
     disabled={state.phase !== 'idle' || !state.accountKey}
     onClick={() => { onStart(); void store.start() }}><Microphone size={16} aria-hidden data-arkme-recording-breath={recording ? 'icon' : undefined} />{state.phase === 'starting' ? '正在准备…' : '开始录音'}</button>
 }

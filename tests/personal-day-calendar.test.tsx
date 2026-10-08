@@ -25,6 +25,7 @@ const clickText = async (label: string) => act(async () => {
 beforeEach(() => {
   arkmeCalendarMonths.activateAccount(undefined)
   mocks.read.mockReset().mockImplementation(async (operation, params) => {
+    if (operation === 'arrangements.list') return { items: [], total: 0, hasMore: false }
     if (operation === 'calendar.activity') {
       if (params.mode === 'buckets') return { daily_data: [], coverage: { status: 'complete' } }
       if (params.source === 'record') return { items: [{ occurred_at: new Date(`${params.body.bucket_date}T12:00:00`).getTime(), record_projection: {
@@ -103,4 +104,63 @@ describe('first-rail personal day calendar', () => {
     await act(async () => view!.root.findByProps({ 'data-calendar-date': personalDateKey(day) }).props.onClick())
     expect(mocks.read.mock.calls.filter(call => call[0] === 'calendar.activity' && call[1].source === 'audio').at(-1)?.[1].body.start_at).toBe(new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime())
   })
+})
+
+it('opens arrangements below the calendar and restores the mounted day on back or date selection', async () => {
+  await mount()
+  const body = view!.root.findByProps({ className: 'arkme-personal-day-body' })
+  await act(async () => view!.root.findByProps({ className: 'arkme-arrangement-entry' }).props.onClick())
+  expect(body.props.hidden).toBe(true)
+  expect(view!.root.findAll(node => !!node.props['data-arrangement-column'])).toHaveLength(3)
+  await act(async () => view!.root.findByProps({ 'aria-label': '返回日历' }).props.onClick())
+  expect(body.props.hidden).toBe(false)
+  expect(view!.root.findByProps({ className: 'arkme-personal-day-body' })).toBe(body)
+  await act(async () => view!.root.findByProps({ className: 'arkme-arrangement-entry' }).props.onClick())
+  const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
+  await act(async () => month.props.onSelectDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)))
+  expect(view!.root.findAll(node => !!node.props['data-arrangement-column'])).toHaveLength(0)
+  expect(view!.root.findByProps({ className: 'arkme-personal-day-body' }).props.hidden).toBe(false)
+})
+
+
+it('places the arrangements tab between conversations and calls and retains it across dates', async () => {
+  await mount()
+  const filters = view!.root.findByProps({className:'arkme-day-filters'})
+  const labels = filters.findAllByType('button').map(node => node.props.children)
+  expect(labels.indexOf('安排')).toBe(labels.indexOf('对话') + 1)
+  expect(labels.indexOf('通话')).toBe(labels.indexOf('安排') + 1)
+  expect(view!.root.findByProps({className:'arkme-arrangement-entry'}).findAllByType('svg')).toHaveLength(1)
+  await act(async () => view!.root.findByProps({'data-day-arrangements-tab':true}).props.onClick())
+  expect(view!.root.findAllByProps({'data-day-arrangements':'identified'})).toHaveLength(1)
+  expect(view!.root.findAllByProps({'data-day-arrangements':'due'})).toHaveLength(1)
+  expect(view!.root.findAllByProps({'data-activity-id':'note:mine'})).toHaveLength(0)
+  const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
+  await act(async () => month.props.onSelectDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)))
+  expect(view!.root.findByProps({'data-day-arrangements-tab':true}).props['aria-pressed']).toBe(true)
+  await clickText('对话')
+  expect(view!.root.findAllByProps({'data-day-arrangements':'identified'})).toHaveLength(0)
+})
+
+it('does not poll while idle, but each calendar invalidation reloads day arrangements and month sources', async () => {
+  vi.useFakeTimers()
+  try {
+    await mount()
+    await act(async () => view!.root.findByProps({'data-day-arrangements-tab':true}).props.onClick())
+    // Let the one-time previous-month prefetch finish before observing idle traffic.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    const idleStart = mocks.read.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(mocks.read.mock.calls.length).toBe(idleStart)
+    const counts = () => ({ arrangements: mocks.read.mock.calls.filter(([op])=>op==='arrangements.list').length,
+      monthSources: mocks.read.mock.calls.filter(([op,p])=>op==='calendar.activity' && p.mode==='buckets').length,
+      recordingMonth: mocks.read.mock.calls.filter(([op])=>op==='recordings.calendar').length })
+    const before = counts()
+    await act(async () => { arkmeCalendarInvalidations.publishAll() })
+    const after = counts()
+    expect(after.arrangements-before.arrangements).toBe(3)
+    expect(after.monthSources-before.monthSources).toBe(4)
+    expect(after.recordingMonth-before.recordingMonth).toBe(1)
+    await act(async () => { arkmeCalendarInvalidations.publishAll() })
+    expect(counts().arrangements-after.arrangements).toBe(3)
+  } finally { vi.useRealTimers() }
 })

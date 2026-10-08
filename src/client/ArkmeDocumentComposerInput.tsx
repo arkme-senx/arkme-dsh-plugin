@@ -191,7 +191,10 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
       const native = nativeSelection()
       const pending = pendingEmojiSelection.current
       pendingEmojiSelection.current = undefined
-      const selection = native ?? (pending?.doc === editor.state.doc ? pending : editor.state.selection)
+      // The native range can collapse while focus moves into the picker. The
+      // range captured before that transition takes precedence until the user
+      // interacts with the editor again or the document changes.
+      const selection = (pending?.doc === editor.state.doc ? pending : undefined) ?? native ?? editor.state.selection
       const anchor = Math.max(0, Math.min(editor.state.doc.content.size, selection.anchor))
       const head = Math.max(0, Math.min(editor.state.doc.content.size, selection.head))
       const previousState = editor.state
@@ -246,10 +249,13 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
 
   return <div ref={host} data-arkme-composer-editor-box="true" className={`${props.format === 'text' ? 'arkme-text-document' : 'arkme-markdown'} ${props.className ?? ''}`} style={{ ...props.style, position: 'relative' }}
     onFocus={props.onFocus} onBlur={props.onBlur}
+    onPointerDownCapture={() => { pendingEmojiSelection.current = undefined }}
+    onMouseDownCapture={() => { pendingEmojiSelection.current = undefined }}
     onCopyCapture={syncNativeTextSelection}
     onCutCapture={syncNativeTextSelection}
     onPasteCapture={event => { syncNativeTextSelection(); props.onPaste?.(event) }}
     onKeyDownCapture={event => {
+      pendingEmojiSelection.current = undefined
       if (event.nativeEvent.isComposing || event.keyCode === 229) {
         if (props.format === 'text') event.stopPropagation()
         return
