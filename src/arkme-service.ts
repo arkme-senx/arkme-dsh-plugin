@@ -1,3 +1,4 @@
+import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
 import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
 import { SpeakerDirectoryService } from './services/speaker-directory-service.js'
@@ -333,6 +334,10 @@ export {
 } from './services/related-recording-service.js'
 export { ArkmePluginError, type ArkmeServiceConfig }
 export class ArkmeService {
+  private readonly logoutFeedback = new LogoutFeedback()
+
+  logoutFailureFeedback() { return this.logoutFeedback.snapshot() }
+
   private readonly runtime: ServiceRuntime
   readonly accountScope: ReturnType<typeof createArkmeAccountSessionOwner>
   private readonly billingGateway: ArkmeBillingGateway
@@ -2384,8 +2389,10 @@ export class ArkmeService {
   async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
-    this.recordingPresenceWriter.revoke()
-    return await this.auth.logout()
+    return await this.logoutFeedback.run(async () => {
+      this.recordingPresenceWriter.revoke()
+      return await this.auth.logout()
+    })
   }
 
   async cachedSnapshot(): Promise<ArkmeCachedSnapshot> {

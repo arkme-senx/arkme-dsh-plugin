@@ -1,3 +1,4 @@
+import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
 import { screenshotWindowRequested } from './native-screenshot.js'
@@ -166,6 +167,13 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    root.render(<ArkmeLogoutFailureToast />)
+    return () => { root.unmount(); host.remove() }
+  }, 'dsh-arkme: logout failure feedback')
   ctx.effect(() => bindScreenshotAskDsh(), 'dsh-arkme: screenshot ask DSH')
   ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation window lifetime')
   ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
