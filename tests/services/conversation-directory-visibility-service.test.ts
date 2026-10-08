@@ -142,7 +142,7 @@ describe('ConversationDirectoryVisibilityService', () => {
       ],
       { ownerUserId: 42 },
     )
-    expect(invalidation.invalidateConversationListPreferenceForCurrentSession).toHaveBeenCalledTimes(4)
+    expect(invalidation.invalidateConversationListPreferenceForCurrentSession).toHaveBeenCalledTimes(3)
   })
 
   it('rejects a Bot owner handoff across login owners before mutating preferences', async () => {
@@ -186,7 +186,7 @@ describe('ConversationDirectoryVisibilityService', () => {
       }) },
     )
 
-    await expect(service.setVisibility('source', 'source-ref', true)).resolves.toBeUndefined()
+    await expect(service.setVisibility('bot', 'bot-ref', true)).resolves.toBeUndefined()
     expect(preference.dismiss).toHaveBeenCalledOnce()
   })
 })
