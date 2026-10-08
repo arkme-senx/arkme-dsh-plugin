@@ -122,3 +122,21 @@ it('reconciles again when an IM hint arrives during a stale in-flight read', asy
   expect(store.getSnapshot().items).toEqual([])
   expect(store.getSnapshot().summary.total).toBe(0)
 })
+
+it('does not mark a concurrent publication read while read-all is pending', async () => {
+  release = store.acquire('test:42')
+  await tick()
+  let finish!: (value: unknown) => void
+  mocks.call.mockImplementation(async (op: string) =>
+    op.endsWith('read') ? new Promise(resolve => { finish = resolve })
+      : op.endsWith('summary') ? { total: 2, unreadCount: 1 }
+      : { items: [{ ...notice, readAtMillis: 101 }, { ...notice, id: 'notice-new' }], nextCursor: '' })
+  const writing = store.read('test:42')
+  store.invalidate('test:42')
+  await tick()
+  finish({ total: 2, unreadCount: 1 })
+  await writing
+  expect(store.getSnapshot().items.find(item => item.id === 'notice-new')?.readAtMillis).toBe(0)
+  await tick()
+  expect(store.getSnapshot().summary.unreadCount).toBe(1)
+})

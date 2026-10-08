@@ -180,26 +180,13 @@ export class OfficialNotificationStore {
     // Invalidate pre-write reads before issuing the command; a late list may not resurrect unread.
     this.generation++
     try {
-      const summary = await callArkme<ArkmeOfficialNotificationSummary>(
+      await callArkme<ArkmeOfficialNotificationSummary>(
         'official-notifications.read',
         { accountKey: scope, ...(ids === undefined ? { all: true } : { ids }) },
         signal,
       )
-      if (
-        !signal.aborted &&
-        scope === this.snapshot.scope &&
-        scope === currentScope()
-      )
-        this.publish({
-          ...this.snapshot,
-          summary,
-          items: this.snapshot.items.map((item) =>
-            ids === undefined || ids.includes(item.id)
-              ? { ...item, readAtMillis: item.readAtMillis || Date.now() }
-              : item,
-          ),
-          error: undefined,
-        })
+      // Only the owner knows the read-all snapshot. A concurrent publication
+      // must retain its receipt state until the authoritative reconciliation.
     } finally {
       if (!signal.aborted && scope === this.snapshot.scope)
         this.invalidate(scope)
