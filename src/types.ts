@@ -3200,6 +3200,13 @@ export interface ArkmeRecordingSection<T> {
 }
 
 export interface ArkmeRecordingDailyMetrics {
+  /** System ASR input in owned recordings, clipped to the day; includes recorded retries. */
+  asrInputDurationMillis: number
+  asrInputState: 'ready' | 'partial' | 'processing' | 'unavailable'
+  asrInputEstimatedCount: number
+  asrInputConfirmedCount: number
+  asrInputPendingCount: number
+  asrInputUnknownCount: number
   /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
