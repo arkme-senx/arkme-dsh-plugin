@@ -125,6 +125,7 @@ describe('recording import client gateway', () => {
       ['X-Arkme-File-Name', encodeURIComponent('会议.m4a')],
       ['X-Arkme-Start-At', '1725000000000'],
       ['X-Arkme-Belong-User', '0'],
+      ['X-Arkme-Recording-Kind', '3'],
     ]))
     request?.respond(202, JSON.stringify({
       ok: true,

@@ -309,6 +309,14 @@ export class ChatRealtimeService {
       void this.selfRoleInvalidation?.().then(() => this.emitChatClientEvent({type:'projection-invalidated',projection:'self_role',revision:this.nextChatClientRevision()})).catch(() => undefined)
       return
     }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'official_notification') {
+      void this.runtime.sessionStore.read().then(session => {
+        if (!session || notice.connectionSignal?.aborted || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return
+        this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'owner-read:official-notifications:')
+        this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'official_notification', revision: this.nextChatClientRevision() })
+      }).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'projection-invalidation'
       && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()

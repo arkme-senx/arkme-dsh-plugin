@@ -1,5 +1,21 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+统计尚未启用|Statistics not enabled
+录音转写统计尚未启用|Recording transcription statistics are not enabled yet
+来源明细|Source breakdown
+收起来源明细|Hide source breakdown
+录音转写已用比例|Recording transcription quota used
+录音总时长|Total recording duration
+录音来源用量明细|Recording usage by source
+来源|Source
+人声时长|Speech duration
+实扣额度|Quota deducted
+减免|Waived
+长录音|Long recordings
+全天候录音|All-day recordings
+文件上传|File uploads
+还有 {v0} 段录音待结算，当前用量仅含已结算部分|{v0} recording segments await settlement. Usage includes settled segments only.
+录音按人声时长计量，录音静音时长不计量|Recordings are measured by speech duration; silence is not counted.
 个人世界|Personal world
 说话人排序|Sort speakers
 经常出现|Most frequent
@@ -116,6 +132,8 @@ AI 来信暂时无法加载|AI letters are temporarily unavailable
 正在加载录音记录…|Loading recordings…
 录音记录加载失败|Could not load recordings
 暂无录音记录|No recordings yet
+绑定手机号后即可使用社交功能|Link a phone number to use social features.
+去绑定|Link phone number
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens
@@ -1283,6 +1301,10 @@ ArkME 插件|Arkme extension
 记录此刻想法|Capture a thought
 Arkme 对话目录|Arkme conversations
 官方|Official
+官方通知|Official notice
+官方通知详情|Official notice details
+返回通知列表|Back to notifications
+通知列表|Notifications
 按日期查看发给自己|Browse saved notes by date
 更多发给自己操作|More saved-note actions
 正在加载会话内容|Loading conversation

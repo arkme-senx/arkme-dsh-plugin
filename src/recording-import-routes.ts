@@ -45,7 +45,7 @@ interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number },
+    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3 },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -108,6 +108,11 @@ export function createArkmeRecordingImportHandler(
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
       const startAtMillis = nonNegativeIntegerHeader(req, 'x-arkme-start-at')
       const belongUserId = nonNegativeIntegerHeader(req, 'x-arkme-belong-user')
+      const recordingKindHeader = headerText(req, 'x-arkme-recording-kind').trim()
+      const recordingKind = recordingKindHeader === '' ? 0 : Number(recordingKindHeader)
+      if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) {
+        throw new ArkmePluginError('recording-import-kind-invalid', '录音来源分类无效', false)
+      }
       let fileName = ''
       try { fileName = decodeURIComponent(headerText(req, 'x-arkme-file-name')).trim() } catch { fileName = '' }
       if (fileName === '' || fileName.length > 255) {
@@ -156,6 +161,7 @@ export function createArkmeRecordingImportHandler(
         sha256: hash.digest('hex'),
         startAtMillis,
         belongUserId,
+        recordingKind,
       }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })

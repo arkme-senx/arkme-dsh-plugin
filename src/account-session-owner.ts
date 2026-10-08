@@ -51,9 +51,10 @@ export class ArkmeAccountSessionOwner {
     this.scopeCloseBarrier = barrier
   }
 
-  async write(session: ArkmeSessionCredentials): Promise<void> {
+  async write(session: ArkmeSessionCredentials, shouldWrite?: () => Promise<boolean>): Promise<void> {
     await this.start()
     await this.serial(async () => {
+      if (await shouldWrite?.() === false) return
       const current = await this.store.read()
       if (current?.userId === session.userId) {
         await this.store.write(session)
@@ -65,6 +66,7 @@ export class ArkmeAccountSessionOwner {
         userId: session.userId,
         ...(claimCurrentGuest === undefined ? {} : { claimCurrentGuest }),
       }, async () => {
+        if (await shouldWrite?.() === false) return
         await this.store.write(session)
       })
     })

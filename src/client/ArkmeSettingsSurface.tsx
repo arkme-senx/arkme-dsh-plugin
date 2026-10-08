@@ -31,6 +31,7 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
+import { publishProfileChange } from './profile-change-store.js'
 import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -52,6 +53,7 @@ import {
 } from './record-input-capture.js'
 import { arkmeUi } from './ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+import { socialBindingDescription } from './ArkmeSocialBindingHint.js'
 
 export type ArkmeBackgroundSoundEligibilityStatus = 'loading' | ArkmeBackgroundSoundEligibilityReason
 export type ArkmeBackgroundSoundCapabilityStatus = 'loading' | 'supported' | 'unsupported'
@@ -646,7 +648,8 @@ export function PhoneBindDialog({
 
   return <SettingsDialog title={actionLabel} onClose={() => { if (!busyRef.current) onClose() }}>
     <form className="arkme-account-form" onSubmit={event => { void verify(event) }}>
-      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p> : null}
+      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p>
+        : <p className="arkme-account-rule">{tr(socialBindingDescription)}</p>}
       {!unbind && <label>
         <span>{tr("手机号")}</span>
         <input value={phone} autoFocus inputMode="tel" placeholder={tr("请输入手机号")} onChange={event => { setPhone(event.target.value) }} />
@@ -823,7 +826,11 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         if (snapshot.profile !== null) applyProfileSnapshot(snapshot)
         return await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
       })
-      .then(snapshot => { if (!signal?.aborted) applyProfileSnapshot(snapshot) })
+      .then(snapshot => {
+        if (signal?.aborted) return
+        applyProfileSnapshot(snapshot)
+        publishProfileChange(snapshot)
+      })
       .catch(caught => {
         if (!signal?.aborted) setError(caught instanceof Error ? caught.message : String(caught))
       })

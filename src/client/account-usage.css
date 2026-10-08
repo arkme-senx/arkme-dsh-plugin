@@ -120,6 +120,11 @@
 .arkme-usage-dialog .arkme-usage-label > span, .arkme-usage-dialog .arkme-usage-metric small, .arkme-usage-dialog .arkme-usage-muted { font-size: 12px; }
 .arkme-usage-dialog .arkme-usage-track { height: 5px; margin-top: 9px; }
 
+.arkme-recording-breakdown { overflow-x: auto; }
+.arkme-recording-breakdown table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.arkme-recording-breakdown caption { text-align: left; margin-bottom: 8px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-recording-breakdown th, .arkme-recording-breakdown td { text-align: right; padding: 8px 6px; border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); font-weight: 400; }
+.arkme-recording-breakdown th:first-child { text-align: left; white-space: nowrap; }
 .arkme-usage-summary-row[data-usage-kind="ai-points"] { grid-template-columns: minmax(0, 1fr) auto; }
 .arkme-account-usage .arkme-points-disclosure { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .arkme-usage-breakdown[data-usage-detail="points"] { margin-top: 8px; }

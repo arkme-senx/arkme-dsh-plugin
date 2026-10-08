@@ -276,6 +276,26 @@ export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, '')}${path}`
 }
 
+/** Detach a stopped consumer without cancelling another caller's shared refresh. */
+function waitForRefresh<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => {
+      signal.removeEventListener('abort', aborted)
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    promise.then(value => {
+      signal.removeEventListener('abort', aborted)
+      resolve(value)
+    }, error => {
+      signal.removeEventListener('abort', aborted)
+      reject(error)
+    })
+    if (signal.aborted) aborted()
+    else signal.addEventListener('abort', aborted, { once: true })
+  })
+}
+
 export class ServiceRuntime {
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
@@ -310,6 +330,19 @@ export class ServiceRuntime {
   async deleteSessionIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
     return await this.accountSessions.deleteIfCurrent(expected)
   }
+  async activatePendingBindingSession(expected: ArkmeSessionCredentials): Promise<void> {
+    await this.accountSessions.write(expected, async () => {
+      const current = await this.sessionStore.read()
+      // Concurrent status readers may already have activated this exact login.
+      if (current?.userId === expected.userId && current.refreshToken === expected.refreshToken) return false
+      if (!this.isPendingBindingSession(expected) || current !== undefined) {
+        throw new ArkmePluginError('login-context-changed', '登录账号已变化，请重试当前操作', true, 409)
+      }
+      return true
+    })
+    if (this.isPendingBindingSession(expected)) await this.clearPendingBindingSession()
+  }
+
   async moveSessionToPendingBinding(expected: ArkmeSessionCredentials): Promise<boolean> {
     return await this.accountSessions.deleteIfCurrent(expected, async current => {
       await this.writePendingBindingSession(current)
@@ -458,9 +491,10 @@ export class ServiceRuntime {
     this.refreshInFlightByUserId.delete(userId)
   }
 
-  async refreshAccessToken(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials> {
+  async refreshAccessToken(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeSessionCredentials> {
+    signal?.throwIfAborted()
     const existing = this.refreshInFlightByUserId.get(session.userId)
-    if (existing?.refreshToken === session.refreshToken) return await existing.promise
+    if (existing?.refreshToken === session.refreshToken) return await waitForRefresh(existing.promise, signal)
     const pendingBinding = this.isPendingBindingSession(session)
     const contextChanged = () => new ArkmePluginError('login-context-changed', '登录账号或凭据已变化，请重试当前操作', false, 409)
     const refresh = (async () => {
@@ -504,15 +538,15 @@ export class ServiceRuntime {
         }
         throw error
       }
-    })()
-    this.refreshInFlightByUserId.set(session.userId, { refreshToken: session.refreshToken, promise: refresh })
-    try {
-      return await refresh
-    } finally {
+    })().finally(() => {
       if (this.refreshInFlightByUserId.get(session.userId)?.promise === refresh) {
         this.refreshInFlightByUserId.delete(session.userId)
       }
-    }
+    })
+    this.refreshInFlightByUserId.set(session.userId, { refreshToken: session.refreshToken, promise: refresh })
+    // Account cleanup may need this consumer to stop before deleting credentials.
+    // Keep the refresh/cleanup owned by the shared flight, not its first waiter.
+    return await waitForRefresh(refresh, signal)
   }
 
   private requestService(baseUrl: string): ArkmeRequestService {
@@ -858,7 +892,7 @@ export class ServiceRuntime {
       return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
     }
   }
@@ -1011,7 +1045,7 @@ export class ServiceRuntime {
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     }
   }

@@ -15,7 +15,9 @@ const points = { accountScope: 'prod:11', unit: 'ai_points', availablePoints: '1
 const storage = { accountScope: 'prod:11', usedBytes: 1024 ** 3, totalBytes: 10 * 1024 ** 3 }
 const voice = { accountScope: 'prod:11', usedSeconds: 300, remainingSeconds: 6900 }
 const balance = { availableNanoCny: '12500000000', totalNanoCny: '15000000000', reservedNanoCny: '2500000000', currency: 'CNY' }
-const defaultValue = (operation: string) => operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.points.query' ? points : storage
+const recording = { accountScope: 'prod:11', month: '2026-09', totalSeconds: 1296000, usedSeconds: 3600, remainingSeconds: 1292400, pendingChildCount: 2, statisticsStartedAtMicros: 1,
+  breakdown: [1, 2, 3].map(recordingKind => ({ recordingKind, recordingDurationMillis: recordingKind === 3 ? null : 3600000, speechDurationMillis: 1200000, requestedSeconds: 1200, deductedSeconds: 1200, waivedSeconds: 0 })) }
+const defaultValue = (operation: string) => operation === 'account.usage.recording' ? recording : operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.points.query' ? points : storage
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   mocks.call.mockReset(); onViewMembership.mockReset()
@@ -56,7 +58,7 @@ describe('account points and independent usage', () => {
   it('shows one point unit and distinct funding, retaining storage and voice units', async () => {
     await render()
     expect(host.querySelectorAll('.arkme-usage-metric')).toHaveLength(4)
-    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
     expect(host.textContent).toContain('可用 1,250 积分')
     const balanceLine = host.querySelector('[data-usage-kind="ai-points"] p')!
     expect(balanceLine.textContent).toContain('可用 1,250 积分')
@@ -68,21 +70,21 @@ describe('account points and independent usage', () => {
     expect(host.textContent).not.toMatch(/暂占|使用中/)
     expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
     expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')
-    expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.textContent).toContain('暂未做限制')
-    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice'])
+    expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.textContent).toContain('360 小时')
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])
     for (const text of ['Token', '实体提取', '阿森有想法', '¥', '永久免费']) expect(host.textContent).not.toContain(text)
   })
   it('loads fresh quotas after leaving and reopening without a refresh button', async () => {
     await render()
-    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '300', purchasedPoints: '200' } : operation === 'account.usage.voice' ? { ...voice, usedSeconds: 600, remainingSeconds: 6600 } : storage)
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '300', purchasedPoints: '200' } : operation === 'account.usage.voice' ? { ...voice, usedSeconds: 600, remainingSeconds: 6600 } : defaultValue(operation))
     await act(async () => root.render(null))
     await render()
     expect(host.textContent).toContain('可用 300 积分')
     expect(host.textContent).toContain('已用 10 分 / 剩余 1 小时 50 分')
-    expect(mocks.call).toHaveBeenCalledTimes(6)
+    expect(mocks.call).toHaveBeenCalledTimes(8)
     expect(host.querySelector('[aria-label="刷新用量与额度"]')).toBeNull()
   })
-  it.each(['account.points.query', 'account.usage.storage', 'account.usage.voice'])('isolates and retries %s failure without inventing zeros', async failed => {
+  it.each(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])('isolates and retries %s failure without inventing zeros', async failed => {
     mocks.call.mockImplementation(async operation => { if (operation === failed) throw new Error('offline'); return defaultValue(operation) })
     await render()
     expect(host.textContent).toContain('暂时无法读取')
@@ -95,10 +97,10 @@ describe('account points and independent usage', () => {
     expect(host.textContent).not.toContain('无法读取')
   })
   it('retains membership actions for depleted storage and voice without creating an order', async () => {
-    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? points : operation === 'account.usage.voice' ? { ...voice, remainingSeconds: 0 } : { ...storage, usedBytes: storage.totalBytes * 1.2 })
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? recording : operation === 'account.points.query' ? points : operation === 'account.usage.voice' ? { ...voice, remainingSeconds: 0 } : { ...storage, usedBytes: storage.totalBytes * 1.2 })
     await render()
     expect(host.querySelectorAll('[data-usage-level="exhausted"]')).toHaveLength(2)
-    expect([...host.querySelectorAll('[role="progressbar"]')].every(bar => bar.getAttribute('aria-valuenow') === '100')).toBe(true)
+    expect([...host.querySelectorAll('[data-usage-level="exhausted"] [role="progressbar"]')].every(bar => bar.getAttribute('aria-valuenow') === '100')).toBe(true)
     const membership = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('查看存储权益'))!
     await act(async () => membership.click())
     expect(onViewMembership).toHaveBeenCalledOnce()
@@ -118,7 +120,7 @@ describe('account points and independent usage', () => {
     await render()
     mocks.call.mockImplementation(async operation => ({ ...defaultValue(operation), accountScope: 'test:11', ...(operation === 'account.points.query' ? { availablePoints: '88' } : {}) }))
     await render('test:11')
-    await act(async () => { pending[0]!(points); pending[1]!(storage); pending[2]!(voice) })
+    await act(async () => { pending[0]!(points); pending[1]!(storage); pending[2]!(voice); pending[3]!(recording) })
     expect(host.textContent).toContain('可用 88 积分')
     expect(host.textContent).not.toContain('1,250')
   })
@@ -129,6 +131,57 @@ describe('account points and independent usage', () => {
     expect(row.textContent).toContain('可用 0 积分')
     expect(row.textContent).not.toContain('暂占')
     expect(row.querySelector('[role="progressbar"]')).toBeNull()
+  })
+  it('expands the three recording sources and shows pending settlement', async () => {
+    await render()
+    const card = host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card.querySelector('table')).toBeNull()
+    expect(card.textContent).toContain('还有 2 段录音待结算')
+    await act(async () => card.querySelector<HTMLButtonElement>('button')!.click())
+    expect([...card.querySelectorAll('tbody th')].map(row => row.textContent)).toEqual(['长录音', '全天候录音', '文件上传'])
+    expect(card.querySelectorAll('tbody tr')).toHaveLength(3)
+    expect([...card.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['来源', '录音总时长', '人声时长'])
+    expect(card.querySelector('tbody')?.textContent).toContain('1 小时20 分')
+    expect(card.querySelector('tbody tr:last-child')?.textContent).toContain('—')
+    expect(card.querySelector('table')?.textContent).not.toContain('减免')
+  })
+  it('distinguishes recording rollout disabled from network errors and retries', async () => {
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.recording') throw { code: 'arkme-code-3003' }; return defaultValue(operation) })
+    await render()
+    const card = () => host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card().textContent).toContain('统计尚未启用')
+    expect(card().querySelector('[role="progressbar"]')).toBeNull()
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.recording') throw new Error('offline'); return defaultValue(operation) })
+    await act(async () => root.render(null)); await render()
+    expect(card().textContent).toContain('暂时无法读取')
+    expect(card().textContent).not.toContain('已用 0')
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => root.render(null)); await render()
+    expect(card().textContent).toContain('剩余 359 小时')
+  })
+  it('bounds recording progress after downgrade and leaves unknown totals unmeasured', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? { ...recording, usedSeconds: 86401, totalSeconds: 86400, remainingSeconds: 0 } : defaultValue(operation))
+    await render()
+    const card = () => host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card().querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100')
+    expect(card().textContent).toContain('每月 24 小时')
+    expect(card().textContent).toContain('录音按人声时长计量，录音静音时长不计量')
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? { ...recording, totalSeconds: null, remainingSeconds: null } : defaultValue(operation))
+    await act(async () => root.render(null)); await render()
+    expect(card().querySelector('[role="progressbar"]')).toBeNull()
+    expect(card().textContent).not.toContain('/ 剩余')
+    expect(card().textContent).toContain('已用 1 小时')
+  })
+  it('formats durations without rounding seconds into fake zero usage', () => {
+    expect(formatUsageSeconds(0)).toBe('0 秒')
+    expect(formatUsageSeconds(1)).toBe('1 秒')
+    expect(formatUsageSeconds(60)).toBe('1 分')
+    expect(formatUsageSeconds(61)).toBe('1 分 1 秒')
+    expect(formatUsageSeconds(61.123)).toBe('1 分 1 秒')
+    expect(formatUsageSeconds(59.9)).toBe('1 分')
+    expect(formatUsageSeconds(743.77)).toBe('12 分 24 秒')
+    expect(formatUsageSeconds(3661)).toBe('1 小时 1 分 1 秒')
+    expect(formatUsageSeconds(1200 * 60)).toBe('20 小时')
   })
   it('opens recharge above details without placing an order and restores focus', async () => {
     mocks.call.mockImplementation(async operation => operation === 'billing.products' ? { items: [] } : defaultValue(operation))
@@ -162,14 +215,14 @@ describe('compact summary and dialog', () => {
     await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={() => {}} />))
     expect(host.querySelectorAll('.arkme-usage-summary-row')).toHaveLength(4)
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
-    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['读取中…', '读取中…', '读取中…', '暂未做限制'])
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['读取中…', '读取中…', '读取中…', '读取中…'])
   })
   it('floors available points in the compact summary and preserves measured storage/voice bars', async () => {
     const open = vi.fn()
     mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '1980.9999999' } : defaultValue(operation))
     await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
-    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,980 积分', '10 GB', '2 小时', '暂未做限制'])
-    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,980 积分', '10 GB', '2 小时', '360 小时'])
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
     expect(host.textContent).not.toContain('Token')
     expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('10')
     await act(async () => host.querySelector('button')!.click()); expect(open).toHaveBeenCalledOnce()

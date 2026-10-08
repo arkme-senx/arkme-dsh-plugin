@@ -26,6 +26,12 @@ export interface RecordingImportGateway {
 }
 
 function importFailure(error: unknown): { code: string; message: string; retryable: boolean } {
+  if (error !== null && typeof error === 'object') {
+    const detail = error as { code?: unknown; message?: unknown }
+    if (detail.code === 'recording_storage_exhausted' || detail.code === 'arkme-code-4301' || String(detail.message).includes('recording_storage_exhausted')) {
+      return { code: 'recording_storage_exhausted', message: '保留在本地 · 上传已暂停，云端存储空间不足', retryable: true }
+    }
+  }
   if (error instanceof RecordingImportContractError) {
     return { code: error.code, message: error.message, retryable: error.retryable }
   }

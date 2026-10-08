@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeAuthSnapshot, ArkmeCancellationSnapshot, ArkmeCaptchaResult, ArkmeUserProfileSnapshot } from '../types.js'
-import { ProfileService } from './profile-service.js'
+import { ProfileService, phoneBindingRequirement } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, stringValue } from './service.js'
 
 interface WechatLoginAttempt {
@@ -125,28 +125,36 @@ export class AuthService {
     }
     if (activeSession !== undefined) {
       const cachedProfile = await this.runtime.stateStore.cachedProfile(activeSession.userId)
-      const snapshot = cachedProfile.profile === null
-        ? await this.authSnapshotForSession(activeSession)
-        : {
-            status: this.profileHasBoundPhone(cachedProfile) ? 'authenticated' : 'binding-required',
-            environment: this.runtime.config.environment,
-            userId: activeSession.userId,
-          } satisfies ArkmeAuthSnapshot
+      // Bound cached accounts keep the existing offline startup path. Unbound
+      // accounts use the profile owner's short-lived decision cache.
+      const snapshot: ArkmeAuthSnapshot = this.profileHasBoundPhone(cachedProfile)
+        ? { status: 'authenticated', environment: this.runtime.config.environment, userId: activeSession.userId }
+        : await this.authSnapshotForSession(activeSession)
+      const current = await this.runtime.sessionStore.read()
+      if (current?.userId !== activeSession.userId || current.refreshToken !== activeSession.refreshToken) throw this.loginContextChanged()
       if (snapshot.status === 'binding-required') {
-        await this.runtime.writePendingBindingSession(activeSession)
-        await this.runtime.deleteSession()
+        if (!await this.runtime.moveSessionToPendingBinding(activeSession)) throw this.loginContextChanged()
         this.lifecycle.reconnectChatRealtime()
       }
       return snapshot
     }
     const pendingSession = await this.runtime.readPendingBindingSession()
-    return pendingSession === undefined
-      ? { status: 'logged-out', environment: this.runtime.config.environment, ...(this.cancellationNotice === undefined ? {} : { cancellationNotice: this.cancellationNotice }) }
-      : {
-          status: 'binding-required',
-          environment: this.runtime.config.environment,
-          userId: pendingSession.userId,
-        }
+    if (pendingSession === undefined) return {
+      status: 'logged-out', environment: this.runtime.config.environment,
+      ...(this.cancellationNotice === undefined ? {} : { cancellationNotice: this.cancellationNotice }),
+    }
+    const snapshot = await this.authSnapshotForSession(pendingSession, { forceProfile: true })
+    if (snapshot.status === 'authenticated') {
+      await this.runtime.activatePendingBindingSession(pendingSession)
+      this.lifecycle.reconnectChatRealtime()
+    } else if (!this.runtime.isPendingBindingSession(pendingSession)) {
+      throw this.loginContextChanged()
+    }
+    return snapshot
+  }
+
+  private loginContextChanged(): ArkmePluginError {
+    return new ArkmePluginError('login-context-changed', '登录账号已变化，请重试当前操作', true, 409)
   }
 
   async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
@@ -519,7 +527,7 @@ export class AuthService {
       if (result !== ARKME_PHONE_BIND_SUCCESS) {
         throw new ArkmePluginError('phone-bind-contract-invalid', 'Arkme 手机号绑定响应不完整', false, 502)
       }
-      return await this.acceptLoginSession(session)
+      return await this.acceptLoginSession(session, 0, { requireBoundPhone: true })
     }
     const data = await this.runtime.post<PhoneLoginResponse>(
       this.runtime.config.authBaseUrl,
@@ -614,21 +622,30 @@ export class AuthService {
     this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
     this.profile.invalidate(session.userId)
     let phone: string
+    let bindingRequired: boolean | undefined
     try {
       // Absence of a display mask is not proof that the owner removed a binding.
-      const data = await this.runtime.authenticatedAuthGet<{ user_id?: unknown; phone?: unknown }>(
+      const data = await this.runtime.authenticatedAuthGet<{ user_id?: unknown; phone?: unknown; phone_binding_policy?: { mode?: unknown } }>(
         '/api/v1/auth/get-user-info', session, undefined, { lane: 'auth', bypassCache: true },
       )
       const current = await this.runtime.requireSession()
       if (data.user_id !== session.userId || typeof data.phone !== 'string'
         || current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new Error('binding fact unavailable')
       phone = data.phone
+      bindingRequired = phoneBindingRequirement(data.phone_binding_policy)
     } catch (error) {
       throw new ArkmePluginError('phone-unbind-outcome-unknown', '解绑状态尚未确认，请重试以刷新状态', true, 502, { cause: error })
     }
     if (phone.trim() !== '') {
       this.pendingPhoneUnbindSession = undefined
       throw new ArkmePluginError('phone-unbind-not-completed', '手机号仍处于绑定状态，请重新获取验证码', false)
+    }
+    if (bindingRequired === false) {
+      this.pendingPhoneUnbindSession = undefined
+      return { status: 'authenticated', environment: this.runtime.config.environment, userId: session.userId }
+    }
+    if (bindingRequired === undefined) {
+      throw new ArkmePluginError('phone-unbind-outcome-unknown', '解绑状态尚未确认，请重试以刷新状态', true, 502)
     }
     // Use the account owner's atomic credential comparison: a late unlink
     // response must never delete a newly selected account's session.
@@ -652,23 +669,42 @@ export class AuthService {
 
   private async authSnapshotForSession(
     session: ArkmeSessionCredentials,
-    options: { forceProfile?: boolean } = {},
+    options: { forceProfile?: boolean; requireBoundPhone?: boolean } = {},
   ): Promise<ArkmeAuthSnapshot> {
-    const profile = options.forceProfile === true
+    let profile = options.forceProfile === true
       ? await this.profile.refreshProfileForSession(session)
       : await this.profile.profileForSession(session)
+    // Persisted profiles intentionally contain no login decision. Obtain one
+    // from the owner on restart; repeated status reads reuse the memory cache.
+    if (options.forceProfile !== true && !this.profileHasBoundPhone(profile)
+      && profile.profile?.phoneBindingRequired === undefined) {
+      profile = await this.profile.refreshProfileForSession(session)
+    }
+    if (options.requireBoundPhone === true && !this.profileHasBoundPhone(profile)) {
+      throw new ArkmePluginError('phone-bind-outcome-unknown', '绑定状态尚未确认，请稍后刷新账号资料', true, 502)
+    }
     return {
-      status: this.profileHasBoundPhone(profile) ? 'authenticated' : 'binding-required',
+      status: this.profileRequiresPhoneBinding(profile) ? 'binding-required' : 'authenticated',
       environment: this.runtime.config.environment,
       userId: session.userId,
     }
+  }
+
+  private profileRequiresPhoneBinding(snapshot: ArkmeUserProfileSnapshot): boolean {
+    if (this.profileHasBoundPhone(snapshot)) return false
+    const required = snapshot.profile?.phoneBindingRequired
+    if (typeof required !== 'boolean') {
+      throw new ArkmePluginError('phone-binding-policy-unavailable', '暂时无法确认账号绑定要求，请重试', true, 502)
+    }
+    return required
   }
 
   private profileHasBoundPhone(snapshot: ArkmeUserProfileSnapshot): boolean {
     return (snapshot.profile?.contact.phoneMasked?.trim() ?? '') !== ''
   }
 
-  private async acceptLoginSession(session: ArkmeSessionCredentials, restDaysCancel = 0, assertCurrent?: () => void): Promise<ArkmeAuthSnapshot> {
+  private async acceptLoginSession(session: ArkmeSessionCredentials, restDaysCancel = 0, options: { assertCurrent?: () => void; requireBoundPhone?: boolean } = {}): Promise<ArkmeAuthSnapshot> {
+    const { assertCurrent } = options
     // A fresh login supersedes any confirmation owned by another window or
     // account. Only the explicit pending-login resolver may retain its identity.
     if (assertCurrent === undefined) this.pendingCancellationLogin = undefined
@@ -680,7 +716,7 @@ export class AuthService {
     this.cancellationNotice = undefined
     this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
     this.profile.invalidate(session.userId)
-    const snapshot = await this.authSnapshotForSession(session, { forceProfile: true })
+    const snapshot = await this.authSnapshotForSession(session, { forceProfile: true, requireBoundPhone: options.requireBoundPhone === true })
     assertCurrent?.()
     if (snapshot.status === 'authenticated') {
       await this.runtime.clearPendingBindingSession()
@@ -712,9 +748,9 @@ export class AuthService {
     }
     await this.runtime.post(this.runtime.config.authBaseUrl, '/api/v1/auth/abort-cancel', {}, pending.session.accessToken, [200])
     if (this.pendingCancellationLogin !== pending) throw new ArkmePluginError('cancellation-login-expired', '登录确认已失效，请重新登录', false)
-    const snapshot = await this.acceptLoginSession(pending.session, 0, () => {
+    const snapshot = await this.acceptLoginSession(pending.session, 0, { assertCurrent: () => {
       if (this.pendingCancellationLogin !== pending) throw new ArkmePluginError('cancellation-login-expired', '登录确认已失效，请重新登录', false)
-    })
+    } })
     if (this.pendingCancellationLogin === pending) this.pendingCancellationLogin = undefined
     return snapshot
   }

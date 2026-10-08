@@ -52,8 +52,9 @@ describe('direct microphone recording lifecycle', () => {
     expect(h.upload).not.toHaveBeenCalled()
     await h.store.stop()
     expect(h.stop).toHaveBeenCalledOnce(); expect(h.upload).toHaveBeenCalledOnce()
-    const [path, file, time, user] = h.upload.mock.calls[0]!
+    const [path, file, time, user, options] = h.upload.mock.calls[0]!
     expect([path, time, user]).toEqual(['/test/import', 1790000000000, 42])
+    expect(options).toMatchObject({ recordingKind: 1 })
     expect(file.type).toBe('audio/wav'); expect(file.size).toBe(48044)
     expect(h.store.getSnapshot().pending).toHaveLength(0)
     expect(h.store.getSnapshot().acceptedRevision).toBe(1)
@@ -131,6 +132,10 @@ describe('direct microphone recording lifecycle', () => {
     const file = await h.store.download(record.id); expect(file?.size).toBe(32044)
     await h.store.upload(record.id)
     expect(h.upload.mock.calls[0]![1].name).toBe(h.upload.mock.calls[1]![1].name)
+    expect(h.upload.mock.calls.map(call => call[4])).toEqual([
+      expect.objectContaining({ recordingKind: 1 }),
+      expect.objectContaining({ recordingKind: 1 }),
+    ])
     expect(h.capture).toHaveBeenCalledOnce(); expect(h.journal.records.size).toBe(0)
   })
   it('restores interrupted local recordings without automatically uploading or starting capture', async () => {

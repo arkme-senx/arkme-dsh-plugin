@@ -60,6 +60,7 @@ export async function importStagedRecording(
       sha256: hash.digest('hex'),
       startAtMillis: input.startAtMillis,
       belongUserId: input.ownership === 'self' ? expectedUserId : 0,
+      recordingKind: 3,
     }, expectedUserId, signal)
     accepted = true
     return job

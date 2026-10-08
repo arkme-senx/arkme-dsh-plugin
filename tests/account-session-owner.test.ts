@@ -27,6 +27,28 @@ function fixture(initial?: ArkmeSessionCredentials, commitStatus: 'ready' | 'rel
 }
 
 describe('Arkme account session owner', () => {
+  test('skips an already resolved conditional login without preparing a scope transition', async () => {
+    const { owner, store, bridge } = fixture(credentials(42))
+    await owner.write(credentials(42, 'stale-access'), async () => false)
+    expect(await store.read()).toEqual(credentials(42))
+    expect(store.write).not.toHaveBeenCalled()
+    expect(bridge.prepare).not.toHaveBeenCalled()
+  })
+
+  test('aborts pending login activation if its owner changes during scope shutdown', async () => {
+    const { owner, store, bridge } = fixture()
+    let pending = true
+    owner.attachScopeCloseBarrier(async () => { pending = false })
+    await expect(owner.write(credentials(42), async () => {
+      if (!pending) throw new Error('login context changed')
+      return true
+    })).rejects.toThrow('login context changed')
+    expect(await store.read()).toBeUndefined()
+    expect(store.write).not.toHaveBeenCalled()
+    expect(bridge.abort).toHaveBeenCalledWith('scope-transition-1')
+    expect(bridge.commit).not.toHaveBeenCalled()
+  })
+
   test('persists a handoff before removing the same active credentials', async () => {
     const initial = credentials(42)
     const { owner, store } = fixture(initial)

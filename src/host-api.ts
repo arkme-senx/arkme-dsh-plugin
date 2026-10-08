@@ -945,7 +945,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1095,6 +1095,7 @@ export async function dispatchArkmeHostOperation(
     case 'auth.cancellation.submit': return await service.submitCancellation(numberParam(params, 'expectedUserId', 0), stringParam(params, 'expectedMode'))
     case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
+    case 'auth.logout.feedback': return service.logoutFailureFeedback()
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
     case 'chat.direct-message-refusal.set':
@@ -1210,6 +1211,12 @@ export async function dispatchArkmeHostOperation(
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.storage': return await service.accountStorageUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.voice': return await service.accountVoiceUsage(stringParam(params, 'expectedAccountScope'))
+    case 'account.usage.recording': {
+      const month = stringParam(params, 'month').trim()
+      return await service.accountRecordingUsage(
+        stringParam(params, 'expectedAccountScope'), month === '' ? undefined : month, requestSignal,
+      )
+    }
     case 'account.usage.token.summary': return await service.accountTokenUsageSummary(stringParam(params, 'expectedAccountScope'), {
       monthKey: stringParam(params, 'monthKey'), timezone: stringParam(params, 'timezone'),
     }, requestSignal)
@@ -1471,6 +1478,7 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.import.session.update-ownership': return await service.updateRecordingImportSessionOwnership(
       stringParam(params, 'sessionRef').trim(), recordingImportOwnershipParam(params), requestSignal,
     )
+    case 'recordings.import.transcription.retry': return await service.retryRecordingTranscription(stringParam(params, 'sessionRef').trim(), requestSignal)
     case 'recordings.import.session.delete': return await service.deleteRecordingImportSession(
       stringParam(params, 'sessionRef').trim(), requestSignal,
     )
@@ -1591,6 +1599,10 @@ export async function dispatchArkmeHostOperation(
         ? {}
         : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
     })
+    case 'official-notifications.list': return service.listOfficialNotifications(stringParam(params, 'cursor'), requestSignal)
+    case 'official-notifications.summary': return service.officialNotificationSummary(requestSignal)
+    case 'official-notifications.detail': return service.officialNotificationDetail(stringParam(params, 'id'), requestSignal)
+    case 'official-notifications.read': return service.readOfficialNotifications({ accountKey: stringParam(params, 'accountKey'), ...(params?.all === true ? { all: true } : { ids: stringListParam(params, 'ids') }) }, requestSignal)
     case 'ai-letter.list': return await service.listAiLetters({
       periodType: numberParam(params, 'periodType', 0),
       cursorStartAt: numberParam(params, 'cursorStartAt', 0),

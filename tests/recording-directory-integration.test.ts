@@ -214,7 +214,7 @@ describe('directory import through the existing recording coordinator', () => {
       const first = await f.run()
       expect(first).toMatchObject({ total: 23, remaining: 0, counts: { uploaded: 23 } })
       expect(f.maxActive()).toBe(1)
-      expect((await f.store.listRecordingImportJobs(42)).every(job => job.phase === 'accepted')).toBe(true)
+      expect((await f.store.listRecordingImportJobs(42)).every(job => job.phase === 'accepted' && job.recordingKind === 3)).toBe(true)
       expect(await readdir(f.uploads)).toEqual([])
       for (const name of f.names) expect(await readFile(join(f.directoryPath, name))).toEqual(wav())
       const second = await f.run()

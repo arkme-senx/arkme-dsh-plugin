@@ -1,3 +1,4 @@
+import { officialNotifications } from './official-notification-store.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
@@ -246,6 +247,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
@@ -285,6 +287,7 @@ export function useArkmeRealtimeClientEvents(
           if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
           return
         }
+        if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated') {
           if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }

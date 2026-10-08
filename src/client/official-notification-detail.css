@@ -1,0 +1,174 @@
+.arkme-official-detail {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary, #17191c);
+  background: var(--dsw-alias-bg-base, #fff);
+}
+
+.arkme-official-detail__inner {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 808px;
+  margin: 0 auto;
+  padding: 20px clamp(20px, 4%, 44px) 56px;
+}
+
+.arkme-official-detail__navigation { margin-bottom: 30px; }
+
+.arkme-official-detail button.arkme-official-detail__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  margin-left: -10px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.arkme-official-detail button:focus-visible,
+.arkme-official-detail a:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe);
+  outline-offset: 3px;
+}
+
+.arkme-official-detail button.arkme-official-detail__back:hover {
+  color: var(--dsw-alias-label-primary, #17191c);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, .06));
+}
+
+.arkme-official-detail__header {
+  padding-bottom: 26px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, .06));
+}
+
+.arkme-official-detail__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--dsw-alias-state-business-primary, #677ec5);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.arkme-official-detail__header h2 {
+  margin: 0 0 14px;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.arkme-official-detail__header time {
+  display: block;
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 12px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.arkme-official-detail__body {
+  padding-top: 26px;
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.arkme-official-detail__body p { margin: 0 0 1.2em; }
+.arkme-official-detail__body :is(h1, h2, h3, h4) {
+  margin: 1.6em 0 .65em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.arkme-official-detail__body h1 { font-size: 23px; }
+.arkme-official-detail__body h2 { font-size: 21px; }
+.arkme-official-detail__body h3 { font-size: 18px; }
+.arkme-official-detail__body h4 { font-size: 16px; }
+.arkme-official-detail__body > :first-child { margin-top: 0; }
+.arkme-official-detail__body > :last-child { margin-bottom: 0; }
+.arkme-official-detail__body :is(ul, ol) { margin: 0 0 1.2em; padding-left: 1.6em; }
+.arkme-official-detail__body ul { list-style-type: disc; }
+.arkme-official-detail__body ol { list-style-type: decimal; }
+.arkme-official-detail__body strong { font-weight: 600; }
+.arkme-official-detail__body li { margin: .3em 0; }
+.arkme-official-detail__body li > :is(ul, ol) { margin-bottom: 0; }
+.arkme-official-detail__body blockquote {
+  margin: 1.2em 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--dsw-alias-state-business-primary, #8295e8);
+  border-radius: 0 6px 6px 0;
+  background: var(--dsw-alias-bg-layer-1, #f8f9fa);
+  color: var(--dsw-alias-label-secondary, #68707c);
+}
+.arkme-official-detail__body blockquote > :last-child { margin-bottom: 0; }
+.arkme-official-detail__body a {
+  color: var(--dsw-alias-state-business-primary, #3964fe);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.arkme-official-detail__body code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2, #f3f4f6);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: .88em;
+}
+.arkme-official-detail__body pre {
+  overflow-x: auto;
+  margin: 1.2em 0;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, #f3f4f6);
+  line-height: 1.65;
+}
+.arkme-official-detail__body pre code { padding: 0; background: transparent; }
+.arkme-official-detail__body hr {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, .06));
+}
+.arkme-official-detail__body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1.2em 0;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.arkme-official-detail__body :is(th, td) {
+  padding: 9px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, .1));
+}
+.arkme-official-detail__body th { background: var(--dsw-alias-bg-layer-1, #f8f9fa); }
+
+.arkme-official-detail__status {
+  margin: 24px 0 0;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1, #f8f9fa);
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.arkme-official-detail .arkme-official-detail__status button {
+  margin-left: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-state-business-primary, #3964fe);
+  font: inherit;
+  cursor: pointer;
+}
+.arkme-official-detail .arkme-official-detail__status button:hover { text-decoration: underline; }

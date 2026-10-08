@@ -7,11 +7,12 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
   'teamCodexPost',
   'interwovenReadReceipts', 'sourceMessageExtensionParent',
   'reactions',
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
-  'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
+  'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -45,7 +46,7 @@ const expectedPublicMethods = [
   'recordingDay', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
-  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
+  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
@@ -118,7 +119,7 @@ const expectedServiceFiles = [
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
-  'member-event-service.ts',
+  'member-event-service.ts', 'official-notification-service.ts',
   'desktop-attention-bridge.ts',
   'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts',
   'recording-presence-writer.ts',

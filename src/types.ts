@@ -8,6 +8,12 @@ export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
 export type ArkmeAuthStatus = 'logged-out' | 'cancellation-pending' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
+export interface ArkmeLogoutFeedback {
+  status: 'idle' | 'pending' | 'failed'
+  id?: string
+  message?: string
+}
+
 export interface ArkmeAuthSnapshot {
   status: ArkmeAuthStatus
   environment: ArkmeEnvironment
@@ -1387,6 +1393,7 @@ export interface ArkmeProviderCapabilities {
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
@@ -1512,6 +1519,8 @@ export interface ArkmeUserProfile {
   arkmeId: string
   /** Whether this account can still use its one-time Arkme ID change. Omitted for legacy cached profiles. */
   canUpdateArkmeId?: boolean
+  /** Fresh account-service login decision; not persisted across process restarts. */
+  phoneBindingRequired?: boolean
   accountType: number
   createdAt: number
   bindings: {
@@ -3736,7 +3745,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -3831,6 +3840,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
   | 'auth.logout'
+  | 'auth.logout.feedback'
   | 'user-ban.status'
   | 'chat.direct-message-admission'
   | 'chat.direct-message-refusal.set'
@@ -3866,6 +3876,7 @@ export type ArkmePluginOperation =
   | 'account.usage.tokens'
   | 'account.usage.storage'
   | 'account.usage.voice'
+  | 'account.usage.recording'
   | 'account.usage.token.summary'
   | 'account.usage.token.operations'
   | 'account.usage.token.calls'
@@ -4104,6 +4115,10 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'official-notifications.list'
+  | 'official-notifications.summary'
+  | 'official-notifications.detail'
+  | 'official-notifications.read'
   | 'archives.list'
   | 'archives.state'
   | 'archives.set'
@@ -4162,6 +4177,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
+  | 'recordings.import.transcription.retry'
   | 'recordings.playback.open'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'

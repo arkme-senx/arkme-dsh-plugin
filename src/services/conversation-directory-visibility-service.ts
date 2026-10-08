@@ -149,7 +149,9 @@ export class ConversationDirectoryVisibilityService {
     const operation = { ownerUserId: entry.ownerUserId, ...(signal === undefined ? {} : { signal }) }
     if (hidden) await this.preference.dismiss(entry.ref, entry.evidence, operation)
     else await this.preference.restore([entry.ref], operation)
-    await this.invalidateBestEffort()
+    // Source dismissal is confirmed by the facade's single-row directory delta.
+    // A generic invalidation would rescan every conversation before/alongside it.
+    if (entryKind !== 'source' || !hidden) await this.invalidateBestEffort()
   }
 
   async restoreSource(

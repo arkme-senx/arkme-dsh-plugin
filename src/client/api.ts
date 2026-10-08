@@ -15,6 +15,8 @@ export interface RecordingImportUploadProgress {
 export interface RecordingImportUploadOptions {
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
+  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  recordingKind?: 1 | 3
 }
 
 function recordingImportMime(file: File): string {
@@ -55,6 +57,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
+    request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
     request.upload.onprogress = event => {
       options.onProgress?.({
         uploadedBytes: Math.max(0, Math.min(file.size, Math.trunc(event.loaded))),
@@ -149,6 +152,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
+  | 'recordings.import.transcription.retry'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
   | 'speaker-directory.summary'
@@ -243,5 +247,14 @@ export async function callArkme<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
-  return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+  try {
+    return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+  } catch (error) {
+    if (operation === 'auth.logout' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('arkme:logout-failed', {
+        detail: error instanceof Error ? error.message : String(error),
+      }))
+    }
+    throw error
+  }
 }
