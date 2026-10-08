@@ -17,7 +17,7 @@ export interface TeamConversation {
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
   blocked: boolean; revision: number; updatedAt: number
-  preview?: { text: string; status: string; hasMedia: boolean }
+  preview?: { text: string; status: string; hasMedia: boolean; templateKind?: number }
 }
 export interface TeamContent { text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
 export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }

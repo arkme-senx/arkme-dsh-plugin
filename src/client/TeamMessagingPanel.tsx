@@ -73,7 +73,9 @@ export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: 
 export function TeamConversationRow({ conversation: c, selected = false, showTeamName = true, role, onClick }: {
   conversation: TeamConversation; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
 }) {
-  const preview = c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? tr('[附件]') : '') : c.preview ? tr('内容暂不可用') : ''
+  const preview = c.preview?.status === 'available'
+    ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
+    : c.preview ? tr('内容暂不可用') : ''
   return <button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onClick={onClick}>

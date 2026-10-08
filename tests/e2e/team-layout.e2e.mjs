@@ -33,7 +33,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     else if (path === '/api/v1/records/detail') data = { record_core: { record_uid: 'personal-team-search', owner_user_id: 99001001, creator_user_id: 99001001,
       origin_kind: 5, source_kind: 4, status: 1, content_access_state: 1, version: 1, template_kind: 1,
       text_content: '搜索打开的完整团队快记正文', send_at: Date.now(), content_payload: {} } }
-    else if (path.startsWith('/api/v1/team/') && teamOwnerFixture) data = teamOwnerFixture(path)
+    else if (path.startsWith('/api/v1/team/') && teamOwnerFixture) data = teamOwnerFixture(path, input)
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: path.startsWith('/api/v1/records/') ? 0 : 200, data }))
   })
   try {
@@ -67,7 +67,12 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const rawChannel = { team_id: 42, name: 'Arkme Internal Interview', jotmo_id: 'arkme_cn', public_ref: publicRef, enabled: true }
     const rawConversation = { conversation_uid: 'signed-avatar-fixture', channel: rawChannel, side: 'team' }
     let signatureRevision = 0
-    teamOwnerFixture = path => {
+    let voicePreviewText
+    teamOwnerFixture = (path, input) => {
+      if (path.endsWith('/conversations/list') && voicePreviewText !== undefined) return {
+        items: [{ ...rawConversation, side: input.side, visitor: { nickname: '语音来访者' },
+          preview: { status: 'available', text: voicePreviewText, has_media: true, template_kind: 3 } }], has_more: false,
+      }
       if (path.endsWith('/conversations/context')) return { conversation_uid: 'signed-avatar-fixture', side:'team', team_name: rawChannel.name }
       if (path.endsWith('/conversations/open')) return { channel: rawChannel, conversation: rawConversation }
       if (path.endsWith('/timeline/page')) {
@@ -127,6 +132,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         {nickname:'设计同事',read:false,readAt:0},{nickname:'研发同事',read:false,readAt:0}]}
       else if(op === 'team.app.read') value={}
       else if(op === 'team.app.create.check') value={available:params.jotmoId !== 'already_taken',reason:params.jotmoId === 'already_taken' ? 'taken' : ''}
+      else if (op === 'team.app.conversations' && voicePreviewText !== undefined) value = await hostOwner.executeTeamApp(op, params)
       else if (op === 'team.app.conversations') value = { items: params.side === 'team'
         ? [conversation(), secondConversation()]
         : [{...conversation(),key:'contacted-team',side:'external',channel:{...channel(),name:'设计团队',jotmoId:'design_team'}}], hasMore:false }
@@ -454,6 +460,21 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.locator('[data-arkme-note-detail]').waitFor({ state: 'detached' })
     await page.locator('[data-team-composer]').waitFor()
     await capture('plugin-team-source-navigation')
+    // Exercise raw wire preview -> installed Host adapter -> both directory sides.
+    // Do not fabricate a client DTO that would hide a dropped template_kind.
+    voicePreviewText = ''
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    const directory = page.locator('[data-arkme-retained-directory="conversations"]')
+    for (const side of ['team', 'external']) {
+      await directory.locator(`[data-team-side="${side}"]`).getByText('[语音]', { exact: true }).waitFor()
+    }
+    await capture('plugin-voice-preview-before-transcription')
+    voicePreviewText = '完成转写后的原文'
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    for (const side of ['team', 'external']) {
+      await directory.locator(`[data-team-side="${side}"]`).getByText(voicePreviewText, { exact: true }).waitFor()
+    }
+    expect(await directory.getByText('[附件]', { exact: true }).count()).toBe(0)
   } catch (error) {
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})

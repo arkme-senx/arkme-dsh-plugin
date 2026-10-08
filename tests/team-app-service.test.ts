@@ -30,6 +30,14 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it.each(['team', 'external'])('preserves voice preview classification for the %s conversation list', async side => {
+    const f = fixture(() => ({ items: [{ ...conversation, side,
+      preview: { status: 'available', text: '', has_media: true, template_kind: 3 },
+    }], has_more: false }))
+    const result = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(result.items[0]?.preview).toEqual({ status: 'available', text: '', hasMedia: true, templateKind: 3 })
+  })
+
   it('cancels by original send identity using current conversation authority without sending content', async () => {
     const f=fixture((path,body)=>path.endsWith('/messages/cancel')
       ? {message_uid:body.client_message_uid,seq:0,state:'cancelled',side:'external',own:true,revision:1}

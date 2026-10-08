@@ -17,7 +17,9 @@ vi.mock('react-dom', async original => ({...await original<typeof import('react-
 const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload, fileCapabilities:async()=>({maxAttachments:9}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
-import { TeamMessagingPanel, TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
+import { TeamMessagingPanel, TeamConversationPane, TeamConversationRow } from '../src/client/TeamMessagingPanel.js'
+import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 
@@ -45,6 +47,41 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  for (const side of ['team', 'external'] as const) {
+    it.each([
+      ['available', '', 3, true, '[语音]'],
+      ['available', '', 3, false, '[语音]'],
+      ['available', '转写内容', 3, true, '转写内容'],
+      ['available', '', 4, true, '[附件]'],
+      ['available', '', undefined, true, '[附件]'],
+      ['available', '', undefined, false, ''],
+      ['deleted', '旧正文不能泄露', 3, true, '内容暂不可用'],
+      ['unavailable', '旧正文不能泄露', 3, true, '内容暂不可用'],
+    ] as const)(`${side} preview %s/%s/%s/%s renders %s`, async (status, text, templateKind, hasMedia, expected) => {
+      await act(async () => { renderer = create(<TeamConversationRow conversation={{ ...conversation, side,
+        preview: { status, text, hasMedia, ...(templateKind === undefined ? {} : { templateKind }) },
+      }} onClick={() => {}} />) })
+      expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.preview }).children.join('')).toBe(expected)
+    })
+  }
+
+  it('uses existing voice translation and preserves user transcription after refresh', async () => {
+    const setLocale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })()
+    setLocale('en')
+    try {
+      const row = (text: string) => <TeamConversationRow conversation={{ ...conversation,
+        preview: { status: 'available', text, hasMedia: true, templateKind: 3 },
+      }} onClick={() => {}} />
+      await act(async () => { renderer = create(row('')) })
+      const preview = () => renderer!.root.findByProps({ style: conversationDirectoryStyles.preview })
+      expect(preview().children.join('')).toBe('[Voice]')
+      const first = preview()
+      await act(async () => { renderer!.update(row('语音原文')) })
+      expect(preview()).toBe(first)
+      expect(preview().children.join('')).toBe('语音原文')
+    } finally { setLocale('zh') }
+  })
 
   it.each(['queued','uploading','sending'])('keeps initial %s text delivery in the message without extra status controls',async state=>{
     let tasks:ReturnType<typeof accepted>[]=[]
