@@ -1,3 +1,5 @@
+import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
+export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
 import type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
 export type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
 export type { ArkmeSelfRolePort } from '../self-role-contract.js'
@@ -1498,6 +1500,22 @@ export class ArkmeSdk {
     await this.call('conversation.directory.bot-pin', { botRef, pinned }, signal)
   }
 
+  /** Official notification queries never acknowledge user reading. */
+  private async requireOfficialNotifications(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.officialNotificationsV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持官方通知',retryable:false})
+  }
+  async listOfficialNotifications(cursor?: string, signal?: AbortSignal): Promise<ArkmeOfficialNotificationPage> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.list', { cursor }, signal)
+  }
+  async officialNotificationSummary(signal?: AbortSignal): Promise<ArkmeOfficialNotificationSummary> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.summary', undefined, signal)
+  }
+  async officialNotificationDetail(id: string, signal?: AbortSignal): Promise<ArkmeOfficialNotification> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.detail', { id }, signal)
+  }
+  async readOfficialNotifications(input: ArkmeOfficialNotificationRead, signal?: AbortSignal): Promise<ArkmeOfficialNotificationSummary> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.read', { ...input }, signal)
+  }
   /** List effective archives, including topics covered by an ancestor. */
   async listArchives(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
     await this.requireArchiveCapability(signal)

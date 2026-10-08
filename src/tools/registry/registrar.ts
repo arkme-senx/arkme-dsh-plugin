@@ -19,6 +19,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_direct_message_refusal_set',
   'arkme_topic_home_visibility',
   'arkme_archive_set',
+  'arkme_official_notifications_read',
   'arkme_background_sound_disable',
   'arkme_file_prepare',
   'arkme_files_send',
@@ -80,6 +81,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
     if (request.action === 'history-policy-set') return request.locked === true

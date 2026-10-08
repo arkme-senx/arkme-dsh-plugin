@@ -1,3 +1,4 @@
+import { officialNotifications } from '../src/client/official-notification-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import * as topicDirectories from '../src/client/self-topic-directory-cache.js'
 import { arkmeCalendarInvalidations } from '../src/client/calendar-invalidation-store.js'
@@ -632,4 +633,24 @@ it('uses Host directory deltas for managed pin and visibility events without ano
     expect(read).not.toHaveBeenCalled()
     expect(refresh).not.toHaveBeenCalled()
   } finally { if (renderer !== undefined) await act(async () => renderer.unmount()) }
+})
+
+it('official hints refresh only the official owner and reconnect reconciles it even without chat refresh', async () => {
+  let socket!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  class FakeWebSocket { onopen = null; onmessage = null; constructor() { socket = this }; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  const invalidate = vi.spyOn(officialNotifications, 'invalidate').mockImplementation(() => {})
+  const records = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({items: [], hasMore: false})
+  function Harness() { useArkmeRealtimeClientEvents({status:'authenticated',userId:42,environment:'test'},1,false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    records.mockClear()
+    await act(async () => { socket.onmessage?.({data:JSON.stringify({type:'projection-invalidated',projection:'official_notification',revision:1})} as MessageEvent<string>) })
+    expect(invalidate).toHaveBeenCalledWith('test:42'); expect(records).not.toHaveBeenCalled()
+    invalidate.mockClear()
+    await act(async () => { socket.onmessage?.({data:JSON.stringify({type:'reconcile',revision:2,connected:true,refresh:'none'})} as MessageEvent<string>) })
+    expect(invalidate).toHaveBeenCalledWith('test:42')
+  } finally { await act(async () => renderer.unmount()) }
 })

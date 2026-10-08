@@ -1,3 +1,5 @@
+import { OfficialNotificationService } from './services/official-notification-service.js'
+import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
 import { SpeakerDirectoryService } from './services/speaker-directory-service.js'
 import { withReactionTrace, measureReaction } from './reaction-host-diagnostics.js'
 import { SelfRoleService } from './services/self-role-service.js'
@@ -348,6 +350,7 @@ export class ArkmeService {
   private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
   private readonly source: SourceService
   private readonly conversationDirectoryVisibility: ConversationDirectoryVisibilityService
@@ -435,6 +438,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
     this.recordDeletion = new RecordDeletionService(this.runtime, this.source)
     this.recordTopicAssignment = new RecordTopicAssignmentService(this.runtime, this.source)
@@ -885,6 +889,7 @@ export class ArkmeService {
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        officialNotificationsV1: true,
         entityArchive: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
@@ -1300,6 +1305,11 @@ export class ArkmeService {
   async renameTopic(sourceRef: string, title: string): Promise<ArkmeTopicRenameResult> {
     return await this.source.renameTopic(sourceRef, title)
   }
+
+  listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }
+  officialNotificationSummary(signal?: AbortSignal) { return this.officialNotifications.summary(signal) }
+  officialNotificationDetail(id: string, signal?: AbortSignal) { return this.officialNotifications.detail(id, signal) }
+  readOfficialNotifications(input: ArkmeOfficialNotificationRead, signal?: AbortSignal) { return this.officialNotifications.read(input, signal) }
 
   async listArchives(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
     return this.archives.list(cursor, signal)
