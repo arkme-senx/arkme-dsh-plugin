@@ -194,7 +194,7 @@ describe('phone unbind', () => {
   const captcha = { lot_number: 'lot', captcha_output: 'output', pass_token: 'pass', gen_time: 'time' }
   function setup(result: number) {
     const runtime = { config, sessionStore: { read: vi.fn(async () => session) }, readPendingBindingSession: vi.fn(async () => undefined), requireSession: vi.fn(async () => session), post: vi.fn(async () => ({ result })),
-      authenticatedAuthGet: vi.fn(async () => ({ user_id: 42, phone: '' })),
+      authenticatedAuthGet: vi.fn(async () => ({ user_id: 42, phone: '', phone_binding_policy: { mode: 'required' } })),
       authenticatedRequestOptions: vi.fn((_session, _service, _lane, options) => options),
       writePendingBindingSession: vi.fn(), moveSessionToPendingBinding: vi.fn(async () => true),
       invalidateScope: vi.fn(), requestScope: vi.fn(() => '42') } as unknown as ServiceRuntime
@@ -251,6 +251,19 @@ describe('phone unbind', () => {
     })
     expect(runtime.moveSessionToPendingBinding).toHaveBeenCalledWith(session)
     expect(runtime.post).toHaveBeenCalledTimes(1)
+  })
+  it('keeps an exempt old account signed in after phone unlink', async () => {
+    const { service, runtime } = setup(2)
+    vi.mocked(runtime.authenticatedAuthGet).mockResolvedValue({ user_id: 42, phone: '', phone_binding_policy: { mode: 'none' } })
+    await expect(service.unbindPhone('123456')).resolves.toEqual({ status: 'authenticated', environment: 'test', userId: 42 })
+    expect(runtime.moveSessionToPendingBinding).not.toHaveBeenCalled()
+    expect(runtime.writePendingBindingSession).not.toHaveBeenCalled()
+  })
+  it.each([undefined, { mode: 'unavailable' }, { mode: 'unknown' }])('keeps credentials and retries unknown binding policy %j after unlink', async policy => {
+    const { service, runtime } = setup(2)
+    vi.mocked(runtime.authenticatedAuthGet).mockResolvedValue({ user_id: 42, phone: '', phone_binding_policy: policy })
+    await expect(service.unbindPhone('123456')).rejects.toMatchObject({ code: 'phone-unbind-outcome-unknown' })
+    expect(runtime.moveSessionToPendingBinding).not.toHaveBeenCalled()
   })
   it('does not park old credentials if another account replaced the session', async () => {
     const { service, runtime, profile } = setup(2)
@@ -313,7 +326,7 @@ describe('phone unbind', () => {
     }
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       if (String(input).endsWith('/phone-unbind')) return upstreamStatus === 200 ? json({ result: 2 }) : new Response('upstream failed', { status: upstreamStatus })
-      if (String(input).endsWith('/get-user-info')) return json({ user_id: 42, phone: '' })
+      if (String(input).endsWith('/get-user-info')) return json({ user_id: 42, phone: '', phone_binding_policy: { mode: 'required' } })
       throw new Error('unexpected request')
     }) as typeof fetch
     const owner = new ArkmeAccountSessionOwner(sessions, bridge)

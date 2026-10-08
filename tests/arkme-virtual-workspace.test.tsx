@@ -162,7 +162,7 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
     expect(workspaceSource).toContain('= [...removalFeedback.rows]')
-    expect(workspaceSource).toContain('rootDirectoryRows.map(row =>')
+    expect(workspaceSource).toContain("rootDirectoryRows.filter(row => row.kind === 'notifications' || socialAllowed || row.kind === 'bot' || !isSocialSource(row.source)).map(row =>")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
     expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")

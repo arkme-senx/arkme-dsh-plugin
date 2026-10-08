@@ -36,23 +36,23 @@ describe('Arkme startup authentication gate', () => {
   })
 
   it('maps every authentication outcome to a fail-closed screen', () => {
-    expect(startupAuthGateScreen(undefined, 'unknown', '')).toBe('checking')
-    expect(startupAuthGateScreen(undefined, 'unknown', '网络连接失败')).toBe('error')
-    expect(startupAuthGateScreen({ status: 'logged-out', environment: 'prod' }, 'unknown', '')).toBe('login')
-    expect(startupAuthGateScreen({ status: 'expired', environment: 'prod' }, 'unknown', '')).toBe('login')
-    expect(startupAuthGateScreen({ status: 'binding-required', environment: 'prod', userId: 1 }, 'required', '')).toBe('login')
-    expect(startupAuthGateScreen({ status: 'authenticated', environment: 'prod', userId: 1 }, 'checking', '')).toBe('checking')
-    expect(startupAuthGateScreen({ status: 'authenticated', environment: 'prod', userId: 1 }, 'ready', '')).toBe('authenticated')
+    expect(startupAuthGateScreen(undefined, '')).toBe('checking')
+    expect(startupAuthGateScreen(undefined, '网络连接失败')).toBe('error')
+    expect(startupAuthGateScreen({ status: 'logged-out', environment: 'prod' }, '')).toBe('login')
+    expect(startupAuthGateScreen({ status: 'expired', environment: 'prod' }, '')).toBe('login')
+    expect(startupAuthGateScreen({ status: 'binding-required', environment: 'prod', userId: 1 }, '')).toBe('login')
+    expect(startupAuthGateScreen({ status: 'authenticated', environment: 'prod', userId: 1 }, '')).toBe('authenticated')
+    expect(startupAuthGateScreen({ status: 'authenticated', environment: 'prod', userId: 1 }, '')).toBe('authenticated')
   })
 
   it('enters login when the user chooses login from an authentication error', () => {
-    expect(startupAuthGateScreen(undefined, 'unknown', '网络连接失败', true)).toBe('login')
+    expect(startupAuthGateScreen(undefined, '网络连接失败', true)).toBe('login')
   })
 
-  it('returns to authentication checking after login succeeds', () => {
+  it('opens content directly after the Host accepts login', () => {
     const authenticated = { status: 'authenticated', environment: 'prod', userId: 1 } as const
-    expect(startupAuthGateScreen(authenticated, 'unknown', '', true)).toBe('checking')
-    expect(startupAuthGateScreen(authenticated, 'checking', '', true)).toBe('checking')
+    expect(startupAuthGateScreen(authenticated, '', true)).toBe('authenticated')
+    expect(startupAuthGateScreen(authenticated, '', true)).toBe('authenticated')
   })
 
   it('enters the selected login mode and starts QR login only for WeChat', () => {

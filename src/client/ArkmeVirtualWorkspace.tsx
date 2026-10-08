@@ -1,5 +1,6 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
+import { isSocialSource, useSocialAccess } from './social-access-store.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -961,6 +962,7 @@ export function ArkmeNavigation({
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   useArkmeLocale()
+  const socialAllowed = useSocialAccess(active)
   const activeRef = useRef(active)
   activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -1076,7 +1078,7 @@ export function ArkmeNavigation({
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
-    authenticated && directory === 'root' && chatDirectory.baselineReady)
+    authenticated && socialAllowed && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
     const anchor = selfEntryRef.current
     if (anchor === null || !active || !authenticated || directory !== 'root') return
@@ -1482,7 +1484,7 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.environment, auth?.userId, bots, chatRevision, directory, rootSources, chatDirectory.projection])
   useEffect(() => {
-    if (!authenticated) {
+    if (!authenticated || !socialAllowed) {
       setOfficialAuthorProfile(undefined)
       return
     }
@@ -1491,7 +1493,7 @@ export function ArkmeNavigation({
       .then(profile => { if (!controller.signal.aborted) setOfficialAuthorProfile(profile) })
       .catch(() => { if (!controller.signal.aborted) setOfficialAuthorProfile(undefined) })
     return () => { controller.abort() }
-  }, [authenticated, auth?.userId])
+  }, [authenticated, auth?.userId, socialAllowed])
   useEffect(() => {
     if (!active) return
     if (ui.searchTarget === undefined) return
@@ -2201,7 +2203,7 @@ export function ArkmeNavigation({
             onActivateSurface?.()
           }}
         />}
-        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && socialAllowed && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
         {authenticated && showHarnessEntry && codexEntryVisible && <button type="button" role="treeitem" aria-label="Codex"
           aria-selected={ui.mode === 'codex'} data-arkme-codex-entry
           style={{ ...styles.chatRow, ...(ui.mode === 'codex' ? styles.chatRowActive : {}) }}
@@ -2212,7 +2214,7 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
           </span>
         </button>}
-        {authenticated && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
+        {authenticated && socialAllowed && officialAuthorSource === undefined && <ArkmeOfficialAuthorRow
           {...(officialAuthorProfile === undefined ? {} : { profile: officialAuthorProfile })}
           busy={officialAuthorOpening}
           onClick={() => { void openOfficialAuthor() }}
@@ -2240,7 +2242,7 @@ export function ArkmeNavigation({
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.filter(row => row.kind === 'notifications' || socialAllowed || row.kind === 'bot' || !isSocialSource(row.source)).map(row => {
           if (row.kind === 'notifications') return <ArkmeNotificationRowContent key="notifications"
             selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
             onClick={showNotifications} summary={notificationSummary}
@@ -2359,7 +2361,7 @@ export function ArkmeNavigation({
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </div>
         })}</ArkmeDirectoryWindow>
-        {privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
+        {socialAllowed && privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
           {tr(privateInteractionDirectory.error)}
         </button>}

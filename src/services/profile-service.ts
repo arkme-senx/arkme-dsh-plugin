@@ -405,6 +405,8 @@ export class ProfileService {
         ...(googleName === '' ? {} : { google: googleName }),
       }
       const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
+      const phoneBindingRequired = typeof data.phone === 'string'
+        ? phoneBindingRequirement(data.phone_binding_policy) : undefined
       const profile: ArkmeUserProfile = {
         userId,
         displayName,
@@ -414,6 +416,7 @@ export class ProfileService {
         ...(avatarUrl === undefined ? {} : { avatarUrl }),
         arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
         ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
+        ...(phoneBindingRequired === undefined ? {} : { phoneBindingRequired }),
         accountType: numberValue(data.type),
         createdAt: numberValue(data.create_at),
         bindings: {
@@ -428,7 +431,12 @@ export class ProfileService {
           ...(email === undefined ? {} : { emailMasked: email }),
         },
       }
-      const snapshot = await this.runtime.stateStore.cacheProfile(userId, profile)
+      const persisted = await this.runtime.stateStore.cacheProfile(userId, profile)
+      // Login policy is a fresh owner decision, not a local database column.
+      // Keep it with the existing short-lived profile cache after persistence.
+      const snapshot: ArkmeUserProfileSnapshot = phoneBindingRequired === undefined || persisted.profile === null
+        ? persisted
+        : { ...persisted, profile: { ...persisted.profile, phoneBindingRequired } }
       this.profileCache.set(userId, { value: snapshot, expiresAtMillis: Date.now() + PROFILE_CACHE_TTL_MS })
       return snapshot
     })()
@@ -795,4 +803,12 @@ export class ProfileService {
       revision: snapshot.revision,
     }
   }
+}
+
+// Dates and account age are evaluated by the account service, never by the plugin.
+export function phoneBindingRequirement(value: unknown): boolean | undefined {
+  const mode = value !== null && typeof value === 'object' && 'mode' in value ? value.mode : undefined
+  if (mode === 'none' || mode === 'remind') return false
+  if (mode === 'required') return true
+  return undefined
 }

@@ -173,6 +173,7 @@ function userInfo(userId: number, phone = '13800138000'): Record<string, unknown
     name_slug: `arkme-${userId}`,
     type: 1,
     create_at: 123,
+    phone_binding_policy: { mode: phone === '' ? 'required' : 'none' },
     phone,
     email: '',
     has_bind_apple: false,
@@ -1302,7 +1303,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       userId: 10009,
     })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
     await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
 
     const prodService = new ArkmeService({ ...config, environment: 'prod' }, sessions, state, async () => {
@@ -1395,7 +1396,7 @@ describe('ArkmeService', () => {
       userId: 10012,
     })
     await expect(recreated.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
   })
 
   it('demotes a legacy active session when the profile still requires phone binding', async () => {
