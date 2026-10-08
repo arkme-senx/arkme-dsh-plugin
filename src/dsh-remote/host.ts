@@ -991,7 +991,15 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (unregistered) await this.options.realtime.disconnect()
     this.connected = false
     this.serviceLeaseGeneration = 0
-    this.ledger?.close()
+    const ledgerCloseErrors: unknown[] = []
+    try {
+      this.ledger?.close()
+    } catch (error) {
+      // Keep an actually open database available for cleanup retry. A closed
+      // ledger must never survive an ACL failure and be reused by this account.
+      if (this.ledger?.isOpen) throw error
+      ledgerCloseErrors.push(error)
+    }
     this.ledger = undefined
     await this.turnUpload?.close()
     this.turnUpload = undefined
@@ -1012,6 +1020,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.lastProjectionSyncAttemptMillis = 0
     this.projectionVersion = 0
     this.clearPendingSessionEventBatches()
+    if (ledgerCloseErrors.length > 0) throw ledgerCloseErrors[0]
   }
 
   private startApiProxyEvents(): void {
