@@ -185,6 +185,7 @@ describe('registerArkmeTools', () => {
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
       'arkme_self_roles_list', 'arkme_self_roles_write',
+      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_ai_points',
@@ -442,6 +443,7 @@ describe('registerArkmeTools', () => {
   })
 
   it.each([
+    { name: 'arkme_official_notifications_read', args: { account_key: 'test:42', all: true }, prompt: '是否将当前全部官方通知标记为已读', port: 'readOfficialNotifications' },
     {
       name: 'arkme_background_sound_disable', args: {}, prompt: '关闭当前 Arkme 账号的文字背景音', port: 'updateBackgroundSoundPreference',
     },

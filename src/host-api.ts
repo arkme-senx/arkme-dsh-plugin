@@ -1591,6 +1591,10 @@ export async function dispatchArkmeHostOperation(
         ? {}
         : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
     })
+    case 'official-notifications.list': return service.listOfficialNotifications(stringParam(params, 'cursor'), requestSignal)
+    case 'official-notifications.summary': return service.officialNotificationSummary(requestSignal)
+    case 'official-notifications.detail': return service.officialNotificationDetail(stringParam(params, 'id'), requestSignal)
+    case 'official-notifications.read': return service.readOfficialNotifications({ accountKey: stringParam(params, 'accountKey'), ...(params?.all === true ? { all: true } : { ids: stringListParam(params, 'ids') }) }, requestSignal)
     case 'ai-letter.list': return await service.listAiLetters({
       periodType: numberParam(params, 'periodType', 0),
       cursorStartAt: numberParam(params, 'cursorStartAt', 0),
