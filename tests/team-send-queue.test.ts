@@ -114,6 +114,29 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     expect((await f.queue.list(command.conversationRef))[1]?.state).toBe('failed')
     expect(f.published.size).toBe(1)
   })
+  it('delivers later messages while an accepted ACK is unknown without duplicating on recovery',async()=>{
+    const f=await fixture(),first=input(),second=input()
+    await f.queue.enqueue(first);await f.queue.enqueue(second)
+    f.loseAck();await f.queue.recover()
+    await f.queue.recover()
+    expect([...f.published.keys()]).toEqual([first.clientUid,second.clientUid])
+    expect((await f.queue.list(first.conversationRef)).map(t=>t.state)).toEqual(['retrying','sent'])
+    vi.setSystemTime(Date.now()+3000);await f.queue.recover()
+    expect(f.published.size).toBe(2)
+    expect((await f.queue.list(first.conversationRef)).map(t=>t.state)).toEqual(['sent','sent'])
+  })
+  it('leaves only the unavailable upload pending and sends a later text',async()=>{
+    const f=await fixture(),file=await f.stage(),first=input({fileRefs:[file.fileRef]}),second=input()
+    await f.queue.enqueue(first);await f.queue.enqueue(second)
+    const original=f.upload.getMockImplementation()!
+    f.upload.mockImplementation(async()=>{throw offline()})
+    await f.queue.recover();await f.queue.recover()
+    expect(f.published.has(second.clientUid)).toBe(true)
+    expect(f.published.has(first.clientUid)).toBe(false)
+    expect(f.upload).toHaveBeenCalledTimes(1)
+    f.upload.mockImplementation(original);vi.setSystemTime(Date.now()+3000);await f.queue.recover()
+    expect(f.published.size).toBe(2)
+  })
   it('reuses successful sibling uploads after an interrupted batch',async()=>{
     const f=await fixture(),a=await f.stage('a.png'),b=await f.stage('b.png')
     const original=f.upload.getMockImplementation()!;let fail=true
@@ -124,16 +147,39 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     expect(f.upload.mock.calls.filter(args=>args[1].fileName==='b.png')).toHaveLength(2)
     expect(f.published.size).toBe(1)
   })
-  it('stops on permission denial and does not upload, auto-retry or advance the blocked lane',async()=>{
+  it('rechecks current authority for later sends without retrying a rejected message',async()=>{
     const f=await fixture(),file=await f.stage(),a=input({fileRefs:[file.fileRef]})
     await f.queue.enqueue(a);await f.queue.enqueue(input());f.setDenied(true)
-    await f.queue.recover();f.setDenied(false);await f.queue.recover()
-    expect((await f.queue.list(a.conversationRef)).map(t=>t.state)).toEqual(['failed','queued'])
+    await f.queue.recover()
     expect(f.upload).not.toHaveBeenCalled();expect(f.published.size).toBe(0)
+    f.setDenied(false);await f.queue.recover()
+    expect((await f.queue.list(a.conversationRef)).map(t=>t.state)).toEqual(['failed','sent'])
+    expect(f.published.size).toBe(1)
     const failed=(await f.queue.list(a.conversationRef))[0]!
     await expect(f.queue.retry(a.conversationRef,failed.taskRef)).rejects.toMatchObject({code:'team-not_accessible'})
     await f.queue.cancel(a.conversationRef,failed.taskRef);await f.queue.recover()
     expect(f.published.size).toBe(1)
+  })
+  it.each(['team-invalid_request','team-dependency_unavailable','team-reply_conflict'])('isolates %s from later independent messages across restart',async(code)=>{
+    const f=await fixture(),first=input(),second=input(),other=input({conversationRef:'42:other'})
+    await f.queue.enqueue(first);await f.queue.enqueue(second);await f.queue.enqueue(other)
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{
+      if(op==='team.app.send'&&p.clientUid===first.clientUid)throw new ArkmePluginError(code,'send failed',code!=='team-invalid_request',409)
+      return original(op,p,signal)
+    })
+    await f.queue.recover()
+    const firstRequest=f.execute.mock.calls.find(([op,p])=>op==='team.app.send'&&p.clientUid===first.clientUid)![1]
+    expect(f.published.has(other.clientUid)).toBe(true)
+    f.restart();await f.queue.recover()
+    expect(f.published.has(second.clientUid)).toBe(true)
+    expect(f.execute.mock.calls.filter(([op,p])=>op==='team.app.send'&&p.clientUid===first.clientUid)).toHaveLength(1)
+    expect((await f.queue.list(first.conversationRef))[0]?.state).toBe(code==='team-invalid_request'?'failed':'retrying')
+    if(code!=='team-invalid_request'){
+      f.execute.mockImplementation(original);vi.setSystemTime(Date.now()+31_000);await f.queue.recover()
+      expect(f.execute.mock.calls.filter(([op,p])=>op==='team.app.send'&&p.clientUid===first.clientUid)[1]![1]).toEqual(firstRequest)
+      expect(f.published.size).toBe(3)
+    }
   })
   it('backs off legacy server responses and resumes the same send without confirmation',async()=>{
     const f=await fixture(),command=input();await f.queue.enqueue(command)

@@ -182,20 +182,18 @@ export class TeamSendQueue {
     this.pollDelay = tasks.some(teamTaskActive) ? 2_000 : 30_000
     const lanes = new Set<string>()
     const ready = tasks.filter(task => {
-      if (['sent', 'cancelled'].includes(task.state)) return false
+      // A failed or deferred message does not reserve its conversation. Each
+      // independent command retains its own identity and retry deadline.
+      if (!teamTaskActive(task) || task.nextAttemptAt > Date.now()) return false
       if (lanes.has(task.conversationKey)) return false
       lanes.add(task.conversationKey)
-      return teamTaskActive(task) && task.nextAttemptAt <= Date.now() && !this.active.has(`${user}:${task.conversationKey}`)
+      return !this.active.has(`${user}:${task.conversationKey}`)
     }).slice(0, 2)
     await Promise.all(ready.map(task => this.run(user, epoch, task)))
     // Do not add a polling interval between consecutive messages in the same
     // conversation. Only failed network attempts wait for their retry deadline.
     const remaining = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
-    const first = new Map<string, TeamSendTask>()
-    for (const task of remaining) {
-      if (!['sent', 'cancelled'].includes(task.state) && !first.has(task.conversationKey)) first.set(task.conversationKey, task)
-    }
-    this.pollDelay = Math.min(30_000, ...[...first.values()]
+    this.pollDelay = Math.min(30_000, ...remaining
       .filter(task => teamTaskActive(task) && !this.active.has(`${user}:${task.conversationKey}`))
       .map(task => Math.max(0, task.nextAttemptAt - Date.now())))
   }
