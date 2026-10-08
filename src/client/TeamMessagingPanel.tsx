@@ -388,11 +388,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
     finally { if (!ctrl.current.signal.aborted) setUploading(false) }
   }
-  const actOnTask = async (task: TeamSendTask, action: 'retry' | 'confirm' | 'cancel') => {
+  const actOnTask = async (task: TeamSendTask, action: 'retry' | 'cancel') => {
     try {
       const result = await callArkme<TeamSendTask>(action === 'cancel' ? 'team.app.send.cancel-task' : 'team.app.send.retry-task', {
         conversationRef: conversation.ref, taskRef: task.taskRef,
-        ...(action === 'confirm' ? { confirmReplySeq: latest.current?.conversation.latestTeamReplySeq ?? 0 } : {}),
       }, ctrl.current.signal)
       if (!ctrl.current.signal.aborted) { delivery.accept(result); setError('') }
     } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
@@ -461,7 +460,6 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
           {tr(task.cancelRequested ? '取消发送待确认' : task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
           {(task.state === 'retrying' || task.state === 'cancelling' || (task.state === 'failed' && task.cancelRequested)) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
-          {!task.cancelRequested && task.reason === 'reply_conflict' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'confirm')}}>{tr('已读新回复，仍要发送')}</button>}
           {!task.cancelRequested && ['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
         </ArkmeSendTaskStatus>)}
       </Fragment>)}

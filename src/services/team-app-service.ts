@@ -17,7 +17,8 @@ const reasons: Record<string, string> = {
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
-  reply_conflict: '其他成员已回复，请阅读新回复后确认是否仍要发送', version_conflict: '内容已被更新，请重新读取后编辑',
+  reply_conflict: '服务暂时不可用，请使用原请求重试',
+  version_conflict: '内容已被更新，请重新读取后编辑',
   idempotency_conflict: '同一发送请求的内容不一致，请核对发送结果', invalid_request: '请求内容无效',
   rate_limited: '操作过于频繁，请稍后使用原请求重试',
   dependency_unavailable: '服务暂时不可用，请使用原请求重试', approval_required: '已启用加入审批', already_member: '你已经是团队成员',
@@ -132,7 +133,7 @@ export class TeamAppService {
     } catch (error) {
       if (error instanceof ArkmeUpstreamResponseError) {
         const reason = str(obj(error.responseData).reason)
-        if (reasons[reason]) throw new ArkmePluginError(`team-${reason}`, reasons[reason], reason === 'dependency_unavailable' || reason === 'rate_limited', reason === 'dependency_unavailable' ? 503 : reason === 'rate_limited' ? 429 : 409, { cause: error })
+        if (reasons[reason]) throw new ArkmePluginError(`team-${reason}`, reasons[reason], ['dependency_unavailable', 'rate_limited', 'reply_conflict'].includes(reason), reason === 'dependency_unavailable' ? 503 : reason === 'rate_limited' ? 429 : 409, { cause: error })
       }
       throw error
     }
@@ -265,10 +266,9 @@ export class TeamAppService {
           return { reason: str(data.reason), message: await this.message(pending, actor, context) }
         }
       }
-      case 'team.app.send.status': case 'team.app.send.confirm': {
+      case 'team.app.send.status': {
         const m = await message()
-        const data = await post(operation === 'team.app.send.status' ? 'conversations/messages/send-status' : 'conversations/messages/confirm-reply',
-          operation === 'team.app.send.status' ? { message_uid: m.message_uid, side: m.side } : { message_uid: m.message_uid, expected_reply_seq: num(p.expectedReplySeq) })
+        const data = await post('conversations/messages/send-status', { message_uid: m.message_uid, side: m.side })
         return { message: await this.message(data, actor, m) }
       }
       case 'team.app.edit': { const m = await message(); return await post('conversations/messages/update', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version), content: obj(p.content) }) }

@@ -51,6 +51,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
     page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
+    let sendTasks = []
+    const sendRetries = []
     const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
     const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'鲨鱼辣椒1998'}, preview:{status:'available',text:'请问可以修改吗？',hasMedia:false}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
@@ -105,6 +107,13 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         // Make a wrong reload observable, including frames before the next bytes arrive.
         await new Promise(resolve=>setTimeout(resolve,150))
         value={base64:fixtureImage.toString('base64'),mimeType:'image/png'}
+      }
+      else if(op === 'team.app.send.tasks') value=sendTasks
+      else if(op === 'team.app.send.retry-task') {
+        sendRetries.push(params)
+        const task=sendTasks.find(task=>task.taskRef===params.taskRef)
+        const m={...messages[0],key:task.clientUid,ref:task.clientUid,seq:messages.length+1,content:task.content,createdAt:task.createdAtMillis}
+        messages.push(m);value={...task,state:'sent',message:m};sendTasks=[value]
       }
       else if(op === 'team.app.send.enqueue') {
         const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
@@ -324,6 +333,20 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
+    // Legacy reply-cursor state uses the ordinary delivery status, never a confirmation.
+    sendTasks=[{conversationRef:conversation().ref,clientUid:'legacy-reply',taskRef:'legacy-task',conversationKey:conversation().key,
+      content:{text_content:'历史待发消息',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],createdAtMillis:Date.now(),
+      state:'retrying',reason:'reply_conflict',attempts:1,nextAttemptAt:0}]
+    await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+    await pane.getByText('历史待发消息',{exact:true}).waitFor()
+    expect(await pane.getByText(/其他成员.*回复|仍要发送|仍然发送/).count()).toBe(0)
+    expect(await pane.getByRole('textbox',{name:'团队消息内容'}).isEditable()).toBe(true)
+    await capture('plugin-legacy-reply-recovery')
+    await pane.getByRole('button',{name:'重试',exact:true}).click()
+    await expect.poll(()=>sendRetries.length).toBe(1)
+    expect(sendRetries[0]).toEqual({conversationRef:conversation().ref,taskRef:'legacy-task'})
+    expect(calls).not.toContain('team.app.send.confirm')
+    await pane.getByRole('button',{name:'重试',exact:true}).waitFor({state:'hidden'})
     const receiptTarget=pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true})
     await receiptTarget.scrollIntoViewIfNeeded()
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))

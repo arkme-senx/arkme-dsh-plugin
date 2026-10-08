@@ -299,6 +299,25 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.send.enqueue')).toHaveLength(1)
   })
+  it('keeps a recovering legacy send in its bubble without reply confirmation',async()=>{
+    const task={conversationRef:conversation.ref,clientUid:'client',content:{text_content:'原消息',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],taskRef:'legacy',conversationKey:'key',createdAtMillis:Date.now(),state:'retrying',attempts:1,nextAttemptAt:0,reason:'reply_conflict'}
+    mocks.call.mockImplementation(async(op:string)=>{
+      if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.tasks')return [task]
+      if(op==='team.app.send.retry-task')return {...task,state:'queued'}
+      throw new Error(op)
+    })
+    await mount()
+    const buttons=renderer!.root.findAllByType('button')
+    expect(buttons.some(v=>v.children.join('').includes('仍要发送'))).toBe(false)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('原消息')
+    const retry=buttons.find(v=>v.children.join('')==='重试')!
+    await act(async()=>{retry.props.onClick();await tick()})
+    expect(mocks.call.mock.calls.find(v=>v[0]==='team.app.send.retry-task')?.[1]).toEqual({conversationRef:conversation.ref,taskRef:'legacy'})
+    expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.confirm')).toBe(false)
+  })
+
   it('shows durable failed tasks after remount and cancels through the Host owner', async () => {
     const task={conversationRef:conversation.ref,clientUid:'client',content:{text_content:'未发出',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],taskRef:'failed-task',conversationKey:'key',createdAtMillis:Date.now(),state:'failed',attempts:1,nextAttemptAt:0,error:'无权发送'}
     let tasks=[task]

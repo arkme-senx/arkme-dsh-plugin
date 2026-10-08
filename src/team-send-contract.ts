@@ -19,7 +19,6 @@ export interface TeamSendTask extends TeamSendInput {
   attempts: number
   nextAttemptAt: number
   sendContent?: TeamContent
-  confirmReplySeq?: number
   cancelRequested?: boolean
   message?: TeamMessage
   reason?: string

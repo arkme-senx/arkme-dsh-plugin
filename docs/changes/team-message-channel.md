@@ -111,3 +111,10 @@ pnpm exec vitest run --config "$ARKME_PLUGIN_CHECKOUT/vitest.team-layout-e2e.con
 最终运行包 SHA-256：`84574f6844162a7dd1880863036a0ff9f6d2b90fecede5ab29d4124def5e6083`。经官方 CLI 安装到全新隔离 DSH_HOME/Profile，使用未修改的 DSH 0.1.5-rc.2 和真实 Chrome 运行 `team-layout.e2e.mjs` 通过。签名更新 6 轮，发送前后头像读取均为 2 次，70 次画面采样未发现原头像闪动；原头像/图片 DOM、图片读取次数、输入节点与位置保持稳定。覆盖阅读点/共享浮层、内联重新编辑、同页及独立窗口图片预览、窄窗/暗色布局。
 
 本轮浏览器用合成 Team/身份响应，不能等同于真实测试服与 Vivo 新包的设备验收。用户当前实例、测试分支和测试服部署未重启或修改；更新后的 Vivo 安装验收由用户更新客户端后进行。配套移动端提交为 `759cc50765`，两个仓库均使用 `codex/c20260922-team-message-channel`。
+
+
+## 2026-10-08 移除独立消息的回复确认
+
+其他成员回复不影响自己发送新消息。Team SendQueue 不再调用 send.confirm，也不要求读完新回复后继续发送。历史 reply_conflict 任务仍沿原 client UID、冻结正文和附件检查点恢复；取消意图只继续取消，权限拒绝和幂等内容不一致仍停止。旧服务持续返回该原因时按现有退避重试，需要 Team 服务包含 d2ccd02 的独立消息追加语义，不能通过更改原请求或新建 UID 绕过。编辑同一条 Record 的版本保护保留。
+
+本次沿用 TeamSendQueue/FileTransfers 的账号隔离与持久化，没有增加存储 owner、DSH 扩展点、配置或插件版本。能力面：UI 删除确认交互；Host 在原内部队列恢复历史状态；Tools/SDK 不增加新能力（该次改动为现有 App 发送逻辑收口，不新增公开命令或授权范围）。类型检查与完整插件测试通过（10,221 通过、15 跳过），旧任务、旧服务持续返回、无 operation 返回、取消恢复、下一条草稿及编辑版本保护均有回归。打包运行验收详见同任务 meta 的 reply-confirmation-removal-20261008.md。

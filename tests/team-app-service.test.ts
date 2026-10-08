@@ -201,6 +201,12 @@ describe('Team App owner adapter', () => {
     expect(f.requests.some(r => r.path.endsWith('/confirm-reply'))).toBe(false)
     expect(JSON.stringify(result)).not.toContain('message-private')
   })
+  it('maps a legacy reply rejection without operation to recoverable delivery, not confirmation', async () => {
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : new Response(JSON.stringify({ code: 1004, data: { reason: 'reply_conflict' } })))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.send', {conversationRef:opened.conversation!.ref,clientUid:'original',expectedReplySeq:0,content:{text_content:'reply',template_kind:1}})).rejects.toMatchObject({code:'team-reply_conflict',retryable:true,message:'服务暂时不可用，请使用原请求重试'})
+    expect(f.requests.some(r => r.path.endsWith('/confirm-reply'))).toBe(false)
+  })
   it('does not cache a previous success over a removed membership', async () => {
     let denied = false
     const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : denied ? new Response(JSON.stringify({ code: 1004, data: { reason: 'not_accessible' } })) : { conversation, messages: [message] })

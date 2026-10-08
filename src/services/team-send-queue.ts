@@ -14,9 +14,18 @@ interface Ports {
 const fail = (code: string, message: string) => new ArkmePluginError(`team-${code}`, message, false, 409)
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const transient = (error: unknown): boolean => error instanceof ArkmePluginError
-  ? error.retryable || ['arkme-network-error', 'arkme-timeout', 'team-dependency_unavailable', 'team-rate_limited'].includes(error.code)
+  ? error.retryable || ['arkme-network-error', 'arkme-timeout', 'team-dependency_unavailable', 'team-rate_limited', 'team-reply_conflict'].includes(error.code)
   : error instanceof TypeError
 const reason = (error: unknown) => error instanceof ArkmePluginError ? error.code.replace(/^team-/, '') : 'network_unavailable'
+
+// Persisted failures from the retired reply-cursor gate are ordinary pending
+// sends. Keep their original identity/body and never override cancellation intent.
+function recoverLegacyReply(task: TeamSendTask): TeamSendTask {
+  if (task.reason !== 'reply_conflict' || task.cancelRequested || ['sent', 'cancelled'].includes(task.state)) return task
+  const recovered: TeamSendTask = { ...task, state: task.state === 'failed' ? 'queued' : task.state, reason: 'preparing' }
+  delete recovered.error
+  return recovered
+}
 
 /** Team delivery policy only. FileTransfers owns all bytes, upload checkpoints and disk writes. */
 export class TeamSendQueue {
@@ -81,9 +90,9 @@ export class TeamSendQueue {
   }
   async list(conversationRef: string): Promise<TeamSendTask[]> {
     const user = await this.user(), key = await this.ports.identify(conversationRef, user)
-    return (await this.ports.files().teamSends(user)).filter(task => task.conversationKey === key).map(task => ({ ...task, conversationRef, files: structuredClone(this.progress.get(`${user}:${task.taskRef}`) ?? task.files) }))
+    return (await this.ports.files().teamSends(user)).map(recoverLegacyReply).filter(task => task.conversationKey === key).map(task => ({ ...task, conversationRef, files: structuredClone(this.progress.get(`${user}:${task.taskRef}`) ?? task.files) }))
   }
-  async retry(conversationRef: string, taskRef: string, confirmReplySeq?: number): Promise<TeamSendTask> {
+  async retry(conversationRef: string, taskRef: string): Promise<TeamSendTask> {
     const user = await this.user(), key = await this.ports.identify(conversationRef, user)
     const lane = `${user}:${key}`
     if (this.active.has(lane)) throw fail('send-busy', '发送处理中，请稍后重试')
@@ -93,12 +102,8 @@ export class TeamSendQueue {
         const task = tasks.find(task => task.taskRef === taskRef && task.conversationKey === key)
         if (!task) throw fail('task-missing', '发送任务不存在')
         if (['sent', 'cancelled'].includes(task.state)) return
-        if (task.cancelRequested) {
-          delete task.confirmReplySeq
-        } else if (task.reason === 'reply_conflict') {
-          if (!Number.isSafeInteger(confirmReplySeq) || confirmReplySeq! < 0) throw fail('reply_conflict', '请阅读新回复后确认是否发送')
-          task.confirmReplySeq = confirmReplySeq!
-        } else if (task.state === 'failed') throw fail(task.reason ?? 'send-rejected', task.error ?? '此发送已被拒绝')
+        if (!task.cancelRequested && task.state === 'failed' && task.reason !== 'reply_conflict') throw fail(task.reason ?? 'send-rejected', task.error ?? '此发送已被拒绝')
+        if (task.reason === 'reply_conflict') { task.reason = 'preparing'; delete task.error }
         task.state = task.cancelRequested ? 'cancelling' : 'queued'; task.nextAttemptAt = 0
       })
       this.wake(0)
@@ -173,7 +178,7 @@ export class TeamSendQueue {
   }
   private async drain(): Promise<void> {
     const user = await this.user(), epoch = this.epoch
-    const tasks = await this.ports.files().teamSends(user)
+    const tasks = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
     this.pollDelay = tasks.some(teamTaskActive) ? 2_000 : 30_000
     const lanes = new Set<string>()
     const ready = tasks.filter(task => {
@@ -185,7 +190,7 @@ export class TeamSendQueue {
     await Promise.all(ready.map(task => this.run(user, epoch, task)))
     // Do not add a polling interval between consecutive messages in the same
     // conversation. Only failed network attempts wait for their retry deadline.
-    const remaining = await this.ports.files().teamSends(user)
+    const remaining = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
     const first = new Map<string, TeamSendTask>()
     for (const task of remaining) {
       if (!['sent', 'cancelled'].includes(task.state) && !first.has(task.conversationKey)) first.set(task.conversationKey, task)
@@ -223,18 +228,13 @@ export class TeamSendQueue {
       }
       task.state = 'sending'; await this.save(user, task)
       await this.guard(user, epoch, controller.signal)
-      let result = await this.ports.execute('team.app.send', this.command(task), controller.signal) as TeamSendResult
-      if (result.message && result.reason === 'reply_conflict' && task.confirmReplySeq !== undefined) {
-        result = await this.ports.execute('team.app.send.confirm', { messageRef: result.message.ref, expectedReplySeq: task.confirmReplySeq }, controller.signal) as TeamSendResult
-        delete task.confirmReplySeq
-      }
+      const result = await this.ports.execute('team.app.send', this.command(task), controller.signal) as TeamSendResult
       await this.guard(user, epoch, controller.signal)
       if (result.message) task.message = result.message
       if (result.reason) task.reason = result.reason; else delete task.reason
       if (result.message?.state === 'published') { task.state = 'sent'; delete task.error }
       else if (result.message?.state === 'cancelled') { task.state = 'cancelled'; delete task.error }
-      else if (result.reason === 'reply_conflict') { task.state = 'failed'; task.error = '其他成员已回复，请阅读后确认是否仍要发送' }
-      else if (!result.reason || ['preparing', 'network_unavailable', 'dependency_unavailable', 'rate_limited'].includes(result.reason)) { task.state = 'retrying'; task.reason = result.reason ?? 'preparing'; this.backoff(task) }
+      else if (!result.reason || ['preparing', 'network_unavailable', 'dependency_unavailable', 'rate_limited', 'reply_conflict'].includes(result.reason)) { task.state = 'retrying'; task.reason = result.reason ?? 'preparing'; delete task.error; this.backoff(task) }
       else { task.state = 'failed'; task.error = '消息未能发送，请核对后取消或重新编辑' }
       if (task.state === 'sent' || task.state === 'cancelled') task.completedAtMillis = Date.now()
       await this.save(user, task)

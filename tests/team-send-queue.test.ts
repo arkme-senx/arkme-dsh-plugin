@@ -135,13 +135,65 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     await f.queue.cancel(a.conversationRef,failed.taskRef);await f.queue.recover()
     expect(f.published.size).toBe(1)
   })
-  it('does not silently confirm conflicts from older test servers',async()=>{
+  it('backs off legacy server responses and resumes the same send without confirmation',async()=>{
     const f=await fixture(),command=input();await f.queue.enqueue(command)
     const original=f.execute.getMockImplementation()!
     f.execute.mockImplementation(async(op,p,signal)=>op==='team.app.send'?{reason:'reply_conflict',message:{ref:'accepted',state:'preparing'}}:original(op,p,signal))
     await f.queue.recover();await f.queue.recover()
     expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
-    expect(f.execute.mock.calls.some(([op])=>op==='team.app.send.confirm')).toBe(false)
+    expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'retrying',reason:'preparing'})
+    vi.setSystemTime(Date.now()+3000);await f.queue.recover()
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(2)
+    f.execute.mockImplementation(original)
+    vi.setSystemTime(Date.now()+5000);await f.queue.recover()
+    const sends=f.execute.mock.calls.filter(([op])=>op==='team.app.send').map(([,p])=>p)
+    expect(sends).toHaveLength(3);expect(sends[1]).toEqual(sends[0]);expect(sends[2]).toEqual(sends[0])
+    expect(f.published.size).toBe(1)
+    expect(f.execute.mock.calls.some(([op])=>String(op)==='team.app.send.confirm')).toBe(false)
+  })
+  it.each([false,true])('recovers a persisted legacy conflict with original identity, cancellation=%s',async(cancelRequested)=>{
+    const f=await fixture(),command=input(),task=await f.queue.enqueue(command)
+    const later=input();await f.queue.enqueue(later)
+    await f.files.mutateTeamSends(42,tasks=>{
+      Object.assign(tasks[0]!,{state:cancelRequested?'cancelling':'failed',reason:'reply_conflict',
+        error:'其他成员已回复，请阅读后确认是否仍要发送',sendContent:command.content,
+        cancelRequested,confirmReplySeq:99,message:{ref:'accepted',state:'preparing'}})
+    })
+    f.restart()
+    if(!cancelRequested)expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'queued',reason:'preparing'})
+    expect((await f.queue.list(command.conversationRef))[0]?.error).toBe(cancelRequested?'其他成员已回复，请阅读后确认是否仍要发送':undefined)
+    await f.queue.recover();await f.queue.recover()
+    const sends=f.execute.mock.calls.filter(([op])=>op==='team.app.send').map(([,p])=>p)
+    expect(sends.map(p=>p.clientUid)).toEqual(cancelRequested?[later.clientUid]:[command.clientUid,later.clientUid])
+    if(!cancelRequested)expect(sends[0]).toEqual({conversationRef:command.conversationRef,clientUid:command.clientUid,expectedReplySeq:0,content:command.content})
+    expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({taskRef:task.taskRef,state:cancelRequested?'cancelled':'sent'})
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.cancel')).toHaveLength(cancelRequested?1:0)
+    expect(f.execute.mock.calls.some(([op])=>String(op)==='team.app.send.confirm')).toBe(false)
+    expect(f.published.size).toBe(cancelRequested?1:2)
+  })
+  it.each(['queued','uploading','sending','retrying'] as const)('hides a retained legacy explanation without resetting the %s checkpoint',async(state)=>{
+    const f=await fixture(),command=input();await f.queue.enqueue(command)
+    const deadline=Date.now()+30_000
+    await f.files.mutateTeamSends(42,tasks=>Object.assign(tasks[0]!,{state,reason:'reply_conflict',error:'其他成员已回复',sendContent:command.content,nextAttemptAt:deadline,attempts:4}))
+    const restored=(await f.queue.list(command.conversationRef))[0]!
+    expect(restored).toMatchObject({state,reason:'preparing',nextAttemptAt:deadline,attempts:4,sendContent:command.content})
+    expect(restored.error).toBeUndefined()
+    await f.queue.recover();expect(f.published.size).toBe(0)
+    vi.setSystemTime(deadline);await f.queue.recover();expect(f.published.size).toBe(1)
+  })
+  it('retries a legacy rejection without operation metadata using the same request',async()=>{
+    const f=await fixture(),command=input();await f.queue.enqueue(command)
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{
+      if(op==='team.app.send')throw new ArkmePluginError('team-reply_conflict','服务暂时不可用',false,409)
+      return original(op,p,signal)
+    })
+    await f.queue.recover();await f.queue.recover()
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(1)
+    expect((await f.queue.list(command.conversationRef))[0]?.state).toBe('retrying')
+    f.execute.mockImplementation(original);vi.setSystemTime(Date.now()+3000);await f.queue.recover()
+    const sends=f.execute.mock.calls.filter(([op])=>op==='team.app.send').map(([,p])=>p)
+    expect(sends).toHaveLength(2);expect(sends[1]).toEqual(sends[0]);expect(f.published.size).toBe(1)
   })
   it('deduplicates repeated local admission and rejects changed payloads',async()=>{
     const f=await fixture(),command=input()
