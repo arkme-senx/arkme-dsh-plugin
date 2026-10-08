@@ -247,7 +247,8 @@ export class DirectRecordingStore {
       if (!this.valid(generation)) return
       // Sending the captured user id (never 0) lets the host reject account changes.
       await this.deps.upload(account.importPath, file, record.startedAt, account.userId, {
-        signal, onProgress: progress => { if (this.valid(generation)) this.publish({ progress: progress.totalBytes ? progress.uploadedBytes / progress.totalBytes : 0 }) },
+        signal, recordingKind: 1,
+        onProgress: progress => { if (this.valid(generation)) this.publish({ progress: progress.totalBytes ? progress.uploadedBytes / progress.totalBytes : 0 }) },
       })
       // Host accepted and durably owns the file/upload job; safe to clear this browser's copy.
       await this.deps.journal.remove(id); this.emergency.delete(id)

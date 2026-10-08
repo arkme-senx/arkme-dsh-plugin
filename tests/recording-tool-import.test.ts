@@ -39,7 +39,7 @@ describe('authorized local file to recording import', () => {
       expect(path).not.toBe(original.path)
       expect(await readFile(path)).toEqual(f.bytes)
       expect((await stat(path)).mode & 0o777).toBe(0o600)
-      expect(metadata).toMatchObject({ fileName: 'voice.wav', fileSize: f.bytes.length, sha256: createHash('sha256').update(f.bytes).digest('hex'), belongUserId: 42 })
+      expect(metadata).toMatchObject({ fileName: 'voice.wav', fileSize: f.bytes.length, sha256: createHash('sha256').update(f.bytes).digest('hex'), belongUserId: 42, recordingKind: 3 })
       expect(expectedUserId).toBe(42)
       await unlink(path) // existing coordinator can discard on acceptance/duplicate
       return { importRef: 'opaque', phase: 'accepted' }

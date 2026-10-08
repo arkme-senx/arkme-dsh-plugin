@@ -1,3 +1,4 @@
+import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
@@ -1248,6 +1249,14 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   >
     {task.status !== 'completed' && <span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(Math.max(0, Math.min(1, task.progress)) * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(Math.max(0, Math.min(1, task.progress)) * 100)}%` }} /></span>}
     <span>{task.statusDetail}</span>
+    {(task.status === 'paused' || task.statusDetail.includes('额度不足')) && <button type="button" style={styles.secondaryButton} onClick={() => { close(); arkmeUi.openDshSettings('arkme-usage') }}>{tr('errorCode' in task && task.errorCode === 'recording_storage_exhausted' ? '管理空间' : '查看额度')}</button>}
+    {'sessionRef' in task && (task.status === 'paused' || task.status === 'partial' || task.status === 'failed') && <button type="button" disabled={pending} style={styles.secondaryButton} onClick={() => {
+      setPending(true); setError('')
+      void callArkme('recordings.import.transcription.retry', { sessionRef: task.sessionRef })
+        .then(async () => { await loadJobs() })
+        .catch(reason => { setError(reason instanceof Error ? reason.message : '转写重试失败') })
+        .finally(() => { setPending(false) })
+    }}>{tr("重试转写")}</button>}
     {task.status === 'failed' && 'errorMessage' in task && task.errorMessage !== undefined && <small style={styles.error}>{task.errorMessage}</small>}
   </span>
 

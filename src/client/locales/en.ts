@@ -1,5 +1,21 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+统计尚未启用|Statistics not enabled
+录音转写统计尚未启用|Recording transcription statistics are not enabled yet
+来源明细|Source breakdown
+收起来源明细|Hide source breakdown
+录音转写已用比例|Recording transcription quota used
+录音总时长|Total recording duration
+录音来源用量明细|Recording usage by source
+来源|Source
+人声时长|Speech duration
+实扣额度|Quota deducted
+减免|Waived
+长录音|Long recordings
+全天候录音|All-day recordings
+文件上传|File uploads
+还有 {v0} 段录音待结算，当前用量仅含已结算部分|{v0} recording segments await settlement. Usage includes settled segments only.
+录音按人声时长计量，录音静音时长不计量|Recordings are measured by speech duration; silence is not counted.
 个人世界|Personal world
 说话人排序|Sort speakers
 经常出现|Most frequent

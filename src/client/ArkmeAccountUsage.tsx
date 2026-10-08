@@ -4,27 +4,27 @@ import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeAccountStorageUsage, ArkmeAccountVoiceUsage } from '../account-usage.js'
+import type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountVoiceUsage } from '../account-usage.js'
 import { callArkme } from './api.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmeStorageUsageBreakdown } from './ArkmeUsageBreakdown.js'
 
-type ReadState<T> = { status: 'loading' | 'error' } | { status: 'ready'; value: T }
-type UsageValue = ArkmeAccountStorageUsage | ArkmeAiPointsAccount | ArkmeAccountVoiceUsage
+type ReadState<T> = { status: 'loading' | 'error'; unavailable?: boolean } | { status: 'ready'; value: T }
+type UsageValue = ArkmeAccountRecordingUsage | ArkmeAccountStorageUsage | ArkmeAiPointsAccount | ArkmeAccountVoiceUsage
 // Floor only the overview labels; keep the exact account values for billing and details.
 function formatWholePoints(value: string): string {
   return (pointsUnits(value) / 10_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
-function useUsage<T extends UsageValue>(operation: 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
+function useUsage<T extends UsageValue>(operation: 'account.usage.recording' | 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
   const [result, setResult] = useState<{ scope: string; revision: number; state: ReadState<T> }>()
   useEffect(() => {
     let active = true
     const controller = new AbortController()
     void callArkme<T>(operation, { expectedAccountScope: scope }, controller.signal).then(value => {
       if (active) setResult({ scope, revision, state: value.accountScope === scope ? { status: 'ready', value } : { status: 'error' } })
-    }).catch(() => {
-      if (active) setResult({ scope, revision, state: { status: 'error' } })
+    }).catch((error: unknown) => {
+      if (active) setResult({ scope, revision, state: { status: 'error', unavailable: operation === 'account.usage.recording' && typeof error === 'object' && error !== null && 'code' in error && error.code === 'arkme-code-3003' } })
     })
     return () => { active = false; controller.abort() }
   }, [operation, scope, revision])
@@ -44,16 +44,23 @@ export function formatUsageBytes(bytes: number): string {
   return `${new Intl.NumberFormat(arkmeIntlLocale(), { maximumFractionDigits: 2 }).format(bytes / 1024 ** index)} ${['B', 'KB', 'MB', 'GB', 'TB'][index]}`
 }
 export function formatUsageSeconds(seconds: number): string {
+  seconds = Math.round(seconds)
   if (getArkmeLocale() === 'en') {
-    const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60), rest = seconds % 60
+    const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60), rest = Math.round(seconds % 60 * 1000) / 1000
     return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', rest || seconds === 0 ? `${rest}s` : ''].filter(Boolean).join(' ')
   }
   if (seconds === 0) return '0 秒'
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor(seconds % 3600 / 60)
-  const rest = seconds % 60
+  const rest = Math.round(seconds % 60 * 1000) / 1000
   return [hours > 0 ? `${numberFormat.format(hours)} 小时` : '', minutes > 0 ? `${minutes} 分` : '', rest > 0 ? tr("{v0} 秒", { v0: rest }) : ''].filter(Boolean).join(' ')
 }
+function formatRecordingQuotaMinutes(seconds: number): string {
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes === 0) return getArkmeLocale() === 'en' ? '0m' : '0 分'
+  return formatUsageSeconds(minutes * 60)
+}
+
 export function usageLevel(used: number, total: number): 'normal' | 'low' | 'exhausted' {
   return total <= used ? 'exhausted' : (total - used) / total <= 0.1 ? 'low' : 'normal'
 }
@@ -90,6 +97,7 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
   const points = useUsage<ArkmeAiPointsAccount>('account.points.query', accountScope, 0)
   const storage = useUsage<ArkmeAccountStorageUsage>('account.usage.storage', accountScope, 0)
   const voice = useUsage<ArkmeAccountVoiceUsage>('account.usage.voice', accountScope, 0)
+  const recording = useUsage<ArkmeAccountRecordingUsage>('account.usage.recording', accountScope, 0)
   const status = (state: ReadState<unknown>) => state.status === 'loading' ? '读取中…' : '暂不可用'
   return <button type="button" className="arkme-usage-summary" aria-label={tr("查看用量与额度详情")} onClick={onOpenDetails}>
     <span className="arkme-usage-summary-heading"><strong>{tr("用量与额度")}</strong><span>{tr("详情 ›")}</span></span>
@@ -107,7 +115,10 @@ export function ArkmeAccountUsage({ accountScope, onOpenDetails }: { accountScop
         totalText: formatUsageSeconds(voice.value.usedSeconds + voice.value.remainingSeconds),
         description: tr("本月已用 {v0} / 剩余 {v1} / 共 {v2}", { v0: formatUsageSeconds(voice.value.usedSeconds), v1: formatUsageSeconds(voice.value.remainingSeconds), v2: formatUsageSeconds(voice.value.usedSeconds + voice.value.remainingSeconds) }),
       } : undefined} />
-      <UsageSummaryRow label={tr("录音转写")} kind="recording-transcription" pending={tr('暂未做限制')} description={tr("录音文件转写暂未做限制；用量统计待接入，灰轨不代表已用为零")} />
+      <UsageSummaryRow label={tr("录音转写")} kind="recording-transcription" pending={tr(recording.status !== 'ready' && recording.unavailable ? '统计尚未启用' : status(recording))} measurement={recording.status === 'ready' && recording.value.totalSeconds !== null && recording.value.remainingSeconds !== null ? {
+        used: recording.value.usedSeconds, total: recording.value.totalSeconds, totalText: formatUsageSeconds(recording.value.totalSeconds),
+        description: tr("本月已用 {v0} / 剩余 {v1} / 共 {v2}", { v0: formatRecordingQuotaMinutes(recording.value.usedSeconds), v1: formatRecordingQuotaMinutes(recording.value.remainingSeconds), v2: formatUsageSeconds(recording.value.totalSeconds) }),
+      } : undefined} />
     </span>
   </button>
 }
@@ -135,6 +146,9 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
   const points = useUsage<ArkmeAiPointsAccount>('account.points.query', accountScope, revision + creditsRevision)
   const storage = useUsage<ArkmeAccountStorageUsage>('account.usage.storage', accountScope, revision)
   const voice = useUsage<ArkmeAccountVoiceUsage>('account.usage.voice', accountScope, revision)
+  const recording = useUsage<ArkmeAccountRecordingUsage>('account.usage.recording', accountScope, revision)
+  const [recordingOpen, setRecordingOpen] = useState(false)
+  const recordingId = useId()
   const retry = () => setRevision(value => value + 1)
   const storageLevel = storage.status === 'ready' ? usageLevel(storage.value.usedBytes, storage.value.totalBytes) : 'normal'
   const voiceTotal = voice.status === 'ready' ? voice.value.usedSeconds + voice.value.remainingSeconds : 0
@@ -171,10 +185,26 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
       </>}
       <small>{tr("语音输入与快记语音的月度权益，不含下方录音文件转写")}</small>
     </div>
-    <div className="arkme-usage-metric" data-usage-kind="recording-transcription">
-      <div className="arkme-usage-label"><strong>{tr("录音转写")}</strong><span className="arkme-usage-unlimited">{tr("暂未做限制")}</span></div>
-      <p className="arkme-usage-muted">{tr("用量统计待接入")}</p>
-      <small>{tr("指录音板块的文件转写，不含 AI 总结")}</small>
+    <div className="arkme-usage-metric" data-usage-kind="recording-transcription" aria-live="polite"
+      data-usage-level={recording.status === 'ready' && recording.value.totalSeconds !== null ? usageLevel(recording.value.usedSeconds, recording.value.totalSeconds) : 'normal'}>
+      <div className="arkme-usage-label"><strong>{tr("录音转写")}</strong>{recording.status === 'ready' && <span className="arkme-usage-label-actions">
+        {recording.value.totalSeconds !== null && <span>{tr("每月 {v0}", { v0: formatUsageSeconds(recording.value.totalSeconds) })}</span>}
+        <button type="button" aria-expanded={recordingOpen} aria-controls={recordingId} onClick={() => setRecordingOpen(value => !value)}>{tr(recordingOpen ? '收起来源明细' : '来源明细')} <span aria-hidden>{recordingOpen ? '⌄' : '›'}</span></button>
+      </span>}</div>
+      {recording.status !== 'ready' ? recording.unavailable ? <p className="arkme-usage-muted">{tr("录音转写统计尚未启用")}</p> : <Pending status={recording.status} onRetry={retry} /> : <>
+        <p>{tr("已用")} {formatRecordingQuotaMinutes(recording.value.usedSeconds)}{recording.value.remainingSeconds !== null && <> {tr("/ 剩余")} {formatRecordingQuotaMinutes(recording.value.remainingSeconds)}</>}</p>
+        {recording.value.totalSeconds !== null && <UsageBar used={recording.value.usedSeconds} total={recording.value.totalSeconds} label={tr("录音转写已用比例")} />}
+        {recording.value.pendingChildCount > 0 && <small>{tr("还有 {v0} 段录音待结算，当前用量仅含已结算部分", { v0: recording.value.pendingChildCount })}</small>}
+        {recordingOpen && <div id={recordingId} className="arkme-usage-breakdown arkme-recording-breakdown">
+          <table><caption>{tr("录音来源用量明细")}</caption><thead><tr>{['来源', '录音总时长', '人声时长'].map(label => <th scope="col" key={label}>{tr(label)}</th>)}</tr></thead>
+            <tbody>{recording.value.breakdown.map(row => <tr key={row.recordingKind}>
+              <th scope="row">{tr(({ 1: '长录音', 2: '全天候录音', 3: '文件上传' } as const)[row.recordingKind])}</th>
+              <td>{row.recordingDurationMillis == null ? '—' : formatUsageSeconds(row.recordingDurationMillis / 1000)}</td>
+              <td>{formatUsageSeconds(row.speechDurationMillis / 1000)}</td>
+            </tr>)}</tbody></table>
+        </div>}
+      </>}
+      <small>{tr("录音按人声时长计量，录音静音时长不计量")}</small>
     </div>
   </section>
 }
