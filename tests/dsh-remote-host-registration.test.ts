@@ -179,6 +179,52 @@ async function journalBackfillFixture(events: DshRemoteHistoryEntry['event'][], 
 afterEach(() => { vi.useRealTimers() })
 
 describe('Host login-only registration lifecycle', () => {
+  it('releases a closed ledger after a permission failure and reopens durable commands on restart', async () => {
+    const { host, controlPlane } = await fixture()
+    await host.start()
+    const internal = host as unknown as { ledger: DshRemoteCommandLedger | undefined }
+    const ledger = internal.ledger!
+    const identity = {
+      accountId: '42', runtimeRef: 'runtime-01', requestRef: 'close-recovery',
+      operation: 'session.prompt' as const, arguments: { text: 'keep this command' },
+      executeBeforeMillis: Date.now() + 60_000,
+    }
+    ledger.begin(identity)
+    ledger.complete(identity, { accepted: true })
+    const close = ledger.close.bind(ledger)
+    const denied = new Error('icacls: access denied after database close')
+    vi.spyOn(ledger, 'close').mockImplementationOnce(() => { close(); throw denied })
+    try {
+      await expect(host.suspend()).rejects.toThrow(denied)
+      expect(host.getStatus()).toMatchObject({ enabled: false, connected: false })
+      expect(internal.ledger).toBeUndefined()
+      controlPlane.registerRuntime = async () => ({ runtime_ref: 'runtime-01', host_generation: 2 })
+      await host.start()
+      expect(host.getStatus().connected).toBe(true)
+      expect(internal.ledger?.begin(identity)).toMatchObject({
+        duplicate: true, entry: { state: 'completed', payload: { result: { accepted: true } } },
+      })
+    } finally { await host.stop() }
+  })
+
+  it('retains the ledger if SQLite itself failed to close', async () => {
+    const { host } = await fixture()
+    await host.start()
+    const internal = host as unknown as { ledger: DshRemoteCommandLedger | undefined }
+    const ledger = internal.ledger!
+    const failed = new Error('SQLite close failed')
+    const close = vi.spyOn(ledger, 'close').mockImplementationOnce(() => { throw failed })
+    try {
+      await expect(host.suspend()).rejects.toThrow(failed)
+      expect(internal.ledger).toBe(ledger)
+      expect(() => ledger.pending('42')).not.toThrow()
+    } finally {
+      close.mockRestore()
+      await host.start()
+      await host.stop()
+    }
+  })
+
   it('backfills a previously sealed short Turn tail before recording a full-journal checkpoint', async () => {
     const events = ['session/start', 'turn/start', 'assistant/message', 'assistant/message', 'turn/end', 'session/title'].map(historyEvent)
     const f = await journalBackfillFixture(events)
