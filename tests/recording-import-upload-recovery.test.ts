@@ -22,7 +22,7 @@ const job: RecordingImportJob = {
 
 function setup(upload: Client['multipartUpload']) {
   const requireSession = vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }))
-  const authenticatedAudioPost = vi.fn(async () => ({
+  const authenticatedAudioPost = vi.fn(async (_path: string) => ({
     access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
     expiration: '2099-01-01T00:00:00.000Z',
   }))
@@ -75,7 +75,12 @@ describe('recording OSS upload recovery', () => {
     await uploading
     expect(checkpoints).toEqual([previous, latest])
     expect(progress).toHaveBeenLastCalledWith(job.fileSize, latest)
-    expect(authenticatedAudioPost.mock.calls).toHaveLength(1)
+    // Renew the existing reservation and fetch STS once; retries must not
+    // create another Audio session/child or restart upload authorization.
+    expect(authenticatedAudioPost.mock.calls.map(([path]) => path)).toEqual([
+      '/api/v1/audio/renew-upload',
+      '/api/v1/audio/get-sts-token',
+    ])
   })
 
   it('stops after five retries with Flutter-style exponential backoff', async () => {

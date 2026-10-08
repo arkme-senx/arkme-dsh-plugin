@@ -66,20 +66,23 @@ describe('model usage read contracts', () => {
 })
 describe('mobile storage composition parity', () => {
   const row = (file_type: number, file_size: number, file_count = 1) => ({ file_type, file_size, file_count })
-  it('groups six categories, combines unknown types and reconciles with the total', () => {
+  it('retains the zero recording category, combines unknown types and reconciles with the total', () => {
     const raw = { size: 100, breakdown: [row(1, 10), row(3, 20), row(5, 10), row(6, 30), row(7, 10), row(0, 10), row(99, 10)] }
     expect(parseStorageUsage({ file_size: 200 }, raw, 'prod:11').breakdown).toEqual([
       { category: 'image', bytes: 10, fileCount: 1 }, { category: 'video', bytes: 20, fileCount: 1 },
       { category: 'file', bytes: 30, fileCount: 1 }, { category: 'backgroundVoice', bytes: 10, fileCount: 1 },
-      { category: 'callRecording', bytes: 10, fileCount: 1 }, { category: 'other', bytes: 20, fileCount: 2 },
+      { category: 'callRecording', bytes: 10, fileCount: 1 },
+      { category: 'recording', bytes: 0, fileCount: 0 }, { category: 'other', bytes: 20, fileCount: 2 },
     ])
   })
   it.each([undefined, [], [row(1, 9)], [row(1, -10)], [row(1, 10, -1)], [null]])('does not invent a breakdown from missing, invalid or inconsistent data', breakdown => {
     const result = parseStorageUsage({ file_size: 100 }, { size: 10, breakdown }, 'prod:11')
     expect(result.usedBytes).toBe(10); expect(result.breakdown).toBeUndefined()
   })
-  it('allows verified empty storage and camel-case aliases', () => {
-    expect(parseStorageUsage({ file_size: 100 }, { size: 0, breakdown: [] }, 'prod:11').breakdown).toEqual([])
+  it('keeps the recording category for verified empty storage and accepts camel-case aliases', () => {
+    expect(parseStorageUsage({ file_size: 100 }, { size: 0, breakdown: [] }, 'prod:11').breakdown).toEqual([
+      { category: 'recording', bytes: 0, fileCount: 0 },
+    ])
     expect(parseStorageUsage({ file_size: 100 }, { size: 10, breakdown: [{ fileType: 1, fileSize: 10, fileCount: 1 }] }, 'prod:11').breakdown?.[0]?.bytes).toBe(10)
   })
 })
