@@ -1288,6 +1288,7 @@ Arkme 对话目录|Arkme conversations
 官方通知|Official notice
 官方通知详情|Official notice details
 返回通知列表|Back to notifications
+通知列表|Notifications
 按日期查看发给自己|Browse saved notes by date
 更多发给自己操作|More saved-note actions
 正在加载会话内容|Loading conversation

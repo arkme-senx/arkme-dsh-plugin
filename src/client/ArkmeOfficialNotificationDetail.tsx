@@ -84,10 +84,11 @@ export function ArkmeOfficialNotificationDetail({
           <button
             type="button"
             className="arkme-official-detail__back"
+            aria-label={tr('返回通知列表')}
             onClick={onClose}
           >
             <ArrowLeft size={16} aria-hidden />
-            {tr('返回通知列表')}
+            {tr('通知列表')}
           </button>
         </nav>
         {error ? (
