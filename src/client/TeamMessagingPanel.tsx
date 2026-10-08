@@ -1,4 +1,4 @@
-import { useTeamSendTasks } from './team-send-tasks.js'
+import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import type { TeamSendTask } from '../team-send-contract.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
@@ -457,7 +457,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
           onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
-        {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
+        {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
           {tr(task.cancelRequested ? '取消发送待确认' : task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
           {(task.state === 'retrying' || task.state === 'cancelling' || (task.state === 'failed' && task.cancelRequested)) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
           {!task.cancelRequested && ['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}

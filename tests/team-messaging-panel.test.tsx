@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
+import { ArkmeSendTaskStatus } from '../src/client/ArkmeSendTaskStatus.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
 import { ArkmeAttachmentDraftTile } from '../src/client/ArkmeRichContent.js'
@@ -44,6 +45,32 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it.each(['queued','uploading','sending'])('keeps initial %s text delivery in the message without extra status controls',async state=>{
+    let tasks:ReturnType<typeof accepted>[]=[]
+    mocks.call.mockImplementation(async(op:string)=>{
+      if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){tasks=[accepted({state})];return tasks[0]}
+      return tasks
+    })
+    await mount();await send()
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.state).toBe('sending')
+    expect(renderer!.root.findAllByType(ArkmeSendTaskStatus)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    await act(async()=>{renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条');await tick()})
+    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false)
+  })
+  it.each(['retrying','failed','cancelling'])('keeps %s delivery actionable in the shared status component',async state=>{
+    let tasks:ReturnType<typeof accepted>[]=[]
+    mocks.call.mockImplementation(async(op:string)=>{
+      if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){tasks=[accepted({state,attempts:1,error:'网络断开',cancelRequested:state==='cancelling'})];return tasks[0]}
+      return tasks
+    })
+    await mount();await send()
+    expect(renderer!.root.findAllByType(ArkmeSendTaskStatus)).toHaveLength(1)
+    expect(renderer!.root.findByType(ArkmeSendTaskStatus).props.state).toBe(state)
+  })
 
   it('online recovery retries the same command once and keeps the next draft and original time', async () => {
     await mount(); await send()

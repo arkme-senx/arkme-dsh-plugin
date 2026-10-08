@@ -68,6 +68,54 @@ async function fixture() {
 }
 
 describe('Team delivery with the shared FileTransfers owner', () => {
+  it('a slow upload does not delay consecutive text sends in another conversation',async()=>{
+    const f=await fixture(),file=await f.stage()
+    const slow=input({fileRefs:[file.fileRef]}),a=input({conversationRef:'42:other'}),b=input({conversationRef:'42:other'})
+    let release!:()=>void
+    const barrier=new Promise<void>(resolve=>{release=resolve})
+    const upload=f.upload.getMockImplementation()!
+    f.upload.mockImplementationOnce(async(...args)=>{await barrier;return upload(...args)})
+    await f.queue.enqueue(slow);await f.queue.enqueue(a);await f.queue.enqueue(b)
+    const recovery=f.queue.recover()
+    try {
+      await vi.waitFor(()=>expect(f.published.has(b.clientUid)).toBe(true))
+      expect(f.published.has(slow.clientUid)).toBe(false)
+      expect([...f.published.keys()]).toEqual([a.clientUid,b.clientUid])
+    } finally {release();await recovery}
+    expect(f.published.size).toBe(3)
+  })
+  it.each(['pause','dispose','account change'])('stops both delivery workers before later sends on %s',async change=>{
+    const f=await fixture(),commands=[input(),input({conversationRef:'42:other'}),input({conversationRef:'42:third'})]
+    let release!:()=>void
+    const barrier=new Promise<void>(resolve=>{release=resolve})
+    const original=f.execute.getMockImplementation()!
+    f.execute.mockImplementation(async(op,p,signal)=>{if(op==='team.app.send')await barrier;return original(op,p,signal)})
+    for(const command of commands)await f.queue.enqueue(command)
+    const recovery=f.queue.recover()
+    try {
+      await vi.waitFor(()=>expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(2))
+      if(change==='account change')f.setUser(43)
+      if(change==='dispose')f.queue.dispose();else f.queue.pause()
+    } finally {release();await recovery}
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(2)
+    expect(f.published.size).toBe(0)
+  })
+  it('uses a free delivery slot for a message submitted while another upload is pending',async()=>{
+    const f=await fixture(),file=await f.stage(),slow=input({fileRefs:[file.fileRef]}),later=input({conversationRef:'42:other'})
+    let release!:()=>void
+    const barrier=new Promise<void>(resolve=>{release=resolve})
+    const upload=f.upload.getMockImplementation()!
+    f.upload.mockImplementationOnce(async(...args)=>{await barrier;return upload(...args)})
+    await f.queue.enqueue(slow)
+    const recovery=f.queue.recover()
+    try {
+      await vi.waitFor(()=>expect(f.upload).toHaveBeenCalledTimes(1))
+      await f.queue.enqueue(later)
+      await vi.waitFor(()=>expect(f.published.has(later.clientUid)).toBe(true))
+      expect(f.published.has(slow.clientUid)).toBe(false)
+    } finally {release();await recovery}
+    expect(f.published.size).toBe(2)
+  })
   it('accepts an offline attachment locally, then survives Host restart with the original identity', async()=>{
     const f=await fixture();f.setOnline(false)
     const file=await f.stage(), command=input({fileRefs:[file.fileRef]})
@@ -85,15 +133,14 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     const f=await fixture(), a=input(), b=input(), c=input({conversationRef:'42:other'})
     await f.queue.enqueue(a);await f.queue.enqueue(b);await f.queue.enqueue(c)
     await f.queue.recover()
-    expect([...f.published.keys()]).toEqual([a.clientUid,c.clientUid])
-    await f.queue.recover()
     expect([...f.published.keys()]).toEqual([a.clientUid,c.clientUid,b.clientUid])
+    await f.queue.recover()
+    expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send')).toHaveLength(3)
     expect(f.execute.mock.calls.filter(([op])=>op==='team.app.send').map(([,p])=>p.expectedReplySeq)).toEqual([0,0,0])
   })
   it('wakes the next queued message immediately after success instead of imposing a polling delay',async()=>{
     const f=await fixture();await f.queue.enqueue(input());await f.queue.enqueue(input())
-    await f.queue.recover();expect(f.published.size).toBe(1)
-    await vi.advanceTimersByTimeAsync(1);await f.queue.recover()
+    await f.queue.recover()
     expect(f.published.size).toBe(2)
   })
   it('persists the frozen request and replays an unknown ACK without reuploading or duplicating',async()=>{
@@ -149,10 +196,10 @@ describe('Team delivery with the shared FileTransfers owner', () => {
   })
   it('rechecks current authority for later sends without retrying a rejected message',async()=>{
     const f=await fixture(),file=await f.stage(),a=input({fileRefs:[file.fileRef]})
-    await f.queue.enqueue(a);await f.queue.enqueue(input());f.setDenied(true)
+    await f.queue.enqueue(a);f.setDenied(true)
     await f.queue.recover()
     expect(f.upload).not.toHaveBeenCalled();expect(f.published.size).toBe(0)
-    f.setDenied(false);await f.queue.recover()
+    f.setDenied(false);await f.queue.enqueue(input());await f.queue.recover()
     expect((await f.queue.list(a.conversationRef)).map(t=>t.state)).toEqual(['failed','sent'])
     expect(f.published.size).toBe(1)
     const failed=(await f.queue.list(a.conversationRef))[0]!

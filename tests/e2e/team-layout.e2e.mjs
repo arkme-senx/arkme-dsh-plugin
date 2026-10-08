@@ -52,6 +52,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
     let sendTasks = []
+    let holdTextDelivery = false
     const sendRetries = []
     const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
@@ -117,7 +118,9 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       }
       else if(op === 'team.app.send.enqueue') {
         const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
-        messages.push(m);value={...params,taskRef:`task-${params.clientUid}`,conversationKey:conversation().key,createdAtMillis:Date.now(),state:'sent',files:[],fileRefs:[],attempts:0,nextAttemptAt:0,message:m}
+        value={...params,taskRef:`task-${params.clientUid}`,conversationKey:conversation().key,createdAtMillis:Date.now(),state:holdTextDelivery?'sending':'sent',files:[],fileRefs:[],attempts:0,nextAttemptAt:0}
+        if(holdTextDelivery)sendTasks=[value]
+        else {messages.push(m);value.message=m}
       }
       else if(op === 'team.app.receipts') value={teamRead:true,visitorRead:true,hasMore:false,members:[
         {nickname:'Loki1999',read:true,readAt:Date.now(),imageKey:'receipt-avatar',imageRef:'receipt-avatar'},
@@ -333,6 +336,25 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(mediaRequests.length).toBe(readsBefore)
     expect(await pane.getByText('正在读取…',{exact:true}).count()).toBe(0)
     expect((await pane.locator('header').first().boundingBox()).y).toBe(headerBefore.y)
+    // A delayed ACK leaves the message visible and the next composer usable,
+    // without a separate first-attempt status/cancellation strip.
+    holdTextDelivery=true
+    await input.fill('等待回执的独立消息')
+    await pane.getByRole('button',{name:'发送',exact:true}).click()
+    await pane.getByText('等待回执的独立消息',{exact:true}).waitFor()
+    await expect.poll(()=>input.textContent()).toBe('')
+    expect(await pane.getByRole('status',{name:'发送状态',exact:true}).count()).toBe(0)
+    expect(await pane.getByRole('button',{name:'取消发送',exact:true}).count()).toBe(0)
+    await input.fill('继续输入下一条')
+    expect(await pane.getByRole('button',{name:'发送',exact:true}).isEnabled()).toBe(true)
+    await capture('plugin-pending-text-composer')
+    holdTextDelivery=false
+    const pending=sendTasks[0],ack={...messages[0],key:'pending-ack',ref:'pending-ack',seq:messages.length+1,content:pending.content,createdAt:pending.createdAtMillis}
+    messages.push(ack);sendTasks=[{...pending,state:'sent',message:ack}]
+    await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+    await expect.poll(()=>pane.locator('[data-team-message-key="pending-ack"]').count()).toBe(1)
+    expect(await input.textContent()).toBe('继续输入下一条')
+    await input.fill('')
     // Legacy reply-cursor state uses the ordinary delivery status, never a confirmation.
     sendTasks=[{conversationRef:conversation().ref,clientUid:'legacy-reply',taskRef:'legacy-task',conversationKey:conversation().key,
       content:{text_content:'历史待发消息',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],createdAtMillis:Date.now(),

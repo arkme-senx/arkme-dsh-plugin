@@ -33,6 +33,8 @@ export class TeamSendQueue {
   private closed = false
   private epoch = 0
   private draining: Promise<void> | undefined
+  private resumeDrain: (() => void) | undefined
+  private drainRequested = false
   private pollDelay = 30_000
   private readonly progress = new Map<string, TeamSendTask['files']>()
   private readonly active = new Map<string, AbortController>()
@@ -41,10 +43,15 @@ export class TeamSendQueue {
   pause(): void {
     ++this.epoch
     for (const controller of this.active.values()) controller.abort()
+    this.resumeDrain?.()
   }
   dispose(): void { this.closed = true; this.pause(); clearTimeout(this.timer) }
   private wake(delay: number): void {
     if (this.closed) return
+    if (delay === 0 && this.draining) {
+      this.drainRequested = true
+      this.resumeDrain?.()
+    }
     clearTimeout(this.timer)
     this.timer = setTimeout(() => { void this.recover() }, delay)
     this.timer.unref?.()
@@ -171,7 +178,9 @@ export class TeamSendQueue {
     if (this.draining) return this.draining
     const work = this.drain().catch(() => undefined).finally(() => {
       this.draining = undefined
-      this.wake(this.pollDelay)
+      const delay = this.drainRequested ? 0 : this.pollDelay
+      this.drainRequested = false
+      this.wake(delay)
     })
     this.draining = work
     return work
@@ -180,22 +189,37 @@ export class TeamSendQueue {
     const user = await this.user(), epoch = this.epoch
     const tasks = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
     this.pollDelay = tasks.some(teamTaskActive) ? 2_000 : 30_000
-    const lanes = new Set<string>()
-    const ready = tasks.filter(task => {
-      // A failed or deferred message does not reserve its conversation. Each
-      // independent command retains its own identity and retry deadline.
-      if (!teamTaskActive(task) || task.nextAttemptAt > Date.now()) return false
-      if (lanes.has(task.conversationKey)) return false
-      lanes.add(task.conversationKey)
-      return !this.active.has(`${user}:${task.conversationKey}`)
-    }).slice(0, 2)
-    await Promise.all(ready.map(task => this.run(user, epoch, task)))
+    const attempted = new Set<string>()
+    const running = new Set<Promise<void>>()
+    try {
+      while (!this.closed && epoch === this.epoch) {
+        const awakened = new Promise<void>(resolve => { this.resumeDrain = resolve })
+        const pending = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
+        await this.guard(user, epoch)
+        // Refill free slots on either completion or new local admission. Keep
+        // two requests at most and only one active request per conversation.
+        for (const next of pending) {
+          if (running.size >= 2) break
+          if (attempted.has(next.taskRef) || !teamTaskActive(next) || next.nextAttemptAt > Date.now()
+            || this.active.has(`${user}:${next.conversationKey}`)) continue
+          attempted.add(next.taskRef)
+          const work = this.run(user, epoch, next).catch(() => undefined).finally(() => { running.delete(work) })
+          running.add(work)
+        }
+        if (!running.size) break
+        await Promise.race([...running, awakened])
+      }
+    } finally {
+      this.resumeDrain = undefined
+      await Promise.allSettled(running)
+    }
+    await this.guard(user, epoch)
     // Do not add a polling interval between consecutive messages in the same
     // conversation. Only failed network attempts wait for their retry deadline.
     const remaining = (await this.ports.files().teamSends(user)).map(recoverLegacyReply)
     this.pollDelay = Math.min(30_000, ...remaining
       .filter(task => teamTaskActive(task) && !this.active.has(`${user}:${task.conversationKey}`))
-      .map(task => Math.max(0, task.nextAttemptAt - Date.now())))
+      .map(task => Math.max(attempted.has(task.taskRef) ? 2_000 : 0, task.nextAttemptAt - Date.now())))
   }
   private async run(user: number, epoch: number, task: TeamSendTask): Promise<void> {
     const lane = `${user}:${task.conversationKey}`, controller = new AbortController()
