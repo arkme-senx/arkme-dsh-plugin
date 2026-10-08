@@ -247,5 +247,14 @@ export async function callArkme<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
-  return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+  try {
+    return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+  } catch (error) {
+    if (operation === 'auth.logout' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('arkme:logout-failed', {
+        detail: error instanceof Error ? error.message : String(error),
+      }))
+    }
+    throw error
+  }
 }

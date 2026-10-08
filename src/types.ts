@@ -8,6 +8,12 @@ export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
 export type ArkmeAuthStatus = 'logged-out' | 'cancellation-pending' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
+export interface ArkmeLogoutFeedback {
+  status: 'idle' | 'pending' | 'failed'
+  id?: string
+  message?: string
+}
+
 export interface ArkmeAuthSnapshot {
   status: ArkmeAuthStatus
   environment: ArkmeEnvironment
@@ -3834,6 +3840,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
   | 'auth.logout'
+  | 'auth.logout.feedback'
   | 'user-ban.status'
   | 'chat.direct-message-admission'
   | 'chat.direct-message-refusal.set'

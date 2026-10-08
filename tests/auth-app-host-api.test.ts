@@ -42,3 +42,13 @@ describe('email binding Host operations', () => {
     expect(service.bindEmail).toHaveBeenCalledWith(7, 'a@example.com', '1234')
   })
 })
+
+describe('logout failure feedback Host operation', () => {
+  it('returns the retained failure without consuming it during page restoration', async () => {
+    const feedback = { status: 'failed', id: 'logout-1', message: '退出登录失败：Windows 凭据删除超时' }
+    const service = { logoutFailureFeedback: () => feedback }
+    for (let read = 0; read < 2; read += 1) {
+      await expect(dispatchArkmeHostOperation(service as never, 'auth.logout.feedback', {})).resolves.toEqual(feedback)
+    }
+  })
+})

@@ -1095,6 +1095,7 @@ export async function dispatchArkmeHostOperation(
     case 'auth.cancellation.submit': return await service.submitCancellation(numberParam(params, 'expectedUserId', 0), stringParam(params, 'expectedMode'))
     case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
+    case 'auth.logout.feedback': return service.logoutFailureFeedback()
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
     case 'chat.direct-message-refusal.set':
