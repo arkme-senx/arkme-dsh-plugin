@@ -1,3 +1,4 @@
+import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { RecordingReadOwner, type RecordingReadView, type RecordingDayReadCursor, type RecordingOwnerFragment, type RecordingOwnerDayPage } from './recording-read-owner.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
@@ -1418,6 +1419,7 @@ export class RecordingService {
     return {
       state: items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : page.coverage.failed_count > 0 ? 'error' : 'empty',
       items, message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : page.coverage.failed_count > 0 ? '转写失败，请稍后重试' : '当天无录音',
+      dailyMetrics: projectRecordingDailyMetrics(page.storage, items, page.asrInput),
       identityCoverage: 'complete', totalDurationMillis: page.totalDurationMillis, processingCount,
       ...(page.captureCoverage === undefined ? {} : { captureCoverage: page.captureCoverage }),
     }

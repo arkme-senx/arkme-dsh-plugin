@@ -7,11 +7,35 @@ const path = recordingPlaybackPath({ child_id: '123456789012345678901234', sourc
 function fixture(fetcher: typeof fetch) {
   let session = { userId: 42, accessToken: 'private-fixture', refreshToken: 'refresh-fixture' }
   const store: ArkmeSessionStore = { read: async () => session, write: async value => { session = value }, delete: async () => {} }
-  const runtime = new ServiceRuntime({ audioBaseUrl: 'https://audio.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
+  const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.test', audioBaseUrl: 'https://audio.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
   return { runtime, changeUser: () => { session = { ...session, userId: 43 } } }
 }
 
 describe('private audio byte delivery', () => {
+  it.each(['bytes', 'transcript'] as const)('detaches a cancelled %s consumer from the shared token refresh', async kind => {
+    const refresh = Promise.withResolvers<Response>()
+    const fetcher = vi.fn(async (input: string | URL | Request) => String(input).startsWith('https://auth.test')
+      ? await refresh.promise : new Response(null, { status: 401 }))
+    const { runtime } = fixture(fetcher)
+    const controller = new AbortController()
+    try {
+      const work = kind === 'bytes'
+        ? runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64, signal: controller.signal })
+        : runtime.authenticatedAudioPost('/api/v1/audio/recordings/query', {}, undefined, controller.signal)
+      const rejected = expect(work).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+      controller.abort()
+      await rejected
+      const shared = runtime.refreshAccessToken({ userId: 42, accessToken: 'private-fixture', refreshToken: 'refresh-fixture' })
+      refresh.resolve(new Response(JSON.stringify({ code: 200, data: { access_token: 'refreshed' } }), { status: 200 }))
+      await expect(shared).resolves.toMatchObject({ accessToken: 'refreshed' })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      refresh.resolve(new Response(null, {status:500}))
+      runtime.requestCoordinator.dispose()
+    }
+  })
+
   it('rechecks the account after capacity wait before another network read', async () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 503, headers: { 'retry-after': '1' } }))
     const { runtime, changeUser } = fixture(fetcher)

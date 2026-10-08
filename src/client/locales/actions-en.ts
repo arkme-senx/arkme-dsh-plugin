@@ -15,7 +15,7 @@ export const actionEnglish: Record<string,string> = {
   '（已确认）': ' (confirmed)',
   '处理中，统计待更新': 'Processing; metrics will update',
   '部分大小暂不可确认': 'Some archive sizes are not yet confirmed',
-  '人声存储仅统计归属于本人的录音，不包含原始文件或转写切片，跨日主档不估算分摊；字数按当天最终转写去除空白后计算。': 'Speech storage includes only recordings attributed to you, excluding source files and transcript slices. Cross-day archive sizes are not prorated. Character counts exclude whitespace in the final daily transcript.',
+  '人声存储仅统计归属于本人的录音，不包含原始文件或临时转写切片，跨日音频不估算分摊；字数按当天最终转写去除空白后计算。': 'Speech storage includes only recordings attributed to you, excluding source files and transcript slices. Cross-day archive sizes are not prorated. Character counts exclude whitespace in the final daily transcript.',
   'Codex 任务列表': 'Codex tasks',
   'Codex 对话阅读区': 'Codex conversation',
   '任务对话记录': 'Task conversation',

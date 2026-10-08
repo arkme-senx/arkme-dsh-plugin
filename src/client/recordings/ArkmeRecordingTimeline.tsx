@@ -270,7 +270,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   items: ArkmeRecordingWorkbenchItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
-  dailyMetrics?: ArkmeRecordingDailyMetrics | undefined
+  dailyMetrics?: (ArkmeRecordingDailyMetrics & { speakerTextCounts?: Readonly<Record<string, number>> }) | undefined
   dayStartMillis?: number
   playheadMillis?: number
   isPlaying: boolean
@@ -640,7 +640,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
                 <span style={styles.legendMetric}>{tr("总时长:")} {speakerStatsDurationLabel(speaker.durationMillis)}</span>
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
-                <span style={styles.legendMetric}>{tr('转写 {count} 字',{count:speaker.items.reduce((sum,item)=>sum+recordingTextCount(item.text),0).toLocaleString(arkmeIntlLocale())})}</span>
+                <span style={styles.legendMetric}>{tr('转写 {count} 字',{count:dailyMetrics === undefined ? '—' : (dailyMetrics.speakerTextCounts?.[speaker.key] ?? speaker.items.reduce((sum,item)=>sum+recordingTextCount(item.text),0)).toLocaleString(arkmeIntlLocale())})}</span>
               </span>
             </span>
           })}

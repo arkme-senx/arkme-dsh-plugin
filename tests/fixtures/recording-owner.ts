@@ -10,6 +10,8 @@ export interface OwnerTestUtterance {
   speaker?: { reference?: string; kind?: string; label?: string; user_id?: number }
 }
 export interface OwnerTestRecording {
+  asrInput?: { duration_ms: number; confirmed_count: number; pending_count: number; unknown_count: number; estimated_count: number }
+  storage?: { bytes: number; confirmed_count: number; pending_count: number; unknown_count: number }
   memoryOwnerUserId?: number
   captureState?: 'receiving' | 'complete' | 'interrupted'
   startAt: number; duration?: number; id?: string; revision?: string
@@ -58,6 +60,8 @@ export function recordingOwnerResponse(path: string, body: Record<string, unknow
   }
   const more = offset + selected.length < fragments.length
   return { status: 'available', recording_uid: row.id ?? recordingId, start_at: row.startAt, revision: row.revision ?? recordingRevision,
+    storage: row.storage,
+    asr_input: row.asrInput,
     coverage: { ...emptyCoverage, ready_count: items.length > 0 ? 1 : 0, ...(enhanced ? row.enhancedCoverage : row.coverage) },
     speakers: selected.map(item => item.identity),
     utterances: selected.map(({ identity: _, ...item }, index) => ({ ...item, speaker_index: index })),

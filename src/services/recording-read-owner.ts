@@ -1,5 +1,7 @@
+import { parseRecordingAsrInputMetrics, addRecordingAsrInputMetrics, type RecordingAsrInputMetrics } from '../recording-asr-input-metrics.js'
 import type { ArkmeRecordingCoverage } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
+import { addRecordingStorageMetrics, parseRecordingStorageMetrics, type RecordingStorageMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from './service.js'
 
@@ -33,6 +35,8 @@ export interface RecordingOwnerFragment {
   speaker: RecordingOwnerSpeaker
 }
 export interface RecordingOwnerTranscriptPage {
+  asrInput: RecordingAsrInputMetrics
+  storage: RecordingStorageMetrics
   recordingId: string; revision: string; startAt: number
   items: RecordingOwnerFragment[]; nextCursor: string; coverage: RecordingOwnerCoverage
 }
@@ -52,6 +56,8 @@ export interface RecordingDayReadCursor extends RecordingReadWindow {
   positions: RecordingDayPosition[]
 }
 export interface RecordingOwnerDayPage {
+  asrInput: RecordingAsrInputMetrics
+  storage: RecordingStorageMetrics
   items: RecordingOwnerFragment[]
   views: RecordingReadView[]
   totalDurationMillis: number
@@ -229,7 +235,7 @@ export class RecordingReadOwner {
     for (let index = 1; index < items.length; index++) follows(items[index - 1]!, items[index]!)
     const cursor = nextCursor(row)
     if (cursor !== '' && (items.length === 0 || cursor === options.cursor) || cursor === '' && items.length > 0 && items.at(-1)!.textEnd !== items.at(-1)!.textTotal) return invalid()
-    return { recordingId, revision: version, startAt, items, nextCursor: cursor, coverage: coverage(row.coverage) }
+    return { recordingId, revision: version, startAt, items, nextCursor: cursor, coverage: coverage(row.coverage), asrInput: parseRecordingAsrInputMetrics(row.asr_input), storage: parseRecordingStorageMetrics(row.storage) }
   }
 
   async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
@@ -240,6 +246,8 @@ export class RecordingReadOwner {
       : structuredClone(continuation)
     const pages = new Map<string, RecordingOwnerTranscriptPage>()
     const total = emptyCoverage()
+    const asrInput = { duration_ms:0,confirmed_count:0,pending_count:0,unknown_count:0,estimated_count:0 }
+    const storage = { bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
     // Two independent read lanes keep first-page work bounded on the current
     // small deployment. Only one lookahead per recording is fetched initially.
     let next = 0
@@ -253,6 +261,8 @@ export class RecordingReadOwner {
           cursor: position.done ? '' : position.cursor, limit: position.done ? 1 : position.limit, revision: position.revision,
         }, readSignal)
         position.revision = page.revision
+        addRecordingStorageMetrics(storage, page.storage)
+        addRecordingAsrInputMetrics(asrInput, page.asrInput)
         for (const key of Object.keys(total) as Array<keyof RecordingOwnerCoverage>) total[key] += page.coverage[key]
         if (!position.done) {
           if (integer(position.skip) > page.items.length) return invalid()
@@ -297,7 +307,7 @@ export class RecordingReadOwner {
     }
     const captures = state.positions.filter(position => position.fact.capture_state !== '')
     return {
-      items, coverage: total,
+      items, coverage: total, storage, asrInput,
       ...(captures.length === 0 ? {} : { captureCoverage: {
         receiving: captures.filter(position => position.fact.capture_state === 'receiving').length,
         interrupted: captures.filter(position => position.fact.capture_state === 'interrupted').length,

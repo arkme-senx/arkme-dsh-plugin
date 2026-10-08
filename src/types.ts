@@ -3223,13 +3223,13 @@ export interface ArkmeRecordingDailyMetrics {
   asrInputConfirmedCount: number
   asrInputPendingCount: number
   asrInputUnknownCount: number
-  /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
+  /** Confirmed retained speech bytes: accepted playback packs or historical VAD archives, never upload/temporary ASR input size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
   confirmedCount: number
   pendingCount: number
   unknownCount: number
-  /** Unicode code points in the final visible transcript, excluding whitespace. */
+  /** Unicode code points in this transcript payload, excluding whitespace; paged consumers aggregate before showing whole-day totals. */
   textCount: number
 }
 

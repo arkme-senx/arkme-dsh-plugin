@@ -6,6 +6,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: mocks.callArkme,
 }))
 import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
 import { ArkmeRecordingTimeline } from '../src/client/recordings/ArkmeRecordingTimeline.js'
 
@@ -53,6 +54,24 @@ describe('recording surface selection and real playback controller', () => {
     await act(async () => { renderer.unmount(); await tick() })
     vi.unstubAllGlobals(); vi.restoreAllMocks()
     vi.useRealTimers()
+  })
+
+  it('discards completed day statistics while the next account is loading', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation,params,signal)
+      if (operation !== 'recordings.day') return value
+      return {...value,transcript:{...value.transcript,dailyMetrics:{archiveBytes:123456,confirmedCount:1,pendingCount:0,unknownCount:0,archiveState:'ready',textCount:6}}}
+    })
+    await act(async()=>{arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42});await tick()})
+    expect(timeline().props.dailyMetrics).toMatchObject({archiveBytes:123456,textCount:6})
+    const next = Promise.withResolvers<Awaited<ReturnType<typeof original>>>()
+    mocks.callArkme.mockImplementation((operation,params,signal)=>operation==='recordings.day'?next.promise:original(operation,params,signal))
+    await act(async()=>{arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:43});await tick()})
+    expect(timeline().props.dailyMetrics).toBeUndefined()
+    await act(async()=>{next.resolve(await original('recordings.day',{dateStamp:new Date(2026,8,15).getTime()},new AbortController().signal));await tick()})
+    expect(timeline().props.dailyMetrics).toBeUndefined()
+    await act(async()=>{arkmeAuthStore.setAuth({status:'logged-out',environment:'test'});await tick()})
   })
 
   it('keeps the new selected time after the old audio reports progress', async () => {

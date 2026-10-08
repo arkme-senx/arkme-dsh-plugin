@@ -1168,7 +1168,7 @@ export class ServiceRuntime {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
@@ -1229,7 +1229,7 @@ export class ServiceRuntime {
         response = await send()
         if (response.status === 401 && !refreshed) {
           await response.body?.cancel()
-          session = await this.refreshAccessToken(session)
+          session = await this.refreshAccessToken(session, signal)
           refreshed = true
           continue
         }
