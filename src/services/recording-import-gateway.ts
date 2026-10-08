@@ -444,6 +444,11 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         const progress = importProgress(owner.import_progress, observedAtMillis)
         result.set(sessionId, {
           ...(displayStatus === undefined ? {} : { displayStatus }),
+          ...(rawStatuses.some(child => objectValue(child).quota_status === 'recording_service_unavailable') ? { serviceUnavailable: true } : {}),
+          ...(rawStatuses.some(child => objectValue(child).quota_status === 'recording_transcription_quota_exhausted') ? {
+            pausedCount: rawStatuses.filter(child => objectValue(child).quota_status === 'recording_transcription_quota_exhausted').length,
+            completedCount: parsedStatuses.filter(status => status === 5).length,
+          } : {}),
           ...(progress === undefined ? {} : { importProgress: progress }),
         })
       }
@@ -563,6 +568,11 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
   ): Promise<void> {
     if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
     await this.requireJobSession(job)
+    const renew = async () => {
+      if (job.childId === undefined) throw new ArkmePluginError('recording-import-child-missing', '缺少录音上传任务', true)
+      await this.runtime.authenticatedAudioPost('/api/v1/audio/renew-upload', { child_id: job.childId }, await this.requireJobSession(job), signal, { lane: 'write', bypassCache: true })
+    }
+    await renew()
     const credentials = await this.audioOssCredentials(job, signal)
     const client = this.createOssClient({
       region: 'oss-cn-hangzhou',
@@ -593,6 +603,15 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       rejectAborted?.(new RecordingImportContractError('recording-import-cancelled', '录音导入已取消'))
     }
     signal?.addEventListener('abort', abort, { once: true })
+    let renewalRunning = false
+    const renewal = setInterval(() => {
+      if (renewalRunning) return
+      renewalRunning = true
+      void renew().catch(error => {
+        try { client.cancel() } catch { /* retain source for retry */ }
+        rejectAborted?.(error)
+      }).finally(() => { renewalRunning = false })
+    }, 5 * 60 * 1000)
     try {
       const objectPath = `pc_upload/${String(job.userId)}/${job.sessionId}/${remoteFileName(job)}`
       const upload = client.multipartUpload(objectPath, job.sourceHandle, {
@@ -606,8 +625,9 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
           await onProgress(Math.round(job.fileSize * bounded), checkpoint)
         },
       })
-      await (signal === undefined ? upload : Promise.race([upload, aborted]))
+      await Promise.race([upload, aborted])
     } finally {
+      clearInterval(renewal)
       signal?.removeEventListener('abort', abort)
     }
   }

@@ -87,11 +87,11 @@ export function parseStorageUsage(member: Record<string, unknown>, usage: Record
     ? integer(member.file_size) : integer(integer(member.file_size_mb) * 1024 * 1024)
   const usedBytes = integer(usage.used_file_size !== undefined ? usage.used_file_size : usage.size)
   const result: ArkmeAccountStorageUsage = { accountScope, usedBytes, totalBytes }
-  // Same six categories and reconciliation rule as the mobile App Web page.
+  // Reconcile all storage categories, including independently billed audio recordings.
   // Keep a valid total even if an older server omits the detailed breakdown.
   if (Array.isArray(usage.breakdown)) {
     try {
-      const categories: Record<number, ArkmeStorageCategory> = { 1: 'image', 3: 'video', 5: 'backgroundVoice', 6: 'file', 7: 'callRecording' }
+      const categories: Record<number, ArkmeStorageCategory> = { 1: 'image', 3: 'video', 5: 'backgroundVoice', 6: 'file', 7: 'callRecording', 8: 'recording' }
       const grouped = new Map<ArkmeStorageCategory, ArkmeStorageBreakdown>()
       for (const raw of usage.breakdown) {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid breakdown')
@@ -104,10 +104,11 @@ export function parseStorageUsage(member: Record<string, unknown>, usage: Record
       }
       const sum = [...grouped.values()].reduce((sum, item) => integer(sum + item.bytes), 0)
       if (sum === usedBytes) {
-        const order: ArkmeStorageCategory[] = ['image', 'video', 'file', 'backgroundVoice', 'callRecording', 'other']
+        if (!grouped.has('recording')) grouped.set('recording', { category: 'recording', bytes: 0, fileCount: 0 })
+        const order: ArkmeStorageCategory[] = ['image', 'video', 'file', 'backgroundVoice', 'callRecording', 'recording', 'other']
         result.breakdown = order.flatMap(category => {
           const item = grouped.get(category)
-          return item && (item.bytes > 0 || item.fileCount > 0) ? [item] : []
+          return item && (category === 'recording' || item.bytes > 0 || item.fileCount > 0) ? [item] : []
         })
       }
     } catch { /* Malformed detail must not invalidate the independently verified total. */ }

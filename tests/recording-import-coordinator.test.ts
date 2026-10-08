@@ -54,6 +54,19 @@ function source(): RecordingImportSource {
 }
 
 describe('RecordingImportCoordinator', () => {
+  it('retains local bytes and permits manual retry when storage is exhausted', async () => {
+    const store = memoryStore(job())
+    const owner = gateway()
+    vi.mocked(owner.createChild).mockRejectedValueOnce(new ArkmePluginError('arkme-code-4301', 'recording_storage_exhausted', false))
+    const input = source()
+    const coordinator = new RecordingImportCoordinator(store, owner, input, async () => 42)
+    const failed = await coordinator.run(42, 'job-1')
+    expect(failed).toMatchObject({ phase: 'failed', errorCode: 'recording_storage_exhausted', retryable: true, sourceHandle: '/private/job-1.upload' })
+    expect(input.discard).not.toHaveBeenCalled()
+    expect(owner.upload).not.toHaveBeenCalled()
+    expect(await coordinator.retry(42, 'job-1', failed.revision)).toMatchObject({ phase: 'accepted' })
+  })
+
   it.each(['login-required', 'login-expired'])('resumes the retained upload after %s without recreating owner records', async code => {
     let signedIn = true
     const runtime = new ServiceRuntime({ environment: 'test' } as never, {

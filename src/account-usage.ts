@@ -13,7 +13,7 @@ export interface ArkmeAccountStorageUsage {
   breakdown?: ArkmeStorageBreakdown[]
 }
 
-export type ArkmeStorageCategory = 'image' | 'video' | 'file' | 'backgroundVoice' | 'callRecording' | 'other'
+export type ArkmeStorageCategory = 'image' | 'video' | 'file' | 'backgroundVoice' | 'callRecording' | 'recording' | 'other'
 export interface ArkmeStorageBreakdown {
   category: ArkmeStorageCategory
   bytes: number

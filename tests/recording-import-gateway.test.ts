@@ -621,6 +621,14 @@ describe('AudioRecordingImportGateway', () => {
     })
   })
 
+  it('counts quota-paused children independently from completed and active children', async () => {
+    const gateway = gatewayForOwnerProgress([{ session_id: 'session-1', child_status_ls: [
+      { status: 5 }, { status: 3, quota_status: 'recording_transcription_quota_exhausted' }, { status: 4 },
+    ] }])
+    const page = await gateway.listOwnerTasks({ viewerUserId: 42, scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0 })
+    expect(page.tasks[0]?.progress).toMatchObject({ pausedCount: 1, completedCount: 1 })
+  })
+
   it('keeps owner status available while business-progress rows are temporarily absent', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'processing', child_status_ls: [{ status: 4 }],
@@ -753,6 +761,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(posts.map(item => item.path)).toEqual([
       '/api/v1/audio/get-session-by-id',
       '/api/v1/audio/new-child',
+      '/api/v1/audio/renew-upload',
       '/api/v1/audio/get-sts-token',
       '/api/v1/audio/child-upload-finish',
       '/api/v1/audio/finish-session',

@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountUsageService, parseRecordingUsage, parseStorageUsage, parseTokenUsage, parseVoiceUsage } from '../../src/services/account-usage-service.js'
 
 describe('account usage contracts', () => {
+  it('keeps audio storage separate from call recordings', () => {
+    expect(parseStorageUsage({ file_size: 100 }, { used_file_size: 30, breakdown: [
+      { file_type: 7, file_size: 10, file_count: 1 }, { file_type: 8, file_size: 20, file_count: 2 },
+    ] }, 'prod:11').breakdown).toEqual([
+      { category: 'callRecording', bytes: 10, fileCount: 1 }, { category: 'recording', bytes: 20, fileCount: 2 },
+    ])
+  })
+
   it('keeps QToken used and remaining separate from monetary balance', () => {
     expect(parseTokenUsage({ used_token: 10, able_token: 90 }, 'prod:11')).toEqual({ accountScope: 'prod:11', used: 10, remaining: 90 })
     expect(parseTokenUsage({ used_token: 0, able_token: 0 }, 'prod:11')).toMatchObject({ used: 0, remaining: 0 })

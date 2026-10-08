@@ -172,6 +172,13 @@ function recordingImportOwnerStatus(
 ): { status: RecordingImportDisplayStatus; statusDetail: string } {
   const owner = task.session
   const ownerProgress = task.progress
+  if ((ownerProgress?.pausedCount ?? 0) > 0) {
+    const completed = ownerProgress?.completedCount ?? 0
+    return { status: completed > 0 ? 'partial' : 'paused', statusDetail: completed > 0
+      ? `${completed} 个文件已完成，${ownerProgress!.pausedCount} 个文件因额度不足暂停`
+      : '已保存到云端 · 转写已暂停，本月录音转写额度不足' }
+  }
+  if (ownerProgress?.serviceUnavailable) return { status: 'waiting', statusDetail: '服务暂时不可用，稍后自动重试' }
   if (!owner.hasFinishedUpload) return { status: 'uploading', statusDetail: '上传中' }
   if (task.processingCompleted) {
     if (ownerProgress?.displayStatus === 'partial') return { status: 'partial', statusDetail: '部分完成' }
@@ -194,6 +201,8 @@ function recordingImportOwnerStatus(
 
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
+  private readonly importRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly importRetryAttempts = new Map<string, number>()
   private readonly importCommands = new Set<string>()
   private readonly importRuns = new Map<string, {
     controller: AbortController
@@ -231,6 +240,8 @@ export class RecordingService {
   dispose(): void {
     this.speakerCacheRevision++
     this.unsubscribeSpeakerAccount()
+    for (const timer of this.importRetryTimers.values()) clearTimeout(timer)
+    this.importRetryTimers.clear()
     for (const run of this.importRuns.values()) run.controller.abort()
   }
 
@@ -897,6 +908,14 @@ export class RecordingService {
     })
   }
 
+  async retryRecordingTranscription(sessionRef: string, signal?: AbortSignal): Promise<void> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const target = await this.openRecordingImportSessionRef(sessionRef)
+    await this.assertRecordingImportOwnerMutationSafe(session.userId, target.sessionId)
+    await this.runtime.authenticatedAudioPost('/api/v1/audio/retry-transcription', { session_id: target.sessionId }, session, signal, { lane: 'write', bypassCache: true })
+  }
+
   async deleteRecordingImportSession(sessionRef: string, signal?: AbortSignal): Promise<void> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
@@ -960,6 +979,7 @@ export class RecordingService {
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of jobs) {
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
+      else this.scheduleRecordingImportRetry(job)
     }
   }
 
@@ -969,9 +989,31 @@ export class RecordingService {
     this.trackRecordingImportRun(
       job.jobId,
       job.revision,
-      this.recordingImports.run(job.userId, job.jobId, controller.signal).then(() => undefined),
+      this.recordingImports.run(job.userId, job.jobId, controller.signal).then(result => {
+        if (!controller.signal.aborted) this.scheduleRecordingImportRetry(result)
+      }),
       controller,
     )
+  }
+
+  private scheduleRecordingImportRetry(job: RecordingImportJob): void {
+    if (job.phase !== 'failed' || job.retryable !== true || job.errorCode === 'recording_storage_exhausted'
+      || job.errorCode?.startsWith('login-') || job.errorCode?.includes('account-')) return
+    if (this.importRetryTimers.has(job.jobId)) return
+    const attempt = this.importRetryAttempts.get(job.jobId) ?? 0
+    this.importRetryAttempts.set(job.jobId, attempt + 1)
+    const timer = setTimeout(() => {
+      this.importRetryTimers.delete(job.jobId)
+      void (async () => {
+        await this.requireRecordingImportSession(job.userId)
+        const current = await this.runtime.stateStore.getRecordingImportJob(job.userId, job.jobId)
+        if (current?.phase !== 'failed' || current.revision !== job.revision) return
+        const resumed = await this.recordingImports.resumeRetry(job.userId, job.jobId, job.revision)
+        this.runRecordingImport(resumed)
+      })().catch(() => undefined)
+    }, Math.min(60_000 * 2 ** Math.min(attempt, 6), 3_600_000))
+    timer.unref?.()
+    this.importRetryTimers.set(job.jobId, timer)
   }
 
   private beginRecordingImportCommand(jobId: string): void {

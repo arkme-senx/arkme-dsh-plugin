@@ -3893,6 +3893,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
+  | 'recordings.import.transcription.retry'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
   | 'recordings.speaker.cached-options'

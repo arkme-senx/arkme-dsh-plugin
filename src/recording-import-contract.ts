@@ -79,6 +79,9 @@ export interface RecordingImportOwnerSession {
 }
 
 export interface RecordingImportOwnerProgress {
+  serviceUnavailable?: boolean
+  pausedCount?: number
+  completedCount?: number
   displayStatus?: Extract<RecordingImportDisplayStatus,
     'speaker-waiting' | 'speaker-recognizing' | 'transcript-waiting' | 'transcribing' | 'completed' | 'partial' | 'failed' | 'unavailable'>
   importProgress?: PublicRecordingImportProgress
@@ -310,7 +313,7 @@ export function toPublicRecordingImportJob(
     : job.phase === 'uploading' ? 'uploading'
       : job.phase === 'finalizing' ? 'processing'
         : job.phase === 'accepted' ? 'accepted'
-        : job.phase === 'failed' ? 'failed'
+        : job.phase === 'failed' ? (job.errorCode === 'recording_storage_exhausted' ? 'paused' : 'failed')
           : 'cancelled'
   const statusDetail = job.phase === 'prepared' ? '准备中'
     : job.phase === 'uploading' ? '上传中'

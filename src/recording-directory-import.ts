@@ -234,7 +234,7 @@ export async function importRecordingDirectory(
           const exact = local.find(value => sameRecordingImportIdentity(value.identity, { ...metadata, userId: prepared.expectedUserId }))
           if (local.length > 0) {
             if (exact === undefined) item = { ...item, outcome: 'conflict', message: '同名本地任务与该录音不一致' }
-            else if (exact.task.phase === 'failed' && exact.task.retryable) {
+            else if (exact.task.phase === 'failed' && exact.task.retryable && exact.task.errorCode !== 'recording_storage_exhausted') {
               admitted = await owner.retryRecordingImport(exact.task.importRef, exact.task.revision, signal)
             } else if (exact.task.phase === 'failed') {
               item = { ...item, outcome: 'failed', importRef: exact.task.importRef, revision: exact.task.revision }
