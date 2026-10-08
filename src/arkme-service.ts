@@ -1385,7 +1385,16 @@ export class ArkmeService {
   async setBotDirectoryPin(botRef: string, pinned: boolean): Promise<void> { await this.directory.pinBot(botRef, pinned) }
 
   async conversationDirectoryVisibilitySnapshot(sourceRefs: readonly string[], botRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeConversationDirectoryVisibility> { return await this.conversationDirectoryVisibility.query(sourceRefs, botRefs, signal) }
-  async setConversationDirectoryVisibility(entryKind: 'source' | 'bot', entryRef: string, hidden: boolean, signal?: AbortSignal): Promise<void> { const { userId } = await this.runtime.requireSession(); await this.conversationDirectoryVisibility.setVisibility(entryKind, entryRef, hidden, signal); await this.directory.confirmVisibility(entryKind, entryRef, hidden, userId).catch(() => undefined) }
+  async setConversationDirectoryVisibility(entryKind: 'source' | 'bot', entryRef: string, hidden: boolean, signal?: AbortSignal): Promise<void> {
+    const { userId } = await this.runtime.requireSession()
+    await this.conversationDirectoryVisibility.setVisibility(entryKind, entryRef, hidden, signal)
+    await this.directory.confirmVisibility(entryKind, entryRef, hidden, userId).catch(async () => {
+      // Accepted writes stay successful; recover only if the targeted projection failed.
+      if (entryKind === 'source' && hidden) {
+        await this.realtime.invalidateConversationListPreferenceForCurrentSession(userId).catch(() => undefined)
+      }
+    })
+  }
 
   async dshBetaCommunityEntryState(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityEntryState> {
     return await this.community.dshBetaCommunityEntryState(signal)
