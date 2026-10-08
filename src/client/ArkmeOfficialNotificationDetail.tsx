@@ -4,8 +4,10 @@ import remarkGfm from 'remark-gfm'
 import type { ArkmeOfficialNotification } from '../official-notification-contract.js'
 import { callArkme } from './api.js'
 import { officialNotifications } from './official-notification-store.js'
-import { arkmeTheme } from './arkme-theme.js'
-import { tr } from './locale.js'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { MegaphoneSimple } from '@phosphor-icons/react/dist/icons/MegaphoneSimple'
+import detailCss from './official-notification-detail.css?inline'
+import { arkmeIntlLocale, tr } from './locale.js'
 
 export function ArkmeOfficialNotificationDetail({
   id,
@@ -74,89 +76,107 @@ export function ArkmeOfficialNotificationDetail({
   return (
     <article
       aria-label={tr('官方通知详情')}
-      style={{
-        padding: 24,
-        overflowY: 'auto',
-        overflowWrap: 'anywhere',
-        flex: 1,
-        color: arkmeTheme.text,
-      }}
+      className="arkme-official-detail"
     >
-      <button type="button" onClick={onClose}>
-        {tr('返回通知列表')}
-      </button>
-      {error ? (
-        <div role="alert">
-          {error}
-          <button onClick={() => setAttempt((value) => value + 1)}>
-            {tr('重试')}
-          </button>
-        </div>
-      ) : !notice ? (
-        <p role="status">{tr('正在加载通知…')}</p>
-      ) : (
-        <>
-          <h2>{notice.title}</h2>
-          <time>{new Date(notice.publishedAtMillis).toLocaleString()}</time>
-          <Markdown
-            skipHtml
-            remarkPlugins={[remarkGfm]}
-            allowedElements={[
-              'p',
-              'h1',
-              'h2',
-              'h3',
-              'h4',
-              'strong',
-              'em',
-              'del',
-              'ul',
-              'ol',
-              'li',
-              'blockquote',
-              'pre',
-              'code',
-              'a',
-              'br',
-              'hr',
-              'table',
-              'thead',
-              'tbody',
-              'tr',
-              'th',
-              'td',
-            ]}
-            urlTransform={(url) => (/^https?:\/\//i.test(url) ? url : '')}
-            components={{
-              a: ({ href, children }) =>
-                href ? (
-                  <a href={href} target="_blank" rel="noopener noreferrer">
-                    {children}
-                  </a>
-                ) : (
-                  <span>{children}</span>
-                ),
-            }}
+      <style>{detailCss}</style>
+      <div className="arkme-official-detail__inner">
+        <nav className="arkme-official-detail__navigation">
+          <button
+            type="button"
+            className="arkme-official-detail__back"
+            onClick={onClose}
           >
-            {notice.bodyMarkdown || ''}
-          </Markdown>
-          {ackError && (
-            <div role="alert">
-              {ackError}
-              <button
-                onClick={() => {
-                  void officialNotifications
-                    .read(scope, [notice.id])
-                    .then(() => setAckError(''))
-                    .catch(() => undefined)
+            <ArrowLeft size={16} aria-hidden />
+            {tr('返回通知列表')}
+          </button>
+        </nav>
+        {error ? (
+          <div role="alert" className="arkme-official-detail__status">
+            {error}
+            <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+              {tr('重试')}
+            </button>
+          </div>
+        ) : !notice ? (
+          <p role="status" className="arkme-official-detail__status">{tr('正在加载通知…')}</p>
+        ) : (
+          <>
+            <header className="arkme-official-detail__header">
+              <div className="arkme-official-detail__label">
+                <MegaphoneSimple size={15} aria-hidden />
+                <span>{tr('官方通知')}</span>
+              </div>
+              <h2>{notice.title}</h2>
+              <time dateTime={new Date(notice.publishedAtMillis).toISOString()}>
+                {new Date(notice.publishedAtMillis).toLocaleString(arkmeIntlLocale(), {
+                  year: 'numeric', month: 'long', day: 'numeric',
+                  hour: '2-digit', minute: '2-digit', hour12: false,
+                })}
+              </time>
+            </header>
+            <div className="arkme-official-detail__body">
+              <Markdown
+                skipHtml
+                remarkPlugins={[remarkGfm]}
+                allowedElements={[
+                  'p',
+                  'h1',
+                  'h2',
+                  'h3',
+                  'h4',
+                  'strong',
+                  'em',
+                  'del',
+                  'ul',
+                  'ol',
+                  'li',
+                  'blockquote',
+                  'pre',
+                  'code',
+                  'a',
+                  'br',
+                  'hr',
+                  'table',
+                  'thead',
+                  'tbody',
+                  'tr',
+                  'th',
+                  'td',
+                ]}
+                urlTransform={(url) => (/^https?:\/\//i.test(url) ? url : '')}
+                components={{
+                  a: ({ href, children }) =>
+                    href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer">
+                        {children}
+                      </a>
+                    ) : (
+                      <span>{children}</span>
+                    ),
                 }}
               >
-                {tr('重试')}
-              </button>
+                {notice.bodyMarkdown || ''}
+              </Markdown>
             </div>
-          )}
-        </>
-      )}
+            {ackError && (
+              <div role="alert" className="arkme-official-detail__status">
+                {ackError}
+                <button
+                  type="button"
+                  onClick={() => {
+                    void officialNotifications
+                      .read(scope, [notice.id])
+                      .then(() => setAckError(''))
+                      .catch(() => undefined)
+                  }}
+                >
+                  {tr('重试')}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </article>
   )
 }
