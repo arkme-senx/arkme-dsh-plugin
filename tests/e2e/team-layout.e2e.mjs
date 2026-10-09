@@ -96,7 +96,12 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       if (accountBoundaryFixture && op.startsWith('team.app.')) { await route.continue(); return }
       if (op === 'team.app.timeline' && failNextTimeline) { failNextTimeline=false; await route.abort('connectionfailed'); return }
       let value
-      if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要',snippet:'检索摘要',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
+      if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要 [im_emoji:yummy_face] [jm_emoji:thumb_up]',snippet:'检索摘要 [im_emoji:yummy_face] [jm_emoji:thumb_up]',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
+      else if (op === 'reactions' && params.action === 'history') value = {items:[],has_more:false}
+      else if (op === 'calendar.buckets' || op === 'recordings.calendar') value = {days:[]}
+      else if (op === 'calendar.activity') value = {data:{items:params.mode !== 'details' ? [] : params.source === 'record'
+        ? [{record_core:{record_uid:'calendar-emoji',title:'日历中的表情',text_content:'文字 [im_emoji:yummy_face] [jm_emoji:thumb_up] 😊 [im_emoji:unknown]'},occurred_at:Date.now()}]
+        : params.source === 'chat' ? [{entry_id:'calendar-chat',occurred_at:Date.now(),source_kind:'group_chat',relation_flags:['sent'],source_ref:{chat_session_uid:'fixture-chat'},text:'会话摘要 [im_emoji:yummy_face] [jm_emoji:thumb_up]'}] : [],has_more:false}}
       else if (op === 'team.app.source') value = await hostOwner.executeTeamApp(op, params)
       else if (op === 'team.app.channel' || op === 'team.app.official') value = {...channel(), teamRef:`refreshed-channel-${randomUUID()}`}
       else if (op === 'team.app.channel.configure') { enabled = params.enabled; value = channel() }
@@ -376,7 +381,12 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     // Stage a real local picture through the installed SDK, then hold admission
     // in every active phase. The image and next draft survive without a footer.
     holdTextDelivery=true
-    await pane.locator('input[type="file"]').setInputFiles({name:'pending-photo.png',mimeType:'image/png',buffer:fixtureImage})
+    await input.focus()
+    await input.evaluate((node, bytes) => {
+      const clipboard = new DataTransfer()
+      clipboard.items.add(new File([new Uint8Array(bytes)],'pending-photo.png',{type:'image/png'}))
+      node.dispatchEvent(new ClipboardEvent('paste',{clipboardData:clipboard,bubbles:true,cancelable:true}))
+    }, [...fixtureImage])
     try {
       await expect.poll(()=>pane.getByRole('button',{name:'发送',exact:true}).isEnabled()).toBe(true)
     } catch(error) {
@@ -384,7 +394,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       console.error('Image staging UI:',await pane.innerText())
       throw error
     }
-    await pane.getByRole('button',{name:'发送',exact:true}).click()
+    await expect.poll(()=>input.evaluate(node=>document.activeElement === node)).toBe(true)
+    await page.keyboard.press('Enter')
     await expect.poll(()=>sendTasks[0]?.files[0]?.fileName).toBe('pending-photo.png')
     const imageTask=sendTasks[0]
     const pendingImage=pane.locator(`[data-team-message-key="${imageTask.clientUid}"]`)
@@ -405,6 +416,16 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.evaluate(()=>window.dispatchEvent(new Event('online')))
     await pendingImage.getByLabel('消息操作',{exact:true}).waitFor()
     await input.fill('')
+    // Draft pictures use the ordinary attachment gallery before they are sent.
+    await pane.locator('input[type=file]').setInputFiles({name:'draft-preview.png',mimeType:'image/png',buffer:fixtureImage})
+    const draftPicture=pane.getByRole('button',{name:'预览 draft-preview.png',exact:true})
+    await expect.poll(()=>draftPicture.isEnabled()).toBe(true)
+    await draftPicture.click()
+    await expect.poll(()=>page.locator('[data-arkme-image-preview-viewport] img').evaluate(img=>img.complete && img.naturalWidth>0)).toBe(true)
+    await capture('plugin-draft-picture-preview')
+    await page.getByRole('button',{name:'关闭预览',exact:true}).click()
+    await pane.getByRole('button',{name:'移除draft-preview.png',exact:true}).click()
+    expect(await draftPicture.count()).toBe(0)
     // Legacy reply-cursor state uses the ordinary delivery status, never a confirmation.
     sendTasks=[{conversationRef:conversation().ref,clientUid:'legacy-reply',taskRef:'legacy-task',conversationKey:conversation().key,
       content:{text_content:'历史待发消息',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],createdAtMillis:Date.now(),
@@ -498,6 +519,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.setViewportSize({width:1440,height:1000})
     await page.getByRole('button',{name:'搜索对话或消息',exact:true}).click()
     await page.getByRole('textbox',{name:'搜索',exact:true}).fill('团队来源')
+    const searchRow = page.getByRole('button').filter({has:page.getByText('搜索团队快记',{exact:true})})
+    await searchRow.locator('img[data-arkme-rich-emoji="yummy_face"]').waitFor()
+    await searchRow.locator('img[data-arkme-rich-emoji="thumb_up"]').waitFor()
+    expect(await searchRow.textContent()).not.toContain('_emoji:')
+    await capture('plugin-search-emoji-preview')
     await page.getByText('搜索团队快记',{exact:true}).click()
     await page.locator('[data-arkme-note-detail]').getByText('搜索打开的完整团队快记正文',{exact:true}).waitFor()
     expect(calls).toContain('record.app.detail')
@@ -508,6 +534,18 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.locator('[data-arkme-note-detail]').waitFor({ state: 'detached' })
     await page.locator('[data-team-composer]').waitFor()
     await capture('plugin-team-source-navigation')
+    await page.getByRole('button',{name:'日历',exact:true}).click()
+    const day = page.getByRole('region',{name:'我的一天',exact:true})
+    await day.locator('[data-activity-id="note:calendar-emoji"] img[data-arkme-rich-emoji="yummy_face"]').waitFor()
+    await expect.poll(()=>day.locator('img[data-arkme-rich-emoji]').count()).toBe(4)
+    await capture('plugin-calendar-emoji-previews')
+    await day.locator('[data-activity-id="note:calendar-emoji"] .arkme-day-entry-content').click()
+    const dayDetail = day.locator('.arkme-day-detail')
+    await dayDetail.locator('img[data-arkme-rich-emoji="thumb_up"]').waitFor()
+    expect(await dayDetail.textContent()).not.toContain('[im_emoji:yummy_face]')
+    expect(await dayDetail.textContent()).toContain('[im_emoji:unknown]')
+    await capture('plugin-calendar-emoji-detail')
+    await day.getByRole('button',{name:'关闭我的一天',exact:true}).click()
     // Exercise raw wire preview -> installed Host adapter -> both directory sides.
     // Do not fabricate a client DTO that would hide a dropped template_kind.
     voicePreviewText = ''

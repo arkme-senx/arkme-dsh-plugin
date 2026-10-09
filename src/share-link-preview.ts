@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from './arkme-emoji-text.js'
 import { arkmeMarkdownPlainText, arkmeMarkdownTree } from './markdown.js'
 import { textLinkRuns } from './text-link-parser.js'
 
@@ -139,9 +140,9 @@ export function sharePreviewIsOwnMessage(raw: unknown, viewerUserId: number): bo
 const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.slice(0, 150).map(previewObject) : []
 export function previewText(value: unknown, max = 200): string {
   if (typeof value !== 'string') return ''
-  const plain = value.slice(0, 12000).replace(/[\u0000-\u001f\u007f\s]+/gu, ' ').trim()
+  const plain = arkmeEmojiTokenSafePrefix(value, 12000, 'codeUnits').replace(/[\u0000-\u001f\u007f\s]+/gu, ' ').trim()
   const points = Array.from(plain)
-  return points.length > max ? `${points.slice(0, max).join('')}…` : plain
+  return points.length > max ? `${arkmeEmojiTokenSafePrefix(plain, max)}…` : plain
 }
 export function previewImageUrl(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 4096) return undefined

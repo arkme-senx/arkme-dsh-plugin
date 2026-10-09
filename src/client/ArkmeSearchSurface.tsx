@@ -179,8 +179,8 @@ export function RecordRow({ item, onClick, onTagClick }: {
   const summary = recordSummary(item)
   const title = recordTitle(item)
   return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={onClick}>
-    <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? title : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
-    {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? summary : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
+    <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? <ArkmeRichText text={title} presentation="preview" /> : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
+    {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? <ArkmeRichText text={summary} presentation="preview" /> : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
     <RecordMeta item={item} />
   </button>
 }
@@ -725,7 +725,7 @@ function ArkmeSearchSurfaceBody({
               {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
               {records?.hasMore && <span style={styles.meta}>{tr("当前仅显示本页匹配记录。")}</span>}
             </> : <>
-              <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
+              <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}><ArkmeRichText text={selectedDsh.snippet} presentation="preview" /></button>
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>{tr("选择一个主题查看关联快记")}</div>
             : sourceLoading ? <Status loading />
@@ -797,7 +797,7 @@ function ArkmeSearchSurfaceBody({
         <Status loading={personalDetail.error === undefined} {...(personalDetail.error === undefined ? {} : { error: personalDetail.error })} />
         {personalDetail.error !== undefined && <button type="button" style={styles.retryLoadMore} onClick={() => { void openRecord(personalDetail.source) }}>{tr('重试')}</button>}
       </ArkmeDetailShell>)}
-    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>{tr("关闭")}</button></div></div>}
+    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}><ArkmeRichText text={preview.subtitle} presentation="preview" /></span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>{tr("关闭")}</button></div></div>}
   </div>
 }
 

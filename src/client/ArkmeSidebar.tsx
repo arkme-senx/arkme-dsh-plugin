@@ -1,3 +1,5 @@
+import { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
+export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
@@ -1041,17 +1043,6 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 
 function qrDataUrl(content: string): string {
   const qr = qrcode(0, 'M'); qr.addData(content); qr.make(); return qr.createDataURL(6, 12)
-}
-
-export function arkmeClipboardFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
-  const itemFiles = Array.from(clipboardData.items)
-    .filter(item => item.kind === 'file')
-    .map(item => item.getAsFile())
-    .filter((file): file is File => file !== null)
-  return itemFiles.length > 0 ? itemFiles : Array.from(clipboardData.files)
-}
-export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
-  return arkmeClipboardFiles(clipboardData).filter(file => file.type.toLowerCase().startsWith('image/'))
 }
 
 export function arkmeMessageCopyText(item: ArkmeTimelineItem): string {

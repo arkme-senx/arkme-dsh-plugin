@@ -398,7 +398,7 @@ export function ArkmeDirectoryRow({
     <span style={styles.avatar} aria-hidden>{avatar}</span>
     <span data-arkme-conversation-content style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.entryName}>{title}</span>{titleBadge}</span>
-      <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
   </button>
 }
@@ -520,7 +520,7 @@ function ArkmeNotificationRowContent({ selected, onClick, summary }: {
         <span aria-hidden style={{ flex: 1 }} />
         {time !== '' && <span style={styles.chatTime}>{time}</span>}
       </span>
-      <span style={styles.chatBottom}><span style={styles.preview}>{summary.preview}</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={summary.preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
   </button>
 }
@@ -575,7 +575,7 @@ export function ArkmeArkoRow({
           dateTime={latestDateTime}
         >{latestTime}</time>}
       </span>
-      <span style={styles.chatBottom}><span style={styles.preview}>{latestPreview}</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={latestPreview} presentation="preview" emojiSize={20} /></span></span>
     </span>
   </button>
 }
@@ -816,7 +816,7 @@ export function ArkmeTopicCard({
       <span style={styles.topicCardMeta}>
         <span style={styles.topicCardCount}>{source.recordCount ?? 0}</span>
         {time !== '' && <span style={styles.topicCardMetaText}>{time}{preview === '' ? '' : '：'}</span>}
-        {preview !== '' && <span style={styles.topicCardPreview}>{preview}</span>}
+        {preview !== '' && <span style={styles.topicCardPreview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span>}
       </span>
     </button>
     {source.kind === 'topic' && arkmeSourceAllowsUserWrite(source) && <div style={{ position: 'absolute', top: 8, right: 8 }}>{actions}</div>}
@@ -2010,7 +2010,7 @@ export function ArkmeNavigation({
               <span aria-hidden style={{ flex: 1 }} />
               {sendToSelfPresentation.time !== '' && <span style={styles.chatTime}>{sendToSelfPresentation.time}</span>}
             </span>
-            <span style={styles.chatBottom}><span style={styles.preview}>{sendToSelfPresentation.preview}</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={sendToSelfPresentation.preview} presentation="preview" emojiSize={20} /></span></span>
           </span>
         </button>)
 
@@ -2210,7 +2210,7 @@ export function ArkmeNavigation({
                   <span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(row.activeAtMillis)}</span>
                 </span>
                 <span style={styles.chatBottom}>
-                  <span style={styles.preview}>{bot.latestMessagePreview || bot.description || '与 Bot 私聊'}</span>
+                  <span style={styles.preview}><ArkmeRichText text={bot.latestMessagePreview || bot.description || '与 Bot 私聊'} presentation="preview" emojiSize={20} /></span>
                   {bot.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
                 </span>
               </span>

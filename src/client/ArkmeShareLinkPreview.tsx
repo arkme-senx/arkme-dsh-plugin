@@ -1,3 +1,5 @@
+import { arkmeEmojiPlainText } from '../arkme-emoji-text.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { previewText, shareLinkLabels, type ShareLinkPreview, type ShareLinkTarget } from '../share-link-preview.js'
@@ -63,7 +65,7 @@ export function ArkmeShareLinkPreview({ target, text, onMessageCopyLinkOpen }: {
   return <><a ref={element} href={target.url} target="_blank" rel="noopener noreferrer"
     data-arkme-share-preview={preview?.kind ?? target.kind} data-preview-state={preview?.state ?? (loaded ? 'error' : 'loading')}
     data-arkme-inline-link={target.kind === 'message' ? 'message-copy-link' : 'share-preview'}
-    aria-label={label} title={label} onClick={event => {
+    aria-label={arkmeEmojiPlainText(label)} title={arkmeEmojiPlainText(label)} onClick={event => {
       event.stopPropagation()
       if (target.kind === 'message' && scope.startsWith(`${target.environment}:`) && onMessageCopyLinkOpen
         && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
@@ -72,6 +74,6 @@ export function ArkmeShareLinkPreview({ target, text, onMessageCopyLinkOpen }: {
     }} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, maxWidth: '100%', minWidth: 0,
       color: 'var(--dsw-alias-state-business-primary, #007aff)', textDecoration: 'none', cursor: 'pointer', verticalAlign: 'baseline' }}>
     <LinkIcon aria-hidden data-arkme-link-icon="true" style={{ width: 16, height: 16, flex: 'none', alignSelf: 'center' }} />
-    <span data-arkme-link-label="true" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+    <span data-arkme-link-label="true" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><ArkmeRichText text={label} presentation="preview" /></span>
   </a>{trailingText && <span data-arkme-share-trailing-text="true">{trailingText}</span>}</>
 }

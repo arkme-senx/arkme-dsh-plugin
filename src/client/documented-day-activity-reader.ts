@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import type { ArkmeBotSummary, ArkmeCalendarRecordItem, ArkmeCalendarRecordLocation, ArkmeCallHistoryItem, ArkmeCallDetail, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { dayActivityMatchesFilter, dayActivityQueryKey, type DayActivityDetailPage, type DayActivityEntry, type DayActivityPage, type DayActivityQuery, type DayActivityReader, type DayActivityKind } from './calendar-activity-model.js'
@@ -78,7 +79,7 @@ function fullText(raw: Record<string, unknown>): string {
   return firstString(raw.text, raw.content, payload.text_content, record.text_content, record.text, raw.preview, raw.summary)
 }
 function preview(raw: Record<string, unknown>): string {
-  return (firstString(raw.preview) || fullText(raw)).slice(0, 240)
+  return arkmeEmojiTokenSafePrefix((firstString(raw.preview) || fullText(raw)), 240, 'codeUnits')
 }
 function relationLabel(flags: string[]): string {
   if (flags.includes('replied_to_me')) return '回复了我'
@@ -172,7 +173,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
             const kind = note.creationSource === 3 || note.content?.agentSource?.kind === 'dsh_agent_input' ? 'dsh'
               : sourceInfo?.kind === 'group_chat' ? 'group_chat' : sourceInfo?.kind === 'private_chat' ? 'private_chat' : 'note'
             session.entries.set(id, { id, kind, startAtMillis: occurred, endAtMillis: occurred, access: 'available', participation: 'self', recordCount: 1,
-              title: kind === 'dsh' ? 'DSH · 我提交的输入' : note.title || sourceInfo?.displayName || '我的记录', preview: (note.preview || note.textContent).slice(0, 240), sourceName: sourceInfo?.displayName || note.topicTitle || '个人记录',
+              title: kind === 'dsh' ? 'DSH · 我提交的输入' : note.title || sourceInfo?.displayName || '我的记录', preview: arkmeEmojiTokenSafePrefix((note.preview || note.textContent), 240, 'codeUnits'), sourceName: sourceInfo?.displayName || note.topicTitle || '个人记录',
               ...(sourceInfo ? { sourceIdentity: sourceInfo.sourceKey || sourceInfo.sourceRef, avatar: { avatarRef: sourceInfo.avatarRef, avatarRefs: sourceInfo.avatarRefs, groupAvatar: sourceInfo.groupAvatar }, ...(kind === 'private_chat' ? { participant: { name: sourceInfo.displayName } } : {}) } : {}),
               ...(note.locationSummary ? { locationSummary: note.locationSummary } : {}), ...(note.locationObservation ? { location: note.locationObservation } : {}), ...(note.locationRef ? { canLoadLocation: true } : {}) })
             session.details.set(id, [{ id, occurredAtMillis: occurred, author: { name: '我' }, text: note.textContent || note.preview, ...(note.content ? { content: note.content } : {}) }])
@@ -188,7 +189,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
           const kind = sourceInfo?.kind === 'group_chat' ? 'group_chat' : sourceInfo?.kind === 'private_chat' ? 'private_chat' : firstString(record.creation_source, item.creation_source) === '3' ? 'dsh' : 'note'
           const loc = locationSummary(item) ?? locationSummary(record)
           const locationRef = firstString(item.location_ref, item.locationRef, record.location_ref, record.locationRef)
-          const entry: DayActivityEntry = { id, kind, startAtMillis: occurred, endAtMillis: occurred, title: firstString(record.title, item.title) || (kind === 'dsh' ? 'DSH · 我提交的输入' : kind === 'note' ? '我的记录' : sourceInfo?.displayName || '对话'), preview: firstString(record.preview, record.text_content, item.preview, item.text_content).slice(0, 240), sourceName: sourceInfo?.displayName || '个人记录', recordCount: 1, access: 'available', participation: 'self', ...(sourceInfo ? { sourceIdentity: sourceInfo.sourceKey, ...(kind === 'private_chat' ? { participant: { name: sourceInfo.displayName } } : {}) } : {}), ...(loc ? { locationSummary: loc } : {}), ...(locationRef ? { canLoadLocation: true } : {}) }
+          const entry: DayActivityEntry = { id, kind, startAtMillis: occurred, endAtMillis: occurred, title: firstString(record.title, item.title) || (kind === 'dsh' ? 'DSH · 我提交的输入' : kind === 'note' ? '我的记录' : sourceInfo?.displayName || '对话'), preview: arkmeEmojiTokenSafePrefix(firstString(record.preview, record.text_content, item.preview, item.text_content), 240, 'codeUnits'), sourceName: sourceInfo?.displayName || '个人记录', recordCount: 1, access: 'available', participation: 'self', ...(sourceInfo ? { sourceIdentity: sourceInfo.sourceKey, ...(kind === 'private_chat' ? { participant: { name: sourceInfo.displayName } } : {}) } : {}), ...(loc ? { locationSummary: loc } : {}), ...(locationRef ? { canLoadLocation: true } : {}) }
           if (sourceInfo) entry.avatar = { avatarRef: sourceInfo.avatarRef, avatarRefs: sourceInfo.avatarRefs, groupAvatar: sourceInfo.groupAvatar }
           session.entries.set(id, entry); if (sourceInfo) session.targets.set(id, { kind: 'source', source: sourceInfo })
           if (locationRef) session.locationRefs.set(id, { ref: locationRef, recordUid: id.slice(5) })

@@ -628,7 +628,7 @@ describe('Arkme search surface', () => {
       await Promise.resolve()
     })
 
-    const result = renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会快记'))
+    const result = renderer.root.findAllByType('button').find(button => content(button.children).includes('发布会快记'))
     act(() => { result?.props.onClick() })
     expect(onOpenRecord).toHaveBeenCalledWith(expect.objectContaining({
       recordUid: 'record-1',
@@ -1013,7 +1013,7 @@ describe('Arkme search surface', () => {
       await Promise.resolve()
     })
 
-    expect(renderer.root.findAllByType('p').filter(node => content(node.props.children) === '重复的快记标题')).toHaveLength(1)
+    expect(renderer.root.findAllByType('p').filter(node => content(node.children) === '重复的快记标题')).toHaveLength(1)
     act(() => { renderer.unmount() })
   })
 
@@ -1109,7 +1109,7 @@ it.each(['local', 'remote', 'legacy', 'error'] as const)('opens the local DSH co
  let renderer!: ReactTestRenderer
  await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="武汉" onOpenRecord={onOpenRecord} onOpenDshSession={onOpenDshSession} onClose={onClose} />) })
  await act(async () => { await vi.advanceTimersByTimeAsync(300) })
- await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会快记'))?.props.onClick(); await Promise.resolve() })
+ await act(async () => { renderer.root.findAllByType('button').find(button => content(button.children).includes('发布会快记'))?.props.onClick(); await Promise.resolve() })
  if (mode === 'local') { expect(onOpenDshSession).toHaveBeenCalledWith('native-session'); expect(onOpenRecord).not.toHaveBeenCalled() }
  else if (mode === 'error') { expect(onOpenRecord).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(content(renderer.toJSON())).toContain('列表读取失败') }
  else { expect(onOpenRecord).toHaveBeenCalledWith(record); expect(onOpenDshSession).not.toHaveBeenCalled() }
