@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { ArkmeAccountUsage, ArkmeAccountUsageDetails, ArkmeAccountUsageDialog, formatCompactTokens, formatUsageBytes, formatUsageSeconds, usageLevel } from '../src/client/ArkmeAccountUsage.js'
 import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
@@ -19,6 +20,7 @@ const recording = { accountScope: 'prod:11', month: '2026-09', totalSeconds: 129
   breakdown: [1, 2, 3].map(recordingKind => ({ recordingKind, recordingDurationMillis: recordingKind === 3 ? null : 3600000, speechDurationMillis: 1200000, requestedSeconds: 1200, deductedSeconds: 1200, waivedSeconds: 0 })) }
 const defaultValue = (operation: string) => operation === 'account.usage.recording' ? recording : operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.points.query' ? points : storage
 beforeEach(() => {
+  connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} });
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   mocks.call.mockReset(); onViewMembership.mockReset()
   mocks.call.mockImplementation(async operation => defaultValue(operation))
@@ -28,9 +30,95 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 async function render(scope = 'prod:11') { await act(async () => root.render(<ArkmeAccountUsageDetails accountScope={scope} onViewMembership={onViewMembership} />)) }
+async function openGiftDetails() {
+  expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  const button = host.querySelector<HTMLButtonElement>('.arkme-usage-grant-help')
+  if (button) await act(async () => { button.focus(); button.click() })
+}
 const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
+  it('toggles gift details, dismisses outside or Escape, and stays inside the owning modal', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={onClose} />))
+    const button = document.querySelector<HTMLButtonElement>('.arkme-usage-grant-help')!
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => { button.focus(); button.click() })
+    expect(document.querySelector('dialog [role="tooltip"]')?.textContent).toContain('月度 100')
+    await act(async () => button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(button)
+    await act(async () => button.click())
+    await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => button.click())
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => root.render(null))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  })
+  it('closes explanations on account change without leaking old grant details', async () => {
+    await render()
+    await openGiftDetails()
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull()
+    mocks.call.mockImplementation(async operation => ({ ...defaultValue(operation), accountScope: 'prod:22', ...(operation === 'account.points.query' ? { availablePoints: '1150', grantedPoints: '0', grants: [] } : {}) }))
+    await render('prod:22')
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(host.querySelector('.arkme-usage-grant-help')).toBeNull()
+  })
+
+  it.each(['320', '0'])('hides exhausted welcome gifts with monthly balance %s', async monthly => {
+    const account = { ...points, availablePoints: String(Number(monthly) + 1150), grantedPoints: monthly, grants: [
+      { source: 'welcome', availablePoints: '0', expiresAt: 0 },
+      { source: 'membership', availablePoints: monthly, expiresAt: Date.UTC(2026, 9, 31, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(monthly === '0' ? [] : ['月度 320（10/31 到期）'])
+  })
+  it('shows just the permanent balance when the monthly gift is exhausted', async () => {
+    const account = { ...points, availablePoints: '3150', grantedPoints: '2000', grants: [
+      { source: 'welcome', availablePoints: '2000', expiresAt: 0 },
+      { source: 'membership', availablePoints: '0', expiresAt: Date.UTC(2026, 9, 31, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('永久 2,000')
+  })
+  it.each(['zh', 'en'])('distinguishes permanent welcome points from monthly expiry in %s', async locale => {
+    connectArkmeLocale({ getLocale: () => ({ active: locale }), subscribe: () => () => {} })
+    const account = { ...points, availablePoints: '4075', grantedPoints: '2340', purchasedPoints: '1735', grants: [
+      { source: 'welcome', availablePoints: '20', expiresAt: 0 },
+      { source: 'welcome', availablePoints: '2000', expiresAt: 0 },
+      { source: 'membership', availablePoints: '320', expiresAt: Date.UTC(2026, 9, 31, 16) },
+      { source: 'membership', availablePoints: '0', expiresAt: Date.UTC(2026, 8, 30, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(locale === 'zh' ? ['永久 2,020 · 月度 320（10/31 到期）'] : ['Permanent 2,020 · Monthly 320 (expires 10/31)'])
+    expect(host.textContent).not.toContain('赠送积分到期时间')
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])
+  })
+  it('shows remaining permanent gifts and preserves separate future-source expiries', async () => {
+    const account = { ...points, availablePoints: '1178.1234568', grantedPoints: '28.1234568', grants: [
+      { source: 'welcome', availablePoints: '18.1234567', expiresAt: 0 },
+      { source: 'future-source', availablePoints: '0.0000001', expiresAt: Date.UTC(2026, 9, 31, 16) },
+      { source: 'future-source', availablePoints: '10', expiresAt: Date.UTC(2026, 10, 30, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(['永久 18.12 · 赠送 < 0.01（2026/10/31 到期） · 赠送 10（2026/11/30 到期）'])
+    expect(host.querySelector('[data-usage-kind="ai-points"]')?.textContent).not.toContain('月度')
+  })
   it.each([
     ['1980.43', '245.16', '1735.27', '可用 1,980 积分赠送 245 · 充值 1,735'],
     ['1.9999999', '0.9999999', '1', '可用 1 积分赠送 0 · 充值 1'],
