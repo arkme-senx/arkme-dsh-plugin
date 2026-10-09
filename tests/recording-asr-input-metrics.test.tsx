@@ -49,6 +49,33 @@ it('distinguishes confirmed silence, pending, missing historical data and a trul
   expect(metrics([]).asrInputState).toBe('unavailable')
   expect(metrics([child, { ...child, id: 'missing', asr_input_metrics: undefined }])).toMatchObject({ asrInputState: 'partial', asrInputDurationMillis: 6000, asrInputUnknownCount: 1 })
 })
+it('keeps observed input visible while the current attempt receipt is pending', () => {
+  const pending = { ...child, asr_input_metrics: { ...speech([[1000, 3000], [1000, 3000]]), state: 'processing' } }
+  expect(metrics([pending])).toMatchObject({ asrInputState: 'processing', asrInputDurationMillis: 4000,
+    asrInputPendingCount: 1, asrInputConfirmedCount: 1, asrInputUnknownCount: 0 })
+  const daily = projectRecordingDailyMetrics({ session_ls: [session], child_ls: [pending] }, [], 42, start, end)
+  const rendered = renderToStaticMarkup(<RecordingDailyMetrics metrics={daily}/>)
+  expect(rendered).toContain('转写输入时长 4秒（已确认）')
+  expect(rendered).toContain('处理中，统计待更新')
+  expect(metrics([{ ...pending, asr_input_metrics: { ...pending.asr_input_metrics, duration_ms: 5000 } }]))
+    .toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1, asrInputUnknownCount: 1, asrInputDurationMillis: 0 })
+  expect(metrics([{ ...pending, asr_input_metrics: { ...pending.asr_input_metrics, basis: 'future-basis' } }]))
+    .toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1, asrInputUnknownCount: 1, asrInputDurationMillis: 0 })
+})
+it('keeps unfinished cross-midnight children pending before SD confirms their duration', () => {
+  const pending = { ...child, duration: 0, has_asr: false, asr_input_metrics: { state: 'processing', duration_ms: null, spans: null } }
+  const result = metrics([pending], [{ ...session, start_at: start - 3000, end_at: start + 3000 }])
+  expect(result).toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1,
+    asrInputUnknownCount: 1, asrInputConfirmedCount: 0, asrInputDurationMillis: 0 })
+  expect(metrics([{ ...pending, start_at: end }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 0 })
+  expect(metrics([{ ...pending, asr_input_metrics: { state: 'unavailable' } }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 1 })
+  const hinted = { ...pending, duration_hint: 6000 }
+  const crossing = [{ ...session, start_at: start - 3000 }]
+  expect(metrics([hinted], crossing)).toMatchObject({ asrInputState: 'processing', asrInputPendingCount: 1, asrInputUnknownCount: 0, asrInputDurationMillis: 0 })
+  expect(metrics([hinted], [{ ...session, start_at: start - 6000 }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 0 })
+  expect(metrics([{ ...hinted, asr_input_metrics: { ...speech([[0, 6000]]), state: 'processing' } }], crossing))
+    .toMatchObject({ asrInputDurationMillis: 0, asrInputPendingCount: 1, asrInputUnknownCount: 1 })
+})
 it.each([
   undefined, null, { state: 'ready', duration_ms: 0 }, speech([[0, 1000]], 2000), speech([[-1, 1000]]),
   speech([[0, 60001]]), speech([[0, 1.5]]), speech([[1000, 0]]), speech([[0, 1000]], NaN),

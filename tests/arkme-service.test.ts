@@ -646,6 +646,7 @@ describe('ArkmeService', () => {
     expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
     expect(bodies).toContainEqual({
       start_at: lowerBound,
+      end_at: new Date(1970, 0, 2).getTime(),
       tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
     })
   })
