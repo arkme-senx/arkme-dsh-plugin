@@ -758,6 +758,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(posts.map(item => item.path)).toEqual([
       '/api/v1/audio/get-session-by-id',
       '/api/v1/audio/new-child',
+      '/api/v1/audio/renew-upload',
       '/api/v1/audio/uploads/begin',
       '/api/v1/audio/child-upload-finish',
       '/api/v1/audio/finish-session',
@@ -766,7 +767,7 @@ describe('AudioRecordingImportGateway', () => {
       session_id: 'session-1', start_at: 0, duration: 60_000,
       file_name: 'arkme_job-1_0.m4a', expected_size: 1024,
     })
-    expect(uploadFile).toHaveBeenCalledWith(current, expect.any(Function), progress, expect.any(Function), undefined, undefined)
+    expect(uploadFile).toHaveBeenCalledWith(current, expect.any(Function), progress, expect.any(Function), expect.any(AbortSignal), undefined)
     expect(progress).toHaveBeenLastCalledWith(1024, { upload_id: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
   })
@@ -1098,7 +1099,7 @@ describe('AudioRecordingImportGateway', () => {
   })
 
   it('carries cancellation to the cloud-neutral transport without exposing cloud state', async () => {
-    const runtime = {} as ServiceRuntime
+    const runtime = {config:{environment:'test'},async requireSession(){return {userId:42,accessToken:'access',refreshToken:'refresh'}},async authenticatedAudioPost(){return {}}} as unknown as ServiceRuntime
     const controller = new AbortController()
     const uploadFile = vi.fn(async (_job, _post, _progress, _account, signal) => {
       await new Promise<void>((_resolve, reject) => {
@@ -1107,6 +1108,7 @@ describe('AudioRecordingImportGateway', () => {
     })
     const gateway = new AudioRecordingImportGateway(runtime, uploadFile)
     const uploading = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), async () => undefined, controller.signal)
+    await vi.waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1))
     controller.abort()
     await expect(uploading).rejects.toMatchObject({ code: 'recording-import-cancelled' })
     expect(uploadFile).toHaveBeenCalledTimes(1)

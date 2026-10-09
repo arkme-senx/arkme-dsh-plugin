@@ -104,7 +104,9 @@ describe('recording calendar selection', () => {
     if (scenario === 'transcript-finishes') {
       expect(JSON.stringify(renderer.toJSON())).toContain('已完成文本')
       expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 暂不可用')
-      await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+      // A still-pending observation continues the same 3-second polling loop;
+      // finishing the text does not restart the first-open timer.
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
     }
     expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 6秒')
     const settledReads = reads

@@ -542,16 +542,45 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     onProgress: (uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    await this.uploadFile(
-      job,
-      async (path, body) => await this.authenticatedOwnerPost<Record<string, unknown>>(
-        job.userId, path, body, signal, { lane: 'write', bypassCache: true },
-      ),
-      onProgress,
-      async () => await this.requireJobSession(job),
-      signal,
-      this.runtime.fetchImpl,
-    )
+    if (job.childId === undefined) throw new ArkmePluginError('recording-import-child-missing', '缺少录音上传任务', true)
+    const controller = new AbortController()
+    const uploadSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
+    const renew = async () => {
+      uploadSignal.throwIfAborted()
+      await this.runtime.authenticatedAudioPost('/api/v1/audio/renew-upload', { child_id: job.childId },
+        await this.requireJobSession(job), uploadSignal, { lane: 'write', bypassCache: true })
+    }
+    try { await renew() } catch (error) {
+      if (uploadSignal.aborted) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+      throw error
+    }
+    if (uploadSignal.aborted) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+    let renewal: Promise<void> | undefined
+    let renewalError: unknown
+    const timer = setInterval(() => {
+      if (renewal !== undefined) return
+      renewal = renew().catch(error => { renewalError = error; controller.abort(error) }).finally(() => { renewal = undefined })
+    }, 5 * 60 * 1000)
+    try {
+      await this.uploadFile(
+        job,
+        async (path, body) => await this.authenticatedOwnerPost<Record<string, unknown>>(
+          job.userId, path, body, uploadSignal, { lane: 'write', bypassCache: true },
+        ),
+        onProgress,
+        async () => await this.requireJobSession(job),
+        uploadSignal,
+        this.runtime.fetchImpl,
+      )
+      if (renewal !== undefined) await renewal
+      if (renewalError !== undefined) throw renewalError
+    } catch (error) {
+      throw renewalError ?? error
+    } finally {
+      clearInterval(timer)
+      controller.abort()
+      if (renewal !== undefined) await renewal
+    }
   }
 
   async finishChild(job: RecordingImportJob, signal?: AbortSignal): Promise<void> {
