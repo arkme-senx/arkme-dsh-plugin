@@ -1,3 +1,4 @@
+import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
 import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
@@ -532,6 +533,7 @@ export class ArkmeService {
       this.messageActions,
       this.callHistory,
     )
+    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
     this.botConversation = new BotConversationService(
@@ -652,6 +654,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.unifiedTimeline.reset()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
@@ -872,6 +875,8 @@ export class ArkmeService {
       throw error
     }
   }
+  private unifiedTimeline!: UnifiedChatTimelineService
+
   providerCapabilities(): ArkmeProviderCapabilities {
     return {
       contractVersion: ARKME_PROVIDER_CONTRACT_VERSION,
@@ -903,6 +908,7 @@ export class ArkmeService {
         contactDirectoryReads: true,
         speakerPresence: true,
         sourceTimeline: true,
+        unifiedChatTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
@@ -935,6 +941,7 @@ export class ArkmeService {
         extensionIcons: true,
         extensionPreviews: true,
         worldFeed: true,
+        worldRecordRead: true,
         worldInteractions: true,
         worldPublish: true,
         worldVoiceprintPlayback: true,
@@ -1018,6 +1025,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.unifiedTimeline.dispose()
     this.selfRoles.dispose()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
@@ -1707,6 +1715,8 @@ export class ArkmeService {
     })
   }
 
+  async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
+
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
 
   async openPrivateChatFromMember(
@@ -1893,11 +1903,27 @@ export class ArkmeService {
 
   async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
+      return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
+        ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
+      }, options.signal), session.userId)
+    }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
   async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
     const session = await this.runtime.requireSession()
-    return await this.withSelfRoleSnapshots(await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options), session.userId)
+    const page = await this.unifiedTimeline.read(sourceRef, { mode: 'around', itemUid, recordOwnerUserId,
+      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal)
+    const window = page.unified!
+    const anchorIndex = page.items.findIndex(item => item.itemUid === itemUid)
+    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window,
+      anchorItemUid: itemUid, anchorIndex, anchorSequence: page.items[anchorIndex]?.sequence ?? 0,
+      olderHasMore: window.olderHasMore, newerHasMore: window.newerHasMore,
+      ...(window.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: window.olderCursor } } } : {}),
+      ...(window.newerCursor ? { newerCursor: { unified: { mode: 'newer' as const, cursor: window.newerCursor } } } : {}),
+    }, session.userId)
   }
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)

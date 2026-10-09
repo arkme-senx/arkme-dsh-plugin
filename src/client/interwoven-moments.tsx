@@ -15,7 +15,7 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
-import { ArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
+import { ArkmeInterwovenReadReceipt, useArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
 import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
 
 export type ArkmeConversationRow =
@@ -223,9 +223,10 @@ export function ArkmeInterwovenMentionCard({
   highlighted?: boolean
 }) {
   useArkmeLocale()
-  const [hintAnchor, setHintAnchor] = useState<HTMLButtonElement>()
+  const receipt = useArkmeInterwovenReadReceipt(moment)
+  const [hint, setHint] = useState<{ anchor: HTMLButtonElement; receipt: boolean }>()
   const hintId = useId()
-  const closeHint = useCallback(() => { setHintAnchor(undefined) }, [])
+  const closeHint = useCallback(() => { setHint(undefined) }, [])
   useEffect(closeHint, [moment.momentRef, closeHint])
   const summary = moment.summary.trim() || tr('群聊提及')
   const accessible = `${moment.groupName}，${moment.senderName}：${summary}`
@@ -238,17 +239,17 @@ export function ArkmeInterwovenMentionCard({
       data-arkme-interwoven-summary
       style={{ ...styles.card, ...(highlighted ? { background: 'var(--dsw-alias-bg-active, #eef0fa)', outline: '1px solid var(--dsw-alias-state-business-primary, #a5acff)' } : {}) }}
       aria-label={tr("打开快记详情：{v0}", { v0: accessible })}
-      aria-describedby={hintAnchor ? hintId : undefined}
+      aria-describedby={hint ? hintId : undefined}
       onMouseOver={event => {
-        // The receipt has its own reader-specific hint; never stack both hints.
-        if ((event.target as Element).closest?.('[data-arkme-interwoven-receipt]')) closeHint()
-        else setHintAnchor(event.currentTarget)
+        const anchor = event.currentTarget
+        const isReceipt = Boolean((event.target as Element).closest?.('[data-arkme-interwoven-receipt]'))
+        setHint(current => current?.anchor === anchor && current.receipt === isReceipt
+          ? current : { anchor, receipt: isReceipt })
       }}
       onMouseLeave={closeHint}
       onFocus={event => {
         event.currentTarget.style.boxShadow = '0 0 0 2px var(--dsw-alias-state-business-primary, #3964fe)'
-        if (event.target === event.currentTarget) setHintAnchor(event.currentTarget)
-        else closeHint()
+        setHint({ anchor: event.currentTarget, receipt: event.target !== event.currentTarget })
       }}
       onBlur={event => { event.currentTarget.style.boxShadow = 'none'; closeHint() }}
       onClick={() => { closeHint(); onOpen(moment) }}
@@ -257,12 +258,12 @@ export function ArkmeInterwovenMentionCard({
         avatarRef={moment.senderAvatarRef} name={moment.senderName} />
       <span data-arkme-interwoven-content style={styles.cardText}>{summary}</span>
       <span data-arkme-interwoven-origin style={styles.originLabel}>{moment.groupName || tr('群聊')}</span>
-      <ArkmeInterwovenReadReceipt moment={moment} />
+      <ArkmeInterwovenReadReceipt receipt={receipt} describedBy={hint?.receipt ? hintId : undefined} />
       <svg viewBox="0 0 16 16" style={styles.chevron} aria-hidden>
         <path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
-    {hintAnchor && <ArkmeCalendarDateTooltip anchor={hintAnchor} id={hintId} text={accessible} onClose={closeHint} />}
+    {hint && <ArkmeCalendarDateTooltip anchor={hint.anchor} id={hintId} text={hint.receipt ? receipt.text : accessible} onClose={closeHint} />}
   </li>
 }
 

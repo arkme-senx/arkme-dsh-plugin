@@ -1,3 +1,4 @@
+import { TimelineTokenCodec } from './timeline-token.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -244,6 +245,14 @@ export class InterwovenService {
       session,
       signal,
     )
+    return await this.projectUnifiedGroups(data, source, session, counterpartUserId, signal)
+  }
+
+  /** Project already-authorized Chat payloads without starting an independent structure read. */
+  async projectUnifiedGroups(
+    data: Record<string, unknown>, source: ArkmeSourceRefPayload, session: ArkmeSessionCredentials,
+    counterpartUserId = 0, signal?: AbortSignal,
+  ): Promise<ArkmeInterwovenBootstrap> {
     const preparedAtMillis = Math.max(0, Math.trunc(numberValue(data.prepared_at))) || Date.now()
     const descriptors: Array<{
       rawMomentId: string
@@ -386,7 +395,7 @@ export class InterwovenService {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' || momentRefs.length < 1 || momentRefs.length > 20
-      || momentRefs.some(ref => typeof ref !== 'string' || !ref.trim() || ref.length > 4096)
+      || momentRefs.some(ref => typeof ref !== 'string' || !ref.trim() || ref.length > 32768)
       || new Set(momentRefs).size !== momentRefs.length) {
       throw new ArkmePluginError('interwoven-param-invalid', '群互动已读查询参数无效', false, 400)
     }
@@ -700,7 +709,7 @@ export class InterwovenService {
         || error.code === 'arkme-code-404')
   }
 
-  private async interwovenStableMomentId(rawMomentId: string): Promise<string> {
+  async interwovenStableMomentId(rawMomentId: string): Promise<string> {
     return `arkme-moment-${createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`interwoven:${rawMomentId}`).digest('base64url').slice(0, 32)}`
   }
@@ -708,19 +717,9 @@ export class InterwovenService {
   private async sealInterwovenMomentRef(
     reference: Omit<ArkmeInterwovenMomentReference, 'expiresAtMillis'>,
   ): Promise<string> {
-    const now = Date.now()
-    for (const [key, value] of this.momentReferences) {
-      if (value.expiresAtMillis <= now) this.momentReferences.delete(key)
-    }
-    while (this.momentReferences.size >= 1000) {
-      const oldest = this.momentReferences.keys().next().value as string | undefined
-      if (oldest === undefined) break
-      this.momentReferences.delete(oldest)
-    }
-    const nonce = randomUUID()
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(nonce).digest('base64url')
-    this.momentReferences.set(nonce, { ...reference, expiresAtMillis: now + 12 * 60 * 60 * 1000 })
-    return `arkme-moment-v1.${nonce}.${signature}`
+    const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(),
+      JSON.stringify([this.runtime.config.environment, reference.userId, reference.sourceOwnerRef]))
+    return codec.seal(JSON.stringify({ ...reference, expiresAtMillis: Date.now() + 12 * 60 * 60 * 1000 }), 'interwoven-detail')
   }
 
   private async openInterwovenMomentRef(
@@ -728,6 +727,21 @@ export class InterwovenService {
     expectedUserId: number,
     expectedSourceOwnerRef: string,
   ): Promise<ArkmeInterwovenMomentReference> {
+    if (momentRef.startsWith('atw1.')) {
+      const cached = this.momentReferences.get(momentRef)
+      if (cached && cached.expiresAtMillis > Date.now() && cached.userId === expectedUserId && cached.sourceOwnerRef === expectedSourceOwnerRef) return cached
+      const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(),
+        JSON.stringify([this.runtime.config.environment, expectedUserId, expectedSourceOwnerRef]))
+      let reference: ArkmeInterwovenMomentReference
+      try { reference = JSON.parse(codec.open(momentRef, 'interwoven-detail')) as ArkmeInterwovenMomentReference }
+      catch { throw new ArkmePluginError('interwoven-ref-invalid', '交织瞬间引用与当前会话不匹配', false, 403) }
+      if (reference.expiresAtMillis <= Date.now()) throw new ArkmePluginError('interwoven-ref-expired', '交织瞬间引用已过期，请刷新会话后重试', true, 410)
+      for (const [key, value] of this.momentReferences) if (value.expiresAtMillis <= Date.now()) this.momentReferences.delete(key)
+      while (this.momentReferences.size >= 1000) this.momentReferences.delete(this.momentReferences.keys().next().value!)
+      // Receipt resolution enriches this object in place. Reuse the verified relation within this runtime.
+      this.momentReferences.set(momentRef, reference)
+      return reference
+    }
     const parts = momentRef.trim().split('.')
     if (parts.length !== 3 || parts[0] !== 'arkme-moment-v1') {
       throw new ArkmePluginError('interwoven-ref-invalid', '交织瞬间引用无效，请刷新会话后重试', false, 400)

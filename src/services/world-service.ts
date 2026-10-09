@@ -1,3 +1,4 @@
+import { TimelineTokenCodec } from './timeline-token.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -335,6 +336,7 @@ function worldImageAssetIdentity(raw: string): string {
 }
 
 export class WorldService {
+  private epoch = 0
   /** Called only for a Record-owner-authorized received-reaction response. */
   async reactionReference(recordUid: string): Promise<string> {
     const session = await this.runtime.requireSession()
@@ -361,6 +363,7 @@ export class WorldService {
   ) {}
 
   dispose(): void {
+    this.epoch++
     this.worldImageRefs.clear()
     this.worldAvatarResolutionCache.clear()
     this.extensionPublicationShareCache.clear()
@@ -368,6 +371,27 @@ export class WorldService {
     this.worldRecordRefs.clear()
     this.voiceprintSocialCache.clear()
     this.voiceprintSocialInFlight.clear()
+  }
+
+  /** Recheck publication at open time; cached timeline references never grant access to private records. */
+  async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
+    const epoch = this.epoch
+    const session = await this.runtime.requireSession()
+    const recordUid = recordRef.startsWith('atw1.')
+      ? new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), JSON.stringify([this.runtime.config.environment, session.userId])).open(recordRef, 'world-record')
+      : this.openWorldRecordRef(recordRef, session.userId).recordUid
+    signal?.throwIfAborted()
+    const raw = await this.runtime.post<Record<string, unknown>>(
+      this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/detail',
+      { record_uid: recordUid }, undefined, [200], signal,
+    )
+    const resolvedAvatars = await this.resolveWorldAvatarUrls([raw], session, signal)
+    if (epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
+    const item = await this.worldFeedItem(raw, session.userId, resolvedAvatars, signal)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
+    if (!item) throw new ArkmePluginError('world-record-unavailable', '这条公开快记已不可用', false, 404)
+    return item
   }
 
   async listWorldRecords(

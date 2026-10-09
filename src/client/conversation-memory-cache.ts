@@ -8,6 +8,7 @@ import type {
 } from '../types.js'
 
 export interface ArkmeConversationTimelineSnapshot {
+  unified?: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineWindow | undefined
   mode?: 'latest' | 'around'
   aroundSequenceRange?: ArkmeConversationTimelineSequenceRange
   items: ArkmeTimelineItem[]
@@ -48,7 +49,8 @@ export function arkmeConversationTimelineContentEqual(
 ): boolean {
   if (left === right) return true
   if (left === undefined || right === undefined) return false
-  return (left.mode ?? 'latest') === (right.mode ?? 'latest')
+  return JSON.stringify(left.unified) === JSON.stringify(right.unified)
+    && (left.mode ?? 'latest') === (right.mode ?? 'latest')
     && JSON.stringify(left.aroundSequenceRange) === JSON.stringify(right.aroundSequenceRange)
     && left.hasMore === right.hasMore
     && left.newerHasMore === right.newerHasMore
