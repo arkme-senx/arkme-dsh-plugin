@@ -1,5 +1,7 @@
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
+import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
+import { arkmeEmojiById } from '../src/client/arkme-emoji.js'
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
 import { ArkmeSendTaskStatus } from '../src/client/ArkmeSendTaskStatus.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
@@ -107,6 +109,65 @@ describe('Team send UI recovery', () => {
     await mount();await send()
     expect(renderer!.root.findAllByType(ArkmeSendTaskStatus)).toHaveLength(1)
     expect(renderer!.root.findByType(ArkmeSendTaskStatus).props.state).toBe(state)
+  })
+
+  it('keeps automatic offline retries quiet and allows composing the next message', async () => {
+    let tasks: ReturnType<typeof accepted>[] = []
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.enqueue') { tasks = [accepted({state:'retrying',attempts:2,reason:'dependency_unavailable',error:'服务暂时不可用，请使用原请求重试'})]; return tasks[0] }
+      return tasks
+    })
+    await mount(); await send()
+    const status = renderer!.root.findByType(ArkmeSendTaskStatus)
+    expect(status.findAllByType('button')).toHaveLength(0)
+    expect(status.findByType('div').children.join('')).toBe('等待发送')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('原请求')
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+  })
+
+  it('uses the shared composer geometry, recipient placeholder and token-preserving emoji edit', async () => {
+    await mount()
+    const input = () => renderer!.root.findByType(ArkmeRichComposerInput)
+    expect(input().props.className).toBe('arkme-conversation-textarea')
+    expect(input().props.placeholder).toBe('发消息到 团队')
+    const surface = () => renderer!.root.findByProps({'data-arkme-primary-composer':'true'})
+    expect(surface().props.style.borderColor).toBe('transparent')
+    await act(async () => input().props.onFocus())
+    expect(surface().props.style.borderColor).not.toBe('transparent')
+    await act(async () => input().props.onSelectionChange('问题',2,2))
+    await act(async () => renderer!.root.findByType(ArkmeEmojiPicker).props.onSelect(arkmeEmojiById.smiling_face))
+    expect(input().props.value).toBe('问题\uFFFC')
+    expect(input().props.emojis).toEqual([{emojiId:'smiling_face',startIndex:2}])
+    await send()
+    expect(mocks.call.mock.calls.find(call=>call[0]==='team.app.send.enqueue')?.[1].content.text_content).toBe('问题[jm_emoji:smiling_face]')
+  })
+
+  it('retries a failed timeline read without losing the draft', async () => {
+    mocks.call.mockRejectedValue(new Error('无法连接本机插件，请确认插件正在运行后重试'))
+    await mount()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    const retry = renderer!.root.findAllByType('button').find(button=>button.children.join('')==='重试')!
+    mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:[])
+    await act(async()=>{retry.props.onClick();await tick()})
+    expect(renderer!.root.findAllByProps({role:'alert'})).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+  })
+
+  it.each([false, undefined, true])('requires explicit inbox authority even when the directory has cached rows: %s', async openInbox => {
+    mocks.call.mockImplementation(async(op:string,p:{side?:string}) => {
+      if(op==='team.app.official') return conversation.channel
+      if(op==='team.app.open') return {channel:conversation.channel,openInbox}
+      if(op==='team.app.conversations') return {items:p.side==='team'?[{...conversation,side:'team'}]:[],hasMore:false}
+      return []
+    })
+    const stop=startTeamDirectory('account')
+    try {
+      await act(async()=>{renderer=create(<TeamMessagingPanel accountKey="account" intent={{kind:'official'}} />);await tick()})
+      await act(async()=>{await refreshTeamDirectory('account');await tick()})
+      expect(JSON.stringify(renderer!.toJSON()).includes('暂时无法打开对话，请重试')).toBe(openInbox!==true)
+      expect(renderer!.root.findAllByType(TeamConversationRow)).toHaveLength(openInbox===true?1:0)
+    } finally { await act(async()=>stop()) }
   })
 
   it('online recovery retries the same command once and keeps the next draft and original time', async () => {
@@ -376,9 +437,8 @@ describe('Team send UI recovery', () => {
     expect(buttons.some(v=>v.children.join('').includes('仍要发送'))).toBe(false)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('原消息')
-    const retry=buttons.find(v=>v.children.join('')==='重试')!
-    await act(async()=>{retry.props.onClick();await tick()})
-    expect(mocks.call.mock.calls.find(v=>v[0]==='team.app.send.retry-task')?.[1]).toEqual({conversationRef:conversation.ref,taskRef:'legacy'})
+    expect(buttons.some(v=>v.children.join('')==='重试')).toBe(false)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('等待发送')
     expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.confirm')).toBe(false)
   })
 
@@ -527,7 +587,7 @@ describe('Team send UI recovery', () => {
     await mount(); await send()
     const request = mocks.call.mock.calls.find(call => call[0] === 'team.app.send.enqueue')![1]
     expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.uid).toBe(request.clientUid)
-    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('使用原请求重试')
+    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('重试')
     expect(JSON.stringify(renderer!.toJSON())).toContain('草稿未能保存到本机')
   })
 })

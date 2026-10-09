@@ -113,8 +113,16 @@ export class TeamAppService {
     }
   }
 
+  async assertViewer(expectedAccountKey: unknown): Promise<ArkmeSessionCredentials> {
+    const session = await this.runtime.requireSession()
+    if (expectedAccountKey !== undefined && expectedAccountKey !== `${this.runtime.config.environment}:${session.userId}`) {
+      throw new ArkmePluginError('team-account-changed', '登录账号已在其他页面切换，请重新打开团队消息', false, 409)
+    }
+    return session
+  }
+
   async execute(operation: TeamAppOperation, p: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-    const session = await this.runtime.requireSession(), actor = session.userId
+    const session = await this.assertViewer(p.expectedAccountKey), actor = session.userId
     const assertAccount = async () => {
       signal?.throwIfAborted()
       const current = await this.runtime.accountScopedSession()

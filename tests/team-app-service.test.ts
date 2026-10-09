@@ -30,6 +30,14 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it.each(['team.app.official','team.app.conversations','team.app.open'] as const)('rejects a stale browser account before %s can return another account data', async operation => {
+    const f=fixture(()=>({channel,conversation}))
+    await expect(f.service.execute(operation,{expectedAccountKey:'test:91'})).rejects.toMatchObject({code:'team-account-changed'})
+    expect(f.requests).toHaveLength(0)
+    await expect(f.service.execute(operation,{expectedAccountKey:'prod:90'})).rejects.toMatchObject({code:'team-account-changed'})
+    expect(f.requests).toHaveLength(0)
+  })
+
   it.each(['team', 'external'])('preserves voice preview classification for the %s conversation list', async side => {
     const f = fixture(() => ({ items: [{ ...conversation, side,
       preview: { status: 'available', text: '', has_media: true, template_kind: 3 },

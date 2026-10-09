@@ -33,13 +33,13 @@ export function startTeamDirectory(key: string): () => void {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
       try {
-        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
+        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
         const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items].map(c => [c.key, c]))
         const seen = new Set<string>()
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
           if (!page.nextCursor || seen.has(page.nextCursor)) throw new Error('消息分页异常，请重试')
           seen.add(page.nextCursor)
-          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, cursor: page.nextCursor }, controller.signal)
+          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, cursor: page.nextCursor }, controller.signal)
           for (const c of page.items) items.set(c.key, c)
         }
         if (!controller.signal.aborted && account === key && token === revision) pages.set(side, { ...page, items: [...items.values()] })

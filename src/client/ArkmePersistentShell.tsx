@@ -29,7 +29,7 @@ import { CodexConversationSurface } from './redesign/contacts/CodexConversationS
 import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
-import { arkmeAuthStore } from './auth-store.js'
+import { arkmeAuthStore, startArkmeAuthRevalidation } from './auth-store.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmePresentationMaintenance } from './presentation-maintenance-runtime.js'
@@ -128,6 +128,7 @@ export function ArkmePersistentClientRuntime() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
+  useEffect(() => startArkmeAuthRevalidation(), [])
   const avatarScopeKey = auth?.status === 'authenticated'
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined

@@ -365,3 +365,14 @@ it.each(['save', 'delete'] as const)('retries failed durable %s on the next plai
  store.setText('other','another plain edit')
  expect(storage.setItem).toHaveBeenCalledTimes(writes)
 })
+
+
+describe('serialized composer projection', () => {
+  it('round trips known emoji tokens and keeps unknown tokens as editable text', async () => {
+    const {arkmeComposerDraftFromText,serializeArkmeComposerDraft}=await import('../src/client/composer-draft-store.js')
+    const wire='a[jm_emoji:smiling_face][jm_emoji:smiling_face]z[jm_emoji:unknown]'
+    const snapshot=arkmeComposerDraftFromText(wire)
+    expect(snapshot.emojis).toEqual([{emojiId:'smiling_face',startIndex:1},{emojiId:'smiling_face',startIndex:2}])
+    expect(serializeArkmeComposerDraft(snapshot).text).toBe(wire)
+  })
+})

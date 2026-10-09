@@ -21,7 +21,7 @@ import { startTeamAttention } from './team-attention-store.js'
 import { showBrowserNotification } from './browser-notification.js'
 import { teamText as tr } from './team-messaging-i18n.js'
 import { useArkmeLocale } from './locale.js'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeUploadedAsset } from '../types.js'
@@ -31,7 +31,7 @@ import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { arkmeConversationMessageLayout as messageLayout, dayKey, dayLabel } from './conversation-message-presentation.js'
 import { arkmeConversationComposerLayout as composerLayout, arkmeConversationComposerBorder } from './conversation-composer-presentation.js'
-import { ArkmeRichComposerInput } from './ArkmeRichComposerInput.js'
+import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeAttachmentDraftTile } from './ArkmeRichContent.js'
@@ -40,7 +40,17 @@ import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
 import { ArkmeReadReceiptMember, ArkmeReadReceiptPanel, ArkmeReadReceiptStatus } from './ArkmeReadReceiptPanel.js'
 
-const emptyComposerEntities = Object.freeze([])
+import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
+import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
+import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { arkmeComposerPlaceholderText } from './composer-placeholder.js'
+import { useResizableComposer } from './use-resizable-composer.js'
+import { focusArkmeComposerFromClick } from './composer-focus.js'
+import { useComposerPasteFocus } from './composer-paste-focus.js'
+import type { ArkmeComposerSelectionRequest } from './composer-selection-request.js'
+import { arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
+
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
 function inaccessible(error: unknown): boolean { return /team-(not_accessible|account-changed)|login-/.test(String((error as { body?: { code?: string } })?.body?.code)) }
@@ -119,10 +129,11 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   const [selected, setSelected] = useState<TeamConversation>()
   const [channel, setChannel] = useState<TeamChannel>()
+  const [openInbox, setOpenInbox] = useState(false)
   const [error, setError] = useState(''), [loading, setLoading] = useState(false), [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
-    setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
+    setSelected(undefined); setChannel(undefined); setOpenInbox(false); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') { setSelected(intent.conversation); return }
       if (intent.kind === 'inbox') { await refreshTeamDirectory(accountKey); return }
@@ -133,11 +144,13 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
         return
       }
       const publicRef = intent.kind === 'official'
-        ? (await callArkme<TeamChannel>('team.app.official', {}, controller.signal)).publicRef : intent.publicRef
-      const value = await callArkme<TeamOpen>('team.app.open', { publicRef }, controller.signal)
+        ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
+      const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
       if (value.conversation) setSelected(value.conversation)
+      else if (value.openInbox === true) setOpenInbox(true)
+      else throw new Error(tr('暂时无法打开对话，请重试'))
       void refreshTeamDirectory(accountKey)
     }
     void run().catch(e => { if (!controller.signal.aborted) setError(errorText(e)) })
@@ -149,7 +162,8 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
       onChanged={() => { void refreshTeamDirectory(accountKey) }}
       onAccessLost={() => { discardTeamDirectory(accountKey, selected) }} />
   </div>
-  const items = directory.items.filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
+  const directoryAllowed = intent.kind === 'inbox' || intent.kind === 'team' || openInbox
+  const items = (directoryAllowed ? directory.items : []).filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
     <header style={messageLayout.header}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong>{channel && <small style={messageLayout.headerSubtitle}>{tr('团队对话')}</small>}</div></header>
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
@@ -175,7 +189,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
+  const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
   const [outgoing, setOutgoing] = useState<TeamMessage | undefined>(() => pendingTeamMessage(draft, conversation, new Map()))
   const localMedia = useRef(new Map<string, string>())
   useEffect(() => () => {
@@ -207,6 +221,21 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; needsReload?: boolean; latestText?: string }>(), [deleting, setDeleting] = useState<TeamMessage>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const fileInput = useRef<HTMLInputElement>(null)
+  const editor = useRef<ArkmeRichComposerHandle>(null), composer = useRef<HTMLDivElement>(null)
+  const addTrigger = useRef<HTMLButtonElement>(null), [addOpen, setAddOpen] = useState(false)
+  const [selectionRequest, setSelectionRequest] = useState<ArkmeComposerSelectionRequest>()
+  const composerScope = useMemo(() => ({}), [accountKey, conversation.key, editing?.message.key])
+  const currentScope = useRef(composerScope); currentScope.current = composerScope
+  const resize = useResizableComposer(composer, `${storageKey}:${editing?.message.key ?? ''}`, scroller)
+  const beginPasteFocus = useComposerPasteFocus({ scope: composerScope, active: !editing, editor, container: composer, onReady: setSelectionRequest })
+  const richDraft = arkmeComposerDraftFromText(editing?.text ?? draft.text)
+  const updateText = (text: string) => {
+    if (editing) setEditing({ ...editing, text })
+    else { const next = { ...draftRef.current, text }; draftRef.current = next; setDraft(next) }
+  }
+  const editorSelection = useRef({start:0,end:0})
+  const captureSelection = () => { if (editor.current) editorSelection.current = {start:editor.current.selectionStart,end:editor.current.selectionEnd} }
+  useEffect(() => { setAddOpen(false); setSelectionRequest(undefined) }, [composerScope])
   const viewport = useRef<ArkmeConversationViewportSnapshot>()
   const sendBusy = useRef(false), receiptsBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
@@ -261,11 +290,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
       setTimeline(data)
-      setError('')
+      setLoadError('')
       if (receiptRef.current) await readReceipts(receiptRef.current.message)
       if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
   }, [conversation.ref, readReceipts])
   const recover = useCallback(async () => {
     if (ctrl.current.signal.aborted) return
@@ -349,7 +378,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     try {
       const task = await callArkme<TeamSendTask>('team.app.send.enqueue', { conversationRef: conversation.ref, clientUid: attempt.uid, content: attempt.content, expectedReplySeq: attempt.expectedReplySeq, fileRefs: attempt.fileRefs ?? [] }, ctrl.current.signal)
       if (ctrl.current.signal.aborted) return
-      if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送任务响应无效，请使用原请求重试'))
+      if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送状态暂时无法确认，请重试'))
       delivery.accept(task)
       const next = { text: draftRef.current.text, assets: [] }
       // Host admission is durable even if browser draft cleanup fails. The old
@@ -361,7 +390,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       if (!ctrl.current.signal.aborted) {
         setError(errorText(e))
         const code = (e as { body?: { code?: string } })?.body?.code
-        const failed = {...draftRef.current, attempt:{...attempt, reason:code?.replace(/^team-/, '') ?? 'network_unavailable'}}
+        const failed = {...draftRef.current, attempt:{...attempt, reason:code === 'local-network-unavailable' ? 'network_unavailable' : code?.replace(/^team-/, '') ?? 'network_unavailable'}}
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
@@ -374,7 +403,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     } finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
   resumeSend.current = send
-  const upload = async (files: FileList | null) => {
+  const upload = async (files: FileList | readonly File[] | null) => {
     if (!files || editing || busy || uploading || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
     setUploading(true)
     try {
@@ -449,6 +478,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         onClick={() => openTeamMessages({ kind: 'team', teamRef: current.channel.teamRef })}><ArrowLeft size={20} aria-hidden /></ArkmeComposerToolButton>}
       <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
     </header>
+    {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}
     {error && <div role="alert" className="team-error">{error}</div>}
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
@@ -460,9 +490,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
           onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
-          {tr(task.cancelRequested ? '取消发送待确认' : task.error ?? (task.state === 'retrying' ? '等待重试' : task.state === 'uploading' ? '正在上传…' : task.state === 'sending' ? '正在发送…' : '等待发送'))}
-          {(task.state === 'retrying' || task.state === 'cancelling' || (task.state === 'failed' && task.cancelRequested)) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
-          {!task.cancelRequested && ['queued','retrying','failed'].includes(task.state) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
+          {tr(task.cancelRequested ? '正在取消…' : task.state === 'failed' ? task.error ?? '发送失败' : task.state === 'retrying' || task.state === 'queued' ? '等待发送' : task.state === 'uploading' ? '正在上传…' : '正在发送…')}
+          {(task.state === 'failed' && task.cancelRequested) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
+          {!task.cancelRequested && task.state === 'failed' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
         </ArkmeSendTaskStatus>)}
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
@@ -481,27 +511,48 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       onConfirm={() => { void mutateMessage() }} onClose={() => { setDeleting(undefined) }} />}
 
 
-    <div style={{...composerLayout.composer, flexDirection: 'column'}} data-team-composer={editing ? 'reedit' : 'message'}>
+    <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} style={{...composerLayout.composer, flexDirection: 'column'}} data-team-composer={editing ? 'reedit' : 'message'}>
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={busy} onClose={() => {setEditing(undefined);setError('')}} />}
-      <div className="arkme-conversation-composer-inner" data-arkme-primary-composer="true" data-arkme-composer-focused={composerFocused ? 'true' : 'false'}
-        style={{ ...composerLayout.composerInner, ...arkmeConversationComposerBorder(arkmeTheme.border, !!editing, false), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>
+      <div ref={composer} className="arkme-conversation-composer-inner" data-arkme-primary-composer="true" data-arkme-composer-focused={composerFocused ? 'true' : 'false'}
+        style={{ ...composerLayout.composerInner, cursor: 'text', transition: 'background-color 140ms ease, box-shadow 140ms ease', boxShadow: composerFocused ? '0 0 0 1px rgba(0,0,0,0.02)' : 'none', ...arkmeConversationComposerBorder(composerFocused || editing ? arkmeTheme.border : 'transparent', !!editing, resize.highlighted), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>
+        {resize.handle}
+        {addOpen && <ArkmeActionMenu label={tr('添加内容')} getAnchorRect={() => addTrigger.current?.getBoundingClientRect() ?? null} side="top" onClose={() => setAddOpen(false)} actions={[{id:'file',label:tr('添加附件'),icon:<Paperclip />,onSelect:()=>{setAddOpen(false);fileInput.current?.click()}}]} />}
         {(!current.channel.enabled || current.blocked) && <p>{tr(current.blocked ? '此对话已被屏蔽，双方暂时不能发送或编辑消息' : '团队已暂停接收新消息')}</p>}
-        <ArkmeRichComposerInput key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={tr('发送消息…')} value={editing?.text ?? draft.text} mentions={emptyComposerEntities} emojis={emptyComposerEntities} maxLength={20_000}
+        <div className="arkme-conversation-input-card"><ArkmeRichComposerInput ref={editor} className="arkme-conversation-textarea" key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={arkmeComposerPlaceholderText({kind:'team_conversation',recipient:current.side === 'team' ? 'person' : 'team',displayName:current.side === 'team' ? current.visitor?.nickname ?? '' : current.channel.name})} value={richDraft.text} mentions={richDraft.mentions} emojis={richDraft.emojis} maxLength={20_000 - ((editing?.text ?? draft.text).length - richDraft.text.length)}
           disabled={editing ? busy : uploading}
-          style={{ ...composerLayout.textarea, background: 'transparent', color: arkmeTheme.text }}
+          style={{ ...composerLayout.textarea, ...resize.editorStyle, background: 'transparent', color: arkmeTheme.text }}
+          selectionRequest={selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
           onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
-          onTextChange={text => { if (editing) setEditing({...editing,text}); else { const next={...draftRef.current,text}; draftRef.current=next;setDraft(next) } }}
+          onTextChange={text => updateText(serializeArkmeComposerDraft({...richDraft,text,emojis:reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)}).text)}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send() } }}
-          onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload(event.clipboardData.files) } }} />
+          onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload(event.clipboardData.files) } }} /></div>
         {!editing && !draft.attempt && draft.assets.length > 0 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>{draft.assets.map((asset, index) => <ArkmeAttachmentDraftTile key={`${asset.fileAssetUid}:${index}`} asset={asset} {...(localMedia.current.has(asset.fileAssetUid) ? {previewUrl: localMedia.current.get(asset.fileAssetUid)!} : {})} disabled={!!draft.attempt || busy} onRemove={() => setDraft(value => ({ ...value, assets: value.assets.filter((_, i) => i !== index) }))} />)}</div>}
         {!editing && !draft.attempt && (draft.localFiles?.length ?? 0) > 0 && <div style={{display:'flex',gap:8,overflowX:'auto'}}>{draft.localFiles!.map(file => <ArkmeAttachmentDraftTile key={file.fileRef} asset={file} previewUrl={createArkmeSdk().localFileUrl(file.fileRef)} disabled={busy || uploading} onRemove={() => setDraft(value => ({...value,localFiles:value.localFiles?.filter(item=>item.fileRef!==file.fileRef) ?? []}))} />)}</div>}
-        <div style={composerLayout.tools}>
-          {!editing && <><ArkmeComposerToolButton title={tr('添加附件')} aria-label={tr('添加附件')} disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onClick={() => fileInput.current?.click()}><Paperclip size={20} aria-hidden /></ArkmeComposerToolButton>
+        <div data-arkme-composer-footer="tools" style={composerLayout.tools}>
+          <div style={{display:'flex',alignItems:'center',gap:2}}>
+          {!editing && <><ArkmeComposerToolButton ref={addTrigger} title={tr('添加内容')} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addOpen} disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onClick={() => setAddOpen(value => !value)}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton>
           <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onChange={e => { void upload(e.target.files); e.target.value = '' }} /></>}
+          <ArkmeEmojiPicker mode="text" accountKey={accountKey} scopeKey={storageKey} disabled={busy || uploading || !!editing || !current.channel.enabled || current.blocked}
+            getCaretGeometry={() => editor.current?.getCaretGeometry()} getEditorGeometry={() => editor.current?.getEditorGeometry()} onBeforeToggle={captureSelection}
+            onSelect={emoji => {
+              const {start,end} = editorSelection.current
+              const inserted = insertArkmeComposerEmoji(richDraft,emoji,start,end)
+              if (!inserted) return false
+              updateText(serializeArkmeComposerDraft(inserted.snapshot).text)
+              const capturedScope = composerScope
+              setSelectionRequest({text:inserted.snapshot.text,start:inserted.caretIndex,end:inserted.caretIndex,canApply:()=>currentScope.current === capturedScope})
+              return true
+            }} onError={setError} />
+          {!editing && Number(accountKey.split(':').at(-1)) > 0 && <ArkmeComposerScreenshotButton userId={Number(accountKey.split(':').at(-1))} scope={composerScope}
+            disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked}
+            isCurrent={() => !ctrl.current.signal.aborted && currentScope.current === composerScope}
+            onBegin={options => { editor.current?.focus({preventScroll:true}); return beginPasteFocus({nativeDialog:true,...options}) }}
+            onFile={file => upload([file])} onError={setError} />}
+          </div>
           {uploading && <span role="status">{tr('正在准备附件…')}</span>}
           {editing && !editing.needsReload && <span />}
           {editing?.needsReload && <ArkmeComposerToolButton disabled={busy} onClick={() => { void reloadEdit() }}>{tr('读取最新版本')}</ArkmeComposerToolButton>}
-          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton ariaLabel={draft.attempt ? tr('使用原请求重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
+          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton shortcutHint={tr('Enter发送 / Shift+Enter换行')} ariaLabel={draft.attempt ? tr('重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
 
         </div>
       </div>

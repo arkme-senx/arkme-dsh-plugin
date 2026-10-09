@@ -29,7 +29,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     if (path.endsWith('/the-best-api-for-testing')) {
       const token = [{ alg: 'none' }, { user_id: input.user_id, exp: Math.floor(Date.now() / 1000) + 3600 }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.') + '.fixture'
       data = { access_token: token, refresh_token: 'layout-fixture' }
-    } else if (path.endsWith('/get-user-info')) data = { user_id: 99001001, nick_name: '布局验收', jotmo_id: 'layout_test', phone: '13800000000' }
+    } else if (path.endsWith('/get-user-info')) data = { user_id: Number(JSON.parse(Buffer.from(String(req.headers.authorization).split('.')[1], 'base64url')).user_id), nick_name: '布局验收', jotmo_id: 'layout_test', phone: '13800000000' }
     else if (path === '/api/v1/records/detail') data = { record_core: { record_uid: 'personal-team-search', owner_user_id: 99001001, creator_user_id: 99001001,
       origin_kind: 5, source_kind: 4, status: 1, content_access_state: 1, version: 1, template_kind: 1,
       text_content: '搜索打开的完整团队快记正文', send_at: Date.now(), content_payload: {} } }
@@ -52,7 +52,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
     let sendTasks = []
-    let holdTextDelivery = false
+    let holdTextDelivery = false, failNextTimeline = false, accountBoundaryFixture = false
     const sendRetries = []
     const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
@@ -93,6 +93,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const mockTeamAPI = async route => {
       const { operation: op, params = {} } = route.request().postDataJSON()
       calls.push(op)
+      if (accountBoundaryFixture && op.startsWith('team.app.')) { await route.continue(); return }
+      if (op === 'team.app.timeline' && failNextTimeline) { failNextTimeline=false; await route.abort('connectionfailed'); return }
       let value
       if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要',snippet:'检索摘要',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
       else if (op === 'team.app.source') value = await hostOwner.executeTeamApp(op, params)
@@ -246,9 +248,19 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(narrowName.width).toBeGreaterThan(20)
     await capture('plugin-team-conversation-list-compact')
     await page.setViewportSize({width:1440,height:1000})
+    failNextTimeline = true
     await teamDirectory.getByRole('button',{name:/鲨鱼辣椒1998/}).click()
     const replyPane = page.locator('.team-conversation-pane')
+    await replyPane.getByRole('alert').getByText('无法连接本机插件，请确认插件正在运行后重试').waitFor()
     await replyPane.getByRole('textbox',{name:'团队消息内容'}).fill('给第一位来访者的草稿')
+    await replyPane.getByRole('alert').getByRole('button',{name:'重试',exact:true}).click()
+    await replyPane.getByRole('alert').waitFor({state:'hidden'})
+    expect(await replyPane.getByRole('textbox',{name:'团队消息内容'}).textContent()).toBe('给第一位来访者的草稿')
+    await replyPane.getByRole('button',{name:'添加内容',exact:true}).click()
+    await page.getByRole('menuitem',{name:'添加附件',exact:true}).waitFor()
+    await page.keyboard.press('Escape')
+    await replyPane.getByRole('button',{name:'选择表情',exact:true}).waitFor()
+    await replyPane.getByRole('separator',{name:'调整输入框高度',exact:true}).waitFor()
     expect(await replyPane.getByRole('button',{name:'对话选项',exact:true}).count()).toBe(0)
     await capture('plugin-team-conversation-back')
     await replyPane.getByRole('button',{name:'返回团队对话',exact:true}).click()
@@ -370,11 +382,15 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     expect(await pane.getByText(/其他成员.*回复|仍要发送|仍然发送/).count()).toBe(0)
     expect(await pane.getByRole('textbox',{name:'团队消息内容'}).isEditable()).toBe(true)
     await capture('plugin-legacy-reply-recovery')
-    await pane.getByRole('button',{name:'重试',exact:true}).click()
-    await expect.poll(()=>sendRetries.length).toBe(1)
-    expect(sendRetries[0]).toEqual({conversationRef:conversation().ref,taskRef:'legacy-task'})
+    expect(await pane.getByRole('button',{name:'重试',exact:true}).count()).toBe(0)
+    expect(await pane.getByRole('button',{name:'取消发送',exact:true}).count()).toBe(0)
+    await pane.getByRole('status',{name:'发送状态',exact:true}).getByText('等待发送',{exact:true}).waitFor()
+    const legacy=sendTasks[0],legacyAck={...messages[0],key:legacy.clientUid,ref:legacy.clientUid,seq:messages.length+1,content:legacy.content,createdAt:legacy.createdAtMillis}
+    messages.push(legacyAck);sendTasks=[{...legacy,state:'sent',message:legacyAck}]
+    await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+    await pane.getByRole('status',{name:'发送状态',exact:true}).waitFor({state:'hidden'})
+    expect(sendRetries).toEqual([])
     expect(calls).not.toContain('team.app.send.confirm')
-    await pane.getByRole('button',{name:'重试',exact:true}).waitFor({state:'hidden'})
     const receiptTarget=pane.locator('[data-team-message-key="own-text"]').getByLabel('消息操作',{exact:true})
     await receiptTarget.scrollIntoViewIfNeeded()
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
@@ -412,7 +428,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await page.evaluate(()=>{window.arkmeAttachmentPreview={version:1,focus(){},close(){}}})
     // Chrome's request interception stalls requests in an initial about:blank.
     // The preview uses the real fixture byte route, so remove interception while it is open.
-    await page.unroute('**/arkme-self/api', mockTeamAPI)
+    await page.unrouteAll({behavior:'wait'})
     const popupPromise=page.waitForEvent('popup')
     await imageRow.getByRole('button',{name:'预览图片 界面截图.png',exact:true}).click()
     const popup=await popupPromise
@@ -475,10 +491,46 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       await directory.locator(`[data-team-side="${side}"]`).getByText(voicePreviewText, { exact: true }).waitFor()
     }
     expect(await directory.getByText('[附件]', { exact: true }).count()).toBe(0)
+    voicePreviewText = undefined
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.getByRole('treeitem',{name:'联系作者',exact:true}).waitFor()
+    // A different browser changes this same Host's account. The retained page
+    // must not use its old visible identity to read the new account's Team data.
+    await page.unrouteAll({behavior:'wait'})
+    accountBoundaryFixture = true
+    await page.route('**/arkme-self/api', mockTeamAPI)
+    const boundaryReads = []
+    const externalConversation = {...rawConversation,side:'external'}
+    teamOwnerFixture = (path,input) => {
+      boundaryReads.push(path)
+      if (path.endsWith('/official-feedback-target')) return rawChannel
+      if (path.endsWith('/conversations/open')) return {channel:rawChannel,conversation:externalConversation,open_inbox:false}
+      if (path.endsWith('/conversations/list')) return {items:input.side==='team'?[]:[externalConversation],has_more:false}
+      if (path.endsWith('/timeline/page')) return {conversation:externalConversation,messages:[],has_more:false}
+      return {}
+    }
+    const rejectedAccounts = []
+    page.on('response',async response=>{
+      if (!response.url().endsWith('/arkme-self/api')) return
+      const body=await response.json().catch(()=>({}))
+      if(body.error?.code==='team-account-changed') rejectedAccounts.push(body.error.code)
+    })
+    expect(await hostOwner.testLogin(99001002)).toMatchObject({status:'authenticated',userId:99001002})
+    await page.getByRole('treeitem',{name:'联系作者',exact:true}).click()
+    await expect.poll(()=>rejectedAccounts.length).toBeGreaterThan(0)
+    await expect.poll(()=>page.locator('[data-team-side="team"]').count()).toBe(0)
+    await page.getByRole('treeitem',{name:'联系作者',exact:true}).click()
+    await pane.locator('header').getByText(rawChannel.name,{exact:true}).waitFor()
+    expect(await page.locator('.team-conversation-directory').count()).toBe(0)
+    expect(await pane.getByRole('button',{name:'返回团队对话',exact:true}).count()).toBe(0)
+    expect(boundaryReads.some(path=>path.endsWith('/conversations/open'))).toBe(true)
+    await capture('plugin-external-account-after-switch')
+
   } catch (error) {
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})
   } finally {
+    await page?.unrouteAll({behavior:'wait'}).catch(e => failures.push(e))
     await browser?.close().catch(e => failures.push(e))
     if (scaffold) await scaffold.ctx.get('arkmeData').logout().catch(e => failures.push(e))
     await scaffold?.close().catch(e => failures.push(e))

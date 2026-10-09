@@ -1,5 +1,10 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '无法连接本机插件，请确认插件正在运行后重试': 'Cannot reach the local plugin. Check that it is running and retry.',
+  '暂时无法打开对话，请重试': 'Unable to open the conversation. Please retry.',
+  '发送状态暂时无法确认，请重试': 'Unable to confirm delivery. Please retry.',
+  '登录账号已在其他页面切换，请重新打开团队消息': 'The account changed in another page. Reopen team messages.',
+  '正在取消…': 'Cancelling…',
   '团队身份已变化，请重新打开团队': 'Team access has changed. Please reopen the team.',
   '团队列表未完整加载，请重试': 'The team list is incomplete. Please retry.',
   '暂时无法打开团队对话，请稍后重试': 'Unable to open the team conversation. Please try again.',

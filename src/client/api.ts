@@ -1,3 +1,5 @@
+import { arkmeAuthStore } from './auth-store.js'
+import { ArkmeClientError } from '../sdk/index.js'
 import type { TeamAppOperation } from '../team-app-contract.js'
 import type { RecordAppOperation } from '../record-app-contract.js'
 import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
@@ -249,9 +251,26 @@ export async function callArkme<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
+  const auth = arkmeAuthStore.getSnapshot().auth
+  const accountKey = operation.startsWith('team.app.') && auth?.status === 'authenticated'
+    ? `${auth.environment}:${auth.userId}` : undefined
+  // A retained view can still hold the previous account's refs during teardown.
+  // Reject it locally instead of replacing its scope with the latest login.
+  if (accountKey !== undefined && params?.expectedAccountKey !== undefined && params.expectedAccountKey !== accountKey) {
+    throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+  }
   try {
-    return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+    const value = await callProvider<T>(operation as ArkmePluginOperation,
+      accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }, signal)
+    const current = arkmeAuthStore.getSnapshot().auth
+    if (accountKey !== undefined && (current?.status !== 'authenticated' || `${current.environment}:${current.userId}` !== accountKey)) {
+      throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+    }
+    return value
   } catch (error) {
+    if ((error as { body?: { code?: string } })?.body?.code === 'team-account-changed') {
+      void arkmeAuthStore.refresh().catch(() => undefined)
+    }
     if (operation === 'auth.logout' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('arkme:logout-failed', {
         detail: error instanceof Error ? error.message : String(error),
