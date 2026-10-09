@@ -5,7 +5,7 @@ import {
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
 } from 'react'
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
-import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
+import { ARKME_COMPOSER_EMOJI_PLACEHOLDER, replaceArkmeComposerEmojiSelection } from './composer-draft-store.js'
 import { arkmeComposerTextRuns } from './ArkmeMentionTextarea.js'
 import { arkmeHashTagTrigger } from '../hashtag.js'
 import { useComposerSelectionRequest, type ArkmeComposerSelectionRequest } from './composer-selection-request.js'
@@ -65,7 +65,7 @@ export interface ArkmeRichComposerInputProps {
   ariaLabel: string
   disabled: boolean
   style: CSSProperties
-  onTextChange(text: string): void
+  onTextChange(text: string, emojis?: readonly ArkmeComposerEmoji[]): void
   /** Genuine editor activity, including provisional IME text; never a draft commit. */
   onInputActivity?(text: string): void
   onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
@@ -102,6 +102,23 @@ function editorSemanticText(root: HTMLElement): string {
   }
   const text = read(root)
   return text === '\n' && root.textContent === '' ? '' : text
+}
+
+/** Read actual atom identities after native edits; equal placeholder text is ambiguous. */
+function editorEmojis(root: HTMLElement): ArkmeComposerEmoji[] {
+  const result: ArkmeComposerEmoji[] = []
+  let offset = 0
+  const visit = (node: Node) => {
+    if (node instanceof HTMLElement && node.dataset.arkmeEditableEmoji !== undefined) {
+      result.push({ emojiId: node.dataset.arkmeEditableEmoji, startIndex: offset++ })
+    } else if (node.nodeType === Node.TEXT_NODE || (node instanceof HTMLElement && node.tagName === 'BR')) {
+      offset += nodeSemanticLength(node)
+    } else {
+      for (const child of node.childNodes) visit(child)
+    }
+  }
+  visit(root)
+  return result
 }
 
 function pointSemanticOffset(root: HTMLElement, targetNode: Node, targetOffset: number): number | undefined {
@@ -348,6 +365,11 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       return true
     })
 
+    const commitText = (text: string, nextEmojis: readonly ArkmeComposerEmoji[]) => {
+      if (emojis.length > 0 || nextEmojis.length > 0) onTextChange(text, nextEmojis)
+      else onTextChange(text)
+    }
+
     const commitDom = (root: HTMLDivElement, nextText = editorSemanticText(root)) => {
       const selection = editorSelection(root, selectionRef.current)
       if (nextText.length > maxLength) {
@@ -359,7 +381,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       }
       selectionRef.current = selection
       pendingSelectionRef.current = selection
-      onTextChange(nextText)
+      commitText(nextText, editorEmojis(root))
       onInputActivity?.(nextText)
       onSelectionChange?.(nextText, selection.start, selection.end)
     }
@@ -371,7 +393,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const caret = selection.start + 1
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
-      onTextChange(nextText)
+      commitText(nextText, replaceArkmeComposerEmojiSelection(emojis, selection.start, selection.end, 1))
       onInputActivity?.(nextText)
     }
 
@@ -382,7 +404,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const caret = selection.start + text.length
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
-      onTextChange(nextText)
+      commitText(nextText, replaceArkmeComposerEmojiSelection(emojis, selection.start, selection.end, text.length))
       onInputActivity?.(nextText)
       onSelectionChange?.(nextText, caret, caret)
     }

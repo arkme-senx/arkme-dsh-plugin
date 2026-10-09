@@ -130,3 +130,42 @@ it('uses the shared attachment preview and sends the retained files in the chose
   await key({key:'Enter'})
   expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].fileRefs).toEqual(['two.png','one.png'])
 })
+
+async function pasteEmojiText(text: string) {
+  await act(async () => {
+    editor().focus()
+    const event = new Event('paste', {bubbles:true,cancelable:true})
+    Object.defineProperty(event,'clipboardData',{value:{files:[],items:[],getData:(type:string)=>type==='text/plain'?text:''}})
+    editor().dispatchEvent(event)
+  })
+}
+it('selected and pasted emoji render as images and preserve semantic tokens',async()=>{
+  Range.prototype.getBoundingClientRect = () => new DOMRect(20,100,1,21)
+  Range.prototype.getClientRects = () => ({length:0,item:()=>null}) as unknown as DOMRectList
+  await act(async()=>editor().focus())
+  await act(async()=>host.querySelector<HTMLButtonElement>('button[aria-label="选择表情"]')!.click())
+  await act(async()=>document.querySelector<HTMLButtonElement>('[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="smiling_face"]')!.click())
+  expect(editor().querySelector('[data-arkme-editable-emoji="smiling_face"] img')?.getAttribute('src')).toBeTruthy()
+  await act(async()=>{
+    const range=document.createRange();range.selectNodeContents(editor());range.collapse(false)
+    document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+  })
+  await pasteEmojiText(' [im_emoji:yummy_face] [jm_emoji:thumb_up]👍🏽[jm_emoji:unknown]')
+  expect(Array.from(editor().querySelectorAll('[data-arkme-editable-emoji]')).map(node=>node.getAttribute('data-arkme-editable-emoji'))).toEqual(['smiling_face','yummy_face','thumb_up'])
+  expect(editor().querySelectorAll('[data-arkme-editable-emoji] img')).toHaveLength(3)
+  expect(editor().textContent).toContain('👍🏽[jm_emoji:unknown]')
+  await key({key:'Enter'})
+  expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content.text_content).toBe('[jm_emoji:smiling_face] [im_emoji:yummy_face] [jm_emoji:thumb_up]👍🏽[jm_emoji:unknown]')
+})
+it('native deletion of the first adjacent emoji preserves the second identity',async()=>{
+  await pasteEmojiText('[jm_emoji:yummy_face][jm_emoji:thumb_up]')
+  await act(async()=>{
+    editor().querySelector('[data-arkme-editable-emoji="yummy_face"]')!.remove()
+    const range=document.createRange();range.selectNodeContents(editor());range.collapse(true)
+    document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+    editor().dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}))
+  })
+  expect(editor().querySelector('[data-arkme-editable-emoji]')?.getAttribute('data-arkme-editable-emoji')).toBe('thumb_up')
+  await key({key:'Enter'})
+  expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content.text_content).toBe('[jm_emoji:thumb_up]')
+})

@@ -237,6 +237,7 @@ import {
   releaseArkmeComposerDraft,
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
+  type ArkmeComposerEmoji,
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { arkmeConversationComposerBorder, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
@@ -5454,7 +5455,7 @@ export function ArkmeSurface({
     }
   }
 
-  const updateComposerText = (text: string) => {
+  const updateComposerText = (text: string, emojis?: readonly ArkmeComposerEmoji[]) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       if (activeRecordReeditComposer.snapshot === undefined || activeRecordReeditComposer.loading || activeRecordReeditComposer.busy
@@ -5466,7 +5467,7 @@ export function ArkmeSurface({
     }
     const hasUserContent = text.length > 0 || attachments.length > 0
     syncComposerUserInput(hasUserContent)
-    arkmeComposerDraftStore.setText(composerDraftKey, text)
+    arkmeComposerDraftStore.setText(composerDraftKey, text, emojis)
   }
 
   const retryAiPolish = async (item: ArkmeTimelineItem) => {

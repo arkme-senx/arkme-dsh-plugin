@@ -302,6 +302,22 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     const readsBefore=mediaRequests.length
     const headerBefore=await pane.locator('header').first().boundingBox()
     const input=pane.getByRole('textbox',{name:'团队消息内容'})
+
+    // The real browser must retain the identity of adjacent emoji on Backspace.
+    await input.focus()
+    await input.evaluate(node => {
+      const clipboard=new DataTransfer();clipboard.setData('text/plain','[im_emoji:yummy_face][jm_emoji:thumb_up]')
+      node.dispatchEvent(new ClipboardEvent('paste',{clipboardData:clipboard,bubbles:true,cancelable:true}))
+    })
+    await expect.poll(()=>input.locator('[data-arkme-editable-emoji] img').count()).toBe(2)
+    await input.evaluate(node=>{
+      const range=document.createRange();range.setStartAfter(node.querySelector('[data-arkme-editable-emoji="yummy_face"]'));range.collapse(true)
+      const selection=getSelection();selection.removeAllRanges();selection.addRange(range)
+    })
+    await page.keyboard.press('Backspace')
+    await expect.poll(()=>input.locator('[data-arkme-editable-emoji]').evaluateAll(nodes=>nodes.map(node=>node.dataset.arkmeEditableEmoji))).toEqual(['thumb_up'])
+    await capture('plugin-input-emoji-deletion')
+    await input.fill('')
     await input.fill('发送后，已有图片保持原位')
     const retainedText = await input.evaluateHandle(node => node.firstChild)
     await expect.poll(()=>pane.locator('[data-arkme-avatar] img').count()).toBe(3)

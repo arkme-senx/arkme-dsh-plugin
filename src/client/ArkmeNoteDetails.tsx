@@ -371,12 +371,12 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
       editor.setSelectionRange(caret, caret)
     })
   }, [])
-  const updateText = (value: string) => {
+  const updateText = (value: string, nextEmojis?: readonly ArkmeComposerEmoji[]) => {
     if (messageCreationBlocked || preparing || sending) return
     const previousText = textRef.current
     setText(value)
     setMentions(reconcileArkmeComposerMentions(previousText, value, mentionsRef.current))
-    setEmojis(reconcileArkmeComposerEmojis(previousText, value, emojisRef.current))
+    setEmojis(nextEmojis ? [...nextEmojis] : reconcileArkmeComposerEmojis(previousText, value, emojisRef.current))
   }
   const updateMentionTrigger = useCallback((value: string, selectionStart: number, selectionEnd: number) => {
     if (!mentionsEnabled) {

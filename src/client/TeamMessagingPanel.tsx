@@ -573,7 +573,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           style={{ ...composerLayout.textarea, ...resize.editorStyle, background: 'transparent', color: arkmeTheme.text }}
           selectionRequest={uploading ? undefined : selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
           onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
-          onTextChange={text => updateText(serializeArkmeComposerDraft({...richDraft,text,emojis:reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)}).text)}
+          onTextChange={(text, emojis) => updateText(serializeArkmeComposerDraft({...richDraft,text,emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)}).text)}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send() } }}
           onPaste={event => {
             if (editing || busy || uploading || draft.attempt || !current.channel.enabled || current.blocked) return
