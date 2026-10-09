@@ -100,7 +100,7 @@ export interface ArkmeChatMessagePreparingHint {
 
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
-  cause: 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'conversation-list-preference-invalidation' | 'chat-policy-invalidation' | 'local'
+  cause: 'team-invalidation' | 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'conversation-list-preference-invalidation' | 'chat-policy-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   policyUpdated?: ArkmeChatPolicyUpdatedHint
   readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
@@ -178,6 +178,17 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
+}
+
+export const ARKME_TEAM_NOTIFICATION_BIZ_TYPE = 28
+export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number } | undefined {
+  const v = decodeDataLine(line)
+  if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
+  if (Object.keys(v).some(key => !['t', 'event_uid', 'kind', 'team_id', 'conversation_uid', 'message_uid', 'revision', 'event_at'].includes(key))) return undefined
+  if (!['team.message.changed', 'team.receipt.changed', 'team.access.changed', 'team.channel.changed'].includes(String(v.kind))) return undefined
+  const eventUid = nonEmptyString(v.event_uid), eventAtMillis = positiveInteger(v.event_at)
+  if (!eventUid || !eventAtMillis || !positiveInteger(v.revision)) return undefined
+  return { eventUid, eventAtMillis }
 }
 
 export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
@@ -712,6 +723,7 @@ export class ArkmeChatRealtimeRuntime {
     connectionStartedAtMillis?: number,
   ): void {
     if (connectionSignal.aborted) return
+    const teamNotification = decodeArkmeTeamNotificationDataLine(line)
     const policyUpdated = decodeArkmeChatPolicyUpdatedDataLine(line)
     if (policyUpdated !== undefined && policyUpdated.userId !== connectionUserId) return
     const memberJoined = decodeArkmeMemberJoinedDataLine(line)
@@ -732,7 +744,7 @@ export class ArkmeChatRealtimeRuntime {
       && projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
-    const eventUid = policyUpdated?.eventUid ?? memberJoined?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
+    const eventUid = teamNotification?.eventUid ?? policyUpdated?.eventUid ?? memberJoined?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
       ?? projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
       ?? timelineChanged?.eventUid ?? messagePreparing?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
@@ -741,13 +753,15 @@ export class ArkmeChatRealtimeRuntime {
       const oldest = this.seenEventUids.values().next().value as string | undefined
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
-    this.lastEventAtMillis = policyUpdated?.eventAtMillis ?? memberJoined?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
+    this.lastEventAtMillis = teamNotification?.eventAtMillis ?? policyUpdated?.eventAtMillis ?? memberJoined?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
       ?? projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? timelineChanged?.eventAtMillis
       ?? messagePreparing?.eventAtMillis
       ?? hint?.eventAtMillis
-    if (policyUpdated !== undefined) {
+    if (teamNotification) {
+      this.advanceRevision('team-invalidation', { connectionUserId, connectionSignal })
+    } else if (policyUpdated !== undefined) {
       this.advanceRevision('chat-policy-invalidation', { policyUpdated, connectionUserId, connectionSignal })
     } else if (memberJoined !== undefined) {
       this.advanceRevision('chat-hint', { memberJoined, connectionUserId, connectionSignal })

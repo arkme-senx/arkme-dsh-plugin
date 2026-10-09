@@ -4,6 +4,8 @@ import { OfficialNotificationService } from './services/official-notification-se
 import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
 import { SpeakerDirectoryService } from './services/speaker-directory-service.js'
 import { withReactionTrace, measureReaction } from './reaction-host-diagnostics.js'
+import { TeamSendQueue } from './services/team-send-queue.js'
+import type { TeamSendInput } from './team-send-contract.js'
 import { SelfRoleService } from './services/self-role-service.js'
 import { teamCodexPost } from './services/team-codex-transport.js'
 import { AiPointsService } from './services/ai-points-service.js'
@@ -12,6 +14,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
 import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
+import { TeamAppService } from './services/team-app-service.js'
+import type { TeamAppOperation } from './team-app-contract.js'
 import { stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
@@ -280,6 +284,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
+  ArkmeTimelineItem,
   ArkmeTopicCreateResult,
   ArkmeTopicDissolveResult,
   ArkmeTopicDissolveProgress,
@@ -375,6 +380,20 @@ export class ArkmeService {
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
+  private readonly teamDelivery: TeamSendQueue
+  private readonly teamApp: TeamAppService
+  async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
+  async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
+      await this.teamApp.assertViewer(params.expectedAccountKey)
+    }
+    if (operation === 'team.app.send.enqueue') return await this.teamDelivery.enqueue(params as unknown as TeamSendInput)
+    if (operation === 'team.app.send.tasks') return await this.teamDelivery.list(String(params.conversationRef ?? ''))
+    if (operation === 'team.app.send.retry-task') return await this.teamDelivery.retry(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
+    if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
+    return await this.teamApp.execute(operation, params, signal)
+  }
+  async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
   private readonly interwoven: InterwovenService
   private readonly linkMetadata: ArkmeLinkMetadataService
   private readonly aiPolish: GroupAiPolishService
@@ -419,6 +438,14 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
+    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamDelivery = new TeamSendQueue({
+      currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
+      files: () => this.filesOwner(),
+      identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
+    })
+    this.teamDelivery.start()
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
       forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
     }, {
@@ -662,6 +689,7 @@ export class ArkmeService {
     this.directory.reset()
     this.realtime.resetAttentionSummary()
     for (const userId of userIds) this.privacy.clear(userId)
+    this.teamDelivery.pause()
     this.fileTransfers?.cancelActive()
     for (const userId of userIds) this.outgoingCall.clearUser(userId, '账号已退出，呼叫已取消')
     this.source.dispose()
@@ -1026,6 +1054,7 @@ export class ArkmeService {
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
     this.unifiedTimeline.dispose()
+    this.teamDelivery.dispose()
     this.selfRoles.dispose()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()

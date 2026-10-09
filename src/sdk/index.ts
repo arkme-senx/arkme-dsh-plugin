@@ -472,7 +472,15 @@ export class ArkmeSdk {
     // Browser fetch is a Web IDL method whose receiver must remain the global object.
     // Storing it unbound and later calling this.fetchImpl(...) makes the SDK instance
     // the receiver and Chrome rejects the call with "Illegal invocation".
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    this.fetchImpl = async (input, init) => {
+      try { return await fetchImpl(input, init) }
+      catch (error) {
+        if (init?.signal?.aborted || !(error instanceof TypeError)) throw error
+        throw new ArkmeClientError({ code: 'local-network-unavailable',
+          message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
+      }
+    }
   }
 
   /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */

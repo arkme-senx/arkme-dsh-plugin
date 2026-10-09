@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Editor } from '@tiptap/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from '../src/client/ArkmeRichComposerInput.js'
-import { ArkmeComposerDraftStore } from '../src/client/composer-draft-store.js'
+import { ArkmeComposerDraftStore, arkmeComposerDraftFromText, serializeArkmeComposerDraft } from '../src/client/composer-draft-store.js'
 import type { ArkmeComposerSelectionRequest } from '../src/client/composer-selection-request.js'
 
 let root: Root
@@ -37,7 +37,7 @@ function Harness({ markdown, initialRequest }: { markdown: boolean; initialReque
     ref={handle} markdownEnabled={markdown} value={draft.text} mentions={draft.mentions} emojis={draft.emojis}
     markdown={draft.markdown} selectionRequest={selection?.key === key ? selection.request : undefined}
     maxLength={20000} disabled={false} style={{}} placeholder="群聊" ariaLabel="群聊"
-    onTextChange={text => store.setText(key, text)}
+    onTextChange={(text, emojis) => store.setText(key, text, emojis)}
     onMarkdownChange={(document, text, mentions, emojis) => store.setMarkdown(key, document, text, mentions, emojis)}
   /></>
 }
@@ -129,4 +129,46 @@ describe.each([false, true])('external mention caret (markdown=%s)', markdown =>
     type('继续')
     expect(store.get('group:1').text).toBe('@张三 继续')
   })
+})
+
+describe('plain editor emoji identity after native edits', () => {
+  it.each([0,1,2])('retains the actual neighboring atoms when deleting index %s', async index => {
+    const tokens=['[jm_emoji:yummy_face]','[jm_emoji:thumb_up]','[jm_emoji:smiling_face]']
+    const initial=arkmeComposerDraftFromText(tokens.join(''))
+    store.setRichText('group:1',initial.text,initial.emojis)
+    await act(async()=>root.render(<Harness markdown={false}/>))
+    await act(async()=>{
+      composer().focus()
+      composer().querySelectorAll('[data-arkme-editable-emoji]')[index]!.remove()
+      const range=document.createRange();range.selectNodeContents(composer());range.collapse(true)
+      document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+      composer().dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}))
+    })
+    expect(serializeArkmeComposerDraft(store.get('group:1')).text).toBe(tokens.filter((_,i)=>i!==index).join(''))
+  })
+  it('Shift+Enter and paste replace exactly the selected emoji',async()=>{
+    const initial=arkmeComposerDraftFromText('[jm_emoji:yummy_face][jm_emoji:thumb_up][jm_emoji:smiling_face]')
+    store.setRichText('group:1',initial.text,initial.emojis)
+    await act(async()=>root.render(<Harness markdown={false}/>))
+    await act(async()=>{
+      handle.current!.focus();handle.current!.setSelectionRange(0,1)
+      composer().dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',shiftKey:true,bubbles:true,cancelable:true}))
+    })
+    expect(serializeArkmeComposerDraft(store.get('group:1')).text).toBe('\n[jm_emoji:thumb_up][jm_emoji:smiling_face]')
+    await act(async()=>{
+      handle.current!.setSelectionRange(1,2)
+      const event=new Event('paste',{bubbles:true,cancelable:true})
+      Object.defineProperty(event,'clipboardData',{value:{getData:()=> '替换'}})
+      composer().dispatchEvent(event)
+    })
+    expect(serializeArkmeComposerDraft(store.get('group:1')).text).toBe('\n替换[jm_emoji:smiling_face]')
+  })
+})
+
+it.each(['mention','hashtag'])('inserting %s over one emoji preserves its neighbor', kind=>{
+  const initial=arkmeComposerDraftFromText('[jm_emoji:yummy_face][jm_emoji:thumb_up]')
+  store.setRichText('group:1',initial.text,initial.emojis)
+  if(kind==='mention') store.insertMention('group:1','member','成员',0,1)
+  else store.insertHashTag('group:1','标签',0,1)
+  expect(serializeArkmeComposerDraft(store.get('group:1')).text).toBe(`${kind==='mention'?'@成员 ':'#标签 '}[jm_emoji:thumb_up]`)
 })

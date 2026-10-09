@@ -1,3 +1,4 @@
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ArkmeCalendarBucketDay, ArkmeRecordingCalendarMonth, ArkmeTimelineItem } from '../types.js'
@@ -134,7 +135,7 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
         renderRecord={record => record.content ? <div className="arkme-day-rich-record">
           <ArkmeMessageContent item={record.content} onArticleOpen={() => setRichDetail(record.content)} onCallDetailOpen={() => setRichDetail(record.content)} />
           <button type="button" className="arkme-day-source" onClick={() => { setShowOriginal(false); setRichDetail(record.content) }}>{tr("查看完整快记")}</button>
-        </div> : record.textFormat === 'markdown' ? <div className="arkme-day-rich-record"><ArkmeMarkdownBody text={record.text} highlightMentions={false} /></div> : <p>{record.text}</p>} />
+        </div> : record.textFormat === 'markdown' ? <div className="arkme-day-rich-record"><ArkmeMarkdownBody text={record.text} highlightMentions={false} /></div> : <p><ArkmeRichText text={record.text} presentation="preview" /></p>} />
     </div>
     {arrangementsOpen && <ArkmeArrangementBoard onAddArrangement={() => setCreateOpen(true)} createdItems={createdArrangements.items} accountScope={accountScope} onBack={() => setArrangementsOpen(false)} />}
     <ArkmeArrangementCreate accountScope={accountScope} open={createOpen} onClose={() => setCreateOpen(false)} onSaved={createdArrangements.merge} />

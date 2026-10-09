@@ -254,3 +254,18 @@ it('keeps the frozen role name and avatar when opening personal calendar detail'
   await click('strong')
   expect(host.querySelector('[aria-label="快记详情"]')?.textContent).toContain('冻结的角色')
 })
+
+it.each(['self', 'chat', 'team'] as const)('renders emoji in %s calendar records and their detail drawer', async sourceKind => {
+  const text = '[im_emoji:yummy_face] [jm_emoji:thumb_up] [im_emoji:unknown]'
+  const original = api.call.getMockImplementation()!
+  api.call.mockImplementation(async (op: string, ...args: unknown[]) => op === 'calendar.records'
+    ? {items:[{...record,sourceKind,content:{...record.content,textContent:text,textFormat:'plain',contentBlocks:[]}}],hasMore:false}
+    : original(op,...args))
+  await render()
+  const bubble = host.querySelector('[aria-label="打开快记详情"]')!
+  expect([...bubble.querySelectorAll('[data-arkme-rich-emoji]')].map(node=>node.getAttribute('data-arkme-rich-emoji'))).toEqual(['yummy_face','thumb_up'])
+  expect(bubble.textContent).toContain('[im_emoji:unknown]')
+  expect(bubble.textContent).not.toContain('[im_emoji:yummy_face]')
+  await click('[aria-label="打开快记详情"]')
+  expect(host.querySelector('[data-arkme-content-presentation="detail"] [data-arkme-rich-emoji="yummy_face"]')).not.toBeNull()
+})

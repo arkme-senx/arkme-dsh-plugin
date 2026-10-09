@@ -7,11 +7,12 @@ import arrangementBoardCss from '../arrangement-board.css?inline'
 import dayTimelineCss from '../day-timeline.css?inline'
 import accountUsageCss from '../account-usage.css?inline'
 import accountProfileCss from '../account-profile.css?inline'
+import teamMessagingCss from '../team-messaging.css?inline'
 import reactionPreviewCss from '../reaction-preview.css?inline'
 import { ARKME_NAVIGATION_WIDTH } from '../arkme-layout.js'
 
 // DSH loads the client factory, not a bundler-emitted standalone CSS asset.
-const layoutCss = `:root { --arkme-navigation-width: ${ARKME_NAVIGATION_WIDTH}px; }\n${redesignBaseCss}\n${buttonHoverCss}\n${interactionFeedbackCss}\n${membershipCss}\n${recordingBreathCss}\n${dayTimelineCss}\n${arrangementBoardCss}\n${accountUsageCss}\n${accountProfileCss}\n${reactionPreviewCss}`
+const layoutCss = `:root { --arkme-navigation-width: ${ARKME_NAVIGATION_WIDTH}px; }\n${redesignBaseCss}\n${buttonHoverCss}\n${interactionFeedbackCss}\n${membershipCss}\n${recordingBreathCss}\n${dayTimelineCss}\n${arrangementBoardCss}\n${accountUsageCss}\n${accountProfileCss}\n${reactionPreviewCss}\n${teamMessagingCss}`
 
 const REDESIGN_STYLE_ID = '@senguoyun/dsh-arkme/redesign'
 

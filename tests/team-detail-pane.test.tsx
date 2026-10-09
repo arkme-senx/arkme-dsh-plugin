@@ -1,6 +1,8 @@
+import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { TeamMembers } from '../src/team-app-contract.js'
 import type { ArkmeTeamMemberPage } from '../src/types.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
@@ -8,13 +10,15 @@ import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 
+import { TeamChannelSettings } from '../src/client/TeamMessagingPanel.js'
+
 import { TeamDetailPane } from '../src/client/redesign/contacts/TeamDetailPane.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
-const teamRefA = `team_v1_${'a'.repeat(32)}`
-const teamRefB = `team_v1_${'b'.repeat(32)}`
+const teamRefA = 'team-app-team.a'
+const teamRefB = 'team-app-team.b'
 
-function page(teamRef: string, name: string, overrides: Partial<ArkmeTeamMemberPage> = {}): ArkmeTeamMemberPage {
+function page(teamRef: string, name: string, overrides: Partial<TeamMembers> = {}): TeamMembers {
   return {
     team: {
       teamRef,
@@ -25,6 +29,7 @@ function page(teamRef: string, name: string, overrides: Partial<ArkmeTeamMemberP
       updatedAtMillis: 2,
     },
     items: [{
+      key: 'member-1', canRemove: false,
       userRef: `usr_v1_${'u'.repeat(32)}`,
       displayName: `${name}成员`,
       jotmoId: 'member_id',
@@ -61,6 +66,17 @@ describe('TeamDetailPane', () => {
   let renderer: ReactTestRenderer | undefined
   let avatarScope = 0
 
+  function mockCodex() {
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      const team = page(params?.teamRef ?? teamRefA, params?.teamRef === teamRefB ? '团队 B' : '团队 A')
+      if (operation === 'team.app.members') return team
+      if (operation === 'team.resolve') return [{ candidates: [{ ...team.team, teamRef: 'team_v1_' + 'c'.repeat(32) }] }]
+      if (operation === 'team.members.list') return { ...team, team: { ...team.team, teamRef: params.teamRef } }
+      if (operation === 'team.app.channel') return { canManage: false }
+      return { self: null, localOnly: true, installations: [], tasks: [] }
+    })
+  }
+
   beforeEach(() => {
     avatarScope += 1
     arkmeAvatarImages.activateScope(`team-detail:${String(avatarScope)}`)
@@ -73,10 +89,55 @@ describe('TeamDetailPane', () => {
     renderer = undefined
   })
 
+  it('keeps a failed leave on the existing Team detail and permits retry', async () => {
+    const teamPage = page(teamRefA, '团队 A')
+    let attempts = 0
+    arkmeContactsTab.activateAccount('account-a')
+    arkmeContactsTab.select({ kind: 'team', teamRef: teamRefA })
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'team.app.members') return teamPage
+      if (operation === 'team.app.leave' && ++attempts === 1) throw new Error('退出失败')
+      return { canManage: false, publicRef: '', enabled: false }
+    })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { button(renderer!, '退出团队').props.onClick(); await tick() })
+    expect(attempts).toBe(0)
+    await act(async () => { button(renderer!, '确认退出').props.onClick(); await tick() })
+    expect(arkmeContactsTab.getSnapshot().selection.kind).toBe('team')
+    expect(text(renderer!.root)).toContain('退出失败')
+    await act(async () => { button(renderer!, '确认退出').props.onClick(); await tick() })
+    expect(attempts).toBe(2)
+    expect(arkmeContactsTab.getSnapshot().selection.kind).toBe('none')
+  })
+
+  it('retains the current member view while refreshing after a message-setting change', async () => {
+    const later = deferred<ArkmeTeamMemberPage>()
+    let refresh = false
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members'
+      ? refresh ? await later.promise : page(teamRefA, '团队 A') : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    const detail = renderer!.root.findByProps({ 'data-team-ref': teamRefA })
+    refresh = true
+    await act(async () => { renderer!.root.findByType(TeamChannelSettings).props.onChanged(); await tick() })
+    expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBe(detail)
+    expect(text(renderer!.root)).not.toContain('正在加载团队成员')
+    await act(async () => { later.resolve(page(teamRefA, '团队 A', { totalCount: 2 })); await tick() })
+    expect(renderer!.root.findByProps({ 'aria-label': '2 位成员' })).toBeDefined()
+  })
+
+  it('does not offer the owner a leave action', async () => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = 'owner'
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(text(renderer!.root)).not.toContain('退出团队')
+  })
+
   it('renders real member avatars and identity degradation without mixing their semantics', async () => {
     const teamPage = page(teamRefA, '团队 A', {
       items: [
         {
+          key: 'member-1', canRemove: false,
           userRef: `usr_v1_${'u'.repeat(32)}`,
           displayName: '头像成员',
           jotmoId: 'avatar_member',
@@ -86,6 +147,7 @@ describe('TeamDetailPane', () => {
           joinedAtMillis: 1,
         },
         {
+          key: 'member-2', canRemove: false,
           userRef: `usr_v1_${'v'.repeat(32)}`,
           displayName: '身份待恢复成员',
           identityState: 'unavailable',
@@ -95,13 +157,13 @@ describe('TeamDetailPane', () => {
       ],
       totalCount: 2,
     })
-    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.members.list'
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members'
       ? teamPage
       : { mediaType: 'image/png', bytes: 1, dataBase64: 'AA==' })
 
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.members.list', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.app.members', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBeDefined()
     expect(text(renderer!.root)).toContain('团队 A')
     expect(text(renderer!.root)).toContain('@team_a')
@@ -118,15 +180,15 @@ describe('TeamDetailPane', () => {
 
   it('routes a member to the shared reader with an opaque identity, not their display name', async () => {
     const data=page(teamRefA,'团队 A')
-    mocks.callArkme.mockResolvedValue(data)
+    mockCodex()
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
     await act(async()=>{button(renderer!,'查看对话 ›').props.onClick();await tick()})
-    expect(arkmeUi.getSnapshot().codexTarget).toMatchObject({accountKey:'account-a',team:data.team,member:data.items[0]!.userRef,memberName:data.items[0]!.displayName,returnView:'members'})
-    expect(mocks.callArkme.mock.calls.every(call=>call[0]==='team.members.list')).toBe(true)
+    expect(arkmeUi.getSnapshot().codexTarget).toMatchObject({accountKey:'account-a',team:{ ...data.team, teamRef:'team_v1_'+'c'.repeat(32) },member:data.items[0]!.userRef,memberName:data.items[0]!.displayName,returnView:'members'})
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.resolve', expect.anything(), expect.any(AbortSignal))
   })
 
   it('opens the legacy management route as a dialog above the retained member list', async () => {
-    mocks.callArkme.mockImplementation(async operation=>operation==='team.members.list'?page(teamRefA,'团队 A'):{self:null,localOnly:true,installations:[],tasks:[]})
+    mockCodex()
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} initialView="activity"/>);await tick()})
     expect(text(renderer!.root)).toContain('Codex 同步')
     expect(text(renderer!.root)).toContain('团队 A成员')
@@ -135,31 +197,33 @@ describe('TeamDetailPane', () => {
     expect(text(renderer!.root)).not.toContain('把正在做的事留在团队里')
     expect(renderer!.root.findAllByProps({className:'arkme-codex-task-sidebar'})).toHaveLength(0)
     expect(renderer!.root.findAllByProps({className:'arkme-codex-conversation'})).toHaveLength(0)
-    expect(mocks.callArkme.mock.calls.every(call=>['team.members.list','team.codex.state'].includes(call[0]))).toBe(true)
+    expect(mocks.callArkme.mock.calls.every(call=>['team.app.members','team.app.channel','team.resolve','team.members.list','team.codex.state'].includes(call[0]))).toBe(true)
     await act(async()=>{button(renderer!,'查看团队对话 ›').props.onClick();await tick()})
     expect(arkmeUi.getSnapshot().codexTarget).toMatchObject({member:'',returnView:'activity',accountKey:'account-a'})
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
   })
 
   it('loads sync only on opening its feature and keeps the member list mounted on close', async () => {
-    mocks.callArkme.mockImplementation(async operation => operation === 'team.members.list' ? page(teamRefA, '团队 A') : { self:null, localOnly:true, installations:[], tasks:[] })
+    mockCodex()
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(text(renderer!.root)).toContain('团队功能')
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
-    expect(mocks.callArkme.mock.calls.map(call => call[0])).toEqual(['team.members.list'])
+    expect(mocks.callArkme.mock.calls.map(call => call[0])).toEqual(['team.app.members','team.app.channel'])
     const members = renderer!.root.findByProps({ className:'arkme-team-member-list' })
     await act(async () => { button(renderer!, 'Codex 同步›').props.onClick(); await tick() })
     expect(renderer!.root.findByProps({ role:'dialog' })).toBeDefined()
     await act(async () => { renderer!.root.findByProps({ 'aria-label':'关闭' }).props.onClick(); await tick() })
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
     expect(renderer!.root.findByProps({ className:'arkme-team-member-list' })).toBe(members)
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'team.members.list')).toHaveLength(1)
-    expect(mocks.callArkme.mock.calls.every(call => ['team.members.list', 'team.codex.state'].includes(call[0]))).toBe(true)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'team.app.members')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.every(call => ['team.app.members','team.app.channel','team.resolve','team.members.list','team.codex.state'].includes(call[0]))).toBe(true)
   })
 
   it.each(['account', 'team'])('closes the old sync dialog when the %s changes', async scope => {
     const pendingSync = deferred<unknown>()
-    mocks.callArkme.mockImplementation(async (operation, params) => operation === 'team.members.list' ? page(params.teamRef, params.teamRef === teamRefA ? '团队 A' : '团队 B') : pendingSync.promise)
+    mockCodex()
+    const standard = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => operation === 'team.codex.state' ? pendingSync.promise : standard(operation, params, signal))
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     await act(async () => { button(renderer!, 'Codex 同步›').props.onClick(); await tick() })
     const syncSignal = mocks.callArkme.mock.calls.find(call => call[0] === 'team.codex.state')?.[2] as AbortSignal
@@ -173,13 +237,14 @@ describe('TeamDetailPane', () => {
 
   it('uses the opaque next cursor and merges a later member page without duplicating rows', async () => {
     const second = deferred<ArkmeTeamMemberPage>()
-    mocks.callArkme
-      .mockResolvedValueOnce(page(teamRefA, '团队 A', { hasMore: true, nextPageCursor: 'cursor_v1_next', totalCount: 2 }))
-      .mockImplementationOnce(async () => await second.promise)
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'team.app.channel') return { teamRef: teamRefA, name: '团队 A', canManage: false }
+      return params.pageCursor ? await second.promise : page(teamRefA, '团队 A', { hasMore: true, nextPageCursor: 'cursor_v1_next', totalCount: 2 })
+    })
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
     await act(async () => { button(renderer!, '加载更多成员').props.onClick(); await tick() })
-    expect(mocks.callArkme).toHaveBeenLastCalledWith('team.members.list', {
+    expect(mocks.callArkme).toHaveBeenLastCalledWith('team.app.members', {
       teamRef: teamRefA,
       limit: 50,
       pageCursor: 'cursor_v1_next',
@@ -189,6 +254,7 @@ describe('TeamDetailPane', () => {
     second.resolve(page(teamRefA, '团队 A', {
       items: [
         {
+          key: 'member-1', canRemove: false,
           userRef: `usr_v1_${'u'.repeat(32)}`,
           displayName: '更新后的成员',
           jotmoId: 'member_id',
@@ -197,6 +263,7 @@ describe('TeamDetailPane', () => {
           joinedAtMillis: 1,
         },
         {
+          key: 'member-2', canRemove: false,
           userRef: `usr_v1_${'v'.repeat(32)}`,
           displayName: '第二位成员',
           identityState: 'incomplete',

@@ -1,6 +1,12 @@
 import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { mergeUnifiedTimelineWindow, type ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
 import { MAX_ACTIVE_TIMELINE_EVENTS, MAX_ACTIVE_TIMELINE_TOKENS } from './unified-timeline-window.js'
+import { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
+export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
+import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
+import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
+import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
+import { arkmeConversationMessageLayout, dayKey, dayLabel, timeLabel } from './conversation-message-presentation.js'
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
@@ -234,6 +240,7 @@ import {
   releaseArkmeComposerDraft,
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
+  type ArkmeComposerEmoji,
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { arkmeConversationComposerBorder, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
@@ -550,16 +557,13 @@ const styles: Record<string, CSSProperties> = {
     color: colors.secondary, cursor: 'pointer', fontSize: 25, lineHeight: 1,
   },
   contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  header: {
-    flex: 'none', height: 68, display: 'flex', alignItems: 'center', padding: '12px 16px 12px 20px',
-    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 4,
-  },
-  titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' },
+  header: arkmeConversationMessageLayout.header,
+  titleGroup: arkmeConversationMessageLayout.titleGroup,
   headerAvatar: { flex: 'none', display: 'grid', placeItems: 'center', marginRight: 6 },
-  titleBlock: { flex: '0 1 auto', minWidth: 0, maxWidth: '100%', padding: '2px 0', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
-  titleLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
-  title: { flex: '0 1 auto', minWidth: 0, margin: 0, fontSize: 15, lineHeight: '21px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  titleBlock: arkmeConversationMessageLayout.titleBlock,
+  titleLine: arkmeConversationMessageLayout.titleLine,
+  title: arkmeConversationMessageLayout.title,
+  headerSubtitle: arkmeConversationMessageLayout.headerSubtitle,
   titleMuteIcon: { width: 16, height: 16, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
 
   messageActionToast: {
@@ -591,25 +595,25 @@ const styles: Record<string, CSSProperties> = {
   timelineSkeletonRowMe: { flexDirection: 'row-reverse' },
   timelineSkeletonAvatar: { width: 34, height: 34, flex: 'none', borderRadius: '50%', background: arkmeTheme.subtle },
   timelineSkeletonBubble: { height: 54, borderRadius: 14, background: arkmeTheme.subtle },
-  date: { alignSelf: 'center', marginBottom: 18, color: arkmeTheme.caption, fontSize: 10 },
-  row: { width: '100%', minWidth: 0, display: 'flex', background: 'transparent', transition: 'background-color .3s ease' },
+  date: arkmeConversationMessageLayout.date,
+  row: arkmeConversationMessageLayout.row,
   rowSearchTarget: { position: 'relative', isolation: 'isolate' },
   rowSearchTargetBackdrop: {
     position: 'absolute', top: -6, right: -6, bottom: 12, left: -6, zIndex: -1,
     background: arkmeTheme.active, pointerEvents: 'none',
   },
-  rowMe: { justifyContent: 'flex-end' },
-  rowOther: { justifyContent: 'flex-start' },
+  rowMe: arkmeConversationMessageLayout.rowMe,
+  rowOther: arkmeConversationMessageLayout.rowOther,
   sharedRecordingRow: { justifyContent: 'center' },
   ...messageSelectionStyles,
-  messageLine: { maxWidth: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 18 },
+  messageLine: arkmeConversationMessageLayout.messageLine,
   messageLineSelectAvatarMode: { minWidth: 0, marginBottom: 0 },
-  messageLineMe: { flexDirection: 'row-reverse' },
+  messageLineMe: arkmeConversationMessageLayout.messageLineMe,
   forwardMessageLine: { width: 'auto' },
   sharedRecordingMessageLine: { width: 'min(600px, 100%)', justifyContent: 'center', marginBottom: 42 },
   messageLineSelectCardCenterMode: { gridColumn: '2', minWidth: 0, justifySelf: 'center', marginBottom: 0 },
-  messageBody: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7 },
-  messageBodyMe: { alignItems: 'flex-end' },
+  messageBody: arkmeConversationMessageLayout.messageBody,
+  messageBodyMe: arkmeConversationMessageLayout.messageBodyMe,
   extensionMessageGroup: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0 },
   extensionMessageGroupMe: { alignItems: 'flex-end' },
   extensionChildLine: { width: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 10 },
@@ -618,13 +622,10 @@ const styles: Record<string, CSSProperties> = {
   extensionChildBodyMe: { alignItems: 'flex-end' },
   forwardMessageBody: { flex: 1 },
   sharedRecordingMessageBody: { width: '100%', flex: 'none', alignItems: 'stretch' },
-  messageAvatar: {
-    width: ARKME_MESSAGE_AVATAR_SIZE, height: ARKME_MESSAGE_AVATAR_SIZE, flex: 'none', overflow: 'hidden', borderRadius: 999,
-    display: 'grid', placeItems: 'center', background: 'transparent', color: arkmeTheme.secondary, fontSize: 11, fontWeight: 600,
-  },
-  messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  sender: { color: colors.text, fontSize: 12, fontWeight: 600 },
-  messageHeader: { display: 'flex', alignItems: 'center', gap: 7 },
+  messageAvatar: arkmeConversationMessageLayout.messageAvatar,
+  messageAvatarImage: arkmeConversationMessageLayout.messageAvatarImage,
+  sender: arkmeConversationMessageLayout.sender,
+  messageHeader: arkmeConversationMessageLayout.messageHeader,
   agentSource: {
     marginTop: 4, maxWidth: '100%', display: 'inline-flex', alignItems: 'center', gap: 2,
     color: colors.secondary, fontSize: 12, lineHeight: '14.4px', fontWeight: 400,
@@ -638,9 +639,9 @@ const styles: Record<string, CSSProperties> = {
   },
   selfTopicBadgeText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   selfTopicBadgeChevron: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 15, lineHeight: 1 },
-  bubble: { maxWidth: 'min(600px, 100%)', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box', cursor: 'pointer', border: '1px solid rgba(29,32,40,.035)' },
-  bubbleMe: { background: arkmeTheme.messageOwn, borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
-  bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
+  bubble: arkmeConversationMessageLayout.bubble,
+  bubbleMe: arkmeConversationMessageLayout.bubbleMe,
+  bubbleOther: arkmeConversationMessageLayout.bubbleOther,
   extensionParentPreview: {
     maxWidth: 'min(600px, 100%)', minWidth: 30, display: 'flex', alignItems: 'center', gap: 8,
     padding: 8, boxSizing: 'border-box', overflow: 'hidden', borderRadius: '12px 12px 0 0',
@@ -659,8 +660,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12, background: arkmeTheme.base, borderColor: arkmeTheme.border,
     boxShadow: 'none', '--arkme-bubble-fade': arkmeTheme.base,
   } as CSSProperties,
-  text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: '20px' },
-  meta: { color: arkmeTheme.tertiary, fontSize: 11 },
+  text: arkmeConversationMessageLayout.text,
+  meta: arkmeConversationMessageLayout.meta,
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
   retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
@@ -687,19 +688,9 @@ const styles: Record<string, CSSProperties> = {
   composerDestinationHintIcon: { flexShrink: 0, marginRight: 6, lineHeight: 'normal' },
   composerDestinationHintText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   composerDestinationHintName: { color: arkmeTheme.secondary, fontWeight: 500 },
-  composerExtensionTarget: {
-    margin: 0, padding: 8, display: 'flex', alignItems: 'flex-start', gap: 10,
-    borderRadius: '12px 12px 0 0', border: `1px solid ${colors.border}`, borderBottom: 0,
-    background: arkmeTheme.extensionSource,
-    boxShadow: `inset 0 -1px 0 ${colors.border}`,
-  },
-  composerExtensionTargetBody: { flex: 1, minWidth: 0 },
-  composerReeditLabel: { color: arkmeTheme.warning, fontSize: 12, lineHeight: '18px' },
-  composerExtensionTargetText: { overflow: 'hidden', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   composerExtensionTargetFiles: { marginTop: 5, display: 'flex', gap: 5, overflow: 'hidden', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
   composerExtensionTargetFile: { width: 42, height: 34, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: 5, background: arkmeTheme.elevated, textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   composerExtensionTargetImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  composerExtensionTargetCancel: { flex: 'none', width: 24, height: 24, padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', fontSize: 18, lineHeight: '22px' },
   selectBar: { ...messageSelectionStyles.selectBar, position: 'absolute', inset: 0, zIndex: 35 },
   forwardTargetBackdrop: {
     position: 'absolute', inset: 0, zIndex: 70, display: 'grid', placeItems: 'center',
@@ -1058,17 +1049,6 @@ function qrDataUrl(content: string): string {
   const qr = qrcode(0, 'M'); qr.addData(content); qr.make(); return qr.createDataURL(6, 12)
 }
 
-export function arkmeClipboardFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
-  const itemFiles = Array.from(clipboardData.items)
-    .filter(item => item.kind === 'file')
-    .map(item => item.getAsFile())
-    .filter((file): file is File => file !== null)
-  return itemFiles.length > 0 ? itemFiles : Array.from(clipboardData.files)
-}
-export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
-  return arkmeClipboardFiles(clipboardData).filter(file => file.type.toLowerCase().startsWith('image/'))
-}
-
 export function arkmeMessageCopyText(item: ArkmeTimelineItem): string {
   const title = item.title.trim()
   const text = item.textFormat === 'markdown' ? item.textContent : item.textContent.trim()
@@ -1220,18 +1200,6 @@ function arkmeForwardTargetMeta(source: ArkmeSourceItem): string {
     case 'default_category': return '默认分类'
     case 'topic': return '主题'
   }
-}
-
-function dayKey(value: number): string {
-  const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
-}
-
-function dayLabel(value: number): string {
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(new Date(value))
-}
-
-function timeLabel(value: number): string {
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
 
 export function arkmeConversationJoinEventsInLoadedWindow(
@@ -1403,50 +1371,15 @@ function extensionConversationPreview(extension: ArkmeMessageCopyLinkExtensionIt
     || '非文本内容'
 }
 
-const ARKME_CONFIRMED_SEND_RETENTION_MILLIS = ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4
-
-/**
- * Retains only bounded Host-confirmed sends while an eventually-consistent
- * first page catches up. A signed authoritative row retires its local entry.
- */
-export class ArkmeConfirmedSendRetentionOwner {
-  private readonly entries = new Map<string, { sourceKey: string; item: ArkmeTimelineItem; expiresAtMillis: number }>()
-
-  constructor(private readonly maxItems = 64) {}
-
-  retain(sourceKey: string, item: ArkmeTimelineItem, nowMillis = Date.now()): void {
-    if (sourceKey === '' || item.itemUid.trim() === '' || !item.isMe || item.status < 0) return
-    const key = `${sourceKey}\0${item.itemUid}`
-    this.entries.delete(key)
-    this.entries.set(key, {
-      sourceKey,
-      item: { ...item },
-      expiresAtMillis: nowMillis + ARKME_CONFIRMED_SEND_RETENTION_MILLIS,
+export class ArkmeConfirmedSendRetentionOwner extends ConfirmedSendRetentionOwner<ArkmeTimelineItem> {
+  constructor(maxItems = 64) {
+    super({
+      maxItems, ttlMillis: ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4,
+      key: item => item.itemUid,
+      canRetain: item => item.isMe && item.status >= 0,
+      isAuthoritative: item => item.messageActionRef !== undefined,
+      merge: mergeItems,
     })
-    while (this.entries.size > this.maxItems) {
-      const oldest = this.entries.keys().next().value as string | undefined
-      if (oldest === undefined) break
-      this.entries.delete(oldest)
-    }
-  }
-
-  forget(sourceKey: string, itemUids: readonly string[]): void {
-    for (const itemUid of itemUids) this.entries.delete(`${sourceKey}\0${itemUid}`)
-  }
-
-  merge(sourceKey: string, authoritative: ArkmeTimelineItem[], nowMillis = Date.now()): ArkmeTimelineItem[] {
-    const retained: ArkmeTimelineItem[] = []
-    const authoritativeById = new Map(authoritative.map(item => [item.itemUid, item]))
-    for (const [key, entry] of this.entries) {
-      if (entry.expiresAtMillis <= nowMillis) {
-        this.entries.delete(key)
-        continue
-      }
-      if (entry.sourceKey !== sourceKey) continue
-      retained.push(entry.item)
-      if (authoritativeById.get(entry.item.itemUid)?.messageActionRef !== undefined) this.entries.delete(key)
-    }
-    return mergeItems(retained, authoritative)
   }
 }
 
@@ -5613,7 +5546,7 @@ export function ArkmeSurface({
     }
   }
 
-  const updateComposerText = (text: string) => {
+  const updateComposerText = (text: string, emojis?: readonly ArkmeComposerEmoji[]) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       if (activeRecordReeditComposer.snapshot === undefined || activeRecordReeditComposer.loading || activeRecordReeditComposer.busy
@@ -5625,7 +5558,7 @@ export function ArkmeSurface({
     }
     const hasUserContent = text.length > 0 || attachments.length > 0
     syncComposerUserInput(hasUserContent)
-    arkmeComposerDraftStore.setText(composerDraftKey, text)
+    arkmeComposerDraftStore.setText(composerDraftKey, text, emojis)
   }
 
   const retryAiPolish = async (item: ArkmeTimelineItem) => {
@@ -8134,7 +8067,7 @@ export function ArkmeSurface({
                               {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
                             </div>)}
                           </div>
-                          const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <div key={task.taskRef} role="status" aria-label={tr("附件发送状态")} data-arkme-file-send-status={task.state} style={{ fontSize: 12, lineHeight: 1.5, color: arkmeTheme.secondary, maxWidth: '100%', overflowWrap: 'anywhere', textAlign: presentationIsMe ? 'right' : 'left' }}>
+                          const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('附件发送状态')} key={task.taskRef} state={task.state} own={presentationIsMe}>
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
                               {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(timelineActions.current.refreshFiles).catch(caught => setError(errorMessage(caught))) }}>{tr("重试")}</button>}
                               {task.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { timelineActions.current.refreshFiles(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>{tr("核对发送结果")}</button>}
@@ -8145,7 +8078,7 @@ export function ArkmeSurface({
                                   .then(timelineActions.current.refreshFiles)
                                   .catch(caught => setError(errorMessage(caught)))
                               }}>{tr("清除")}</button></>}
-                            </div>)
+                            </ArkmeSendTaskStatus>)
                           const messageContentLine = isSharedRecordingCard
                             ? messageBubble
                             : <ArkmeMessageReadReceiptLine
@@ -8899,16 +8832,16 @@ export function ArkmeSurface({
               onConfirm={() => { void recoverRecordReedit() }}
             />}
             {composerInfoRow}
-            {activeComposerTargetItem !== undefined && <div
-              style={styles.composerExtensionTarget}
-              {...(activeRecordReeditComposer === undefined
-                ? { 'data-arkme-composer-extension-target': 'true' }
-                : { 'data-arkme-composer-reedit-target': 'true' })}
-            >
-              <div style={styles.composerExtensionTargetBody}>
-                {activeRecordReeditComposer !== undefined && <div style={styles.composerReeditLabel}>{tr("重新编辑:")}</div>}
-                {(activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()) !== ''
-                  && <div style={styles.composerExtensionTargetText}><ArkmeRichText text={activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()} presentation="preview" /></div>}
+            {activeComposerTargetItem !== undefined && <ArkmeComposerTargetPreview
+              mode={activeRecordReeditComposer === undefined ? 'extension' : 'reedit'}
+              {...(activeRecordReeditComposer === undefined ? {} : { label: tr('重新编辑:') })}
+              text={activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()}
+              closeLabel={activeRecordReeditComposer === undefined ? '取消延展' : '关闭重新编辑'}
+              disabled={activeRecordReeditComposer?.busy === true || preparingReeditFiles}
+              onClose={() => {
+                if (activeRecordReeditComposer === undefined) { setComposerExtensionTarget(undefined); textareaRef.current?.focus() }
+                else void closeRecordReedit()
+              }}>
                 {(activeComposerTargetItem.contentBlocks?.length ?? 0) > 0 && <div style={styles.composerExtensionTargetFiles}>
                   {activeComposerTargetItem.contentBlocks?.slice(0, 3).map((block, index) => <span key={`${block.mediaRef}:${String(index)}`} style={styles.composerExtensionTargetFile} title={block.fileName || '附件'}>
                     {block.kind === 'image'
@@ -8916,22 +8849,7 @@ export function ArkmeSurface({
                       : block.fileName || '附件'}
                   </span>)}
                 </div>}
-              </div>
-              <button data-arkme-feedback="neutral"
-                type="button"
-                style={styles.composerExtensionTargetCancel}
-                aria-label={activeRecordReeditComposer === undefined ? '取消延展' : '关闭重新编辑'}
-                disabled={activeRecordReeditComposer?.busy === true || preparingReeditFiles}
-                onClick={() => {
-                  if (activeRecordReeditComposer === undefined) {
-                    setComposerExtensionTarget(undefined)
-                    textareaRef.current?.focus()
-                  } else {
-                    void closeRecordReedit()
-                  }
-                }}
-              >×</button>
-            </div>}
+            </ArkmeComposerTargetPreview>}
             <div
               ref={composerRef}
               className="arkme-conversation-composer-inner"

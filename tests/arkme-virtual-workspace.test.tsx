@@ -1,3 +1,4 @@
+import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
@@ -82,7 +83,7 @@ describe('Arkme conversation directory load state', () => {
   })
 
   it('uses 38px avatars consistently in the conversation directory', () => {
-    expect(workspaceSource).toContain("sourceAvatarWrap: { width: 38, height: 38")
+    expect(conversationDirectoryStyles.sourceAvatarWrap).toMatchObject({ width: 38, height: 38 })
     expect(workspaceSource.match(/<ArkmeMark size=\{38\} \/>/g)).toHaveLength(3)
     expect(workspaceSource).toContain('<ArkmeSendToSelfIcon size={38} />')
     expect(workspaceSource).toContain('<ArkmeDirectorySourceAvatar source={source} size={38} />')
@@ -114,13 +115,14 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('authenticated && <ArkmeNotificationPermissionBanner />')
   })
 
-  it('hides the contact-author guide when the ordinary directory already contains the author chat', () => {
+  it('retains historical author chats while replacing the contact shortcut with the real official Team conversation', () => {
     const author = { sourceRef: 'author-chat', kind: 'private_chat' as const, peerUserId: 11, displayName: '作者', activeAtMillis: 1, unreadCount: 0 }
     const peer = { sourceRef: 'peer-chat', kind: 'private_chat' as const, peerUserId: 12, displayName: '朋友', activeAtMillis: 2, unreadCount: 0 }
     expect(arkmeOfficialAuthorSource([peer, author], 11)).toBe(author)
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
-    expect(workspaceSource).toContain("officialAuthorSource === undefined && <ArkmeOfficialAuthorRow")
-    expect(workspaceSource).toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
+    expect(workspaceSource).toContain("authenticated && socialAllowed && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow")
+    expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
+    expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
   })
 
@@ -161,8 +163,9 @@ describe('Arkme conversation directory load state', () => {
   it('commits owner visibility immediately but retains shared inline removal feedback', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
-    expect(workspaceSource).toContain('= [...removalFeedback.rows]')
-    expect(workspaceSource).toContain("rootDirectoryRows.filter(row => row.kind === 'notifications' || socialAllowed || row.kind === 'bot' || !isSocialSource(row.source)).map(row =>")
+    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items)')
+    expect(workspaceSource).toContain('= [...mergedConversationRows]')
+    expect(workspaceSource).toContain("rootDirectoryRows.filter(row => row.kind === 'notifications' || socialAllowed || row.kind === 'bot' || row.kind === 'source' && !isSocialSource(row.source)).map(row =>")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
     expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")

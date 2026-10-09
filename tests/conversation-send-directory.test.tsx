@@ -2485,7 +2485,9 @@ describe('conversation send directory projection', () => {
       expect(ancestor.props['data-arkme-message-direction']).toBeUndefined()
       ancestor = ancestor.parent
     }
-    expect(status.parent!.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
+    let statusContainer = status.parent!
+    while (typeof statusContainer.type !== 'string') statusContainer = statusContainer.parent!
+    expect(statusContainer.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
     expect(status.findAllByType('button').map(button => button.children.join(''))).toEqual(
       state === 'failed' ? ['重试', '清除'] : state === 'uncertain' ? ['核对发送结果', '清除'] : [])
     if (state === 'failed') {
@@ -6477,17 +6479,18 @@ describe('conversation send directory projection', () => {
     // Keep the recipient hint above the extension, with the preview attached
     // directly to the separately decorated input card.
     const composerInfo = renderer!.root.findByProps({ 'data-arkme-composer-info-row': 'true' })
+    const previewComponent = targetPreview.parent! // shared component adds no DOM wrapper
     expect(destinationHint.parent).toBe(composerInfo)
-    expect(composerInfo.parent).toBe(targetPreview.parent)
+    expect(composerInfo.parent).toBe(previewComponent.parent)
     expect(composerInfo.parent!.children.indexOf(composerInfo))
-      .toBeLessThan(composerInfo.parent!.children.indexOf(targetPreview))
+      .toBeLessThan(composerInfo.parent!.children.indexOf(previewComponent))
     expect(destinationHint.findAll(node => node.children.includes('正在给'))).toHaveLength(1)
     expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
     expect(destinationHint.findAll(node => node.children.includes('发消息'))).toHaveLength(1)
     const composerSurface = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
-    expect(composerSurface.parent).toBe(targetPreview.parent)
-    expect(targetPreview.parent!.children.indexOf(composerSurface))
-      .toBe(targetPreview.parent!.children.indexOf(targetPreview) + 1)
+    expect(composerSurface.parent).toBe(previewComponent.parent)
+    expect(previewComponent.parent!.children.indexOf(composerSurface))
+      .toBe(previewComponent.parent!.children.indexOf(previewComponent) + 1)
     expect(composerSurface.props.style).toMatchObject({
       borderRadius: '0 0 15px 15px',
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',

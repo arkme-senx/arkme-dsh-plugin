@@ -371,12 +371,12 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
       editor.setSelectionRange(caret, caret)
     })
   }, [])
-  const updateText = (value: string) => {
+  const updateText = (value: string, nextEmojis?: readonly ArkmeComposerEmoji[]) => {
     if (messageCreationBlocked || preparing || sending) return
     const previousText = textRef.current
     setText(value)
     setMentions(reconcileArkmeComposerMentions(previousText, value, mentionsRef.current))
-    setEmojis(reconcileArkmeComposerEmojis(previousText, value, emojisRef.current))
+    setEmojis(nextEmojis ? [...nextEmojis] : reconcileArkmeComposerEmojis(previousText, value, emojisRef.current))
   }
   const updateMentionTrigger = useCallback((value: string, selectionStart: number, selectionEnd: number) => {
     if (!mentionsEnabled) {
@@ -1328,7 +1328,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 500, letterSpacing: '.02px' }}>{segment.speakerName}</span>
               <time style={{ marginLeft: 4, color: arkmeTheme.tertiary, fontSize: 12, letterSpacing: '.24px' }}>{time}</time>
             </div>
-            <p style={{ margin: '6px 0 0 20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px' }}>{segment.textContent}</p>
+            <p style={{ margin: '6px 0 0 20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px' }}><ArkmeRichText text={segment.textContent} presentation="preview" /></p>
           </div>
         })}
       </div>

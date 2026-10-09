@@ -1,3 +1,5 @@
+import { arkmeEmojiPlainText } from '../arkme-emoji-text.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -184,7 +186,7 @@ export function ArkmeMessageReportDialog({
         <p style={styles.subtitle}>{tr("你的反馈可以帮助我们持续优化，Arkme 会及时处理。")}</p>
       </header>
       <div style={styles.body}>
-        <p style={styles.preview} title={preview}>{preview}</p>
+        <p style={styles.preview} title={arkmeEmojiPlainText(preview)}><ArkmeRichText text={preview} presentation="preview" /></p>
         <div role="radiogroup" aria-label={tr("举报类型")} style={styles.group}>
           {REPORT_OPTIONS.map(option => {
             const selected = reportType === option.type

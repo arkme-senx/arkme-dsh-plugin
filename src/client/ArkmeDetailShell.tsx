@@ -47,7 +47,8 @@ export function ArkmeDetailShell({ title, label, headerContent, subtitle, footer
     const onKey = (event: KeyboardEvent) => {
       // A portal preview owns Escape until it is closed; do not close both layers.
       if (event.key !== 'Escape' || event.defaultPrevented
-        || document.querySelector('[data-arkme-image-preview-viewport], [aria-modal="true"], [role="menu"]') !== null) return
+        || Array.from(document.querySelectorAll('[data-arkme-image-preview-viewport], [aria-modal="true"], [role="menu"]'))
+          .some(overlay => !overlay.contains(panelRef.current))) return
       event.preventDefault()
       event.stopPropagation()
       onCloseRef.current()
