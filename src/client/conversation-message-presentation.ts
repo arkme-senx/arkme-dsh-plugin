@@ -46,4 +46,3 @@ export function dayLabel(value: number): string {
 export function timeLabel(value: number): string {
   return new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
-
