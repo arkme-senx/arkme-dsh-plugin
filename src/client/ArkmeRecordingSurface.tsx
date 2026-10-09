@@ -720,6 +720,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   // Do not retain local placeholders once the cloud has confirmed their complete range.
   const coverage = [...(day?.coverage?.intervals ?? []), ...localCoverage.filter(local => local.status === 'recording' || !recordingCoverageContains(day?.coverage?.intervals ?? [], local.startAtMillis, local.endAtMillis))]
   const awaitingCoverageSync = coverage.some(range => range.status === 'submitted')
+  const awaitingAsrInputMetrics = (day?.transcript.dailyMetrics?.asrInputPendingCount ?? 0) > 0
   const [summaryVersionId, setSummaryVersionId] = useState('')
   const [timelineVersionId, setTimelineVersionId] = useState('')
   const [generatingKinds, setGeneratingKinds] = useState<Record<ArkmeRecordingProjectionKind, boolean>>({ summary: false, timeline: false })
@@ -833,11 +834,12 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }, [selectedDate, recordingRefreshRevision])
 
   useEffect(() => {
-    if (!active || (!awaitingCoverageSync && day?.summary.state !== 'processing' && day?.timeline.state !== 'processing' && day?.transcript.state !== 'processing' && !day?.coverage?.intervals.some(range => range.status === 'processing'))) return
+    if (!active || (!awaitingCoverageSync && !awaitingAsrInputMetrics && day?.summary.state !== 'processing' && day?.timeline.state !== 'processing' && day?.transcript.state !== 'processing' && !day?.coverage?.intervals.some(range => range.status === 'processing'))) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let attempts = 0
     const poll = async () => {
+      if (controller.signal.aborted) return
       attempts += 1
       try {
         const next = await callArkme<ArkmeRecordingDay>(
@@ -849,7 +851,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         setDay(next)
         setSummaryVersionId(current => reconcileRecordingVersionId(current, next.summary.items))
         setTimelineVersionId(current => reconcileRecordingVersionId(current, next.timeline.items))
-        if (awaitingCoverageSync || next.summary.state === 'processing' || next.timeline.state === 'processing' || next.transcript.state === 'processing' || next.coverage?.intervals.some(range => range.status === 'processing')) {
+        if (!controller.signal.aborted && (awaitingCoverageSync || (next.transcript.dailyMetrics?.asrInputPendingCount ?? 0) > 0 || next.summary.state === 'processing' || next.timeline.state === 'processing' || next.transcript.state === 'processing' || next.coverage?.intervals.some(range => range.status === 'processing'))) {
           timer = setTimeout(() => { void poll() }, attempts < 90 ? 3_000 : 15_000)
         }
       } catch {
@@ -858,7 +860,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
     timer = setTimeout(() => { void poll() }, 1_500)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [active, awaitingCoverageSync, day?.summary.state, day?.timeline.state, day?.transcript.state, day?.coverage?.intervals.some(range => range.status === 'processing'), selectedDate])
+  }, [active, awaitingCoverageSync, awaitingAsrInputMetrics, day?.summary.state, day?.timeline.state, day?.transcript.state, day?.coverage?.intervals.some(range => range.status === 'processing'), selectedDate])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])

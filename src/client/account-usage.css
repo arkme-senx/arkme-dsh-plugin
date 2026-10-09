@@ -89,7 +89,12 @@
 .arkme-usage-metric small, .arkme-usage-muted { color: var(--dsw-alias-label-secondary, #68707c); font-size: 10px; }
 .arkme-usage-metric small { display: block; margin-top: 5px; }
 .arkme-usage-points-balance { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
-.arkme-usage-points-sources { color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-usage-points-sources { color: var(--dsw-alias-label-secondary, #68707c); min-width: 0; max-width: 100%; }
+.arkme-account-usage .arkme-usage-grant-help { display: inline-flex; align-items: center; gap: 4px; padding: 0; vertical-align: baseline; max-width: 100%; }
+.arkme-usage-grant-help > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+/* Match the existing reserved-balance explanation icon, using DSH theme tokens. */
+.arkme-usage-grant-icon { display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; box-sizing: border-box; border: 1px solid var(--dsw-alias-label-tertiary, #9097a1); border-radius: 50%; font-size: 10px; line-height: 1; font-weight: 600; }
+.arkme-usage-grant-icon::before { content: '?'; }
 .arkme-usage-track { display: block; height: 4px; overflow: hidden; border-radius: 4px; background: var(--dsw-alias-border-l2, #e1e3e6); margin-top: 6px; }
 .arkme-usage-track > span { height: 100%; display: block; border-radius: inherit; background: var(--dsw-alias-label-tertiary, #9097a1); }
 .arkme-usage-metric[data-usage-level='low'] .arkme-usage-label > span, .arkme-usage-metric[data-usage-level='exhausted'] .arkme-usage-label > span { color: var(--dsw-alias-state-warn-label, #a16207); }
