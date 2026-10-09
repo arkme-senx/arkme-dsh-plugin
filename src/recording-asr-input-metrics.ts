@@ -11,7 +11,8 @@ const id = (value: unknown): string => typeof value === 'string' ? value.trim() 
  * is never inferred from transcript text, bytes or the recording envelope. */
 function clippedInputDuration(child: Record<string, unknown>, duration: number, from: number, to: number): number | undefined {
   const input = object(child.asr_input_metrics)
-  if (!['ready', 'partial'].includes(String(input.state)) || !['observed', 'estimated'].includes(String(input.basis))
+  if (!['ready', 'partial', 'processing'].includes(String(input.state)) || !['observed', 'estimated'].includes(String(input.basis))
+    || (input.state === 'processing' && input.basis !== 'observed')
     || !validTime(input.duration_ms) || !Array.isArray(input.spans)) return undefined
   let total = 0, clipped = 0
   for (const raw of input.spans) {
@@ -47,14 +48,32 @@ export function projectRecordingAsrInputMetrics(response: unknown, viewerUserId:
     if (!recordingBelongsToViewer(session, viewerUserId)) continue
     represented.add(sessionId)
     const offset = child.start_at, duration = child.duration
-    if (!validTime(offset) || !validTime(duration) || duration === 0 || (offset < 100_000_000_000 && !validTime(session.start_at))) { asrInputUnknownCount++; continue }
+    if (!validTime(offset) || (offset < 100_000_000_000 && !validTime(session.start_at))) { asrInputUnknownCount++; continue }
     const start = offset >= 100_000_000_000 ? offset : (session.start_at as number) + offset
-    const end = start + duration
-    if (!validTime(start) || !validTime(end)) { asrInputUnknownCount++; continue }
+    if (!validTime(start)) { asrInputUnknownCount++; continue }
+    const input = object(child.asr_input_metrics), state = input.state
+    // The upload hint locates pending work on the calendar only; it never
+    // validates observed model-input windows or supplies their duration.
+    const rangeDuration = validTime(duration) && duration > 0 ? duration
+      : state === 'processing' && validTime(child.duration_hint) && child.duration_hint > 0 ? child.duration_hint : undefined
+    if (rangeDuration === undefined) {
+      if (start >= dayEnd) continue
+      // Before SD confirms the media duration, the API can already know that
+      // work is pending. Keep polling without inventing a range or a zero total.
+      asrInputUnknownCount++
+      if (state === 'processing') asrInputPendingCount++
+      continue
+    }
+    const end = start + rangeDuration
+    if (!validTime(end)) { asrInputUnknownCount++; continue }
     if (end <= dayStart || start >= dayEnd) continue
-    const state = object(child.asr_input_metrics).state
-    if (state === 'processing') { asrInputPendingCount++; continue }
-    const value = clippedInputDuration(child, duration, dayStart - start, dayEnd - start)
+    if (state === 'processing') {
+      asrInputPendingCount++
+      // A new attempt can be pending while previous attempts already have
+      // observed input. Keep that known total visible until the receipt arrives.
+      if (input.basis == null && input.duration_ms == null && input.spans == null) continue
+    }
+    const value = validTime(duration) && duration > 0 ? clippedInputDuration(child, duration, dayStart - start, dayEnd - start) : undefined
     if (value === undefined || !Number.isSafeInteger(asrInputDurationMillis + value)) { asrInputUnknownCount++; continue }
     asrInputDurationMillis += value
     asrInputConfirmedCount++

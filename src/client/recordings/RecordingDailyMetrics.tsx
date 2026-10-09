@@ -29,7 +29,7 @@ export function RecordingDailyMetrics({metrics,loading=false,localPending=false}
       ? tr(inputIncomplete ? '约{duration}（部分，含估算）' : '约{duration}（含估算）', { duration: durationValue })
       : `${durationValue}${inputIncomplete ? tr('（已确认）') : ''}`
   return <div aria-label={tr('当天录音统计')} style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'4px 12px',fontSize:11,lineHeight:'18px',color:arkmeTheme.secondary}}
-    title={tr('人声存储仅统计归属于本人的录音，不包含原始文件或转写切片，跨日主档不估算分摊；字数按当天最终转写去除空白后计算。') + '\n' + tr('转写输入时长统计归属于你的录音送入系统转写模型的音频，跨日按当天截取，已记录的重试分别累计。有依据的历史录音按当前转写窗口估算并标注。此数值不是说话时长或 GPU 运行时长，也不包含豆包转写。')}>
+    title={tr('人声存储仅统计归属于本人的录音，不包含原始文件或转写切片，跨日主档不估算分摊；字数按当天最终转写去除空白后计算。') + '\n' + tr('转写输入时长统计归属于你的录音实际送入系统转写模型的音频，包含输入窗口中的静音，跨日按当天截取，已记录的重试分别累计。缺少可靠记录的历史输入时长暂不可用，不按录音时长或文字估算。此数值不是说话时长或 GPU 运行时长，也不包含豆包转写。')}>
     <span>{tr('人声存储 {size}',{size:loading ? '—' : bytes})}</span>
     <span>{tr('转写 {count} 字',{count:loading || !metrics ? '—' : new Intl.NumberFormat(arkmeIntlLocale()).format(metrics.textCount)})}</span>
     <span style={{whiteSpace:'nowrap'}}>{tr('转写输入时长 {duration}',{duration:loading ? '—' : duration})}</span>

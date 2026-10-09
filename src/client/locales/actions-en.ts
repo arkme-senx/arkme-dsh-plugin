@@ -11,7 +11,7 @@ export const actionEnglish: Record<string,string> = {
   '{minutes}分{seconds}秒': '{minutes}m {seconds}s',
   '{hours}小时{minutes}分{seconds}秒': '{hours}h {minutes}m {seconds}s',
   '部分转写输入时长暂不可确认': 'Some ASR input durations are not yet confirmed',
-  '转写输入时长统计归属于你的录音送入系统转写模型的音频，跨日按当天截取，已记录的重试分别累计。有依据的历史录音按当前转写窗口估算并标注。此数值不是说话时长或 GPU 运行时长，也不包含豆包转写。': 'Audio fed to the system transcription model for recordings attributed to you, clipped to the selected day. Recorded retries count separately. Historical recordings with sufficient evidence use labeled estimates based on current input windows. This is neither speaking time nor GPU runtime, and excludes Doubao transcription.',
+  '转写输入时长统计归属于你的录音实际送入系统转写模型的音频，包含输入窗口中的静音，跨日按当天截取，已记录的重试分别累计。缺少可靠记录的历史输入时长暂不可用，不按录音时长或文字估算。此数值不是说话时长或 GPU 运行时长，也不包含豆包转写。': 'Audio actually fed to the system transcription model for recordings attributed to you, including silence within input windows, clipped to the selected day. Recorded retries count separately. Historical input without reliable records is unavailable; it is not estimated from recording duration or text. This is neither speaking time nor GPU runtime, and excludes Doubao transcription.',
   '（已确认）': ' (confirmed)',
   '处理中，统计待更新': 'Processing; metrics will update',
   '部分大小暂不可确认': 'Some archive sizes are not yet confirmed',

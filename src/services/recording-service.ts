@@ -1403,6 +1403,8 @@ export class RecordingService {
 
   private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal) {
     const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
     const date = dayStart.getTime()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
@@ -1410,7 +1412,7 @@ export class RecordingService {
         // The v2 endpoint omits the session-to-speaker bindings needed to
         // resolve a labelled person from get-speaker-ls.
         '/api/v1/audio/one-day-trans',
-        { start_at: date, tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+        { start_at: date, end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
         session,
         signal,
       ),
@@ -1428,8 +1430,6 @@ export class RecordingService {
       : []
     const userIds = speakerUserIds(speakerData)
     const profilesByUserId = await this.recordingSpeakerProfiles(userIds, session, signal)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
     const options = { viewerUserId: session.userId, dayStartMillis: date, dayEndMillis: dayEnd.getTime() }
     const response = transcriptResult.value
     const coverage = projectRecordingCoverage(response, date, dayEnd.getTime(), session.userId)

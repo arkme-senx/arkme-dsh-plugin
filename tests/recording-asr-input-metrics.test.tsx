@@ -49,10 +49,38 @@ it('distinguishes confirmed silence, pending, missing historical data and a trul
   expect(metrics([]).asrInputState).toBe('unavailable')
   expect(metrics([child, { ...child, id: 'missing', asr_input_metrics: undefined }])).toMatchObject({ asrInputState: 'partial', asrInputDurationMillis: 6000, asrInputUnknownCount: 1 })
 })
+it('keeps observed input visible while the current attempt receipt is pending', () => {
+  const pending = { ...child, asr_input_metrics: { ...speech([[1000, 3000], [1000, 3000]]), state: 'processing' } }
+  expect(metrics([pending])).toMatchObject({ asrInputState: 'processing', asrInputDurationMillis: 4000,
+    asrInputPendingCount: 1, asrInputConfirmedCount: 1, asrInputUnknownCount: 0 })
+  const daily = projectRecordingDailyMetrics({ session_ls: [session], child_ls: [pending] }, [], 42, start, end)
+  const rendered = renderToStaticMarkup(<RecordingDailyMetrics metrics={daily}/>)
+  expect(rendered).toContain('转写输入时长 4秒（已确认）')
+  expect(rendered).toContain('处理中，统计待更新')
+  expect(metrics([{ ...pending, asr_input_metrics: { ...pending.asr_input_metrics, duration_ms: 5000 } }]))
+    .toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1, asrInputUnknownCount: 1, asrInputDurationMillis: 0 })
+  expect(metrics([{ ...pending, asr_input_metrics: { ...pending.asr_input_metrics, basis: 'future-basis' } }]))
+    .toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1, asrInputUnknownCount: 1, asrInputDurationMillis: 0 })
+})
+it('keeps unfinished cross-midnight children pending before SD confirms their duration', () => {
+  const pending = { ...child, duration: 0, has_asr: false, asr_input_metrics: { state: 'processing', duration_ms: null, spans: null } }
+  const result = metrics([pending], [{ ...session, start_at: start - 3000, end_at: start + 3000 }])
+  expect(result).toMatchObject({ asrInputState: 'unavailable', asrInputPendingCount: 1,
+    asrInputUnknownCount: 1, asrInputConfirmedCount: 0, asrInputDurationMillis: 0 })
+  expect(metrics([{ ...pending, start_at: end }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 0 })
+  expect(metrics([{ ...pending, asr_input_metrics: { state: 'unavailable' } }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 1 })
+  const hinted = { ...pending, duration_hint: 6000 }
+  const crossing = [{ ...session, start_at: start - 3000 }]
+  expect(metrics([hinted], crossing)).toMatchObject({ asrInputState: 'processing', asrInputPendingCount: 1, asrInputUnknownCount: 0, asrInputDurationMillis: 0 })
+  expect(metrics([hinted], [{ ...session, start_at: start - 6000 }])).toMatchObject({ asrInputPendingCount: 0, asrInputUnknownCount: 0 })
+  expect(metrics([{ ...hinted, asr_input_metrics: { ...speech([[0, 6000]]), state: 'processing' } }], crossing))
+    .toMatchObject({ asrInputDurationMillis: 0, asrInputPendingCount: 1, asrInputUnknownCount: 1 })
+})
 it.each([
   undefined, null, { state: 'ready', duration_ms: 0 }, speech([[0, 1000]], 2000), speech([[-1, 1000]]),
   speech([[0, 60001]]), speech([[0, 1.5]]), speech([[1000, 0]]), speech([[0, 1000]], NaN),
   { state: 'ready', duration_ms: '1000', spans: [[0, 1000]] }, speech([[0, Number.MAX_SAFE_INTEGER + 1]]),
+  { ...speech([[0, 1000]]), basis: 'unknown' },
 ])('does not manufacture a duration from malformed or missing evidence: %j', asr_input_metrics => {
   expect(metrics([{ ...child, asr_input_metrics }])).toMatchObject({ asrInputState: 'unavailable', asrInputDurationMillis: 0 })
 })
@@ -65,6 +93,7 @@ it('renders precise duration, localized states and no stale values during loadin
   const daily = projectRecordingDailyMetrics({ session_ls: [session], child_ls: [child] }, [], 42, start, end)
   const ready = { ...daily, asrInputDurationMillis: 8316000 }
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('转写输入时长 2小时18分36秒')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('缺少可靠记录的历史输入时长暂不可用')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={{ ...ready, asrInputDurationMillis: 500 }}/>)).toContain('不足1秒')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).toContain('转写输入时长 —')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).not.toContain('2小时')
@@ -75,6 +104,7 @@ it('renders precise duration, localized states and no stale values during loadin
   expect(partial).toContain('部分转写输入时长暂不可确认')
   connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('ASR input 2h 18m 36s')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical input without reliable records is unavailable')
 })
 
 it('preserves partial attempt totals and clearly labels historical estimates', () => {
@@ -89,4 +119,23 @@ it('preserves partial attempt totals and clearly labels historical estimates', (
 it('clips each repeated input separately across midnight', () => {
   const repeated = { ...child, start_at: end - 30000, asr_input_metrics: speech([[29000, 32000], [29000, 32000]]) }
   expect(metrics([repeated]).asrInputDurationMillis).toBe(2000)
+})
+
+it.each([
+  ['east of UTC', '2026-10-08T00:00:00+08:00', '2026-10-09T00:00:00+08:00', '2026-10-10T00:00:00+08:00'],
+  ['west of UTC', '2026-10-08T00:00:00-07:00', '2026-10-09T00:00:00-07:00', '2026-10-10T00:00:00-07:00'],
+  ['short DST day', '2026-03-08T00:00:00-05:00', '2026-03-09T00:00:00-04:00', '2026-03-10T00:00:00-04:00'],
+  ['long DST day', '2026-11-01T00:00:00-04:00', '2026-11-02T00:00:00-05:00', '2026-11-03T00:00:00-05:00'],
+])('preserves every input millisecond across caller-supplied dates: %s', (_, from, boundary, to) => {
+  const firstStart = Date.parse(from), midnight = Date.parse(boundary), secondEnd = Date.parse(to)
+  const input = speech([[29000, 32000], [29000, 32000], [40000, 50000]])
+  const data = {
+    session_ls: [{ ...session, start_at: midnight - 30000, end_at: midnight + 30000 }],
+    child_ls: [{ ...child, start_at: midnight - 30000, asr_input_metrics: input }],
+  }
+  const first = projectRecordingAsrInputMetrics(data, 42, firstStart, midnight)
+  const second = projectRecordingAsrInputMetrics(data, 42, midnight, secondEnd)
+  expect(first).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 2000 })
+  expect(second).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 14000 })
+  expect(first.asrInputDurationMillis + second.asrInputDurationMillis).toBe(input.duration_ms)
 })
