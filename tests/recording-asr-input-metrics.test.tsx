@@ -53,6 +53,7 @@ it.each([
   undefined, null, { state: 'ready', duration_ms: 0 }, speech([[0, 1000]], 2000), speech([[-1, 1000]]),
   speech([[0, 60001]]), speech([[0, 1.5]]), speech([[1000, 0]]), speech([[0, 1000]], NaN),
   { state: 'ready', duration_ms: '1000', spans: [[0, 1000]] }, speech([[0, Number.MAX_SAFE_INTEGER + 1]]),
+  { ...speech([[0, 1000]]), basis: 'unknown' },
 ])('does not manufacture a duration from malformed or missing evidence: %j', asr_input_metrics => {
   expect(metrics([{ ...child, asr_input_metrics }])).toMatchObject({ asrInputState: 'unavailable', asrInputDurationMillis: 0 })
 })
@@ -65,6 +66,7 @@ it('renders precise duration, localized states and no stale values during loadin
   const daily = projectRecordingDailyMetrics({ session_ls: [session], child_ls: [child] }, [], 42, start, end)
   const ready = { ...daily, asrInputDurationMillis: 8316000 }
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('转写输入时长 2小时18分36秒')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('缺少可靠记录的历史输入时长暂不可用')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={{ ...ready, asrInputDurationMillis: 500 }}/>)).toContain('不足1秒')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).toContain('转写输入时长 —')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).not.toContain('2小时')
@@ -75,6 +77,7 @@ it('renders precise duration, localized states and no stale values during loadin
   expect(partial).toContain('部分转写输入时长暂不可确认')
   connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('ASR input 2h 18m 36s')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical input without reliable records is unavailable')
 })
 
 it('preserves partial attempt totals and clearly labels historical estimates', () => {
@@ -89,4 +92,23 @@ it('preserves partial attempt totals and clearly labels historical estimates', (
 it('clips each repeated input separately across midnight', () => {
   const repeated = { ...child, start_at: end - 30000, asr_input_metrics: speech([[29000, 32000], [29000, 32000]]) }
   expect(metrics([repeated]).asrInputDurationMillis).toBe(2000)
+})
+
+it.each([
+  ['east of UTC', '2026-10-08T00:00:00+08:00', '2026-10-09T00:00:00+08:00', '2026-10-10T00:00:00+08:00'],
+  ['west of UTC', '2026-10-08T00:00:00-07:00', '2026-10-09T00:00:00-07:00', '2026-10-10T00:00:00-07:00'],
+  ['short DST day', '2026-03-08T00:00:00-05:00', '2026-03-09T00:00:00-04:00', '2026-03-10T00:00:00-04:00'],
+  ['long DST day', '2026-11-01T00:00:00-04:00', '2026-11-02T00:00:00-05:00', '2026-11-03T00:00:00-05:00'],
+])('preserves every input millisecond across caller-supplied dates: %s', (_, from, boundary, to) => {
+  const firstStart = Date.parse(from), midnight = Date.parse(boundary), secondEnd = Date.parse(to)
+  const input = speech([[29000, 32000], [29000, 32000], [40000, 50000]])
+  const data = {
+    session_ls: [{ ...session, start_at: midnight - 30000, end_at: midnight + 30000 }],
+    child_ls: [{ ...child, start_at: midnight - 30000, asr_input_metrics: input }],
+  }
+  const first = projectRecordingAsrInputMetrics(data, 42, firstStart, midnight)
+  const second = projectRecordingAsrInputMetrics(data, 42, midnight, secondEnd)
+  expect(first).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 2000 })
+  expect(second).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 14000 })
+  expect(first.asrInputDurationMillis + second.asrInputDurationMillis).toBe(input.duration_ms)
 })
