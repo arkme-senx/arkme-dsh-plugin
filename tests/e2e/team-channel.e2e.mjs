@@ -220,8 +220,33 @@ describe('independent Team channel, installed artifact on official DSH', () => {
         await page.setViewportSize({width:1440,height:1000})
         await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
       }
-      // Cancellation must never turn an unknown request into a new publication.
-      // Exercise the real UI -> Host queue -> authenticated adapter -> Team owner.
+      // Transient failures recover automatically, without blocking the next draft.
+      // Cover both an unsent request and a committed message with a lost ACK.
+      for (const acceptedBeforeRecovery of [false, true]) {
+        const retryText = `自动恢复 ${acceptedBeforeRecovery} ${randomUUID()}`
+        retryMarker = retryText
+        retriedCommands.length = 0
+        sendFaults.push(acceptedBeforeRecovery ? 'after' : 'before')
+        await panel.getByRole('textbox', {name:'团队消息内容'}).fill(retryText)
+        await panel.getByRole('button', {name:'发送', exact:true}).click()
+        await expect.poll(() => retriedCommands.length).toBeGreaterThan(0)
+        expect(await panel.getByRole('button', {name:'取消发送', exact:true}).count()).toBe(0)
+        await panel.getByRole('textbox', {name:'团队消息内容'}).fill('恢复期间继续编辑')
+        await expect.poll(async () => {
+          const messages = (await teamCall(users.visitor, 'conversations/timeline/page', {conversation_uid:uid,side:'external'})).messages
+          return messages.filter(item=>item.record?.text_content===retryText).length
+        }, {timeout:25000}).toBe(1)
+        await expect.poll(async () => {
+          const state = JSON.parse(await readFile(join(root,'state','files',String(users.member),'state.json'),'utf8'))
+          return state.teamSends.find(task=>task.content?.text_content===retryText)?.state
+        }, {timeout:25000}).toBe('sent')
+        expect(new Set(retriedCommands.map(cmd=>cmd.client_message_uid)).size).toBe(1)
+        expect(await panel.getByRole('textbox', {name:'团队消息内容'}).textContent()).toBe('恢复期间继续编辑')
+        await panel.getByRole('textbox', {name:'团队消息内容'}).fill('')
+        sendFaults.length = 0
+      }
+      // Older clients may already have persisted cancellation intent. Exercise
+      // that Host contract directly; transient recovery no longer offers this UI.
       for (const acceptedBeforeCancel of [false, true]) {
         const cancelledText = `取消边界 ${acceptedBeforeCancel} ${randomUUID()}`
         retryMarker = cancelledText
@@ -231,7 +256,23 @@ describe('independent Team channel, installed artifact on official DSH', () => {
         await panel.getByRole('textbox', {name:'团队消息内容'}).fill(cancelledText)
         await panel.getByRole('button', {name:'发送', exact:true}).click()
         await expect.poll(() => retriedCommands.length).toBeGreaterThan(0)
-        await panel.getByRole('button', {name:'取消发送', exact:true}).click()
+        expect(await panel.getByRole('button', {name:'取消发送', exact:true}).count()).toBe(0)
+        await expect.poll(async () => {
+          const state = JSON.parse(await readFile(join(root, 'state', 'files', String(users.member), 'state.json'), 'utf8'))
+          const task = state.teamSends.find(item => item.content?.text_content === cancelledText)
+          if (!task) return false
+          try {
+            await service.executeTeamApp('team.app.send.cancel-task', {
+              expectedAccountKey: `test:${users.member}`, conversationRef: task.conversationRef, taskRef: task.taskRef,
+            })
+            return true
+          } catch (error) {
+            if (error.code === 'team-send-busy') return false
+            const saved = JSON.parse(await readFile(join(root, 'state', 'files', String(users.member), 'state.json'), 'utf8'))
+            if (error.retryable && saved.teamSends.some(item => item.taskRef === task.taskRef && item.cancelRequested)) return true
+            throw error
+          }
+        }, { timeout: 20000 }).toBe(true)
         // The shared HTTP coordinator cools down Team writes for 5s after 503.
         await expect.poll(() => cancellationAcks.length, {timeout:20000}).toBe(cancellationsBefore + 1)
         expect(cancellationAcks.at(-1)).toMatchObject({code:200,data:{state:acceptedBeforeCancel ? 'published' : 'cancelled'}})
