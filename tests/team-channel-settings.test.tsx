@@ -71,6 +71,32 @@ describe('Team channel settings interactions', () => {
     expect(writeText).toHaveBeenCalledWith(channel.link)
     expect(text(renderer!.root)).toContain('链接已复制')
   })
+  it.each(['arkme_cn', 'studio'])('preserves owner approval and link actions when %s cannot be paused', async jotmoId => {
+    channel = { ...channel, jotmoId, canPause: false, enabled: true, publicRef: 'a'.repeat(32), link: 'https://example.com/team-message?channel=' + 'a'.repeat(32) }
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation(async (op, p) => op === 'team.app.applications'
+      ? { items: [{ ref: 'application', name: '申请人甲', state: 'pending', requestedAt: 1 }], hasMore: false }
+      : op === 'team.app.application.decide' ? {} : original(op, p))
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    await mount()
+    expect(renderer!.root.findAllByProps({ role: 'switch' })).toHaveLength(0)
+    expect(text(renderer!.root)).toContain('申请人甲')
+    await click(button('同意')); await click(button('确认'))
+    expect(mocks.call).toHaveBeenCalledWith('team.app.application.decide', { applicationRef: 'application', approve: true }, expect.any(AbortSignal))
+    await click(button('复制链接'))
+    expect(writeText).toHaveBeenCalledWith(channel.link)
+    await click(button('重置链接')); await click(button('确认'))
+    expect(mocks.call).toHaveBeenCalledWith('team.app.channel.configure', { teamRef: 'team', revision: 1, enabled: true, rotate: true }, expect.any(AbortSignal))
+    expect(channel.enabled).toBe(true)
+    expect(renderer!.root.findAllByProps({ role: 'switch' })).toHaveLength(0)
+  })
+  it.each([true, undefined])('allows owners to pause with current or legacy capability: %s', async canPause => {
+    channel = { ...channel, ...(canPause === undefined ? {} : { canPause }), enabled: true, publicRef: 'a'.repeat(32) }
+    await mount()
+    await click(renderer!.root.findByProps({ role: 'switch' }))
+    expect(mocks.call).toHaveBeenCalledWith('team.app.channel.configure', { teamRef: 'team', revision: 1, enabled: false, rotate: false }, expect.any(AbortSignal))
+  })
   it('offers retry after a failed initial load without a permanent refresh action', async () => {
     mocks.call.mockRejectedValueOnce(new Error('暂时无法读取'))
     await mount()

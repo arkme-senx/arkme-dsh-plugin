@@ -1,5 +1,13 @@
 # 团队消息通道交付
 
+## 2026-10-09 通道暂停能力
+
+既有 Team App 通道响应新增 `can_pause` 权限元数据，由 `TeamAppService` 统一映射为 `canPause`。设置页仅按该能力决定是否显示接收消息开关；`canManage` 继续控制成员申请审批和链接重置，复制链接保持原行为。客户端不按团队即我号判断官方身份，官方常开策略及拒绝停用由 Team 服务负责。
+
+旧服务没有 `can_pause` 时，Host 回退到 `can_manage`。Client 的 `canPause` 保持可选并回退到 `canManage`，兼容旧 Host DTO、已留存的内存快照和 UI fixture。设置页本身不持久化通道对象；团队目录与会话缓存无需数据迁移。
+
+能力矩阵：UI 覆盖开关权限、审批、复制与重置；Host owner 仍为既有 `TeamAppService`，不新增请求或写入口；Tools / SDK 沿用本功能既有的内置 App 范围，不扩展公共消费面。变更不涉及 DSH 扩展机制或平台路径。
+
 ## 2026-09-30 链接设置与会话返回
 
 本轮是既有能力的 UI 整理，没有新增 Host 查询、命令、持久化或配置。能力矩阵：UI 为覆盖面；Tools、SDK、Host owner 无新增能力，继续调用既有 Team App owner。Flutter 同步隐藏团队会话的屏蔽入口；后端屏蔽状态与拒绝发送规则不变。

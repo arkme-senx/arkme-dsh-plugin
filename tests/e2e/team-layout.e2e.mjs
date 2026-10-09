@@ -51,11 +51,12 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
     page.on('pageerror', error => failures.push(error))
     let owner = true, enabled = true
+    let canPause, pendingApplications = []
     let sendTasks = []
     let holdTextDelivery = false, failNextTimeline = false, accountBoundaryFixture = false
     const sendRetries = []
     const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
-    const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner })
+    const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner, ...(canPause === undefined ? {} : { canPause }) })
     const conversation = () => ({ref: 'conversation-ref', key: 'conversation-key', channel: channel(), side: 'team', visitor: {nickname:'鲨鱼辣椒1998'}, preview:{status:'available',text:'请问可以修改吗？',hasMedia:false}, lastSeq: 3, latestTeamReplySeq: 2, myReadSeq: 3, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: Date.now()})
     const secondConversation = () => ({...conversation(), ref:'second-ref', key:'second-key', visitor:{nickname:'第二位来访者'}, preview:{status:'available',text:'我想了解一下团队功能',hasMedia:false}})
     const messages = [
@@ -143,7 +144,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       else if (op === 'team.app.conversations') value = { items: params.side === 'team'
         ? [conversation(), secondConversation()]
         : [{...conversation(),key:'contacted-team',side:'external',channel:{...channel(),name:'设计团队',jotmoId:'design_team'}}], hasMore:false }
-      else if (op === 'team.app.applications') value = { items: [], hasMore: false }
+      else if (op === 'team.app.applications') value = { items: pendingApplications, hasMore: false }
+      else if (op === 'team.app.application.decide') { pendingApplications = []; value = {} }
       else if (op === 'team.app.attention') value = { team: false, external: false, applications: false }
       else { await route.continue(); return }
       await route.fulfill({ json: { ok: true, value } })
@@ -276,6 +278,26 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await expect.poll(()=>replyPane.getByRole('textbox',{name:'团队消息内容'}).textContent()).toBe('给第一位来访者的草稿')
     await replyPane.getByRole('textbox',{name:'团队消息内容'}).fill('')
     await page.setViewportSize({ width: 1024, height: 768 })
+    canPause = false
+    pendingApplications = [{ ref: 'fixed-channel-application', name: '官方团队申请人', state: 'pending', requestedAt: Date.now() }]
+    await page.reload()
+    await page.getByRole('button', { name: '联系人', exact: true }).click()
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+    await section.getByRole('button', { name: /Arkme Internal Interview/ }).click()
+    await detail.getByText('官方团队申请人', { exact: true }).waitFor()
+    expect(await detail.getByRole('switch').count()).toBe(0)
+    await detail.getByRole('button', { name: '复制链接', exact: true }).click()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(channel().link)
+    await detail.getByRole('button', { name: '重置链接', exact: true }).click()
+    await detail.getByRole('button', { name: '确认', exact: true }).click()
+    expect(enabled).toBe(true)
+    await detail.getByRole('button', { name: '同意', exact: true }).waitFor()
+    await capture('plugin-official-owner-fixed-channel')
+    await detail.getByRole('button', { name: '同意', exact: true }).click()
+    await detail.getByRole('button', { name: '确认', exact: true }).click()
+    await detail.getByText('官方团队申请人', { exact: true }).waitFor({ state: 'hidden' })
+    expect(calls).toContain('team.app.application.decide')
+    expect(await detail.getByRole('switch').count()).toBe(0)
     owner = false; await page.reload()
     await page.getByRole('button', { name: '联系人', exact: true }).click()
     if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()

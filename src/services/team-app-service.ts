@@ -78,7 +78,8 @@ export class TeamAppService {
     link.searchParams.set('channel', publicRef)
     return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
       ...(identity.imageRef ? { imageRef: identity.imageRef, imageKey: identity.imageKey } : {}), publicRef, link: publicRef ? link.toString() : '',
-      enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true }
+      enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true,
+      canPause: v.can_pause === undefined ? v.can_manage === true : v.can_pause === true }
   }
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
     const v = obj(raw), uid = str(v.conversation_uid), side: TeamSide = v.side === 'team' ? 'team' : 'external'
