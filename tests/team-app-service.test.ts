@@ -1,0 +1,285 @@
+import { describe, it, expect, vi } from 'vitest'
+import { TeamAppService } from '../src/services/team-app-service.js'
+import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
+import type { ArkmeSessionStore } from '../src/keychain-store.js'
+import type { TeamChannel, TeamConversation, TeamOpen, TeamSendResult, TeamTimeline, TeamMembers } from '../src/team-app-contract.js'
+import { parseOwnerJson, stringifyOwnerJson } from '../src/record-owner-id.js'
+import { decodeArkmeTeamNotificationDataLine, decodeArkmeMemberEventDataLine } from '../src/chat-realtime.js'
+
+const channel = { team_id: '9223372036854775800', name: '即我团队', jotmo_id: 'arkme_cn', public_ref: 'a'.repeat(32), enabled: true, revision: 1, can_manage: false }
+const conversation = { conversation_uid: 'conversation-private', team_id: channel.team_id, external_user_id: 90, channel, side: 'external', last_seq: 2, latest_team_reply_seq: 1, my_read_seq: 0, unread: 1 }
+const message = { message_uid: 'message-private', actor_user_id: 11, record_owner_user_id: 11, seq: 2, revision: 2, side: 'team', state: 'published', sender: { nickname: '小林', avatar_url: 'https://userfiles.jotmo.cc/test.png' }, record: { status: 'available', version: 3, text_content: '已收到', media: [{ file_asset_uid: 'asset-secret', file_name: 'photo.png', mime_type: 'image/png', size: 42, file_kind: 1, download_url: 'https://private-signed.invalid' }] } }
+function fixture(handler: (path: string, body: Record<string, unknown>) => unknown | Promise<unknown> = () => ({})) {
+  let session = { userId: 90, accessToken: 'app-token', refreshToken: 'app-refresh' }
+  const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = []
+  const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname, body = parseOwnerJson(String(init?.body || '{}')) as Record<string, unknown>
+    requests.push({ path, body, headers: new Headers(init?.headers) })
+    const data = await handler(path, body)
+    if (data instanceof Response) return data
+    return new Response(stringifyOwnerJson({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+  })
+  const config = { environment: 'test', teamBaseUrl: 'https://team.test', authBaseUrl: 'https://auth.test', chatBaseUrl: 'https://chat.test', recordBaseUrl: 'https://record.test', subjectBaseUrl: 'https://subject.test', routePath: '/custom/api', requestTimeoutMs: 500, shareWebsite: 'https://share.test', maxTextLength: 20000 } as ArkmeServiceConfig
+  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key' } as StateStore, fetchImpl as typeof fetch)
+  vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
+  vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
+  const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
+  const service = new TeamAppService(runtime, avatars)
+  return { service, runtime, requests, fetchImpl, avatars, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+}
+async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
+
+describe('Team App owner adapter', () => {
+  it.each(['team.app.official','team.app.conversations','team.app.open'] as const)('rejects a stale browser account before %s can return another account data', async operation => {
+    const f=fixture(()=>({channel,conversation}))
+    await expect(f.service.execute(operation,{expectedAccountKey:'test:91'})).rejects.toMatchObject({code:'team-account-changed'})
+    expect(f.requests).toHaveLength(0)
+    await expect(f.service.execute(operation,{expectedAccountKey:'prod:90'})).rejects.toMatchObject({code:'team-account-changed'})
+    expect(f.requests).toHaveLength(0)
+  })
+
+  it.each(['team', 'external'])('preserves voice preview classification for the %s conversation list', async side => {
+    const f = fixture(() => ({ items: [{ ...conversation, side,
+      preview: { status: 'available', text: '', has_media: true, template_kind: 3 },
+    }], has_more: false }))
+    const result = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(result.items[0]?.preview).toEqual({ status: 'available', text: '', hasMedia: true, templateKind: 3 })
+  })
+
+  it('cancels by original send identity using current conversation authority without sending content', async () => {
+    const f=fixture((path,body)=>path.endsWith('/messages/cancel')
+      ? {message_uid:body.client_message_uid,seq:0,state:'cancelled',side:'external',own:true,revision:1}
+      : {channel,conversation,messages:[]})
+    const opened=await open(f)
+    const result=await f.service.execute('team.app.cancel',{conversationRef:opened.conversation!.ref,clientUid:'original-command'}) as TeamSendResult
+    expect(result.message?.state).toBe('cancelled')
+    expect(f.requests.at(-1)?.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',client_message_uid:'original-command'})
+    expect(f.requests.some(r=>r.path.endsWith('/messages/send'))).toBe(false)
+    f.changeAccount()
+    await expect(f.service.execute('team.app.cancel',{conversationRef:opened.conversation!.ref,clientUid:'original-command'})).rejects.toMatchObject({code:'team-reference-invalid'})
+    expect(f.requests).toHaveLength(2)
+  })
+  it('keeps a real minimal send ACK distinct from a hydrated timeline and binds durable task scope to its viewer', async () => {
+    const f=fixture((path,body)=>path.endsWith('/messages/send')
+      ? {message_uid:body.client_message_uid,seq:3,state:'published',side:'external',own:true,sender:{nickname:'我'},created_at:1,revision:1}
+      : {channel,conversation,messages:[]})
+    const a=await open(f), b=await open(f)
+    expect(a.conversation!.ref).not.toBe(b.conversation!.ref)
+    expect(await f.service.conversationKey(a.conversation!.ref,90)).toBe(await f.service.conversationKey(b.conversation!.ref,90))
+    await expect(f.service.conversationKey(a.conversation!.ref,91)).rejects.toMatchObject({code:'team-reference-invalid'})
+    const result=await f.service.execute('team.app.send',{conversationRef:a.conversation!.ref,clientUid:'stable',expectedReplySeq:0,content:{text_content:'hello',template_kind:1}}) as TeamSendResult
+    expect(result.message).toMatchObject({own:true,state:'published',version:0,contentStatus:'',media:[]})
+    expect(result.message!.content).toBeUndefined()
+  })
+
+  it('resolves Record origin under current Team authority and seals its navigation reference', async () => {
+    const f = fixture(path => path.endsWith('/context')
+      ? { conversation_uid: conversation.conversation_uid, side: 'external', team_name: '新团队名' }
+      : { conversation, messages: [] })
+    const source = await f.service.execute('team.app.source', { conversationUid: conversation.conversation_uid }) as { name: string; conversationRef: string }
+    expect(source.name).toBe('新团队名')
+    expect(JSON.stringify(source)).not.toContain(conversation.conversation_uid)
+    await f.service.execute('team.app.timeline', { conversationRef: source.conversationRef })
+    expect(f.requests[0]!.body).toEqual({ conversation_uid: conversation.conversation_uid })
+    expect(f.requests[1]!.body).toMatchObject({ conversation_uid: conversation.conversation_uid, side: 'external' })
+    f.changeAccount()
+    await expect(f.service.execute('team.app.timeline', { conversationRef: source.conversationRef })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+  })
+  it('does not invent a Team source when the current user lost access', async () => {
+    const f = fixture(() => new Response(JSON.stringify({ code:1001, data:{reason:'not_accessible'} })))
+    await expect(f.service.execute('team.app.source', {conversationUid:'source'})).rejects.toMatchObject({code:'team-not_accessible'})
+  })
+
+  it('explains an ID claim race without retrying the create mutation', async () => {
+    const f = fixture(path => path.endsWith('/create') ? new Response(JSON.stringify({code:1001,message:'参数错误'})) : {available:false,reason:'taken'})
+    await expect(f.service.execute('team.app.create', {name:'团队',jotmoId:'studio_1',requestUid:'request'})).rejects.toMatchObject({message:'该即我号已被占用'})
+    expect(f.requests.map(r=>r.path)).toEqual(['/api/v1/team/create','/api/v1/auth/check-jotmo-id-available'])
+  })
+
+  it.each([true, false])('checks Team IDs in team_create without personal edit restrictions: %s', async available => {
+    const f = fixture(() => ({available, reason: available ? '' : 'taken'}))
+    expect(await f.service.execute('team.app.create.check', {jotmoId:' studio_1 '})).toEqual({available,reason:available?'':'taken'})
+    expect(f.requests).toHaveLength(1)
+    expect(f.requests[0]!.path).toBe('/api/v1/auth/check-jotmo-id-available')
+    expect(f.requests[0]!.body).toEqual({name:'studio_1',scene:'team_create'})
+    expect(f.requests[0]!.headers.get('authorization')).toBe('Bearer app-token')
+  })
+
+  it('distinguishes missing official setup from revoked conversation access', async () => {
+    const f = fixture(() => new Response(JSON.stringify({ code: 1001, data: { reason: 'official_unavailable' } })))
+    await expect(f.service.execute('team.app.official', {})).rejects.toMatchObject({ code: 'team-official_unavailable', message: '暂时无法联系作者，请稍后重试' })
+  })
+  it('uses the App credential and lossless Team IDs without Chat, Subject or OpenAPI', async () => {
+    const f = fixture(path => path.endsWith('/official-feedback-target') ? channel : path.endsWith('/message-channel/get') ? channel : {})
+    const target = await f.service.execute('team.app.official', {}) as TeamChannel
+    expect(target.link).toBe(`https://share.test/team-message?channel=${channel.public_ref}`)
+    expect(JSON.stringify(target)).not.toContain(channel.team_id)
+    await f.service.execute('team.app.channel', { teamRef: target.teamRef })
+    expect(f.requests[1]?.body.team_id).toBe(channel.team_id)
+    expect(f.requests.every(r => r.headers.get('authorization') === 'Bearer app-token')).toBe(true)
+    expect(f.fetchImpl.mock.calls.every(args => String(args[0]).startsWith('https://team.test/'))).toBe(true)
+  })
+  it('redacts internal owner/actor/asset IDs and signed provider URLs from external messages', async () => {
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [message], has_more: false, before_seq: 2 })
+    const opened = await open(f)
+    const page = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
+    const encoded = JSON.stringify(page)
+    for (const secret of ['conversation-private', 'message-private', 'actor_user_id', 'record_owner_user_id', 'asset-secret', 'private-signed.invalid', 'userfiles.jotmo.cc']) expect(encoded).not.toContain(secret)
+    expect(page.messages[0]?.sender.nickname).toBe('小林')
+    expect(page.messages[0]?.content?.text_content).toBe('已收到')
+    expect(page.messages[0]!.media[0]!.url).toBe(`/custom/api/team/media?ref=${encodeURIComponent(page.messages[0]!.media[0]!.ref)}`)
+  })
+  it.each([true,false,undefined])('preserves recipient read truth without interpreting unknown as unread: %s', async value => {
+    const f=fixture(path=>path.endsWith('/open') ? {channel,conversation} : {conversation,messages:[{...message,recipient_read:value}]})
+    const opened=await open(f)
+    const page=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    expect(page.messages[0]!.recipientRead).toBe(value)
+  })
+  it('rejects cross-account and forged references before contacting owner', async () => {
+    const f = fixture(() => ({ channel, conversation }))
+    const opened = await open(f), count = f.requests.length
+    f.changeAccount()
+    await expect(f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+    await expect(f.service.execute('team.app.channel', { teamRef: 'team-app-team.forged' })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+    expect(f.requests.length).toBe(count)
+  })
+  it('separates stable media presentation identity from rotating encrypted access references', async () => {
+    let current = structuredClone(message)
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [current] })
+    const opened = await open(f)
+    const read = async () => (await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline).messages[0]!
+    const first = await read(), second = await read()
+    expect(second.ref).not.toBe(first.ref)
+    expect(second.media[0]!.ref).not.toBe(first.media[0]!.ref)
+    expect(second.media[0]!.key).toBe(first.media[0]!.key)
+    expect(second.sender.imageRef).not.toBe(first.sender.imageRef)
+    expect(second.sender.imageKey).toBe(first.sender.imageKey)
+    current.record.version++
+    current.sender.avatar_url = 'https://userfiles.jotmo.cc/changed.png'
+    const edited = await read()
+    expect(edited.media[0]!.key).not.toBe(first.media[0]!.key)
+    expect(edited.sender.imageKey).not.toBe(first.sender.imageKey)
+    f.changeAccount()
+    const other = await open(f)
+    const page = await f.service.execute('team.app.timeline', { conversationRef: other.conversation!.ref }) as TeamTimeline
+    expect(page.messages[0]!.media[0]!.key).not.toBe(edited.media[0]!.key)
+  })
+  it.each([
+    ['OSSAccessKeyId=one&Expires=1&Signature=first&security-token=one', 'Signature=second&Expires=2&OSSAccessKeyId=two&security-token=two'],
+    ['x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-credential=one&x-oss-date=20260924T010000Z&x-oss-expires=60&x-oss-signature=first', 'x-oss-signature=second&x-oss-expires=120&x-oss-date=20260924T020000Z&x-oss-credential=two&x-oss-signature-version=OSS4-HMAC-SHA256'],
+  ])('keeps avatar identity across signed URL renewal but detects changed image content: %s', async (before, after) => {
+    const base = 'https://jotmo-userfiles.senguo.me/avatar.png'
+    let url = `${base}?${before}&x-oss-process=image%2Fresize%2Cw_80&v=1`
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [{ ...message, sender: { nickname: '小林', avatar_url: url } }] })
+    const opened = await open(f)
+    const read = async () => (await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline).messages[0]!.sender
+    const first = await read()
+    url = `${base}?v=1&x-oss-process=image%2Fresize%2Cw_80&${after}`
+    const renewed = await read()
+    expect(renewed.imageKey).toBe(first.imageKey)
+    expect(renewed.imageRef).not.toBe(first.imageRef)
+    url = `${base}?${after}&x-oss-process=image%2Fresize%2Cw_160&v=1`
+    expect((await read()).imageKey).not.toBe(first.imageKey)
+    url = `${base}?${after}&x-oss-process=image%2Fresize%2Cw_80&v=2`
+    const edited = await read()
+    expect(edited.imageKey).not.toBe(first.imageKey)
+    f.changeAccount()
+    const other = await open(f)
+    const page = await f.service.execute('team.app.timeline', { conversationRef: other.conversation!.ref }) as TeamTimeline
+    expect(page.messages[0]!.sender.imageKey).not.toBe(edited.imageKey)
+  })
+  it('keeps draft and view identities separate when a visitor later joins the same team', async () => {
+    let side = 'external'
+    const f = fixture(() => ({ items: [{ ...conversation, side }], has_more: false }))
+    const external = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    side = 'team'
+    const internal = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(internal.items[0]!.key).not.toBe(external.items[0]!.key)
+    expect((await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }).items[0]!.key).toBe(internal.items[0]!.key)
+  })
+  it('drops a response completed after an account change', async () => {
+    let release!: () => void
+    const barrier = new Promise<void>(r => { release = r })
+    const f = fixture(async () => { await barrier; return channel })
+    const pending = f.service.execute('team.app.official', {})
+    await vi.waitFor(() => { expect(f.requests).toHaveLength(1) })
+    f.changeAccount(); release()
+    await expect(pending).rejects.toMatchObject({ code: 'team-account-changed' })
+  })
+  it('preserves accepted operation and idempotency key on reply conflict without auto-confirming', async () => {
+    const pendingMessage = { ...message, state: 'preparing', side: 'team', own: true }
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation: { ...conversation, side: 'team' } } : new Response(JSON.stringify({ code: 1004, data: { reason: 'reply_conflict', operation: pendingMessage } })))
+    const opened = await open(f), p = { conversationRef: opened.conversation!.ref, clientUid: 'stable-attempt', expectedReplySeq: 2, content: { text_content: 'reply', template_kind: 1 } }
+    const result = await f.service.execute('team.app.send', p) as TeamSendResult
+    expect(result.reason).toBe('reply_conflict'); expect(result.message?.state).toBe('preparing')
+    await f.service.execute('team.app.send', p)
+    expect(f.requests.filter(r => r.path.endsWith('/send')).map(r => r.body.client_message_uid)).toEqual(['stable-attempt', 'stable-attempt'])
+    expect(f.requests.some(r => r.path.endsWith('/confirm-reply'))).toBe(false)
+    expect(JSON.stringify(result)).not.toContain('message-private')
+  })
+  it('maps a legacy reply rejection without operation to recoverable delivery, not confirmation', async () => {
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : new Response(JSON.stringify({ code: 1004, data: { reason: 'reply_conflict' } })))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.send', {conversationRef:opened.conversation!.ref,clientUid:'original',expectedReplySeq:0,content:{text_content:'reply',template_kind:1}})).rejects.toMatchObject({code:'team-reply_conflict',retryable:true,message:'服务暂时不可用，请使用原请求重试'})
+    expect(f.requests.some(r => r.path.endsWith('/confirm-reply'))).toBe(false)
+  })
+  it('does not cache a previous success over a removed membership', async () => {
+    let denied = false
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : denied ? new Response(JSON.stringify({ code: 1004, data: { reason: 'not_accessible' } })) : { conversation, messages: [message] })
+    const opened = await open(f), p = { conversationRef: opened.conversation!.ref }
+    await f.service.execute('team.app.timeline', p); denied = true
+    await expect(f.service.execute('team.app.timeline', p)).rejects.toMatchObject({ code: 'team-not_accessible', retryable: false })
+  })
+  it('applies for protected membership without falling back to the open platform', async () => {
+    const f = fixture(path => path.endsWith('/join-by-jotmo-id') ? new Response(JSON.stringify({ code: 1004, data: { reason: 'approval_required' } })) : { state: 'pending', user_id: 90, team_id: 42 })
+    await expect(f.service.execute('team.app.join', { jotmoId: 'protected_team', requestUid: 'application-1' })).resolves.toEqual({ state: 'pending' })
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/join-by-jotmo-id', '/api/v1/team/join-requests/create'])
+    expect(f.requests[1]?.body).toEqual({ jotmo_id: 'protected_team', request_uid: 'application-1' })
+  })
+  it('returns only current members and opaque removal handles', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true }], total_count: 1 } : { teams: [{ ...channel, role: 1 }] })
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(members.items[0]?.canRemove).toBe(true)
+    const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(refreshed.items[0]?.userRef).not.toBe(members.items[0]?.userRef)
+    expect(refreshed.items[0]?.key).toBe(members.items[0]?.key)
+    expect(JSON.stringify(members)).not.toContain('user_id')
+    await f.service.execute('team.app.member.remove', { userRef: members.items[0]!.userRef })
+    expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })
+  })
+  it('preserves optional profile avatars and unavailable identity without changing member authority', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
+      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 },
+        { user_id: 12, display_name: '用户', identity_state: 'unavailable', role: 3 }], total_count: 2,
+    } : { teams: [{ ...channel, role: 1 }] })
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', { avatarRef: 'profile-avatar' }]]))
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(members.items[0]).toMatchObject({ avatarRef: 'profile-avatar', identityState: 'ready' })
+    expect(members.items[1]).toMatchObject({ identityState: 'unavailable' })
+    expect(f.avatars.publicAvatarPresentationsByArkmeIds).toHaveBeenCalledWith(['member_lin'], expect.any(AbortSignal))
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockRejectedValue(new Error('avatar unavailable'))
+    const degraded = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
+    expect(degraded.items).toHaveLength(2)
+    expect(degraded.items[0]?.avatarRef).toBeUndefined()
+  })
+  it('rechecks membership on every byte request and never forwards provider credentials or URLs', async () => {
+    let denied = false
+    const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : path.endsWith('/media') ? denied ? new Response(JSON.stringify({ code: 1004, data: { reason: 'not_accessible' } }), { headers: { 'content-type': 'application/json' } }) : new Response('bytes', { headers: { 'content-type': 'application/octet-stream' } }) : { conversation, messages: [message] })
+    const opened = await open(f), timeline = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
+    const ref = timeline.messages[0]!.media[0]!.ref
+    const bytes = await f.service.fetchMedia(ref, 'bytes=0-3', new AbortController().signal)
+    expect(await bytes.response.text()).toBe('bytes')
+    expect(f.requests.at(-1)?.headers.get('range')).toBe('bytes=0-3')
+    denied = true
+    await expect(f.service.fetchMedia(ref, undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'team-not_accessible' })
+  })
+  it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
+    const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100 })
+    expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()
+  })
+})

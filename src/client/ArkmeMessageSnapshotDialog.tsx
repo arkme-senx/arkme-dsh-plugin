@@ -1,3 +1,4 @@
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -92,7 +93,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = fals
   const text = detail?.textContent.trim() || item.textContent.trim() || item.title.trim() || '暂无内容'
   const error = loadError?.trim()
   if (error !== undefined && error !== '') return <>
-    <p style={styles.preview}>{text}</p>
+    <p style={styles.preview}><ArkmeRichText text={text} presentation="preview" /></p>
     <div role="alert" style={styles.error}>{tr("快记详情未加载成功：")}{error}</div>
   </>
   const durationMillis = Math.max(0, detail?.recordDurationMillis ?? item.recordDurationMillis ?? 0) + Math.max(0, detail?.editDurationMillis ?? item.editDurationMillis ?? 0)
@@ -132,7 +133,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = fals
     { icon: <CloudArrowUp size={19} weight="light" />, label: '同步时间', value: detail?.syncedAtMillis === undefined ? (detail?.syncState === 'syncing' ? '同步中' : detail?.syncState === 'failed' ? '同步失败' : detail?.syncState === 'synced' ? '已同步' : '未记录') : detailTimeLabel(detail.syncedAtMillis) },
   ]
   return <>
-    <p style={styles.preview}>{text}</p>
+    <p style={styles.preview}><ArkmeRichText text={text} presentation="preview" /></p>
     <div style={styles.stats} aria-label={tr("快记统计")}>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("字数")}</span><strong style={styles.statValue}>{String(Array.from(text).length)}</strong></div>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("记录时长")}</span><strong style={styles.statValue}>{arkmeMessageSnapshotDurationLabel(durationMillis)}</strong></div>

@@ -4,6 +4,7 @@ import type { ResolvedMentions } from './mention-metadata-codec.js'
 import { prepareRecordReeditMentions, recordReeditMentionMetadata, recordReeditMentionProjection, type NewMentionResolver } from './record-reedit-mentions.js'
 import { recordManualEditFact } from '../record-edit-history.js'
 import { recordSenderSnapshot } from '../record-sender-snapshot.js'
+import { recordOwnerId } from '../record-owner-id.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { projectCallRecord } from '../call-record-presentation.js'
@@ -852,6 +853,32 @@ export class RecordService {
     return { status: 'discarded', itemUid: context.itemUid }
   }
 
+  /** Personal detail access never depends on a Home entry or a Team/Chat grant. */
+  async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> {
+    const session = await this.runtime.requireSession()
+    const uid = recordUid.trim()
+    if (!uid) throw new ArkmePluginError('record-uid-required', '快记标识无效', false, 400)
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read' },
+    )
+    const core = objectValue(data.record_core)
+    if (stringValue(core.record_uid) !== uid || recordOwnerId(core.owner_user_id) !== session.userId
+      || numberValue(core.status) !== 1 || numberValue(core.content_access_state ?? data.content_access_state) !== 1
+      || arkmePrivacyLockedRecord(data)) {
+      throw new ArkmePluginError('record-detail-unavailable', '此快记暂不可查看', false, 403)
+    }
+    const media = await this.media.hydrateRecordMediaPage([data], session, signal)
+    signal?.throwIfAborted()
+    const current = await this.runtime.accountScopedSession()
+    if (!current || current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('record-account-changed', '登录账号已变化，请重新打开', false, 409)
+    }
+    return this.recordTimelineItemFromRaw(data, session.userId, {
+      displayItems: media.displayItemsByRecordUid.get(uid) ?? [],
+      mediaUnavailable: media.unavailableRecordUids.has(uid),
+    })
+  }
+
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
@@ -1113,7 +1140,7 @@ export class RecordService {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于当前会话', false, 403)
       }
     } else if (source.kind === 'default_category') {
-      if (!personalSource || originContainerRef !== '' || topicUid !== '') {
+      if (!personalSource || topicUid !== '') {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于未分类来源', false, 403)
       }
     } else if (source.kind === 'send_to_self' && !personalSource && !topicSource) {

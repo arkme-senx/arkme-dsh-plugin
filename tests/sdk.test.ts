@@ -19,6 +19,19 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('normalizes local fetch rejection without automatically replaying a write', async () => {
+    const fetchImpl = vi.fn(async()=>{throw new TypeError('Failed to fetch')})
+    const sdk = createArkmeSdk({fetchImpl})
+    await expect(sdk.call('source.send-text',{text:'hello'})).rejects.toMatchObject({body:{code:'local-network-unavailable',retryable:true},message:'无法连接本机插件，请确认插件正在运行后重试'})
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+  it('preserves abort identity rather than calling cancellation a transport failure', async () => {
+    const controller=new AbortController(); controller.abort()
+    const error=new DOMException('cancelled','AbortError')
+    const sdk=createArkmeSdk({fetchImpl:async()=>{throw error}})
+    await expect(sdk.call('auth.status',{},controller.signal)).rejects.toBe(error)
+  })
+
   it('exposes local-first common-group reads and one-batch sync through the same Host contract', async () => {
     const calls: Array<{operation: string; params?: unknown}> = []
     const signal = new AbortController().signal

@@ -88,3 +88,17 @@ it('does not steal external focus when a subview is dismissed programmatically',
   expect(document.activeElement).toBe(elsewhere)
   elsewhere.remove()
 })
+
+it('closes inside a parent modal but lets a nested preview own Escape', async () => {
+  const close = vi.fn()
+  await act(async () => root.render(<section role="dialog" aria-modal="true">
+    <ArkmeDetailShell title="详情" label="详情" onClose={close}>正文</ArkmeDetailShell>
+  </section>))
+  const preview = document.createElement('div')
+  preview.setAttribute('aria-modal', 'true'); document.body.append(preview)
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+  expect(close).not.toHaveBeenCalled()
+  preview.remove()
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+  expect(close).toHaveBeenCalledOnce()
+})

@@ -213,3 +213,12 @@ describe('reaction events in the existing day timeline', () => {
     expect(view.root.findAllByProps({ 'aria-label': '表态动态' })).toHaveLength(0)
   })
 })
+
+it.each(['note','private_chat','group_chat'] as const)('renders emoji in %s day-activity previews', async kind => {
+  const message = '[im_emoji:yummy_face] [jm_emoji:thumb_up] [im_emoji:unknown]'
+  const {reader} = setup([{...entry('emoji'),kind,preview:message}])
+  await mount(reader)
+  expect(view.root.findAllByType('img').map(image=>image.props['data-arkme-rich-emoji']).filter(Boolean)).toEqual(['yummy_face','thumb_up'])
+  expect(text()).not.toContain('[im_emoji:yummy_face]')
+  expect(text()).toContain('[im_emoji:unknown]')
+})

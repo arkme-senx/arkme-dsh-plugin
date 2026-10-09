@@ -1,3 +1,5 @@
+import { teamAvatarImages } from './team-avatar-image-runtime.js'
+import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -27,7 +29,7 @@ import { CodexConversationSurface } from './redesign/contacts/CodexConversationS
 import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
-import { arkmeAuthStore } from './auth-store.js'
+import { arkmeAuthStore, startArkmeAuthRevalidation } from './auth-store.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmePresentationMaintenance } from './presentation-maintenance-runtime.js'
@@ -126,6 +128,7 @@ export function ArkmePersistentClientRuntime() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
+  useEffect(() => startArkmeAuthRevalidation(), [])
   const avatarScopeKey = auth?.status === 'authenticated'
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
@@ -134,7 +137,7 @@ export function ArkmePersistentClientRuntime() {
     || (ui.mode === 'source' && ui.productMode !== 'contacts')
   )
 
-  useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
+  useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey); teamAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
   useEffect(() => {
     if (avatarScopeKey === undefined) return
     return arkmePresentationMaintenance.start()
@@ -156,6 +159,7 @@ export function ArkmePersistentClientRuntime() {
 
   return <>
     <ArkmeOutgoingCallHost />
+    {avatarScopeKey && <TeamMessagingMount key={avatarScopeKey} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
     <ArkmeHomeTour auth={auth}
       blocked={ui.mode === 'login' || ui.webLoginDialogOpen === true}
       routeActive={homeTourRouteActive}
@@ -231,7 +235,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || harnessMode || ui.mode === 'codex')
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || ui.mode === 'team' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
   const sidebarResizeRef = useRef<{
@@ -345,6 +349,10 @@ export function ArkmePersistentSidebar({
     :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
     :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
       transition: none !important;
+    }
+    @media (max-width: 760px) {
+      :root:has([data-arkme-owned="team-conversation-layer"]) { --arkme-persistent-sidebar-width: 184px !important; }
+      :root:has([data-arkme-owned="team-conversation-layer"]) [data-side="sidebar"] { left: 184px !important; }
     }
     [data-arkme-owned="persistent-sidebar-resize-handle"]::after {
       content: "";
@@ -520,7 +528,8 @@ export function ArkmePersistentWorkspace({
   const webLockedHarness = !startupAuthGateEnabled() && authState.auth?.status !== 'authenticated'
   const harnessVisible = ui.mode === 'harness' || webLockedHarness
   const codexVisible = ui.mode === 'codex' && ui.calendarOpen !== true && !webLockedHarness
-  const conversationHidden = harnessVisible || contactsMode || ui.mode === 'codex' && ui.calendarOpen !== true
+  const teamVisible = ui.mode === 'team' && contactsAccountKey !== undefined && ui.teamIntent !== undefined
+  const conversationHidden = harnessVisible || contactsMode || teamVisible || ui.mode === 'codex' && ui.calendarOpen !== true
   const conversationActive = !conversationHidden && ui.calendarOpen !== true
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
@@ -569,6 +578,9 @@ export function ArkmePersistentWorkspace({
           active={conversationActive}
         />
       </div>}
+    {teamVisible && <div data-arkme-owned="team-conversation-layer" style={{ ...styles.conversationLayer, zIndex: 1 }}>
+      <TeamMessagingPanel key={contactsAccountKey} accountKey={contactsAccountKey!} intent={ui.teamIntent!} />
+    </div>}
     {contactsMode && <div className="arkme-directory-detail-pane" data-arkme-contacts-workspace style={styles.contactsLayer}>
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>{tr("返回联系人目录")}</button>}
       <DirectoryDetailPane

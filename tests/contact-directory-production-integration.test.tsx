@@ -77,9 +77,9 @@ beforeEach(() => {
     if (operation === 'auth.config') return { environment: 'test' }
     if (operation === 'calls.outgoing.intent.claim') return null
     if (operation === 'sources.list') return { items: [], hasMore: false }
-    if (operation === 'directory.list' && params?.section === 'groups') return { section: 'groups', items: [{ kind: 'group', sourceRef: 'group-1', displayName: '测试群' }], total: 1, hasMore: false }
-    if (operation === 'directory.list' && params?.section === 'contacts') return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '', letter: 'X' }], total: 1, hasMore: false }
-    if (operation === 'directory.list' && params?.section !== undefined) return { section: params.section, items: [], total: 0, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section === 'groups') return { section: 'groups', items: [{ kind: 'group', sourceRef: 'group-1', displayName: '测试群' }], total: 1, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section === 'contacts') return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '', letter: 'X' }], total: 1, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section !== undefined) return { section: params.section, items: [], total: 0, hasMore: false }
     if (operation === 'directory.contact.profile') return {
       contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '',
     }
@@ -197,7 +197,7 @@ describe('production sibling Contacts tab', () => {
     expect(button(renderer, '选择联系人')).toBeDefined()
     const fullDirectoryLoads = () => testState.callArkme.mock.calls.filter(([operation, params]) => {
       const request = params as { section?: string; countOnly?: boolean } | undefined
-      return operation === 'directory.list' && request?.countOnly !== true
+      return (operation === 'directory.list' || operation === 'team.app.directory') && request?.countOnly !== true
     }).map(([, params]) => (params as { section: string }).section)
     expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
 
@@ -287,7 +287,7 @@ it('adds through the real Contacts dialog, refreshes matching counts and keeps a
       added = true
       return { state: 'ready', source: { sourceRef: 'new-chat', kind: 'private_chat', displayName: '选择新联系人' } }
     }
-    if (added && operation === 'directory.list' && params.section === 'contacts') {
+    if (added && (operation === 'directory.list' || operation === 'team.app.directory') && params.section === 'contacts') {
       if (params.cursor === 'next-page') return await new Promise(resolve => { finishRefresh = resolve })
       return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-2', displayName: '选择新联系人', nickname: '选择新联系人', remark: '', letter: 'X' }], total: 2, hasMore: true, nextCursor: 'next-page' }
     }
@@ -392,7 +392,7 @@ it('accepts a later server directory refresh after a local remark save on a stab
   let externalUpdate = false
   testState.callArkme.mockImplementation(async (operation, params) => {
     if (operation === 'directory.contact.remark.update') return { contactRef: 'contact-1', nickname: '选择联系人', displayName: params.remark, remark: params.remark }
-    if (externalUpdate && operation === 'directory.list' && params.section === 'contacts') return {
+    if (externalUpdate && (operation === 'directory.list' || operation === 'team.app.directory') && params.section === 'contacts') return {
       section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '别端新备注', nickname: '新昵称', remark: '别端新备注', letter: 'B' }], total: 1, hasMore: false,
     }
     return original(operation, params)

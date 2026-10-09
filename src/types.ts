@@ -539,7 +539,9 @@ export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
   textFormat?: 'plain' | 'markdown'
   preview: string
   topicTitle?: string
-  sourceKind: 'self' | 'topic' | 'chat' | 'unknown'
+  sourceKind: 'self' | 'topic' | 'chat' | 'team' | 'unknown'
+  /** Team origin identity; optional label/navigation is resolved by Team under current authority. */
+  teamConversationUid?: string
   creationSource: number
   templateKind: number
   displayKind: number
@@ -3698,6 +3700,9 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'team-invalidated'
+  revision: number
+} | {
   type: 'directory-update'
   revision: number
   page: ArkmeSourceList

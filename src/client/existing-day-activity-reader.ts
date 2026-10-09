@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import type { ArkmeCalendarRecordLocation, ArkmeCalendarDayRecordPage, ArkmeCalendarRecordItem, ArkmeRecordingDay, ArkmeRecordingCoverageInterval,
   ArkmeRecordingWorkbenchItem, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -98,7 +99,7 @@ export function createExistingDayActivityReader(accountScope: string, read: type
         ...(available && item.locationRef ? { canLoadLocation: true } : {}),
         access: available ? 'available' : 'restricted', title: available ? kind === 'dsh' ? 'DSH · 我提交的输入'
           : kind === 'group_chat' ? `${item.source!.displayName} · 我参与的讨论` : item.title || '我的记录' : '',
-        preview: available ? (item.preview || item.textContent).slice(0, 240) : '',
+        preview: available ? arkmeEmojiTokenSafePrefix((item.preview || item.textContent), 240, 'codeUnits') : '',
         sourceName: available ? item.source?.displayName || item.topicTitle || '我发送的内容' : '', recordCount: 1, participation: 'self',
         ...(kind === 'private_chat' || kind === 'group_chat' ? { statusLabel: '仅我发送的记录' }
           : kind === 'dsh' ? { statusLabel: '已同步输入，不代表完整工作过程' } : {}) }
@@ -119,7 +120,7 @@ export function createExistingDayActivityReader(accountScope: string, read: type
       const items = owned.filter(item => item.startAtMillis < interval.endAtMillis && item.endAtMillis > interval.startAtMillis)
       session.transcripts.set(id, items)
       const entry: DayActivityEntry = { id, kind: 'recording', ...interval, access: 'available', title: '录音时段',
-        preview: items.length ? items.slice(0, 2).map(item => item.text).join(' ').slice(0, 240)
+        preview: items.length ? arkmeEmojiTokenSafePrefix(items.slice(0, 2).map(item => item.text).join(' '), 240, 'codeUnits')
           : recording.transcript.state === 'error' || recording.transcript.state === 'failed' ? '转写暂不可用，音频覆盖仍可查看' : '已记录声音，暂无已识别转写',
         sourceName: interval.sourceLabel, recordCount: items.length, participation: 'self' }
       session.entries.set(id, entry); session.pending.push(entry)

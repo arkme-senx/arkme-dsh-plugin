@@ -20,6 +20,43 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it('reads a complete personal Team record without a Home or conversation dependency', async () => {
+    const session = { userId: 42, refreshToken: 'test-session' }
+    const core = { record_uid: 'team-record', owner_user_id: 42, origin_kind: 5, status: 1,
+      content_access_state: 1, text_content: '正文'.repeat(2000), content_payload: { media_refs: [{ file_asset_uid: 'image' }] } }
+    const post = vi.fn(async () => ({ record_core: core }))
+    const runtime = { requireSession: async () => session, accountScopedSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const displays = [{ file_asset_uid: 'image' }]
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map([['team-record', displays]]), unavailableRecordUids: new Set() })),
+      richContentBlocks: vi.fn(() => []), recordMediaUnavailable: () => false } as unknown as MediaService
+    const service = new RecordService(runtime, media, {} as never)
+    const item = await service.personalRecordDetail('team-record')
+    expect(item.textContent).toBe(core.text_content)
+    expect(item.isMe).toBe(true)
+    expect(media.richContentBlocks).toHaveBeenCalledWith({ record_core: core }, 42, displays)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/records/detail')
+  })
+  it.each([
+    { owner_user_id: 43 }, { record_uid: 'another' }, { status: 2 },
+    { content_access_state: 2 }, { content_access_state: 0 },
+  ])('does not render inaccessible personal content: %j', async change => {
+    const session = { userId: 42, refreshToken: 'test-session' }
+    const runtime = { requireSession: async () => session,
+      authenticatedPost: async () => ({ record_core: { record_uid: 'team-record', owner_user_id: 42,
+        status: 1, content_access_state: 1, ...change } }) } as unknown as ServiceRuntime
+    const hydrateRecordMediaPage = vi.fn()
+    const service = new RecordService(runtime, { hydrateRecordMediaPage } as unknown as MediaService, {} as never)
+    await expect(service.personalRecordDetail('team-record')).rejects.toMatchObject({ code: 'record-detail-unavailable' })
+    expect(hydrateRecordMediaPage).not.toHaveBeenCalled()
+  })
+  it('discards a personal detail response when the authenticated account changes', async () => {
+    const runtime = { requireSession: async () => ({ userId: 42, refreshToken: 'a' }),
+      accountScopedSession: async () => ({ userId: 43, refreshToken: 'b' }),
+      authenticatedPost: async () => ({ record_core: { record_uid: 'r', owner_user_id: 42, status: 1, content_access_state: 1 } }) } as unknown as ServiceRuntime
+    const media = { hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() }) } as unknown as MediaService
+    await expect(new RecordService(runtime, media, {} as never).personalRecordDetail('r')).rejects.toMatchObject({ code: 'record-account-changed' })
+  })
   it.each(['file_asset://avatar-at-creation', '42_old_avatar.jpg', 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/42_old_avatar.jpg'])('preserves the historical avatar %s through both self projections', avatar => {
     const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
     const service = new RecordService({} as ServiceRuntime, media, {} as never)
@@ -601,6 +638,7 @@ describe('RecordService', () => {
     { sourceKind: 'topic' as const, ownerRef: 'topic-1', originKind: 2, topicUid: 'topic-1' },
     { sourceKind: 'private_chat' as const, ownerRef: 'private-1', originKind: 3 },
     { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 1 },
+    { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 5 },
   ])('accepts a record from the exact $sourceKind family', async ({ sourceKind, ownerRef, originKind, topicUid }) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-source-family-valid-'))
     const stateStore = new ArkmeStateStore(root)
@@ -612,6 +650,7 @@ describe('RecordService', () => {
           record_core: {
             record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42,
             origin_kind: originKind,
+            ...(originKind === 5 ? {source_kind:1,origin_container_ref:'team-conversation'} : {}),
             ...(sourceKind === 'private_chat' ? { origin_container_ref: ownerRef } : {}),
             template_kind: 1, title: '', text_content: '原正文', status: 1,
             version: 7, content_access_state: 1, send_at: 123_000,

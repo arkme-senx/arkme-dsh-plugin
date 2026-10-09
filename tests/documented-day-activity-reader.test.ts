@@ -179,3 +179,19 @@ describe('documented multi-source day activity reader', () => {
     expect(page.items.map(item => item.id).sort()).toEqual(['chat:other', 'chat:same'])
   })
 })
+
+for (const source of ['record', 'chat'] as const) {
+  it(`keeps emoji and grapheme boundaries when truncating ${source} day previews`, async () => {
+    const prefix = 'x'.repeat(230)
+    const original = `${prefix}[im_emoji:yummy_face] 👨‍👩‍👧‍👦 尾部`
+    const read = vi.fn<typeof callArkme>(async (_operation, params: any) => ({data: {items: params.source !== source ? [] : [source === 'record'
+      ? {record_core: {record_uid: 'emoji', text_content: original}, occurred_at: start}
+      : {entry_id:'emoji', occurred_at:start, source_kind:'private_chat', relation_flags:['sent'], text:original}], has_more:false}}))
+    const reader = createDocumentedDayActivityReader(query.accountScope, read)
+    const page = await reader.loadDay(query, options())
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]!.preview).toBe(prefix)
+    const detail = await reader.loadDetail(query, page.items[0]!.id, {...options(), snapshotId:page.snapshotId})
+    expect(detail.items[0]!.text).toBe(original)
+  })
+}
