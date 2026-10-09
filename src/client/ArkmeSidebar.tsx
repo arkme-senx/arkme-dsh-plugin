@@ -4352,10 +4352,9 @@ export function ArkmeSurface({
     if (sourceKey !== undefined && cachedTimeline !== undefined) {
       pendingViewportRestoreRef.current = {
         sourceKey,
-        // Ordinary chat entry opens at the tail; explicit search/calendar targets
-        // keep their navigation owner and remembered history position.
-        viewport: cachedTimeline.unified && arkmeUi.getSnapshot().conversationTarget === undefined
-          ? undefined : conversationCacheRef.current.getViewport(sourceKey),
+        // Reopening a conversation restores reading; only explicit navigation
+        // or a first entry without a saved viewport chooses a new position.
+        viewport: conversationCacheRef.current.getViewport(sourceKey),
       }
     } else {
       pendingViewportRestoreRef.current = undefined
@@ -4461,16 +4460,6 @@ export function ArkmeSurface({
     const conversationChanged = timelineForegroundRef.current.key !== conversationKey
     const foregroundChanged = conversationChanged || timelineForegroundRef.current.revision !== foregroundReadRevision
     timelineForegroundRef.current = { key: conversationKey, revision: foregroundReadRevision }
-    if (sourceIsChat && cachedTimeline?.unified && conversationChanged
-      && arkmeUi.getSnapshot().conversationTarget === undefined
-      && (cachedTimeline.mode === 'around' || cachedTimeline.newerHasMore)) {
-      // Reopening a historical window from the directory asks for the current
-      // tail, not a refresh of the previously located historical range.
-      void loadTimeline(undefined, false, 40, 'return-to-latest').catch(caught => {
-        if (generation === timelineGenerationRef.current) setError(errorMessage(caught))
-      })
-      return
-    }
     if (cachedTimeline?.mode === 'around') {
       // An explicit unread directory click requests current messages; a reaction locate keeps history.
       if (sourceIsChat && arkmeUi.getSnapshot().conversationTarget === undefined

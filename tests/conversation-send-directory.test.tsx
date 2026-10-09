@@ -1767,9 +1767,10 @@ describe('conversation send directory projection', () => {
     expect(composerArticleStore.get(articleKey)).toBeUndefined()
   })
 
-  it.each(['cold', 'cached-latest', 'cached-around'] as const)('opens the latest unified messages on ordinary conversation entry: %s', async mode => {
+  it.each(['cold', 'cached-latest', 'cached-around', 'cached-bottom'] as const)('preserves the unified conversation entry intent: %s', async mode => {
     const stored = vi.spyOn(ArkmeConversationMemoryCache.prototype, 'storeTimeline')
     const base = mocks.callArkme.getMockImplementation()!
+    const refresh = deferred<void>()
     let fresh = false
     const item = (uid: string): ArkmeTimelineItem => ({ itemUid: uid, sequence: fresh ? 9 : 8, senderName: '同事',
       isMe: false, sendAtMillis: fresh ? 9 : 8, textContent: uid, status: 1 })
@@ -1779,31 +1780,40 @@ describe('conversation send directory projection', () => {
       if (operation === 'source.timeline') {
         if (params?.cursor?.unified?.cacheOnly) throw new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'empty', retryable: false })
         const selected = params?.sourceRef === other.sourceRef ? other : target
-        // The new DOM is taller than the cached/empty view used while loading.
+        if (fresh) await refresh.promise
+        // Background content updates must respect the position restored on entry.
         body.scrollHeight = fresh ? 2400 : 2000
-        return unifiedFixture(selected, [item(fresh ? 'latest-entry' : 'old-entry')])
+        const page = unifiedFixture(selected, [item(fresh ? 'refreshed-entry' : 'old-entry')])
+        if (fresh && mode === 'cached-around') Object.assign(page.unified, { newerHasMore: true, newerCursor: 'historical-tail' })
+        return page
       }
       return base(operation, params, signal)
     })
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
-    if (mode !== 'cold') {
-      body.scrollTop = 200
-      act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
-      await act(async () => { arkmeUi.selectSource(other) })
-      if (mode === 'cached-around') {
-        const cache = stored.mock.contexts[0] as ArkmeConversationMemoryCache
-        const cached = cache.getTimeline(target.sourceKey!)!
-        cache.storeTimeline(target.sourceKey!, { ...cached, mode: 'around', newerHasMore: true,
-          unified: { ...cached.unified!, newerHasMore: true, newerCursor: 'historical-tail' } })
-      }
-      fresh = true
-      await act(async () => { arkmeUi.selectSource(target) })
-      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'latest-entry' })).toHaveLength(1)
-      if (mode === 'cached-around') expect(mocks.callArkme.mock.calls.filter(([op, params]) => op === 'source.timeline' && params?.sourceRef === target.sourceRef).at(-1)?.[1]?.cursor).toBeUndefined()
-    }
     expect(body.scrollTop).toBe(body.scrollHeight)
+    if (mode === 'cold') return
+    body.scrollTop = mode === 'cached-bottom' ? body.scrollHeight - body.clientHeight : 200
+    act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
+    await act(async () => { arkmeUi.selectSource(other) })
+    const cache = stored.mock.contexts[0] as ArkmeConversationMemoryCache
+    if (mode === 'cached-around') {
+      const cached = cache.getTimeline(target.sourceKey!)!
+      cache.storeTimeline(target.sourceKey!, { ...cached, mode: 'around', newerHasMore: true,
+        unified: { ...cached.unified!, newerHasMore: true, newerCursor: 'historical-tail' } })
+    }
+    fresh = true
+    const beforeReturn = mocks.callArkme.mock.calls.length
+    await act(async () => { arkmeUi.selectSource(target) })
+    expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight : 200)
+    await act(async () => { refresh.resolve() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'refreshed-entry' })).toHaveLength(1)
+    expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight : 200)
+    const reads = mocks.callArkme.mock.calls.slice(beforeReturn).filter(([op, params]) => op === 'source.timeline' && params?.sourceRef === target.sourceRef)
+    expect(reads).toHaveLength(1)
+    expect(reads[0]?.[1]?.cursor?.unified).toEqual(expect.objectContaining({ mode: 'refresh' }))
+    expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
   })
 
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {
