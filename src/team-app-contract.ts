@@ -12,6 +12,8 @@ export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: 
 export interface TeamChannel {
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
   link: string; enabled: boolean; revision: number; canManage: boolean
+  /** Older Host responses and retained snapshots use canManage when absent. */
+  canPause?: boolean
 }
 export interface TeamConversation {
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide

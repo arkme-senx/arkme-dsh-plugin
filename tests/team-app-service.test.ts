@@ -119,6 +119,22 @@ describe('Team App owner adapter', () => {
     expect(f.requests.every(r => r.headers.get('authorization') === 'Bearer app-token')).toBe(true)
     expect(f.fetchImpl.mock.calls.every(args => String(args[0]).startsWith('https://team.test/'))).toBe(true)
   })
+  it.each([
+    { canManage: true, canPause: false, expected: false },
+    { canManage: true, canPause: true, expected: true },
+    { canManage: false, canPause: false, expected: false },
+    { canManage: true, canPause: undefined, expected: true },
+    { canManage: false, canPause: undefined, expected: false },
+  ])('maps pause capability independently and supports legacy responses: $canManage/$canPause', async ({ canManage, canPause, expected }) => {
+    const raw = { ...channel, can_manage: canManage, ...(canPause === undefined ? {} : { can_pause: canPause }) }
+    const f = fixture(path => path.endsWith('/open') ? { channel: raw, conversation: { ...conversation, channel: raw } } : raw)
+    const official = await f.service.execute('team.app.official', {}) as TeamChannel
+    const settings = await f.service.execute('team.app.channel', { teamRef: official.teamRef }) as TeamChannel
+    const opened = await open(f)
+    for (const value of [official, settings, opened.channel, opened.conversation!.channel]) {
+      expect(value).toMatchObject({ canManage, canPause: expected })
+    }
+  })
   it('redacts internal owner/actor/asset IDs and signed provider URLs from external messages', async () => {
     const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { conversation, messages: [message], has_more: false, before_seq: 2 })
     const opened = await open(f)

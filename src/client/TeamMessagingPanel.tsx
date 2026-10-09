@@ -674,7 +674,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
       <div className="team-channel-state">
         <span className="team-channel-icon" aria-hidden><LinkSimple size={22} /></span>
         <div><h2>{tr('接收外部消息')}</h2></div>
-        {channel.canManage && <button type="button" role="switch" className="team-channel-switch" aria-checked={channel.enabled}
+        {(channel.canPause ?? channel.canManage) && <button type="button" role="switch" className="team-channel-switch" aria-checked={channel.enabled}
           aria-label={tr('接收外部消息')} disabled={busy}
           onClick={() => {
             if (!channel.publicRef) setConfirm({ label: tr('建立通道后，现有成员均可查看全部团队对话。请核对团队成员名单；此后新成员须经所有者审批。确认建立？'), run: () => configure(true) })
