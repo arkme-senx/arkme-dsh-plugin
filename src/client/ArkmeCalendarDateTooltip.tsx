@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom'
 import { arkmeTheme } from './arkme-theme.js'
 
 /** Native title hints have a browser-controlled delay; date details must appear immediately. */
-export function ArkmeCalendarDateTooltip({ anchor, id, text, onClose }: {
+export function ArkmeCalendarDateTooltip({ anchor, id, text, onClose, portalRoot }: {
   anchor: HTMLButtonElement
   id: string
   text: string
   onClose(): void
+  /** Keep a hint inside its owning modal's top layer, when opened there. */
+  portalRoot?: HTMLElement
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ left: 0, top: 0 })
@@ -45,5 +47,5 @@ export function ArkmeCalendarDateTooltip({ anchor, id, text, onClose }: {
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
     background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow,
     fontSize: 12, lineHeight: '18px', fontWeight: 400, overflowWrap: 'anywhere',
-  }}>{text}</div>, owner.body)
+  }}>{text}</div>, portalRoot ?? owner.body)
 }
