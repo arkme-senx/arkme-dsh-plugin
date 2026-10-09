@@ -43,7 +43,7 @@ macOS 同一工作树、Node/pnpm 环境、全新临时 SQLite，256 页 × 40 �
 
 ## 性能审查阶段验证（后续功能回归见统一时间线文档）
 
-- 全量入口 `NODE_OPTIONS=--no-experimental-webstorage pnpm test --maxWorkers=2`：873 个文件通过、11 个既有跳过；10,257 项通过、15 项既有跳过，耗时约 258 秒。日志 `/tmp/arkme-timeline-audit-full.log`。
+- 全量入口 `NODE_OPTIONS=--no-experimental-webstorage pnpm test --maxWorkers=2`：873 个文件通过、11 个既有跳过；10,257 项通过、15 项既有跳过，耗时约 258 秒。
 - 定向链路回归 7 文件 393 项通过；已读生命周期独立复跑 6 项通过。
 - Typecheck、完整构建、不可变 tgz 打包通过；最终验收包 `plugin-performance-audit.tgz` SHA-256 为 `4f11a8405cb2c9b9cdebbd71ab925b67490a673bb28a936d15ad40cc60cf2e01`。Consumer 与 Profile 的 Browser bundle SHA-256 均为 `86a181ffd2935f4002718dc8cf5dcf64a31a7c9b89d1643c9b373dbc2d084888`，临时诊断代码不在制品内。
 - 最终包在已登录的独立客户端打开原私聊场景后，用户继续切换会话。61 秒、13 次进程树采样中始终为同一组 7 个进程，未新增 Harness；进程树 RSS 由约 1,386 MiB 到 1,210 MiB，随后一次读取约 827 MiB。处于启动/用户操作过程，不将 CPU 波动或这段短样本当作长期无泄漏证明。保留用户当前会话，不再抢占导航。
