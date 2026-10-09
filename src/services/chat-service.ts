@@ -1,3 +1,4 @@
+import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
 import { encodeMentionMetadata, type ResolvedMentions } from './mention-metadata-codec.js'
@@ -1217,6 +1218,24 @@ interface MutableJoinEventGroup {
   inviteesByUserId: Map<number, string>
 }
 
+function memberJoinSource(extra: Record<string, unknown>) {
+  const nested = ['inviter', 'invite_source', 'join_source']
+    .map(key => parsedObject(extra[key])).find(value => Object.keys(value).length > 0) ?? {}
+  const canonicalSource = stringValue(extra.join_source)
+  const canonicalActor = ['direct_add', 'invite_accept'].includes(canonicalSource) ? integerLikeValue(extra.join_actor_user_id) : 0
+  const userId = canonicalActor || firstInteger(extra, [
+    'inviter_user_id', 'inviter_id', 'invite_from_user_id', 'creator_user_id', 'creator',
+  ]) || firstInteger(nested, ['user_id', 'owner_id', 'sid', 'id', 'creator_user_id'])
+  const displayName = firstJoinDisplayName(extra, [
+    'inviter_display_name', 'inviter_name', 'invite_from_display_name', 'creator_display_name', 'creator_name',
+  ]) || firstJoinDisplayName(nested, ['display_name', 'nick_name', 'nickname', 'name'])
+  const sourceType = canonicalSource || firstJoinDisplayName(extra, ['join_source_type', 'join_action', 'source_type', 'action']).toLowerCase()
+  const action: ArkmeConversationMemberJoinEvent['action'] = new Set([
+    'direct_add', 'add_member', 'add_members', 'manual_add', 'added_by_member',
+  ]).has(sourceType) ? 'direct_add' : 'invite'
+  return { userId, displayName, action }
+}
+
 /** Converts allowlisted member join metadata into a Browser-safe projection. */
 export async function projectArkmeConversationMemberJoinEvents(
   rawItems: readonly Record<string, unknown>[],
@@ -1233,15 +1252,9 @@ export async function projectArkmeConversationMemberJoinEvents(
     if (inviteeUserId <= 0) continue
     const extra = parsedObject(item.extra)
     if (Object.keys(extra).length === 0) continue
-    const nestedInviter = ['inviter', 'invite_source', 'join_source']
-      .map(key => parsedObject(extra[key])).find(value => Object.keys(value).length > 0) ?? {}
-    const inviterUserId = firstInteger(extra, [
-      'inviter_user_id', 'inviter_id', 'invite_from_user_id', 'creator_user_id', 'creator',
-    ]) || firstInteger(nestedInviter, ['user_id', 'owner_id', 'sid', 'id', 'creator_user_id'])
-    const inviterDisplayName = firstJoinDisplayName(extra, [
-      'inviter_display_name', 'inviter_name', 'invite_from_display_name', 'creator_display_name', 'creator_name',
-    ]) || firstJoinDisplayName(nestedInviter, ['display_name', 'nick_name', 'nickname', 'name'])
-      || rawMemberDisplayName(membersByUserId.get(inviterUserId) ?? {})
+    const joinSource = memberJoinSource(extra)
+    const inviterUserId = joinSource.userId
+    const inviterDisplayName = joinSource.displayName || rawMemberDisplayName(membersByUserId.get(inviterUserId) ?? {})
     if (inviterUserId <= 0 && inviterDisplayName === '') continue
     const occurredAtMillis = normalizedJoinTimestamp(
       extra.join_batch_at ?? extra.join_tip_at ?? extra.join_event_at ?? item.join_at ?? item.joinAt,
@@ -1251,12 +1264,7 @@ export async function projectArkmeConversationMemberJoinEvents(
       'invitee_display_name', 'joined_display_name', 'join_display_name',
     ]) || rawMemberDisplayName(item)
     if (inviteeDisplayName === '') continue
-    const sourceType = firstJoinDisplayName(extra, [
-      'join_source_type', 'join_action', 'source_type', 'action',
-    ]).toLowerCase()
-    const action: ArkmeConversationMemberJoinEvent['action'] = new Set([
-      'direct_add', 'add_member', 'add_members', 'manual_add', 'added_by_member',
-    ]).has(sourceType) ? 'direct_add' : 'invite'
+    const action = joinSource.action
     const inviterKey = inviterUserId > 0 ? `id:${String(inviterUserId)}` : `unknown-inviter:${String(inviteeUserId)}`
     const groupKey = `${String(occurredAtMillis)}|${action}|${inviterKey}`
     const group = groups.get(groupKey) ?? {
@@ -6237,7 +6245,54 @@ export class ChatService {
     return members
   }
 
-  private async projectChatTimelineItems(
+  async projectUnifiedMemberJoins(
+    payloads: Record<string, unknown>[], source: ArkmeSourceRefPayload, session: ArkmeSessionCredentials, signal?: AbortSignal,
+  ): Promise<(ArkmeTimelineMemberJoinEvent | undefined)[]> {
+    signal?.throwIfAborted()
+    // Only the current page is hydrated. ProfileService owns caching and 50-user batches.
+    const rows = payloads.map(payload => {
+      const userId = integerLikeValue(payload.user_id)
+      const extra = parsedObject(payload.extra_json)
+      const displayName = firstUsableChatMemberName([
+        payload.group_display_name, payload.display_name_snapshot,
+        extra.invitee_display_name, extra.joined_display_name, extra.join_display_name,
+      ], userId)
+      return { payload, userId, displayName, inviter: memberJoinSource(extra) }
+    })
+    const names = new Map(rows.filter(row => row.displayName && row.userId > 0).map(row => [row.userId, row.displayName]))
+    for (const row of rows) {
+      if (row.inviter.userId > 0 && row.inviter.displayName && !names.has(row.inviter.userId)) names.set(row.inviter.userId, row.inviter.displayName)
+    }
+    const missingIds = [...new Set(rows.flatMap(row => [row.userId, row.inviter.userId]).filter(id => id > 0 && !names.has(id)))]
+    if (missingIds.length) {
+      const profiles = await this.profile.publicProfileSummariesByUserIds(missingIds, session, signal).catch(() => new Map())
+      for (const [id, profile] of profiles) {
+        const name = firstUsableChatMemberName([profile.displayName], id)
+        if (name) names.set(id, name)
+      }
+    }
+    signal?.throwIfAborted()
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    const results: (ArkmeTimelineMemberJoinEvent | undefined)[] = []
+    for (const row of rows) {
+      signal?.throwIfAborted()
+      if (row.userId <= 0) { results.push(undefined); continue }
+      const occurredAtMillis = normalizedJoinTimestamp(row.payload.join_at)
+      const eventId = `arkme-chat-join-v1.${createHmac('sha256', signingKey).update(`${session.userId}|${source.ownerRef}|${row.userId}|${occurredAtMillis}`).digest('base64url')}`
+      const invitees = [{ memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, row.userId),
+        displayName: names.get(row.userId) || '群成员', isSelf: row.userId === session.userId }]
+      const base = { eventId, occurredAtMillis, invitees }
+      const inviterId = row.inviter.userId
+      results.push(inviterId > 0 || row.inviter.displayName ? {
+        ...base, action: row.inviter.action,
+        inviter: { ...(inviterId > 0 ? { memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, inviterId) } : {}),
+          displayName: names.get(inviterId) || row.inviter.displayName || '群成员', isSelf: inviterId === session.userId },
+      } : { ...base, action: 'join' })
+    }
+    return results
+  }
+
+  async projectChatTimelineItems(
     rawItems: unknown[],
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,

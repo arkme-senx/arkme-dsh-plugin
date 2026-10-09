@@ -1404,6 +1404,7 @@ export interface ArkmeProviderCapabilities {
     remoteRecordSearch?: true
     contactDirectoryReads?: true
     speakerPresence?: true
+    unifiedChatTimeline?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -1462,6 +1463,7 @@ export interface ArkmeProviderCapabilities {
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
+    worldRecordRead?: true
     /** Optional additive capability for reading and writing World comments and replies. */
     worldInteractions?: true
     /** Optional additive capability for publishing text and file-asset World records. */
@@ -1791,6 +1793,7 @@ export interface ArkmeTopicDissolveTask extends ArkmeTopicDissolveProgress {
 }
 
 export interface ArkmeTimelineCursor {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineQuery
   sendAtMillis?: number
   itemUid?: string
   beforeSequence?: number
@@ -1890,6 +1893,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  timelineEventId?: string
   /** Local display role for a self-authored record; isMe remains the real author. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Original media refs were not fully projected, even when rich-media rendering is disabled. */
@@ -2538,6 +2542,7 @@ export interface ArkmeMessageCopyLinkResolveResult {
 }
 
 export interface ArkmeTimelinePage {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
   aiPolishNotices?: ArkmeGroupAiPolishNotice[]
@@ -2548,6 +2553,7 @@ export interface ArkmeTimelinePage {
 
 /** A continuous chat timeline window centered on an exact record. */
 export interface ArkmeTimelineAroundPage {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
   anchorItemUid: string
@@ -3947,6 +3953,7 @@ export type ArkmePluginOperation =
   | 'user.arkme-id.set'
   | 'image.read'
   | 'images.list'
+  | 'world.record.read'
   | 'world.feed'
   | 'world.mine'
   | 'world.user'

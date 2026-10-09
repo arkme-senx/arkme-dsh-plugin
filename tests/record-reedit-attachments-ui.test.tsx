@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), renderedItems: [] as ArkmeTimelineItem[] }))
-vi.mock('../src/client/api.js', () => ({
-  callArkme: mocks.callArkme,
+vi.mock('../src/client/api.js', async () => { const { emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
+  callArkme: emptyTimelineCacheFixture(mocks.callArkme),
   ArkmeClientError: class extends Error {
     constructor(readonly body: { code: string; message: string; retryable: boolean }) { super(body.message) }
   },
-}))
+}) })
 vi.mock('react-dom', () => ({ createPortal: (children: unknown) => children }))
 vi.mock('../src/client/ArkmeRichContent.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/client/ArkmeRichContent.js')>()

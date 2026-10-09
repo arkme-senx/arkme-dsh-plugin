@@ -1,3 +1,6 @@
+import { ArkmeClientError } from './api.js'
+import { MAX_ACTIVE_TIMELINE_EVENTS, MAX_ACTIVE_TIMELINE_TOKENS } from './unified-timeline-window.js'
+import { mergeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeTimelinePage } from '../types.js'
 import { conversationTimelineReadPort, type ConversationTimelineReadPort } from './conversation-timeline-read-port.js'
@@ -36,13 +39,20 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
     controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
     try {
       const cursor = intent === 'older' ? previous?.nextCursor : undefined
-      const refreshWindow = intent === 'refresh' && previous !== undefined && previous.items.length > 0
-      const result = refreshWindow
-        ? await readConversationTimelineWindow(previous,
+      const refreshWindow = intent === 'refresh' && previous !== undefined && (previous.unified !== undefined || previous.items.length > 0)
+      const read = () => refreshWindow
+        ? readConversationTimelineWindow(previous,
           next => port.readPage(sourceRef, next, controller.signal), controller.signal)
-        : await port.readPage(sourceRef, cursor, controller.signal)
+        : port.readPage(sourceRef, cursor, controller.signal)
+      let rebuilt = false
+      let result: ArkmeTimelinePage
+      try { result = await read() } catch (caught) {
+        if (!(caught instanceof ArkmeClientError) || caught.body.code !== 'chat-timeline-window-invalid') throw caught
+        result = await port.readPage(sourceRef, undefined, controller.signal)
+        rebuilt = true
+      }
       if (controller.signal.aborted || request.current !== controller) return
-      if (!refreshWindow && result.hasMore && (result.nextCursor?.beforeSequence === undefined
+      if (!result.unified && !refreshWindow && result.hasMore && (result.nextCursor?.beforeSequence === undefined
         || result.nextCursor.beforeSequence <= 0
         || cursor?.beforeSequence !== undefined && result.nextCursor.beforeSequence >= cursor.beforeSequence)) {
         throw new Error('消息分页暂不可继续，请重试')
@@ -52,8 +62,13 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
       const next: ArkmeTimelinePage = {
         ...result,
         // Refresh replaces content in the loaded window; the older-page boundary is unchanged.
-        ...(refreshWindow ? { hasMore: previous.hasMore, nextCursor: previous.nextCursor } : {}),
+        ...(refreshWindow && !rebuilt ? { hasMore: previous.hasMore, nextCursor: previous.nextCursor } : {}),
         items: [...items.values()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0) || a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid)),
+      }
+      if (result.unified) {
+        next.unified = intent === 'older' && !rebuilt ? mergeUnifiedTimelineWindow(previous?.unified, result.unified, 'older') : result.unified
+        if (next.unified.events.length > MAX_ACTIVE_TIMELINE_EVENTS || next.unified.windowTokens.length > MAX_ACTIVE_TIMELINE_TOKENS) throw new Error('已加载历史较多，请重新打开预览')
+        next.items = next.unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
       }
       currentPage.current = next
       setPage(next)

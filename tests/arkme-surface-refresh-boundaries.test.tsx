@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ callArkme: vi.fn(), worldRenders: 0 }))
 vi.mock('react-dom', () => ({ createPortal: (node: unknown) => node }))
-vi.mock('../src/client/api.js', () => ({
-  callArkme: state.callArkme,
+vi.mock('../src/client/api.js', async () => { const { emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
+  callArkme: emptyTimelineCacheFixture(state.callArkme),
   ArkmeClientError: class ArkmeClientError extends Error {},
-}))
+}) })
 vi.mock('../src/client/ArkmeWorldSurface.js', () => ({
   ArkmeWorldSurface: () => { state.worldRenders += 1; return <div>世界</div> },
 }))

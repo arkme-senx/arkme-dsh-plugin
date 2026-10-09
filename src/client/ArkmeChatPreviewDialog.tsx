@@ -1,3 +1,4 @@
+import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -50,6 +51,9 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
     viewport.current = arkmeConversationViewport(element)
   }, [timeline.page])
 
+  const rows = timeline.page?.unified?.events ?? timeline.page?.items.map(item => ({
+    kind: 'message' as const, eventId: item.itemUid, occurredAtMillis: item.sendAtMillis, item,
+  })) ?? []
   if (typeof document === 'undefined') return null
   return createPortal(<div data-arkme-chat-preview-backdrop style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.3)' }}
     onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -78,9 +82,27 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
         onScroll={() => { if (body.current !== null) viewport.current = arkmeConversationViewport(body.current) }}>
         {timeline.page?.hasMore && <div style={status}><button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.loadMore() }}>{tr("加载更早消息")}</button></div>}
         {timeline.loading && timeline.page === undefined && <div role="status" style={status}>{tr("正在加载消息…")}</div>}
-        {!timeline.loading && timeline.error === '' && timeline.page?.items.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
-        {timeline.page?.items.map((item, index, items) => <Fragment key={item.itemUid}>
-          {source.kind === 'group_chat' && (index === 0 || Math.abs(item.sendAtMillis - items[index - 1]!.sendAtMillis) > 30 * 60 * 1000) && <div data-arkme-preview-time-marker style={status}>
+        {!timeline.loading && timeline.error === '' && timeline.page !== undefined && rows.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
+        {timeline.page?.unified && !timeline.page.unified.complete && <div role="status" style={status}>{tr('部分时间线内容暂未加载')}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr('重试')}</button></div>}
+        {rows.map((event, index) => {
+          if (event.kind === 'world-public') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><ArkmeTimelinePublicNote recordRef={event.recordRef} authorName={event.authorName} isGroup={source?.kind === 'group_chat'} /></article>
+          if (event.kind === 'member-join') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={status}>
+            {event.item.action !== 'join' && <>
+              <span style={{ color: arkmeTheme.info, fontWeight: 500 }}>{event.item.inviter.isSelf ? '你' : event.item.inviter.displayName}</span>
+              {event.item.action === 'direct_add' ? ' 添加 ' : ' 邀请 '}
+            </>}
+            {event.item.invitees.map((person, i) => <Fragment key={person.memberRef ?? i}>
+              {i > 0 && '、'}<span style={{ color: arkmeTheme.info, fontWeight: 500 }}>{person.isSelf ? '你' : person.displayName}</span>
+            </Fragment>)} 加入群聊
+          </article>
+          if (event.kind !== 'message') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={{ ...status, whiteSpace: 'pre-wrap' }}>
+            {event.kind === 'moment' ? `${event.item.groupName} · ${event.item.senderName}：${event.item.summary}`
+              : event.kind === 'member-event' ? `${event.item.displayName}退出了群聊`
+                : event.kind === 'external' ? `${event.title}：${event.text}` : event.text}
+          </article>
+          const item = event.item
+          return <Fragment key={event.eventId}>
+          {source.kind === 'group_chat' && (index === 0 || Math.abs(item.sendAtMillis - rows[index - 1]!.occurredAtMillis) > 30 * 60 * 1000) && <div data-arkme-preview-time-marker style={status}>
             {new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
           </div>}
           <article data-arkme-conversation-row={`message:${item.itemUid}`}
@@ -94,7 +116,7 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
               </div>
             </ArkmeMessageReadReceiptLine>
           </div>
-        </article></Fragment>)}
+        </article></Fragment>})}
       </div>
     </div>
   </div>, document.body)
