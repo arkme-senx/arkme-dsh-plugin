@@ -125,7 +125,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       }
       else if(op === 'team.app.send.enqueue') {
         const m={...messages[0],key:`sent-${messages.length}`,ref:`sent-${messages.length}`,seq:messages.length+1,content:params.content,createdAt:Date.now()}
-        value={...params,taskRef:`task-${params.clientUid}`,conversationKey:conversation().key,createdAtMillis:Date.now(),state:holdTextDelivery?'sending':'sent',files:[],fileRefs:[],attempts:0,nextAttemptAt:0}
+        value={...params,taskRef:`task-${params.clientUid}`,conversationKey:conversation().key,createdAtMillis:Date.now(),state:holdTextDelivery?'sending':'sent',files:params.fileRefs.map(fileRef=>({fileRef,fileName:'pending-photo.png',mimeType:'image/png',fileKind:1,size:fixtureImage.length})),fileRefs:params.fileRefs,attempts:0,nextAttemptAt:0}
         if(holdTextDelivery)sendTasks=[value]
         else {messages.push(m);value.message=m}
       }
@@ -373,6 +373,38 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     await expect.poll(()=>pane.locator('[data-team-message-key="pending-ack"]').count()).toBe(1)
     expect(await input.textContent()).toBe('继续输入下一条')
     await input.fill('')
+    // Stage a real local picture through the installed SDK, then hold admission
+    // in every active phase. The image and next draft survive without a footer.
+    holdTextDelivery=true
+    await pane.locator('input[type="file"]').setInputFiles({name:'pending-photo.png',mimeType:'image/png',buffer:fixtureImage})
+    try {
+      await expect.poll(()=>pane.getByRole('button',{name:'发送',exact:true}).isEnabled()).toBe(true)
+    } catch(error) {
+      await capture('plugin-image-staging-failure')
+      console.error('Image staging UI:',await pane.innerText())
+      throw error
+    }
+    await pane.getByRole('button',{name:'发送',exact:true}).click()
+    await expect.poll(()=>sendTasks[0]?.files[0]?.fileName).toBe('pending-photo.png')
+    const imageTask=sendTasks[0]
+    const pendingImage=pane.locator(`[data-team-message-key="${imageTask.clientUid}"]`)
+    await pendingImage.locator('img[alt="pending-photo.png"]').waitFor()
+    await expect.poll(()=>pendingImage.locator('img[alt="pending-photo.png"]').evaluate(img=>img.complete && img.naturalWidth>0)).toBe(true)
+    await input.fill('图片发送时继续输入')
+    for (const state of ['queued','uploading','sending']) {
+      sendTasks=[{...imageTask,state}]
+      const statusRefresh=page.waitForResponse(res=>res.url().endsWith('/arkme-self/api') && res.request().postDataJSON()?.operation==='team.app.send.tasks')
+      await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+      await statusRefresh
+      expect(await pane.getByRole('status',{name:'发送状态',exact:true}).count()).toBe(0)
+      expect(await input.textContent()).toBe('图片发送时继续输入')
+    }
+    await capture('plugin-pending-image-composer')
+    const imageAck={...messages[2],key:imageTask.clientUid,ref:imageTask.clientUid,seq:messages.length+1,createdAt:imageTask.createdAtMillis}
+    messages.push(imageAck);sendTasks=[{...imageTask,state:'sent',message:imageAck}];holdTextDelivery=false
+    await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+    await pendingImage.getByLabel('消息操作',{exact:true}).waitFor()
+    await input.fill('')
     // Legacy reply-cursor state uses the ordinary delivery status, never a confirmation.
     sendTasks=[{conversationRef:conversation().ref,clientUid:'legacy-reply',taskRef:'legacy-task',conversationKey:conversation().key,
       content:{text_content:'历史待发消息',template_kind:1},expectedReplySeq:0,fileRefs:[],files:[],createdAtMillis:Date.now(),
@@ -491,6 +523,18 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       await directory.locator(`[data-team-side="${side}"]`).getByText(voicePreviewText, { exact: true }).waitFor()
     }
     expect(await directory.getByText('[附件]', { exact: true }).count()).toBe(0)
+    voicePreviewText = '[im_emoji:yummy_face] [jm_emoji:thumb_up]'
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    for (const side of ['team', 'external']) {
+      const row=directory.locator(`[data-team-side="${side}"]`)
+      await row.locator('img[data-arkme-rich-emoji="yummy_face"]').waitFor()
+      await row.locator('img[data-arkme-rich-emoji="thumb_up"]').waitFor()
+      expect(await row.textContent()).not.toContain('_emoji:')
+      const emoji=row.locator('img[data-arkme-rich-emoji="yummy_face"]')
+      await expect.poll(()=>emoji.evaluate(img=>img.complete && img.naturalWidth>0)).toBe(true)
+      expect((await emoji.boundingBox()).width).toBe(20)
+    }
+    await capture('plugin-team-emoji-directory-preview')
     voicePreviewText = undefined
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await page.getByRole('treeitem',{name:'联系作者',exact:true}).waitFor()

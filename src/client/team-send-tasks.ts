@@ -2,10 +2,10 @@ import { useArkmeDeliveryTasks } from './file-send-tasks.js'
 import { callArkme } from './api.js'
 import { teamTaskActive, type TeamSendTask } from '../team-send-contract.js'
 
-// Like ordinary Chat, initial text admission is represented by the message.
-// Attachments retain the existing transfer status; failures remain actionable.
+// Initial delivery is represented by the message, including local attachments.
+// Recovery keeps its status so hiding routine work never disguises a failure.
 export function teamTaskShowsInlineStatus(task: TeamSendTask): boolean {
-  return task.fileRefs.length > 0 || task.attempts > 0 || !!task.reason || !!task.error
+  return task.attempts > 0 || !!task.reason || !!task.error
     || !!task.cancelRequested || !['queued', 'uploading', 'sending'].includes(task.state)
 }
 

@@ -1,4 +1,5 @@
 import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import type { TeamSendTask } from '../team-send-contract.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
@@ -99,7 +100,7 @@ export function TeamConversationRow({ conversation: c, selected = false, showTea
         <ArkmeTopicTagBadge label={c.side === 'team' ? `${showTeamName ? `${c.channel.name} · ` : ''}${tr('外部用户')}` : c.channel.name} selected={selected} truncate />
         <span style={{ ...directoryStyles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(c.updatedAt)}</span>
       </span>
-      <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}>{preview}</span></span>
+      <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
   </button>
 }
@@ -405,11 +406,14 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   resumeSend.current = send
   const upload = async (files: FileList | readonly File[] | null) => {
     if (!files || editing || busy || uploading || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
+    // The file picker is reset synchronously after onChange; retain its selection
+    // before awaiting capabilities, just as the ordinary Chat composer does.
+    const picked = Array.from(files)
     setUploading(true)
     try {
       const sdk = createArkmeSdk(), policy = await sdk.fileCapabilities()
       const userId = Number(accountKey.split(':').at(-1))
-      for (const file of [...files]) {
+      for (const file of picked) {
         if (draftRef.current.assets.length + (draftRef.current.localFiles?.length ?? 0) >= policy.maxAttachments) throw new Error(tr('最多添加 9 个附件'))
         const local = await sdk.stageFile(file, { signal: ctrl.current.signal, ...(userId > 0 ? {expectedUserId:userId} : {}) })
         if (ctrl.current.signal.aborted) return

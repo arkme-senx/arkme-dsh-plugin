@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
+import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { arkmeEmojiById } from '../src/client/arkme-emoji.js'
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
@@ -64,9 +65,20 @@ describe('Team send UI recovery', () => {
       await act(async () => { renderer = create(<TeamConversationRow conversation={{ ...conversation, side,
         preview: { status, text, hasMedia, ...(templateKind === undefined ? {} : { templateKind }) },
       }} onClick={() => {}} />) })
-      expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.preview }).children.join('')).toBe(expected)
+      expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.preview }).findByType(ArkmeRichText).props.text).toBe(expected)
     })
   }
+
+  it.each(['team', 'external'] as const)('%s preview renders current and legacy emoji tokens through ordinary Chat presentation', async side => {
+    const text = '你好 [im_emoji:yummy_face] [jm_emoji:thumb_up] [im_emoji:unknown] https://example.com'
+    await act(async () => { renderer = create(<TeamConversationRow conversation={{...conversation, side,
+      preview:{status:'available',text,hasMedia:false}}} onClick={() => {}} />) })
+    const preview = renderer!.root.findByProps({style:conversationDirectoryStyles.preview})
+    expect(preview.findAllByType('img').map(image => image.props['data-arkme-rich-emoji'])).toEqual(['yummy_face','thumb_up'])
+    expect(preview.findByType(ArkmeRichText).props).toMatchObject({presentation:'preview',emojiSize:20})
+    expect(preview.findAllByType('a')).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('[im_emoji:unknown]')
+  })
 
   it('uses existing voice translation and preserves user transcription after refresh', async () => {
     const setLocale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })()
@@ -77,33 +89,39 @@ describe('Team send UI recovery', () => {
       }} onClick={() => {}} />
       await act(async () => { renderer = create(row('')) })
       const preview = () => renderer!.root.findByProps({ style: conversationDirectoryStyles.preview })
-      expect(preview().children.join('')).toBe('[Voice]')
+      expect(preview().findByType(ArkmeRichText).props.text).toBe('[Voice]')
       const first = preview()
       await act(async () => { renderer!.update(row('语音原文')) })
       expect(preview()).toBe(first)
-      expect(preview().children.join('')).toBe('语音原文')
+      expect(preview().findByType(ArkmeRichText).props.text).toBe('语音原文')
     } finally { setLocale('zh') }
   })
 
-  it.each(['queued','uploading','sending'])('keeps initial %s text delivery in the message without extra status controls',async state=>{
-    let tasks:ReturnType<typeof accepted>[]=[]
-    mocks.call.mockImplementation(async(op:string)=>{
-      if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
-      if(op==='team.app.send.enqueue'){tasks=[accepted({state})];return tasks[0]}
-      return tasks
+  for (const kind of ['text', 'image', 'file'] as const) {
+    it.each(['queued','uploading','sending'])(`keeps initial %s ${kind} delivery in the message without extra status controls`,async state=>{
+      const files = kind === 'text' ? [] : [{fileRef:'local-attachment',fileName:kind === 'image' ? 'photo.png' : 'document.pdf',mimeType:kind === 'image' ? 'image/png' : 'application/pdf',fileKind:kind === 'image' ? 1 : 4,size:100}]
+      localStorage.setItem(storageKey, JSON.stringify({text:'问题',assets:[],localFiles:files}))
+      let tasks:ReturnType<typeof accepted>[]=[]
+      mocks.call.mockImplementation(async(op:string)=>{
+        if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
+        if(op==='team.app.send.enqueue'){tasks=[accepted({state,files,fileRefs:files.map(file=>file.fileRef)})];return tasks[0]}
+        return tasks
+      })
+      await mount();await send()
+      const message = renderer!.root.findByType(TeamConversationMessage).props.message
+      expect(message.state).toBe('sending')
+      expect(message.media).toHaveLength(files.length)
+      expect(renderer!.root.findAllByType(ArkmeSendTaskStatus)).toHaveLength(0)
+      expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+      await act(async()=>{renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条');await tick()})
+      expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false)
     })
-    await mount();await send()
-    expect(renderer!.root.findByType(TeamConversationMessage).props.message.state).toBe('sending')
-    expect(renderer!.root.findAllByType(ArkmeSendTaskStatus)).toHaveLength(0)
-    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
-    await act(async()=>{renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条');await tick()})
-    expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false)
-  })
+  }
   it.each(['retrying','failed','cancelling'])('keeps %s delivery actionable in the shared status component',async state=>{
     let tasks:ReturnType<typeof accepted>[]=[]
     mocks.call.mockImplementation(async(op:string)=>{
       if(op==='team.app.timeline')return {conversation,messages:[],hasMore:false,beforeSeq:0}
-      if(op==='team.app.send.enqueue'){tasks=[accepted({state,attempts:1,error:'网络断开',cancelRequested:state==='cancelling'})];return tasks[0]}
+      if(op==='team.app.send.enqueue'){tasks=[accepted({state,fileRefs:['local-image'],files:[],attempts:1,error:'网络断开',cancelRequested:state==='cancelling'})];return tasks[0]}
       return tasks
     })
     await mount();await send()
@@ -229,10 +247,17 @@ describe('Team send UI recovery', () => {
   })
 
   it('stages attachments locally through the SDK and restores their shared preview without uploading', async () => {
+    mocks.stage.mockClear()
     mocks.stage.mockResolvedValue({fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10})
     await mount()
     const picker=renderer!.root.findByProps({type:'file'})
-    await act(async()=>{picker.props.onChange({target:{files:[new File(['image'],'image.png',{type:'image/png'})],value:''}});await tick()})
+    const image = new File(['image'],'image.png',{type:'image/png'})
+    const files = [image]
+    // A browser FileList is live: resetting the picker empties the same list.
+    const target = {files, set value(_value: string) { files.length = 0 }}
+    await act(async()=>{picker.props.onChange({target});await tick()})
+    expect(files).toHaveLength(0)
+    expect(mocks.stage).toHaveBeenCalledWith(image, expect.objectContaining({signal:expect.any(AbortSignal)}))
     expect(renderer!.root.findByType(ArkmeAttachmentDraftTile).props.previewUrl).toBe('/local/local-image')
     expect(mocks.upload).not.toHaveBeenCalled()
     await act(async()=>renderer!.unmount());await mount()
