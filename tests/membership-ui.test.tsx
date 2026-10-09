@@ -6,6 +6,7 @@ import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeMembershipDialog } from '../src/client/ArkmeMembershipDialog.js'
 import { membershipDescription, membershipLabel, useMembership, type MembershipState } from '../src/client/arkme-membership.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 const mocks=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.call}))
 vi.mock('../src/client/read-intent-visibility.js',()=>({suspendArkmeVisibleReadIntent:()=>()=>{}}))
@@ -15,6 +16,7 @@ vi.mock('../src/client/arkme-membership.css?inline',async()=>({default:(await im
 const free:MembershipState={status:'ready',value:{userId:11,memberType:0,expireAtMillis:null,gifted:false,lifetime:false}}
 let root:Root, host:HTMLDivElement
 beforeEach(()=>{
+  connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} });
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true
   mocks.call.mockReset()
   host=document.createElement('div');document.body.append(host);root=createRoot(host)
@@ -25,6 +27,23 @@ afterEach(async()=>{await act(async()=>root.unmount());host.remove()})
 const flush=async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0))})}
 function button(text:string){return [...document.querySelectorAll('button')].find(b=>b.textContent?.includes(text))!}
 describe('membership presentation',()=>{
+  it.each(['zh', 'en'])('explains monthly and permanent gifts and links to shared policy in %s', async locale => {
+    connectArkmeLocale({ getLocale: () => ({ active: locale }), subscribe: () => () => {} })
+    mocks.call.mockResolvedValue({userId:11,products:[]})
+    await act(async()=>root.render(<ArkmeMembershipDialog userId={11} state={free} onRefresh={()=>{}} onClose={()=>{}} />))
+    for (const tier of ['VIP', 'SVIP']) {
+      await act(async()=>document.querySelector<HTMLButtonElement>(`.arkme-member-tabs button:${tier === 'VIP' ? 'first' : 'last'}-child`)!.click())
+      const benefits = document.querySelector('.arkme-member-benefits')!
+      expect(benefits.textContent).toContain(locale === 'zh' ? '每月赠送 AI 额度' : 'AI allowance granted every month')
+      expect(benefits.textContent).toContain(locale === 'zh' ? '一次性额度永久有效；月度额度月底到期。' : 'One-time allowances never expire; monthly allowances expire at month end.')
+      const link = new URL(benefits.querySelector('a')!.href)
+      expect(link.pathname).toBe('/app/membership/rights')
+      expect(link.searchParams.get('member_type')).toBe(tier.toLowerCase())
+      expect(link.searchParams.get('highlight_right_id')).toBe('ai_points')
+      expect(link.searchParams.get('lang')).toBe(locale)
+    }
+    expect(mocks.call.mock.calls.map(call=>call[0])).toEqual(['membership.catalog'])
+  })
   it('ships membership CSS through the actual plugin style installer',()=>{
     const dispose=installArkmeRedesignStyles()
     expect(document.head.textContent).toContain('.arkme-member-columns')

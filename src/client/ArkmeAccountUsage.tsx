@@ -1,4 +1,4 @@
-import { pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
+import { formatAiPoints, nanoCnyToPoints, pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -15,6 +15,24 @@ type UsageValue = ArkmeAccountRecordingUsage | ArkmeAccountStorageUsage | ArkmeA
 // Floor only the overview labels; keep the exact account values for billing and details.
 function formatWholePoints(value: string): string {
   return (pointsUnits(value) / 10_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+// Multiple welcome grants (including historical top-ups) share one validity row.
+function grantDescriptions(grants: ArkmeAiPointsAccount['grants']): string[] {
+  const groups = new Map<string, { source: string; expiresAt: number; units: bigint }>()
+  for (const grant of grants) {
+    const key = JSON.stringify([grant.source, grant.expiresAt])
+    const group = groups.get(key) ?? { source: grant.source, expiresAt: grant.expiresAt, units: 0n }
+    group.units += pointsUnits(grant.availablePoints)
+    groups.set(key, group)
+  }
+  return [...groups.values()].filter(group => group.units > 0n).map(group => {
+    const label = tr(group.source === 'membership' ? '月度赠送' : group.source === 'welcome' ? '一次性赠送' : '赠送')
+    const validity = group.expiresAt > 0
+      ? tr('{v0} 到期', { v0: new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(group.expiresAt - 1) })
+      : tr('永久有效')
+    return tr('{v0} {v1} 积分 · {v2}', { v0: label, v1: formatAiPoints(nanoCnyToPoints(group.units.toString())), v2: validity })
+  })
 }
 function useUsage<T extends UsageValue>(operation: 'account.usage.recording' | 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
   const [result, setResult] = useState<{ scope: string; revision: number; state: ReadState<T> }>()
@@ -159,7 +177,7 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
       <div className="arkme-usage-label"><strong>{tr('AI 额度')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
       {points.status !== 'ready' ? <Pending status={points.status} onRetry={retry} /> : <>
         <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatWholePoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatWholePoints(points.value.grantedPoints), v1: formatWholePoints(points.value.purchasedPoints) })}</span></p>
-        {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
+        {grantDescriptions(points.value.grants).map((description, index) => <small key={index}>{description}</small>)}
       </>}
       <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
       {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
