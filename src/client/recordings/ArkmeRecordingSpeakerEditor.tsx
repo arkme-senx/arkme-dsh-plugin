@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale } from '../locale.js'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -76,7 +76,7 @@ function SpeakerOptionRow({ option, selected, onClick }: {
   selected: boolean
   onClick(): void
 }) {
-  return <button data-arkme-feedback="neutral" type="button" style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}) }} onClick={onClick}>
+  return <button data-arkme-feedback="neutral" type="button" data-speaker-option-key={option.optionKey} aria-pressed={selected} style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}) }} onClick={onClick}>
     {option.avatarRef === undefined
       ? <span style={{ ...styles.avatar, ...(selected ? { boxShadow: '0 0 0 1px rgba(9,184,62,.3)' } : {}) }}>{option.label.slice(0, 1) || '声'}</span>
       : <ArkmeUserAvatar avatarRef={option.avatarRef} size={24} label={tr("{v0}的头像", { v0: option.label })} />}
@@ -105,6 +105,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
   useArkmeLocale()
   const { contextKey: key, options, loading, error: optionsError, ready: optionsReady, pending, refresh, save } = useRecordingSpeakerOptions(item)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef(typeof document === 'undefined' ? null : document.activeElement)
   const selectionTouched = useRef(false)
   const viewGeneration = useRef(0)
@@ -128,6 +129,21 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
   useEffect(() => {
     if (!selectionTouched.current) setSelected(options.find(option => option.currentAssignment)?.optionKey ?? '')
   }, [options, key, forceBatchUpdate])
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || !selected || query.trim() || loading) return
+    const row = [...list.querySelectorAll<HTMLElement>('[data-speaker-option-key]')]
+      .find(node => node.dataset.speakerOptionKey === selected)
+    if (!row) return
+    const viewport = list.getBoundingClientRect(), bounds = row.getBoundingClientRect()
+    // Scroll only this list after filtering is cleared, keeping the transcript
+    // and the confirm action still. Leave already-visible selections in place.
+    if (bounds.top < viewport.top + 23 || bounds.bottom > viewport.bottom) {
+      list.scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight,
+        list.scrollTop + bounds.top - viewport.top - (list.clientHeight - bounds.height) / 2))
+    }
+  }, [selected, query, loading])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -177,7 +193,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
   const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending) onClose() }} />
   <div style={{ ...styles.popover, left: position.left, top: position.top }} role="dialog" aria-label={tr("编辑说话人")}>
     <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected('') }} placeholder={tr("输入名称")} />
-    {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div style={styles.list}>
+    {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={styles.list} data-speaker-options-list>
       <SpeakerSection title={tr("推荐说话人")} options={categories.recommended} selected={selected} onSelect={choose} />
       <SpeakerSection title={tr("已添加说话人")} options={categories.speakers} selected={selected} onSelect={choose} />
       <SpeakerSection title={tr("Arkme 用户")} options={categories.users} selected={selected} onSelect={choose} />
