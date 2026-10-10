@@ -185,7 +185,7 @@ export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: s
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
   if (Object.keys(v).some(key => !['t', 'event_uid', 'kind', 'team_id', 'conversation_uid', 'message_uid', 'revision', 'event_at'].includes(key))) return undefined
-  if (!['team.message.changed', 'team.receipt.changed', 'team.access.changed', 'team.channel.changed'].includes(String(v.kind))) return undefined
+  if (!['team.message.changed', 'team.receipt.changed', 'team.access.changed', 'team.channel.changed', 'team.profile.changed'].includes(String(v.kind))) return undefined
   const eventUid = nonEmptyString(v.event_uid), eventAtMillis = positiveInteger(v.event_at)
   if (!eventUid || !eventAtMillis || !positiveInteger(v.revision)) return undefined
   return { eventUid, eventAtMillis }

@@ -299,3 +299,29 @@ describe('Team App owner adapter', () => {
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()
   })
 })
+
+const profileTeam={team_id:channel.team_id,name:'团队',jotmo_id:'test_team',role:1,profile_revision:3,can_edit_profile:true,avatar:{mode:'custom',key:'team:private:asset:secret',url:'https://bucket.s3.example/avatar?sig=private',slots:[{user_id:11,name:'所有者',avatar_url:'https://userfiles.jotmo.cc/member.png'}]}}
+async function profileRef(f:ReturnType<typeof fixture>){return ((await f.service.execute('team.app.teams',{})) as Array<{teamRef:string}>)[0]!.teamRef}
+describe('Team profile owner adapter',()=>{
+ it('seals image and team locators, keeps presentation identity through signature rotation, and rejects another account',async()=>{
+  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:{team:profileTeam});const ref=await profileRef(f)
+  const a=await f.service.execute('team.app.profile.get',{teamRef:ref}) as import('../src/team-profile-contract.js').ArkmeTeamProfile
+  const b=await f.service.execute('team.app.profile.get',{teamRef:ref}) as typeof a
+  expect(a.avatar.key).toBe(b.avatar.key);expect(a.avatar.imageRef).not.toBe(b.avatar.imageRef);expect(a.avatar).not.toHaveProperty('slots')
+  for(const secret of [channel.team_id,'asset:secret','sig=private','s3.example','user_id','member.png'])expect(JSON.stringify(a)).not.toContain(secret)
+  f.changeAccount();await expect(f.service.execute('team.app.profile.get',{teamRef:a.profileRef})).rejects.toMatchObject({code:'team-reference-invalid'})
+ })
+ it.each([0,1])('recovers lost response only from this exact request receipt: %s',async accepted=>{
+  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:path.endsWith('/profile/update')?new Response(JSON.stringify({code:1001,data:{reason:'version_conflict'}})):path.endsWith('/status')?{accepted_revision:accepted,request_uid:'same',team:{...profileTeam,profile_revision:9}}:{team:profileTeam})
+  const ref=await profileRef(f),call=f.service.execute('team.app.profile.update',{teamRef:ref,expectedRevision:3,requestUid:'same',name:' 新名 '})
+  if(accepted)expect(await call).toMatchObject({acceptedRevision:1,requestUid:'same',profile:{profileRevision:9}})
+  else await expect(call).rejects.toMatchObject({code:'team-version_conflict'})
+  expect(f.requests.at(-1)!.body).toEqual({team_id:channel.team_id,request_uid:'same'})
+  expect(f.requests.at(-2)!.body.name).toBe('新名')
+ })
+ it('checks actual owner before parsing or uploading bytes',async()=>{
+  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:{team:{...profileTeam,can_edit_profile:false}});const ref=await profileRef(f)
+  await expect(f.service.execute('team.app.profile.avatar.upload',{teamRef:ref,uploadUid:'image',contentBase64:'invalid'})).rejects.toMatchObject({code:'team-not_owner'})
+  expect(f.requests).toHaveLength(2)
+ })
+})

@@ -272,9 +272,17 @@ export function contactDirectoryReducer(
       // Partial contact identity scans cannot prove removal. Group page coverage is
       // pagination progress, not this failure semantic, and must still replace page one.
       const partialContactRefresh = action.mode === 'replace' && action.section === 'contacts' && action.page.coverage === 'partial'
+      // Team's public account ID is its stable entity identity. Preserve the
+      // account-scoped navigation reference while replacing its presentation.
+      // Requests still reauthorize with the owner; missing teams clear selection.
+      const incoming = action.section === 'teams' ? action.page.items.map(item => {
+        if (item.kind !== 'team' || !item.publicId) return item
+        const previous = current.items.find(row => row.kind === 'team' && row.publicId === item.publicId)
+        return previous?.kind === 'team' ? { ...item, teamRef: previous.teamRef } : item
+      }) : action.page.items
       const items = action.mode === 'append' || partialContactRefresh
-        ? mergeDirectoryItems(current.items, action.page.items)
-        : [...action.page.items]
+        ? mergeDirectoryItems(current.items, incoming)
+        : [...incoming]
       // Contact presentation is hydrated page by page. Audio instead reports its
       // owner's current projection state, so a later fresh result supersedes it.
       const projectionState = action.section === 'contacts' && action.mode === 'append' && current.projectionState !== undefined && current.projectionState !== 'fresh'
