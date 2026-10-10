@@ -1,3 +1,4 @@
+import {readFile} from 'node:fs/promises'
 import { describe, it, expect, vi } from 'vitest'
 import { TeamAppService } from '../src/services/team-app-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
@@ -303,6 +304,11 @@ describe('Team App owner adapter', () => {
 const profileTeam={team_id:channel.team_id,name:'团队',jotmo_id:'test_team',role:1,profile_revision:3,can_edit_profile:true,avatar:{mode:'custom',key:'team:private:asset:secret',url:'https://bucket.s3.example/avatar?sig=private',slots:[{user_id:11,name:'所有者',avatar_url:'https://userfiles.jotmo.cc/member.png'}]}}
 async function profileRef(f:ReturnType<typeof fixture>){return ((await f.service.execute('team.app.teams',{})) as Array<{teamRef:string}>)[0]!.teamRef}
 describe('Team profile owner adapter',()=>{
+ it.skipIf(!process.env.JOTMO_TEAM_PROFILE_HINTS_FILE)('decodes the actual Team to IM profile fanout wire',async()=>{
+  const lines=(await readFile(process.env.JOTMO_TEAM_PROFILE_HINTS_FILE!,'utf8')).trim().split('\n')
+  for(const line of lines)expect(decodeArkmeTeamNotificationDataLine(`data: ${line}`)).toMatchObject({eventUid:expect.any(String),eventAtMillis:expect.any(Number)})
+ })
+
  it('seals image and team locators, keeps presentation identity through signature rotation, and rejects another account',async()=>{
   const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:{team:profileTeam});const ref=await profileRef(f)
   const a=await f.service.execute('team.app.profile.get',{teamRef:ref}) as import('../src/team-profile-contract.js').ArkmeTeamProfile
@@ -312,12 +318,29 @@ describe('Team profile owner adapter',()=>{
   f.changeAccount();await expect(f.service.execute('team.app.profile.get',{teamRef:a.profileRef})).rejects.toMatchObject({code:'team-reference-invalid'})
  })
  it.each([0,1])('recovers lost response only from this exact request receipt: %s',async accepted=>{
-  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:path.endsWith('/profile/update')?new Response(JSON.stringify({code:1001,data:{reason:'version_conflict'}})):path.endsWith('/status')?{accepted_revision:accepted,request_uid:'same',team:{...profileTeam,profile_revision:9}}:{team:profileTeam})
+  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:path.endsWith('/profile/update')?new Response(JSON.stringify({code:500,data:{reason:'dependency_unavailable'}})):path.endsWith('/status')?{accepted_revision:accepted,request_uid:'same',team:{...profileTeam,profile_revision:9}}:{team:profileTeam})
   const ref=await profileRef(f),call=f.service.execute('team.app.profile.update',{teamRef:ref,expectedRevision:3,requestUid:'same',name:' 新名 '})
   if(accepted)expect(await call).toMatchObject({acceptedRevision:1,requestUid:'same',profile:{profileRevision:9}})
-  else await expect(call).rejects.toMatchObject({code:'team-version_conflict'})
+  else await expect(call).rejects.toMatchObject({code:'team-dependency_unavailable'})
   expect(f.requests.at(-1)!.body).toEqual({team_id:channel.team_id,request_uid:'same'})
   expect(f.requests.at(-2)!.body.name).toBe('新名')
+ })
+ it.each(['not_owner','version_conflict','idempotency_conflict','invalid_team_profile','profile_edit_rejected'])('preserves definitive %s instead of masking it with an old receipt',async reason=>{
+  const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:path.endsWith('/profile/update')?new Response(JSON.stringify({code:1001,data:{reason}})):{accepted_revision:4,team:profileTeam})
+  const ref=await profileRef(f)
+  await expect(f.service.execute('team.app.profile.update',{teamRef:ref,expectedRevision:3,requestUid:'same',name:'different'})).rejects.toMatchObject({code:`team-${reason}`})
+  expect(f.requests.some(r=>r.path.endsWith('/status'))).toBe(false)
+ })
+ it('keeps channel writes independent and resolves a public custom avatar outside member-only profile reads',async()=>{
+  const v={...channel,avatar:profileTeam.avatar}
+  const f=fixture(path=>path.endsWith('/conversations/open')?{channel:v}:path.endsWith('/configure')?v:path.endsWith('/message-channel/get')?v:path.endsWith('/resolve')?v:path==='/avatar'?new Response('jpeg',{headers:{'content-type':'image/jpeg'}}):{teams:[profileTeam]})
+  const opened=await open(f)
+  await f.service.execute('team.app.channel.configure',{teamRef:opened.channel.teamRef,revision:1,enabled:true})
+  expect(f.requests.find(r=>r.path.endsWith('/configure'))?.body.avatar_url).toBe('')
+  expect(opened.channel.avatar?.mode).toBe('custom')
+  await expect(f.service.execute('team.app.image',{imageRef:opened.channel.avatar!.imageRef})).resolves.toMatchObject({mimeType:'image/jpeg'})
+  expect(f.requests.some(r=>r.path.endsWith('/profile/get'))).toBe(false)
+  expect(f.requests.find(r=>r.path.endsWith('/resolve'))?.body).toEqual({public_ref:channel.public_ref})
  })
  it('checks actual owner before parsing or uploading bytes',async()=>{
   const f=fixture(path=>path.endsWith('/list-mine')?{teams:[profileTeam]}:{team:{...profileTeam,can_edit_profile:false}});const ref=await profileRef(f)

@@ -2,6 +2,7 @@ import type { ArkmeTeamAvatar as Avatar } from '../team-profile-contract.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
+import type { TeamChannel } from '../team-app-contract.js'
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
@@ -27,4 +28,12 @@ export function ArkmeTeamAvatar({ avatar, name, size = 44, label = '团队头像
     ? <ArkmeUserAvatar avatarRef={avatar.imageRef} imageKey={avatar.key} imagePort={teamAvatarImages}
         size={size} label={label} fallbackContent={fallback}/>
     : fallback
+}
+
+/** The channel override and the current Team profile have separate owners. */
+export function ArkmeTeamChannelAvatar({channel,size=44}:{channel:TeamChannel;size?:number}) {
+  return channel.imageRef
+    ? <ArkmeUserAvatar avatarRef={channel.imageRef} imageKey={channel.imageKey} imagePort={teamAvatarImages}
+        size={size} label="团队头像" fallbackContent={<ArkmeTeamNameAvatar name={channel.name} size={size}/>}/>
+    : <ArkmeTeamAvatar avatar={channel.avatar} name={channel.name} size={size}/>
 }

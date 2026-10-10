@@ -1,4 +1,5 @@
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
+import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
@@ -11,6 +12,7 @@ export type TeamAppOperation = `team.app.${
 export type TeamSide = 'team' | 'external'
 export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
 export interface TeamChannel {
+  avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
   link: string; enabled: boolean; revision: number; canManage: boolean
   /** Older Host responses and retained snapshots use canManage when absent. */

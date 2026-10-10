@@ -74,10 +74,10 @@ export class TeamAppService {
       profileRevision:num(v.profile_revision),canEditProfile:v.can_edit_profile===true,avatar:await this.avatar(v,actor),
       currentUserRole: role(v.role), createdAtMillis: num(v.ca), updatedAtMillis: num(v.ua) }
   }
-  private async avatar(raw:Record<string,unknown>,actor:number):Promise<ArkmeTeamAvatar> {
+  private async avatar(raw:Record<string,unknown>,actor:number,publicRef?:string):Promise<ArkmeTeamAvatar> {
     const v=obj(raw.avatar),custom=v.mode==='custom', key=await this.key(`avatar:${str(v.key)}`,actor);
     return {mode:custom?'custom':'default',key:custom?`team_avatar_asset://${key}`:key,
-      ...(custom?{imageRef:await this.ref('profile-image',{team_id:raw.team_id,key:v.key},actor)}:{})};
+      ...(custom?{imageRef:await this.ref('profile-image',{team_id:raw.team_id,key:v.key,...(publicRef?{public_ref:publicRef}:{})},actor)}:{})};
   }
   private async profile(raw:unknown,actor:number):Promise<ArkmeTeamProfile> {
     const v=obj(raw);if(!recordOwnerId(v.team_id))throw invalid();
@@ -94,6 +94,7 @@ export class TeamAppService {
     const link = new URL('/team-message', this.runtime.config.shareWebsite || 'https://www.jotmo.cc')
     link.searchParams.set('channel', publicRef)
     return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+      avatar: await this.avatar(v,actor,publicRef),
       ...(identity.imageRef ? { imageRef: identity.imageRef, imageKey: identity.imageKey } : {}), publicRef, link: publicRef ? link.toString() : '',
       enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true,
       canPause: v.can_pause === undefined ? v.can_manage === true : v.can_pause === true }
@@ -199,6 +200,10 @@ export class TeamAppService {
         }
         let result:Record<string,unknown>
         try{result=await post('profile/update',body)}catch(error){
+          // A definitive rejection must not be replaced by an older receipt for
+          // the same UID with different command contents or authority.
+          if(error instanceof ArkmeUpstreamResponseError &&
+            ['not_owner','not_accessible','version_conflict','idempotency_conflict','invalid_team_profile','profile_edit_rejected'].includes(str(obj(error.responseData).reason)))throw error
           const status=await post('profile/update/status',{team_id:id,request_uid:p.requestUid},true).catch(()=>undefined)
           if(!status||num(status.accepted_revision)<=0)throw error
           result=status
@@ -407,7 +412,10 @@ export class TeamAppService {
   private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
       const ref=await this.open('profile-image',p.imageRef,session.userId)
-      const result=obj(await this.runtime.authenticatedTeamPost('/api/v1/team/profile/get',{team_id:ref.team_id},session,signal,true)),avatar=obj(obj(result.team).avatar)
+      const result=obj(await this.runtime.authenticatedTeamPost(
+        ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
+        ref.public_ref?{public_ref:ref.public_ref}:{team_id:ref.team_id},session,signal,true))
+      const avatar=obj((ref.public_ref?result:obj(result.team)).avatar)
       if(avatar.mode!=='custom'||str(avatar.key)!==str(ref.key))throw invalid()
       const cacheKey=`team_avatar_asset://${await this.key(`avatar:${str(ref.key)}`,session.userId)}`
       const cached=await this.runtime.stateStore.readAvatarCache?.(session.userId,cacheKey).catch(()=>undefined)
