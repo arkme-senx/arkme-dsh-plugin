@@ -261,7 +261,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
     return { query: session.query, snapshotId: session.id, order: 'descending', replaceItems: true, items: grouped.items, completeness: missing.length || hasMore ? 'partial' : 'complete', missingKinds: [...new Set(missing)], hasMore, ...(hasMore ? { nextCursor: `${session.id}:${session.page}` } : {}), dayStartMillis: session.start, dayEndMillis: session.end, warnings: [...new Set(session.warnings)], ...(session.coverage ? { coverage: session.coverage } : {}), ...(session.speechIntervals.length ? { speechIntervals: session.speechIntervals } : {}), notice: '数据按来源独立读取；概览只统计当前已加载内容，不代表全天完整总量。' }
   }
   return {
-    capabilities: { kinds: ['note', 'private_chat', 'group_chat', 'call', 'recording', 'arko', 'bot', 'dsh'], modes: ['activities', 'records'], autoLocationLimit: 0, background: false, notice: '私聊、群聊、通话、录音、Arko、Bot 与个人记录按来源独立读取；来源失败或历史不完整时会保留明确状态。' },
+    capabilities: { kinds: ['note', 'private_chat', 'group_chat', 'call', 'recording', 'arko', 'bot', 'dsh'], modes: ['activities', 'records'], autoLocationLimit: 100, background: false, notice: '私聊、群聊、通话、录音、Arko、Bot 与个人记录按来源独立读取；来源失败或历史不完整时会保留明确状态。' },
     async loadDay(query, options) {
       if (!accountScope || query.accountScope !== accountScope) throw new Error('账号范围不一致，请重新打开日历')
       let session = current

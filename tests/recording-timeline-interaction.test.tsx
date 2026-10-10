@@ -1,7 +1,7 @@
 import { type ComponentType } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { act, create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeRecordingTimeline,
   RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS,
@@ -15,6 +15,94 @@ import {
   recordingTimelineWheelZoom,
   recordingVisibleTimelineItems,
 } from '../src/client/recordings/ArkmeRecordingTimeline.js'
+
+describe('responsive all-day speaker legend', () => {
+  let renderer: ReactTestRenderer | undefined
+  afterEach(() => {
+    act(() => { renderer?.unmount() })
+    renderer = undefined
+    vi.unstubAllGlobals()
+  })
+
+  function mountLegend(count = 8, loading = false) {
+    const summary = { clientWidth: 350 }
+    let resize = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const dayStart = new Date(2026, 9, 1).getTime()
+    const items = Array.from({ length: count }, (_, index) => ({
+      itemId: `item-${index}`, itemRef: `ref-${index}`, speakerKey: `speaker-${index}`,
+      speakerLabel: index === 0 ? '一个需要省略显示的很长的说话人名称' : `说话人 ${index + 1}`,
+      speakerColorIndex: index, speakerNumber: index + 1, sameSpeakerItemCount: 1,
+      text: '内容', startAtMillis: dayStart + index * 60_000,
+      endAtMillis: dayStart + index * 60_000 + 1_000, isBackground: false,
+    }))
+    const element = (isLoading: boolean) => <ArkmeRecordingTimeline items={items} loading={isLoading}
+      dayStartMillis={dayStart} isPlaying={false} onSelectAtMillis={() => {}} onTogglePlayback={() => {}} />
+    act(() => {
+      renderer = create(element(loading), { createNodeMock: node => node.type === 'summary' ? summary : null })
+    })
+    return {
+      resize(width: number) { summary.clientWidth = width; act(resize) },
+      setLoading(value: boolean) { act(() => { renderer!.update(element(value)) }) },
+      visible() { return renderer!.root.findByType('summary').findAllByType('button') },
+      overflow() {
+        return renderer!.root.findByType('summary').findAllByType('span')
+          .filter(node => node.children[0] === '+').map(node => node.children.join(''))
+      },
+      disconnect,
+    }
+  }
+
+  it('fills available width, removes overflow when everyone fits, and shrinks again', () => {
+    const legend = mountLegend()
+    expect(legend.visible()).toHaveLength(3)
+    expect(legend.overflow()).toEqual(['+5'])
+    legend.resize(650)
+    expect(legend.visible()).toHaveLength(6)
+    expect(legend.overflow()).toEqual(['+2'])
+    // Exact fit without the badge: 8 * 96 + 12 padding + 16 caret.
+    legend.resize(796)
+    expect(legend.visible()).toHaveLength(8)
+    expect(legend.overflow()).toEqual([])
+    expect(legend.visible()[0]?.props.title).toBe('一个需要省略显示的很长的说话人名称')
+    legend.resize(230)
+    expect(legend.visible()).toHaveLength(1)
+    expect(legend.overflow()).toEqual(['+7'])
+    legend.resize(90)
+    expect(legend.visible()).toHaveLength(0)
+    expect(legend.overflow()).toEqual(['+8'])
+  })
+
+  it('measures when loading finishes and disconnects when the legend disappears', () => {
+    const legend = mountLegend(8, true)
+    legend.resize(650)
+    legend.setLoading(false)
+    expect(legend.visible()).toHaveLength(6)
+    legend.setLoading(true)
+    expect(legend.disconnect).toHaveBeenCalledTimes(1)
+    legend.resize(350)
+    legend.setLoading(false)
+    expect(legend.visible()).toHaveLength(3)
+  })
+
+  it('keeps multi-digit overflow counts accurate as the container grows', () => {
+    const legend = mountLegend(15)
+    expect(legend.visible()).toHaveLength(2)
+    expect(legend.overflow()).toEqual(['+13'])
+    legend.resize(740)
+    expect(legend.visible()).toHaveLength(7)
+    expect(legend.overflow()).toEqual(['+8'])
+    legend.resize(1_468)
+    expect(legend.visible()).toHaveLength(15)
+    expect(legend.overflow()).toEqual([])
+  })
+})
 
 describe('recording timeline math', () => {
   it('projects real segments into the visible time window', () => {
