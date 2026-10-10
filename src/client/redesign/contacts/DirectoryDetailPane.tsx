@@ -54,7 +54,7 @@ export function DirectoryDetailPane({
     return <ConversationProfileDetail key={`${accountKey}:${selection.kind}:${selection.kind === 'group' ? selection.sourceRef : selection.bot.botRef}`} item={selection} onSourceActivated={onSourceActivated} {...(onBotActivated === undefined ? {} : { onBotActivated })} />
   }
   if (selection.kind === 'team') {
-    return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} />
+    return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} initialView={selection.view ?? 'members'} />
   }
   return <ContactProfileDetail
     key={`${accountKey}:${selection.contactRef}`}

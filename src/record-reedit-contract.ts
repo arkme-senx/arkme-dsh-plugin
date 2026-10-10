@@ -34,10 +34,43 @@ export function parseArkmeRecordReeditAttachments(value: unknown): ArkmeRecordRe
   })
 }
 
+/** Existing identities are looked up in the versioned Record, never supplied by the Browser. */
+export interface ArkmeRecordReeditMention {
+  originalIndex?: number
+  mentionRef?: string
+  botRef?: string
+  all?: boolean
+  displayName: string
+  startIndex: number
+  length: number
+}
+
+export function parseArkmeRecordReeditMentions(value: unknown): ArkmeRecordReeditMention[] {
+  if (!Array.isArray(value) || value.length > 100) throw new TypeError('重新编辑 @ 数据无效')
+  return value.map(raw => {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('重新编辑 @ 数据无效')
+    const item = raw as ArkmeRecordReeditMention
+    const keys = ['originalIndex', 'mentionRef', 'botRef', 'all'].filter(key => (raw as Record<string, unknown>)[key] !== undefined)
+    if (keys.length !== 1 || typeof item.displayName !== 'string' || item.displayName.trim() === ''
+      || !Number.isSafeInteger(item.startIndex) || item.startIndex < 0 || !Number.isSafeInteger(item.length) || item.length < 2
+      || (item.originalIndex !== undefined && (!Number.isSafeInteger(item.originalIndex) || item.originalIndex < 0))
+      || (item.mentionRef !== undefined && (typeof item.mentionRef !== 'string' || item.mentionRef.trim() === ''))
+      || (item.botRef !== undefined && (typeof item.botRef !== 'string' || item.botRef.trim() === ''))
+      || (item.all !== undefined && item.all !== true)) throw new TypeError('重新编辑 @ 数据无效')
+    return { displayName: item.displayName, startIndex: item.startIndex, length: item.length,
+      ...(item.originalIndex === undefined ? {} : { originalIndex: item.originalIndex }),
+      ...(item.mentionRef === undefined ? {} : { mentionRef: item.mentionRef }),
+      ...(item.botRef === undefined ? {} : { botRef: item.botRef }),
+      ...(item.all === true ? { all: true } : {}),
+    }
+  })
+}
+
 export interface ArkmeRecordReeditPrepareInput {
   sourceRef: string
   itemUid: string
   newText?: string
+  mentions?: ArkmeRecordReeditMention[]
   newTitle?: string
   attachments?: ArkmeRecordReeditAttachmentSelection[]
   expectedVersion?: number
@@ -80,6 +113,7 @@ export interface ArkmeRecordReeditSubmissionView {
   state: 'pending' | 'committing' | 'committed' | 'failed' | 'uncertain'
   title: string
   textContent: string
+  mentions?: ArkmeRecordReeditMention[]
   attachments: ArkmeRecordReeditAttachmentView[]
   voiceFileAssetUid?: string
   voiceBlock?: ArkmeContentBlock
@@ -113,6 +147,7 @@ export interface ArkmeRecordReeditEditorSnapshot {
   itemUid: string
   title: string
   textContent: string
+  mentions?: ArkmeRecordReeditMention[]
   textFormat?: ArkmeTextFormat
   sendAtMillis: number
   templateKind: number
@@ -127,6 +162,7 @@ export interface ArkmeRecordReeditEditorSnapshot {
   draft?: {
     title: string
     textContent: string
+    mentions?: ArkmeRecordReeditMention[]
     updatedAtMillis: number
     attachments?: ArkmeRecordReeditAttachmentView[]
     baseVersion: number

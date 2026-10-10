@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/X'
@@ -11,6 +12,7 @@ export function ContactRemarkDialog({ profile, saveRemark, onClose, onSaved }: {
   onClose(): void
   onSaved(profile: ArkmeDirectoryContactProfile): void
 }) {
+  useArkmeLocale()
   const id = useId()
   const [draft, setDraft] = useState(profile.remark)
   const [busy, setBusy] = useState(false)
@@ -75,17 +77,17 @@ export function ContactRemarkDialog({ profile, saveRemark, onClose, onSaved }: {
     <form ref={dialogRef} className="arkme-contact-remark-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-busy={busy}
       onKeyDown={onKeyDown} onSubmit={event => { event.preventDefault(); void submit() }}>
       <header className="arkme-contact-remark-header">
-        <h2 id={`${id}-title`}>修改备注</h2>
-        <button type="button" className="arkme-contact-remark-close" aria-label="关闭修改备注" disabled={busy} onClick={onClose}><X size={20} aria-hidden /></button>
+        <h2 id={`${id}-title`}>{tr("修改备注")}</h2>
+        <button data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-close" aria-label={tr("关闭修改备注")} disabled={busy} onClick={onClose}><X size={20} aria-hidden /></button>
       </header>
-      <label className="arkme-contact-remark-label" htmlFor={`${id}-input`}>备注名</label>
-      <input ref={inputRef} className="arkme-contact-remark-input" id={`${id}-input`} value={draft} placeholder="输入备注名" maxLength={100}
+      <label className="arkme-contact-remark-label" htmlFor={`${id}-input`}>{tr("备注名")}</label>
+      <input ref={inputRef} className="arkme-contact-remark-input" id={`${id}-input`} value={draft} placeholder={tr("输入备注名")} maxLength={100}
         readOnly={busy} autoComplete="off" aria-invalid={error !== undefined} aria-describedby={error === undefined ? undefined : `${id}-error`}
         onChange={event => { setDraft(event.target.value); setError(undefined) }} />
       {error !== undefined && <p className="arkme-contact-remark-error" id={`${id}-error`} role="alert">{error}</p>}
       <footer className="arkme-contact-remark-footer">
-        <button type="button" className="arkme-contact-remark-cancel" disabled={busy} onClick={onClose}>取消</button>
-        <button type="submit" className="arkme-contact-remark-confirm" disabled={busy}>{busy ? '保存中…' : '确认'}</button>
+        <button data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-cancel" disabled={busy} onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" className="arkme-contact-remark-confirm" disabled={busy}>{busy ? tr("保存中…") : tr("确认")}</button>
       </footer>
     </form>
   </div>

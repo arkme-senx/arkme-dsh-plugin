@@ -7,6 +7,7 @@ import {
   ArkmeUserAvatar,
 } from '../src/client/ArkmeAvatar.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
+import { arkmePersonalAvatarRef } from '../src/client/self-role-presentation.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -49,6 +50,44 @@ describe('ArkmeAvatar', () => {
 
   afterEach(() => { arkmeAvatarImages.activateScope(undefined) })
 
+  it('drops a role photo immediately when switching to a default avatar, including a late response', async () => {
+    const pending = deferred<{ mediaType: string; dataBase64: string }>()
+    mocks.callArkme.mockImplementation(async (_operation: string, input: { imageRef: string }) => input.imageRef === 'file_asset://pending-role'
+      ? pending.promise : { mediaType: 'image/png', dataBase64: Buffer.from('role-photo').toString('base64') })
+    let renderer!: ReactTestRenderer
+    const fallback = { kind: 'phone_default', colorIndex: 0, label: '?' } as const
+    await act(async () => { renderer = create(<ArkmeUserAvatar avatarRef="file_asset://ready-role" fallback={fallback} />); await tick() })
+    expect(renderer.root.findAllByType('img')).toHaveLength(1)
+    await act(async () => { renderer.update(<ArkmeUserAvatar fallback={fallback} />) })
+    expect(renderer.root.findAllByType('img')).toHaveLength(0)
+    expect(JSON.stringify(renderer.toJSON())).toContain('?')
+    await act(async () => { renderer.update(<ArkmeUserAvatar avatarRef="file_asset://pending-role" fallback={fallback} />) })
+    await act(async () => { renderer.update(<ArkmeUserAvatar fallback={fallback} />) })
+    await act(async () => { pending.resolve({ mediaType: 'image/png', dataBase64: Buffer.from('late').toString('base64') }); await tick() })
+    expect(renderer.root.findAllByType('img')).toHaveLength(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('loads the current self image without requesting an unavailable historical or other-device avatar', async () => {
+    const profile = { avatarRef: 'current-self-avatar' }
+    mocks.callArkme.mockImplementation(async (_operation: string, input: { imageRef: string }) => {
+      if (input.imageRef !== profile.avatarRef) throw new Error('Historical avatar unavailable')
+      return { mediaType: 'image/png', dataBase64: Buffer.from('current-photo').toString('base64') }
+    })
+    for (const avatarRef of ['file_asset://old_avatar_42', 'arkme-self-role-image-v1.device-a', undefined]) {
+      const item = { isMe: true, ...(avatarRef === undefined ? {} : { avatarRef }) }
+      let renderer!: ReactTestRenderer
+      await act(async () => {
+        renderer = create(<ArkmeUserAvatar avatarRef={arkmePersonalAvatarRef(item, profile)!} />)
+        await tick()
+      })
+      expect(renderer.root.findByType('img').props.src).toBe(imageDataUrl('current-photo'))
+      act(() => renderer.unmount())
+    }
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: profile.avatarRef }, undefined, { priority: 'background' })
+  })
+
   it('uses the Flutter Bot icon for a Bot without an image, and its image when available', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeUserAvatar senderKind="bot" />) })
@@ -74,7 +113,7 @@ describe('ArkmeAvatar', () => {
 
     expect(second.root.findAllByType('img')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-user-a' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-user-a' }, undefined, { priority: 'background' })
     act(() => { second.unmount() })
   })
 
@@ -92,7 +131,7 @@ describe('ArkmeAvatar', () => {
 
     expect(second.root.findAllByType('img')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-source-a' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-source-a' }, undefined, { priority: 'background' })
     act(() => { second.unmount() })
   })
 
@@ -286,7 +325,7 @@ describe('ArkmeAvatar', () => {
       await tick()
     })
     expect(privateChat.root.findAll(node => node.props['data-arkme-group-avatar-count'] !== undefined)).toHaveLength(0)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'private-avatar' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'private-avatar' }, undefined, { priority: 'background' })
     act(() => { privateChat.unmount() })
   })
 })

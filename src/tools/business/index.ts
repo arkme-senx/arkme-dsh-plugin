@@ -1,5 +1,10 @@
+import { officialNotificationToolModules } from './account/official-notifications.js'
+import { selfRoleToolModules } from './records/self-roles.js'
+import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
+import { archiveToolModules } from './conversation/archive.js'
 import { memberPageToolModules } from './conversation/member-pages.js'
 import { arkoToolModules } from './arko/index.js'
+import { readReactionsToolModule, writeReactionsToolModule } from './conversation/reactions.js'
 import { botToolModules } from './bots/index.js'
 import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
@@ -51,6 +56,8 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  ...selfRoleToolModules,
+  ...officialNotificationToolModules,
   directoryReadToolModule,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
@@ -77,7 +84,10 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   pinBotDirectoryToolModule,
   topicHomeVisibilityToolModule,
+  ...archiveToolModules,
   unreadConversationsToolModule,
+  privateInteractionSummaryToolModule,
+  privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
   copyLinkExtendToolModule,
@@ -94,6 +104,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   directMessageRefusalToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  readReactionsToolModule,
+  writeReactionsToolModule,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

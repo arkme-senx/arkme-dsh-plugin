@@ -9,7 +9,7 @@ import {
   arkmeMemberProfileNames,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
-  retainArkmeMemberRecordsScrollTop, shouldLoadOlderArkmeMemberRecords,
+  shouldLoadOlderArkmeMemberRecords,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichText.js'
 import {
@@ -173,7 +173,8 @@ describe('chat member action menu placement', () => {
     expect(menu).toContain('看TA的快记')
     expect(menu).toContain('>2<')
     expect(menu).toContain('>7<')
-    expect(menu).toContain('background:var(--dsw-specific-menu')
+    expect(menu).toContain('role="menu"')
+    expect(menu).not.toContain('box-shadow:')
 
     const ownerMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
       member,
@@ -327,11 +328,6 @@ describe('chat member action menu placement', () => {
     expect(shouldLoadOlderArkmeMemberRecords(0, true, 900, true)).toBe(false)
   })
 
-  it('retains the visible record after older records are prepended', () => {
-    expect(retainArkmeMemberRecordsScrollTop(24, 1_000, 1_400)).toBe(424)
-    expect(retainArkmeMemberRecordsScrollTop(0, 1_000, 900)).toBe(0)
-  })
-
   it('builds the same chronological 30-minute time segmentation as the desktop client', () => {
     const now = new Date(2026, 7, 22, 15, 0).getTime()
     const at = (hour: number, minute: number) => new Date(2026, 7, 22, hour, minute).getTime()
@@ -416,6 +412,30 @@ describe('chat member action menu placement', () => {
       .toEqual(['visible', 'new'])
     expect(arkmeConversationJoinEventsInLoadedWindow(events, items, false).map(item => item.eventId))
       .toEqual(['old', 'visible', 'new'])
+  })
+
+  it('highlights plain arrivals without inventing an inviter', () => {
+    const html = renderToStaticMarkup(createElement(ArkmeMemberJoinNotice, {
+      rowId: 'arrival', event: { eventId: 'arrival', action: 'join', occurredAtMillis: 1000,
+        invitees: [{ memberRef: 'member-2', displayName: '小红', isSelf: false }] },
+      membersByRef: new Map(), onOpenMember() {},
+    }))
+    expect(html).toContain('font-weight:500')
+    expect(html).toContain('小红</span>')
+    expect(html).toContain('加入群聊')
+    expect(html).not.toContain('邀请')
+  })
+
+  it('keeps inviter and invitee highlighted before the member directory has loaded', () => {
+    const html = renderToStaticMarkup(createElement(ArkmeMemberJoinNotice, {
+      rowId: 'invite', event: { eventId: 'invite', action: 'invite', occurredAtMillis: 1000,
+        inviter: { memberRef: 'member-1', displayName: '小明', isSelf: false },
+        invitees: [{ memberRef: 'member-2', displayName: '小红', isSelf: false }] },
+      membersByRef: new Map(), onOpenMember() {},
+    }))
+    expect(html.match(/font-weight:500/g)).toHaveLength(2)
+    expect(html).toContain('小明</span><span> 邀请 </span><span')
+    expect(html).toContain('小红</span>')
   })
 
   it('matches the client join notice time, name, self, and two-person rules', () => {

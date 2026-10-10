@@ -9,6 +9,13 @@ describe('re-edit presentation is not a canonical record', () => {
   it('updates text and attachments together without inventing a version or send time', () => {
     expect(projectRecordReedit(original, [pending])).toMatchObject({ itemUid: 'r', textContent: '新文', version: 7, sendAtMillis: 1, contentBlocks: [{ localFileRef: 'local' }] })
   })
+  it('does not carry old clickable mention ranges onto an edited candidate', () => {
+    const item = { ...original, textContent: '@小明', mentions: [{ kind: 'member' as const, memberRef: 'old', displayName: '小明', startIndex: 0, length: 3 }] }
+    const job = { ...pending, textContent: '@小明', mentions: [] }
+    expect(projectRecordReedit(item, [job]).mentions).toEqual([])
+    const canonical = { ...item, version: 8, mentions: [] }
+    expect(projectRecordReedit(canonical, [job])).toBe(canonical)
+  })
   it('never masks a newer canonical version while a conflicting edit is pending', () => {
     const newer = { ...original, version: 8, textContent: '其他设备更新' }
     expect(projectRecordReedit(newer, [pending])).toBe(newer)

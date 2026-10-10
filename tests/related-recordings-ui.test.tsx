@@ -1,3 +1,4 @@
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from '../src/client/arkme-layout.js'
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -85,7 +86,7 @@ describe('related recordings UI', () => {
     expect(source).not.toContain('正在检查')
   })
 
-  it('renders a lowered overlay panel with partial and shared states', () => {
+  it('aligns the overlay below the conversation header with partial and shared states', () => {
     const html = renderPanel({
       state: 'partial',
       stateMessage: '部分来源暂不可用',
@@ -93,7 +94,7 @@ describe('related recordings UI', () => {
       monthBuckets: [{ monthKey: '2026-08', itemCount: 1 }],
     })
 
-    expect(html).toContain('top:48px')
+    expect(html).toContain(`top:${ARKME_CONVERSATION_HEADER_HEIGHT}px`)
     expect(html).toContain('bottom:0')
     expect(html).toContain('width:min(408px, 100%)')
     expect(html.slice(0, html.indexOf(' aria-label="相关录音"'))).not.toContain('height:100%')
@@ -216,22 +217,20 @@ describe('related recordings UI', () => {
     expect(source).not.toContain('>⌄<')
   })
 
-  it('reuses the group-chat header menu chrome for the private related-recordings entry', () => {
+  it('reuses the native DSH menu chrome for the private related-recordings entry', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     const privateStart = source.indexOf('shouldShowPrivateChatActions(authenticated, source?.kind) && <div')
     const privateBlock = source.slice(privateStart, source.indexOf('</header>', privateStart))
 
     expect(privateStart).toBeGreaterThan(-1)
     expect(privateBlock).toContain('ARKME_CONVERSATION_HEADER_ACTIONS_STYLE')
-    expect(privateBlock).toContain('ArkmeConversationHeaderIconButton')
-    expect(privateBlock).toContain('ArkmeConversationMoreIcon')
-    expect(privateBlock).toContain('buttonRef={relatedMenuButtonRef}')
-    expect(privateBlock).toContain('createPortal(')
     expect(privateBlock).toContain('ConversationActionsMenu')
+    expect(privateBlock).toContain('anchor={relatedMenuButtonRef}')
+    expect(privateBlock).toContain('trigger={{')
     const menu = readFileSync(new URL('../src/client/PrivateChatActions.tsx', import.meta.url), 'utf8')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE')
+    expect(menu).toContain('ArkmeDshMenu')
+    expect(menu).toContain('ArkmeConversationHeaderIconButton')
+    expect(menu).toContain('ArkmeConversationMoreIcon')
     expect(privateBlock).not.toContain('•••')
     expect(source).not.toContain('moreButton:')
     expect(source).not.toContain('menuItem:')

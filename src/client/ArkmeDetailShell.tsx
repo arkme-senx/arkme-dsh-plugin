@@ -1,6 +1,5 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode, type Ref, type RefObject } from 'react'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
@@ -9,8 +8,11 @@ import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 export interface ArkmeDetailShellProps {
   title: string
   label: string
+  headerContent?: ReactNode
   subtitle?: string
   footer?: ReactNode
+  /** Hide a subview's editor without discarding its draft or staged attachments. */
+  footerHidden?: boolean
   onClose: () => void
   children: ReactNode
   onBack?: () => void
@@ -25,21 +27,13 @@ const styles: Record<string, CSSProperties> = {
     width: 'min(372px, 100%)', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
     background: arkmeTheme.base, color: arkmeTheme.text, borderLeft: `1px solid ${arkmeTheme.borderSoft}`,
     boxShadow: '-12px 0 28px rgba(29,32,40,.055)' },
-  header: { flex: 'none', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '22px 20px 0 22px' },
-  heading: { flex: 1, minWidth: 0 },
-  title: { margin: 0, fontSize: 16, lineHeight: '24px', fontWeight: 600, overflowWrap: 'anywhere' },
-  subtitle: { marginTop: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
-  close: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
-  back: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain', padding: '24px 22px' },
   footer: { flex: 'none', textAlign: 'center', padding: '12px 22px 20px', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
   extensionFooter: { flex: 'none', padding: 0, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
 }
 
 /** Non-modal overlay: the conversation retains its width and scroll position. */
-export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
+export function ArkmeDetailShell({ title, label, headerContent, subtitle, footer, footerHidden = false, onClose, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
@@ -53,7 +47,8 @@ export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBa
     const onKey = (event: KeyboardEvent) => {
       // A portal preview owns Escape until it is closed; do not close both layers.
       if (event.key !== 'Escape' || event.defaultPrevented
-        || document.querySelector('[data-arkme-image-preview-viewport], [aria-modal="true"], [role="menu"]') !== null) return
+        || Array.from(document.querySelectorAll('[data-arkme-image-preview-viewport], [aria-modal="true"], [role="menu"]'))
+          .some(overlay => !overlay.contains(panelRef.current))) return
       event.preventDefault()
       event.stopPropagation()
       onCloseRef.current()
@@ -67,17 +62,16 @@ export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBa
       if (target?.isConnected && (active === document.body || active === null || panel?.contains(active))) target.focus({ preventScroll: true })
     }
   }, [])
-  return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
+  const hasBack = onBack !== undefined
+  useEffect(() => {
+    if (hasBack) backRef.current?.focus({ preventScroll: true })
+    else if (document.activeElement === document.body) closeRef.current?.focus({ preventScroll: true })
+  }, [hasBack])
+  return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={headerContent === undefined ? titleId : undefined} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
     {resize.handle}
-    <header style={styles.header}>
-      {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
-        aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
-      <div style={styles.heading}><h3 id={titleId} style={styles.title}><ArkmeRichText text={title} presentation="preview" /></h3>
-        {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
-      </div>
-      <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
-    </header>
+    <ArkmeRightPanelHeader title={<ArkmeRichText text={title} presentation="preview" />} titleId={titleId} heading={headerContent}
+      subtitle={subtitle} onClose={onClose} closeRef={closeRef} onBack={onBack} backLabel={backLabel} backRef={backRef} />
     <div ref={bodyRef} style={styles.body}>{children}</div>
-    {footer !== undefined && footer !== null && <footer style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}
+    {footer !== undefined && footer !== null && <footer hidden={footerHidden} style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}
   </aside>
 }

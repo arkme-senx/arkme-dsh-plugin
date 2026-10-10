@@ -11,7 +11,7 @@ export function ArkmeArkoAvatar({ size = 44 }: { size?: number }) {
     borderRadius: 999,
     background: 'var(--dsw-alias-fill-secondary, #f3f4f5)',
   }
-  return <span style={surface} aria-hidden>
+  return <span data-arkme-avatar style={surface} aria-hidden>
     <svg width={iconSize} height={iconSize} viewBox="2 1.4 12 12" fill="none">
       <path d="M3.25 6.72C3.25 5.67 3.67 4.78 4.38 4.18L4.25 2.7C4.22 2.4 4.57 2.22 4.82 2.42L6.2 3.5C6.76 3.33 7.37 3.24 8 3.24C8.63 3.24 9.24 3.33 9.8 3.5L11.18 2.42C11.43 2.22 11.78 2.4 11.75 2.7L11.62 4.18C12.33 4.78 12.75 5.67 12.75 6.72V8.78C12.75 11.11 10.63 12.76 8 12.76C5.37 12.76 3.25 11.11 3.25 8.78V6.72Z" fill="#FFFDF4" stroke="#252525" strokeWidth="0.7" strokeLinejoin="round" />
       <path d="M4.38 4.18L4.25 2.7C4.22 2.4 4.57 2.22 4.82 2.42L6.2 3.5C6.55 3.4 6.93 3.32 7.32 3.28C7.26 4.12 7.28 4.79 7.16 5.42C7.04 6.1 6.84 6.65 6.68 7.18C6.5 7.78 6.13 8.19 5.57 8.35C4.75 8.58 3.9 8.23 3.26 7.67V6.72C3.26 5.67 3.67 4.78 4.38 4.18Z" fill="#252525" />

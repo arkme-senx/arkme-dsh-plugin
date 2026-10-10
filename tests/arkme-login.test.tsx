@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/client/ArkmeLogin.js'
+import { ArkmeJiwoBrandMark } from '../src/client/ArkmeJiwoBrandMark.js'
 import {
   arkmeLoginEn, type ArkmeLoginLocaleKey, type ArkmeLoginTranslate,
 } from '../src/client/arkme-login-locales.js'
@@ -44,12 +45,31 @@ function darkLoginCss(patch: Partial<ArkmeLoginProps> = {}): string {
 }
 
 describe('ArkmeLogin', () => {
+  it('uses the navigation brand assets instead of typeset text in the headline', () => {
+    const html = renderLogin()
+    const headline = (html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1] ?? '').replaceAll('&quot;', '"')
+    const brand = renderToStaticMarkup(<ArkmeJiwoBrandMark />)
+    const sources = (markup: string) => [...markup.matchAll(/<img[^>]*src="([^"]+)"/g)].map(match => match[1])
+
+    expect(sources(headline)).toEqual(sources(brand))
+    expect(sources(headline)).toHaveLength(2)
+    expect(headline).toContain('alt="即我"')
+    expect(headline).toContain('你的数字自我')
+    expect(headline).not.toContain('即我，')
+    expect(headline).toContain('width:2.5em;height:1.16em')
+    // Signed-out pages must not depend on the logged-in workspace's stylesheet.
+    expect(headline).toContain('[data-arkme-jiwo-brand="dark"] { display: none !important; }')
+    expect(headline).toContain('[data-arkme-jiwo-brand="light"] { mix-blend-mode: multiply; }')
+    expect(headline).toContain('body[data-ds-dark-theme] [data-arkme-jiwo-brand="dark"] { display: block !important; }')
+  })
+
   it('defaults to Jiwo scan with WeChat and phone retained', () => {
     const html = renderLogin()
     const visibleText = html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '')
 
     expect(html).toContain('登录即我')
-    expect(html).toContain('即我，')
+    expect(html).not.toContain('即我，')
+    expect(html).toContain('dsh-arkme-login-story-mark')
     expect(html).toContain('你的数字自我')
     expect(html).toContain('<p class="dsh-arkme-login-description">连接你的经历，成为更懂你的数字自我。</p>')
     expect(visibleText).not.toContain('选择你熟悉的方式继续')
@@ -223,7 +243,8 @@ describe('ArkmeLogin', () => {
   it('keeps a concise product description below the English headline and a short Wechat QR tab', () => {
     const html = renderLogin({ t: english })
 
-    expect(html).toContain('<h1>Arkme,<br/>Digital ark, true me</h1>')
+    expect(html).toContain('Digital ark, true me</h1>')
+    expect(html).not.toContain('Arkme,<br/>')
     expect(html).toContain('<p class="dsh-arkme-login-description">Your experiences, connected into a digital you.</p>')
     expect(html).not.toContain('Choose the sign-in method you prefer')
     expect(html).toMatch(/role="tab"[^>]*>Wechat QR<\/button>/)

@@ -150,6 +150,56 @@ describe('recording summary and timeline generation', () => {
     expect(renderedText(renderer.root)).not.toContain('最新时间轴')
   })
 
+  it('keeps timeline rows concise and opens the full event details in a dialog', async () => {
+    const originalImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day') {
+        const day = await originalImplementation(operation, params, signal) as Record<string, unknown>
+        return {
+          ...day,
+          timeline: {
+            state: 'ready', message: '', items: [{
+              id: 'timeline-detail', status: 'done', selectable: true, generationStage: 2,
+              generatedAtMillis: 1_000, modelDisplayName: 'Qwen3 Max', content: '完整时间轴', error: '',
+              timelineEvents: [{
+                eventId: 'event-detail', timeRange: '08:00–08:20', title: '孩子起床',
+                description: '简短摘要', scene: '家庭', emotion: '平静', todo: '联系园长',
+                participants: ['我', '安宝'], tags: ['家庭'], rawText: '完整原始内容',
+                speakerNote: '安宝是孩子。',
+                dialoguePoints: [{ speakerName: '安宝', summary: '表达不想上学', quote: '我不要去', roleDescription: '孩子', isSelf: false }],
+              }],
+            }],
+          },
+        }
+      }
+      return await originalImplementation(operation, params, signal)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    await act(async () => { button(renderer, '时间轴').props.onClick(); await tick() })
+
+    const row = renderer.root.findByProps({ 'aria-label': '08:00–08:20 孩子起床' })
+    expect(renderedText(row)).toContain('简短摘要')
+    expect(renderedText(row)).not.toContain('我不要去')
+    expect(renderedText(row.findByProps({ 'data-arkme-recording-timeline-event-header': true }))).toContain('家庭')
+    expect(renderedText(row.findByProps({ 'data-arkme-recording-timeline-participants': true }))).toContain('我安宝')
+    expect(renderedText(row.findByProps({ 'data-arkme-recording-timeline-participants': true }))).not.toContain('家庭')
+
+    await act(async () => { row.props.onClick(); await tick() })
+    const dialog = renderer.root.findByProps({ role: 'dialog' })
+    expect(renderedText(dialog)).toContain('时段总结简短摘要')
+    expect(renderedText(dialog)).toContain('安宝是孩子。')
+    expect(renderedText(dialog)).toContain('安宝：我不要去')
+    expect(renderedText(dialog)).toContain('联系园长')
+    expect(renderedText(dialog)).not.toContain('完整原始内容')
+
+    const close = renderer.root.findByProps({ 'aria-label': '关闭' })
+    await act(async () => { close.props.onClick(); await tick() })
+    expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
+  })
+
   it('starts each owner generation from the matching desktop empty action', async () => {
     await act(async () => {
       renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)

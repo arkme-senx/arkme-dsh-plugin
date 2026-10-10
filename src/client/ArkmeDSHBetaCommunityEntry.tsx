@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -101,13 +102,13 @@ export function ArkmeDSHBetaCommunityEntryContent({
 }) {
   return <div style={styles.section} role="none">
     <div style={styles.sectionHeader} aria-hidden>
-      <span style={styles.sectionLabel}>DSH 内测</span>
+      <span style={styles.sectionLabel}>{tr("DSH 内测")}</span>
       <span style={styles.sectionLine} />
     </div>
     <button
       type="button"
       role="treeitem"
-      aria-label="加入 DSH 内测群"
+      aria-label={tr("加入 DSH 内测群")}
       aria-busy={joining}
       style={{ ...styles.row, cursor: joining ? 'default' : 'pointer' }}
       disabled={joining}
@@ -116,12 +117,12 @@ export function ArkmeDSHBetaCommunityEntryContent({
       {groupAvatar === undefined
         ? <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
         : <ArkmeSourceAvatar kind="group" groupAvatar={groupAvatar} size={40} />}
-      <span style={styles.content}>
-        <span style={styles.title}>还没加入 DSH 内测群？</span>
-        <span style={styles.subtitle}>和内测用户一起聊聊</span>
+      <span data-arkme-conversation-content style={styles.content}>
+        <span style={styles.title}>{tr("还没加入 DSH 内测群？")}</span>
+        <span style={styles.subtitle}>{tr("和内测用户一起聊聊")}</span>
       </span>
-      <span style={styles.action}>{joining ? '加入中…' : '去加入'}</span>
-      {!joining && <span style={styles.chevron} aria-hidden>›</span>}
+      <span data-arkme-conversation-content style={styles.action}>{joining ? '加入中…' : '去加入'}</span>
+      {!joining && <span data-arkme-conversation-content style={styles.chevron} aria-hidden>›</span>}
     </button>
     <div style={styles.bottomLine} aria-hidden />
   </div>
@@ -138,6 +139,7 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
   onCancel(): void
   onConfirm(): void
 }) {
+  useArkmeLocale()
   const confirmRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     confirmRef.current?.focus()
@@ -153,15 +155,15 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
   return <div style={styles.backdrop} onMouseDown={cancelFromBackdrop}>
     <section style={styles.sheet} role="dialog" aria-modal="true" aria-labelledby="arkme-community-join-title">
       <div style={styles.handle} aria-hidden />
-      <button type="button" style={styles.cancel} aria-label="取消加入群聊" onClick={onCancel}>‹</button>
+      <button type="button" style={styles.cancel} aria-label={tr("取消加入群聊")} onClick={onCancel}>‹</button>
       <div style={styles.sheetContent}>
         {groupAvatar === undefined
           ? <ArkmeAvatarMosaic urls={avatarUrls} size={86} fallback={false} />
           : <ArkmeSourceAvatar kind="group" groupAvatar={groupAvatar} size={86} />}
-        <h2 id="arkme-community-join-title" style={styles.sheetTitle}>DSH 内测群</h2>
-        <p style={styles.sheetSubtitle}>和内测用户一起聊聊</p>
+        <h2 id="arkme-community-join-title" style={styles.sheetTitle}>{tr("DSH 内测群")}</h2>
+        <p style={styles.sheetSubtitle}>{tr("和内测用户一起聊聊")}</p>
         <button ref={confirmRef} type="button" style={styles.confirm} onClick={onConfirm}>
-          <span>加入群聊</span>
+          <span>{tr("加入群聊")}</span>
           <span style={styles.confirmArrow} aria-hidden>›</span>
         </button>
       </div>
@@ -170,6 +172,7 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
 }
 
 export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEntryProps) {
+  useArkmeLocale()
   const [phase, setPhase] = useState<EntryPhase>('hidden')
   const [ready, setReady] = useState<ReadyEntry>()
   const [confirmationOpen, setConfirmationOpen] = useState(false)

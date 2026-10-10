@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import mentionAiThoughtBase64 from '../../assets/mention/icon_ai_thought.svg'
@@ -111,6 +112,6 @@ export function ArkmeMentionSuggestionRow({ candidate, active, styles, onActive,
         ? <span style={styles.secondary}>{secondary}</span>
         : null}
     </span>
-    {reservedAgent ? <span style={reservedAgentBadgeStyle}>AI智能体</span> : null}
+    {reservedAgent ? <span style={reservedAgentBadgeStyle}>{tr("AI智能体")}</span> : null}
   </button>
 }

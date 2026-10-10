@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -63,16 +63,35 @@ describe('account-bound file lifecycle', () => {
     } finally { clock.mockRestore() }
   })
 
-  it('releases expired abandoned re-edit capacity without raising the 256-file limit', async () => {
+  it('releases expired abandoned re-edit files even beyond 256 cached attachments', async () => {
     const f = await fixture()
     f.ports.retainedFileRefs = async () => []
-    for (let index = 0; index < 256; index++) await f.stage('edit.pdf', 'references')
-    await expect(f.stage('full.pdf')).rejects.toMatchObject({ code: 'file-cache-full' })
+    for (let index = 0; index < 257; index++) await f.stage('edit.pdf', 'references')
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
     try {
       const next = await f.stage('next.pdf')
       expect(await f.owner.files()).toEqual([next])
     } finally { clock.mockRestore() }
+  })
+
+  it('stages images and files beyond 256 after restart while retaining the byte quota', async () => {
+    const f = await fixture()
+    for (let index = 0; index < 256; index++) await f.stage('draft.pdf')
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    const imagePath = join(f.directory, 'pasted.png'); await writeFile(imagePath, 'image')
+    await expect(restarted.stage(imagePath, { fileName: 'pasted.png', mimeType: 'image/png', size: 5 }))
+      .resolves.toMatchObject({ fileKind: 1 })
+    await expect(restarted.stageBytes('YWJj', { fileName: 'next.txt', mimeType: 'text/plain' }))
+      .resolves.toMatchObject({ size: 3 })
+    expect(await restarted.files()).toHaveLength(258)
+    const statePath = join(f.directory, '42', 'state.json')
+    const state = JSON.parse(await readFile(statePath, 'utf8'))
+    state.files[Object.keys(state.files)[0]!].size = 1024 * 1024 * 1024
+    await writeFile(statePath, JSON.stringify(state))
+    const full = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(full.stageBytes('YQ==', { fileName: 'over.txt', mimeType: 'text/plain' }))
+      .rejects.toMatchObject({ code: 'file-cache-full' })
+    expect(await full.files()).toHaveLength(258)
   })
 
   it('persists cleanup even when the subsequent import fails', async () => {
@@ -393,6 +412,82 @@ describe('account-bound file lifecycle', () => {
     expect(JSON.stringify(await f.owner.openLocal(file.fileRef))).not.toContain(f.directory)
     f.setUser(43)
     await expect(f.owner.openLocal(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+  })
+  it('opens the containing directory through the host without opening the file or exposing paths', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    await expect(f.owner.openLocalFolder(file.fileRef)).resolves.toEqual({ folderOpened: true })
+    const path = f.openPath.mock.calls[0]![0]
+    expect(path).toBe(join(f.directory, '42', '.open', file.fileRef))
+    expect(await readFile(join(path, 'report.pdf'), 'utf8')).toBe('report.pdf')
+    expect(f.upload).not.toHaveBeenCalled()
+    expect(f.send).not.toHaveBeenCalled()
+    f.setUser(43)
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    await expect(f.owner.openLocalFolder('../escape')).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    expect(f.openPath).toHaveBeenCalledOnce()
+  })
+  it('rejects missing files and allows retry after host folder failure', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    f.openPath.mockRejectedValueOnce(new Error('host unavailable'))
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-folder-open-failed' })
+    await expect(f.owner.openLocalFolder(file.fileRef)).resolves.toEqual({ folderOpened: true })
+    await rm((await f.owner.readLocal(file.fileRef)).path)
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-local-missing' })
+    expect(f.openPath).toHaveBeenCalledTimes(2)
+  })
+  it('keeps edits in the opened file separate from the canonical attachment', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const canonical = (await f.owner.readLocal(file.fileRef)).path
+    await f.owner.openLocalFolder(file.fileRef)
+    const editable = join(f.openPath.mock.calls[0]![0], 'report.pdf')
+    await writeFile(editable, 'USER EDIT!')
+    expect(await readFile(canonical, 'utf8')).toBe('report.pdf')
+    await f.owner.openLocalFolder(file.fileRef)
+    expect(await readFile(editable, 'utf8')).toBe('USER EDIT!')
+  })
+  it('does not dispatch a folder operation that was already cancelled', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const controller = new AbortController(); controller.abort()
+    await expect(f.owner.openLocalFolder(file.fileRef, controller.signal)).rejects.toBeDefined()
+    expect(f.openPath).not.toHaveBeenCalled()
+  })
+  it('detaches any shared-inode open file and retains independent edits of a different size', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const canonical = (await f.owner.readLocal(file.fileRef)).path
+    const directory = join(f.directory, '42', '.open', file.fileRef)
+    const editable = join(directory, file.fileName)
+    await mkdir(directory, { recursive: true }); await link(canonical, editable)
+    await f.owner.openLocalFolder(file.fileRef)
+    expect((await stat(editable)).ino).not.toBe((await stat(canonical)).ino)
+    await writeFile(editable, 'longer user-edited document')
+    await f.owner.openLocal(file.fileRef)
+    expect(await readFile(editable, 'utf8')).toBe('longer user-edited document')
+    expect(await readFile(canonical, 'utf8')).toBe('report.pdf')
+    await f.owner.uploadRefs([file.fileRef])
+    expect(f.upload.mock.calls[0]![0]).toBe(canonical)
+    expect(await readdir(directory)).toEqual(['report.pdf'])
+    await f.owner.remove(file.fileRef)
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it.each(['request', 'account'] as const)('propagates %s cancellation to the host without holding the local file lock', async reason => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    let started!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    let hostSignal!: AbortSignal
+    f.openPath.mockImplementation((_path, signal) => new Promise((_resolve, reject) => {
+      hostSignal = signal; started()
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    const controller = new AbortController()
+    const opening = f.owner.openLocalFolder(file.fileRef, controller.signal)
+    const rejected = expect(opening).rejects.toMatchObject({ code: 'file-folder-open-failed' })
+    await entered
+    const other = await f.stage('another.pdf')
+    expect(other.fileRef).not.toBe(file.fileRef)
+    if (reason === 'request') controller.abort()
+    else f.owner.cancelActive()
+    await rejected
+    expect(hostSignal.aborted).toBe(true)
   })
   it('preserves the original extension for native ZIP opening and sanitizes unsafe path characters', async () => {
     const f = await fixture()
@@ -801,4 +896,62 @@ describe('account-bound file lifecycle', () => {
 
     expect(await f.owner.tasks()).toContainEqual(expect.objectContaining({ taskRef: task.taskRef, state: 'sent' }))
   })
+})
+
+describe('long article files', () => {
+  it.each([10, 21, 100])('uploads %i images in order with at most three in flight and caches retries', async count => {
+    const f = await fixture()
+    const refs: string[] = []
+    for (let i = 0; i < count; i++) {
+      const path = join(f.directory, `image-${i}.png`)
+      await writeFile(path, `image-${i}`)
+      const file = await f.owner.stageLongArticleImage(path, { fileName: `image-${i}.png`, mimeType: 'image/png', size: (await readFile(path)).length })
+      refs.push(file.fileRef)
+    }
+    let running = 0; let peak = 0
+    f.upload.mockImplementation(async (_path, file) => {
+      peak = Math.max(peak, ++running)
+      await new Promise(resolve => setTimeout(resolve, 1))
+      running--
+      return { ...file, fileAssetUid: `asset-${file.fileName}` }
+    })
+    const assets = await f.owner.uploadLongArticleImages(refs)
+    expect(peak).toBeLessThanOrEqual(3)
+    expect(assets.map(asset => asset.fileName)).toEqual(Array.from({length: count}, (_, i) => `image-${i}.png`))
+    await f.owner.uploadLongArticleImages(refs)
+    expect(f.upload).toHaveBeenCalledTimes(count)
+    await expect(f.owner.uploadRefs(refs)).rejects.toMatchObject({code:'file-upload-invalid'})
+  })
+  it('rejects oversized and empty images before staging and accepts the exact limit', async () => {
+    const f = await fixture()
+    const path = join(f.directory, 'limit.png')
+    await writeFile(path, Buffer.alloc(1000))
+    await expect(f.owner.stageLongArticleImage(path, {fileName:'limit.png',mimeType:'image/png',size:1000})).resolves.toMatchObject({size:1000})
+    await writeFile(path, Buffer.alloc(1001))
+    await expect(f.owner.stageLongArticleImage(path, {fileName:'limit.png',mimeType:'image/png',size:1001})).resolves.toMatchObject({size:1001})
+    await expect(f.owner.stageLongArticleImage(path, {fileName:'limit.png',mimeType:'image/png',size:50 * 1024 * 1024 + 1})).rejects.toMatchObject({code:'file-input-invalid'})
+    await expect(f.owner.stageLongArticleImage(path, {fileName:'limit.png',mimeType:'image/png',size:0})).rejects.toMatchObject({code:'file-input-invalid'})
+  })
+})
+
+it('keeps long article and ordinary staging independent after restart', async () => {
+  const f = await fixture()
+  const path = join(f.directory, 'tiny.png')
+  await writeFile(path, 'x')
+  for (let i = 0; i < 257; i++) await f.owner.stageLongArticleImage(path, { fileName:`${i}.png`,mimeType:'image/png',size:1 })
+  expect(await f.owner.files()).toHaveLength(257)
+  const restarted = new FileTransfers(f.directory, f.ports, 1000)
+  expect(await restarted.files()).toHaveLength(257)
+  await expect(f.stage('ordinary.pdf')).resolves.toMatchObject({fileName:'ordinary.pdf'})
+})
+
+it('identifies the exact long article image when upload or fixed-limit validation fails', async () => {
+  const f=await fixture(); const path=join(f.directory,'failed.png'); await writeFile(path,'image bytes')
+  const file=await f.owner.stageLongArticleImage(path,{fileName:'failed.png',mimeType:'image/png',size:11})
+  f.upload.mockRejectedValue(new ArkmePluginError('upstream-upload-rejected','upload failed',true,503))
+  await expect(f.owner.uploadLongArticleImages([file.fileRef])).rejects.toMatchObject({code:'upstream-upload-rejected',imageFailures:[{fileRef:file.fileRef,fileName:'failed.png',phase:'upload'}]})
+  const statePath=join(f.directory,'42','state.json'); const state=JSON.parse(await readFile(statePath,'utf8'))
+  state.files[file.fileRef].size=50 * 1024 * 1024 + 1; await writeFile(statePath,JSON.stringify(state))
+  const restarted=new FileTransfers(f.directory,f.ports,1000)
+  await expect(restarted.uploadLongArticleImages([file.fileRef])).rejects.toMatchObject({imageFailures:[{fileRef:file.fileRef,fileName:'failed.png',phase:'validation'}]})
 })

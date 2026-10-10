@@ -22,7 +22,7 @@ const source: ArkmeSourceItem = { sourceRef: 'preview-ref', sourceKey: 'preview-
 const other: ArkmeSourceItem = { ...source, sourceRef: 'other', sourceKey: 'other', displayName: '当前会话', unreadCount: 0 }
 let root: Root, host: HTMLDivElement
 const onActivateSurface = vi.fn()
-const row = () => document.querySelector<HTMLButtonElement>('button[aria-label="未读群聊，5 条未读"]')!
+const row = () => document.querySelector<HTMLElement>('[role="treeitem"][aria-label="未读群聊，5 条未读"]')!
 const menuItem = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === text)
 const dialog = () => document.querySelector('[aria-label="未读群聊的聊天预览"]')
 

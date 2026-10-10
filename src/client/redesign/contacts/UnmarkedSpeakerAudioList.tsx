@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
@@ -67,7 +68,7 @@ function emptySegmentListState(identity: string, loading = false): SegmentListSt
 
 function durationLabel(durationMillis: number): string {
   const seconds = Math.max(0, Math.round(durationMillis / 1_000))
-  return `${String(seconds)} 秒`
+  return tr("{v0} 秒", { v0: String(seconds) })
 }
 
 export function UnmarkedSpeakerAudioList({
@@ -77,6 +78,7 @@ export function UnmarkedSpeakerAudioList({
   loadSegments = defaultLoadSegments,
   playbackDependencies,
 }: UnmarkedSpeakerAudioListProps) {
+  useArkmeLocale()
   const identity = `${accountKey}:${candidateRef}`
   const playback = useSingleAudioPlayback(identity, playbackDependencies)
   const [storedState, setStoredState] = useState<SegmentListState>(() => emptySegmentListState(identity, true))
@@ -143,18 +145,18 @@ export function UnmarkedSpeakerAudioList({
     }
   }, [identity, requestPage])
 
-  return <section className="arkme-unmarked-speaker-audio" aria-label="声音片段">
+  return <section className="arkme-unmarked-speaker-audio" aria-label={tr("声音片段")}>
     <header className="arkme-unmarked-speaker-subview-header">
-      <button type="button" onClick={onBack}>返回候选摘要</button>
+      <button type="button" onClick={onBack}>{tr("返回候选摘要")}</button>
       <span className="arkme-unmarked-speaker-action-icon"><UnmarkedSpeakerLinearIcon kind="sound" /></span>
       <div className="arkme-unmarked-speaker-subview-heading">
-        <h2>声音片段</h2>
-        <p>试听相关片段，确认这是谁的声音</p>
+        <h2>{tr("声音片段")}</h2>
+        <p>{tr("试听相关片段，确认这是谁的声音")}</p>
       </div>
     </header>
-    {state.loading && state.items.length === 0 && <div role="status">正在加载声音片段…</div>}
+    {state.loading && state.items.length === 0 && <div role="status">{tr("正在加载声音片段…")}</div>}
     {state.error !== undefined && <div role="alert">{state.error}</div>}
-    {!state.loading && state.items.length === 0 && state.error === undefined && <p>暂无可听声音片段</p>}
+    {!state.loading && state.items.length === 0 && state.error === undefined && <p>{tr("暂无可听声音片段")}</p>}
     <div className="arkme-unmarked-speaker-segment-list" role="list">
       {state.items.map(item => {
         const active = playback.activeSegmentRef === item.segmentRef
@@ -190,7 +192,7 @@ export function UnmarkedSpeakerAudioList({
         }
       }}
     >
-      {state.loading ? '正在加载…' : '加载更多声音'}
+      {state.loading ? tr("正在加载…") : '加载更多声音'}
     </button>}
   </section>
 }

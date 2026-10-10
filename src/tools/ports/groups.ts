@@ -5,6 +5,8 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeGroupToolPort {
+  listCommonGroups(sourceRef: string, options?: { cursor?: string; signal?: AbortSignal }): Promise<import('../../common-groups.js').ArkmeCommonGroupPage>
+  syncCommonGroups(sourceRef: string, signal?: AbortSignal): Promise<import('../../common-groups.js').ArkmeCommonGroupPage>
   createGroup(
     title: string,
     clientMutationId: string,

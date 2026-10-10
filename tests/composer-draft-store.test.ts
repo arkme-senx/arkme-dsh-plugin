@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeUploadedAsset } from '../src/types.js'
 import {
   ArkmeComposerDraftStore,
+  reconcileArkmeComposerMentions, insertArkmeComposerMentionToken,
   ARKME_COMPOSER_EMOJI_PLACEHOLDER,
   arkmeComposerCanSend,
   arkmeComposerAtomicDeletion,
@@ -23,6 +24,21 @@ function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
 
 describe('Arkme composer draft store', () => {
   beforeEach(() => { vi.restoreAllMocks() })
+
+  it('preserves source-range identities when re-editing escaped Markdown mentions', () => {
+    const mentions = [{ originalIndex: 0, displayName: 'A_B', startIndex: 0, length: 5 }]
+    expect(reconcileArkmeComposerMentions(String.raw`@A\_B`, String.raw`前 @A\_B`, mentions, 'markdown'))
+      .toEqual([{ ...mentions[0], startIndex: 2 }])
+    const inserted = insertArkmeComposerMentionToken({ text: String.raw`@A\_B `, mentions, emojis: [] },
+      { mentionRef: 'new' }, 'C_D', 6, 6, 'markdown')
+    expect(inserted?.text).toBe(String.raw`@A\_B @C\_D `)
+    expect(inserted?.mentions).toEqual([mentions[0], { mentionRef: 'new', displayName: 'C_D', startIndex: 6, length: 5 }])
+  })
+
+  it('removes mention identity when Markdown editing turns it into code', () => {
+    const mentions = [{ originalIndex: 0, displayName: '小明', startIndex: 1, length: 3 }]
+    expect(reconcileArkmeComposerMentions('`@小明', '`@小明`', mentions, 'markdown')).toEqual([])
+  })
 
   it('allows keyboard submission when either text or an attachment is ready', () => {
     expect(arkmeComposerCanSend('文字', 0, false)).toBe(true)
@@ -313,5 +329,50 @@ describe('Arkme composer draft store', () => {
 
     expect(store.deleteMentionAtSelection(key, 5, 5, 'backward')).toBe(1)
     expect(store.get(key)).toMatchObject({ text: '前后', mentions: [] })
+  })
+})
+
+it('persists durable drafts synchronously without rewriting them for unrelated text edits', () => {
+ const storage = { getItem: () => null, setItem: vi.fn() }
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = arkmeSourceComposerDraftKey(1001, {kind:'private_chat',sourceRef:'first'})!
+ store.appendAttachments(key, [{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ const changed = vi.fn(); store.subscribe(changed)
+ for (let i = 1; i <= 20; i++) store.setText('other', 'x'.repeat(i))
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ expect(changed).toHaveBeenLastCalledWith('other')
+ store.take(key)
+ expect(storage.setItem).toHaveBeenLastCalledWith('arkme-local-file-drafts-v1', '[]')
+})
+
+
+it.each(['save', 'delete'] as const)('retries failed durable %s on the next plain edit without repeated successful writes', action => {
+ let saved: string | null = null, unavailable = action === 'save'
+ const storage = {getItem:()=>saved,setItem:vi.fn((_key:string,value:string)=>{
+  if(unavailable)throw new Error('storage temporarily unavailable')
+  saved=value
+ })}
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = 'arkme-composer:42:source:private_chat:durable'
+ store.appendAttachments(key,[{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ if(action==='delete'){unavailable=true;store.take(key)}
+ expect(()=>store.setText('other','still editable')).not.toThrow()
+ unavailable=false
+ store.setText('other','next draft')
+ expect(new ArkmeComposerDraftStore(storage).get(key).attachments).toHaveLength(action==='save'?1:0)
+ const writes=storage.setItem.mock.calls.length
+ store.setText('other','another plain edit')
+ expect(storage.setItem).toHaveBeenCalledTimes(writes)
+})
+
+
+describe('serialized composer projection', () => {
+  it('round trips known emoji tokens and keeps unknown tokens as editable text', async () => {
+    const {arkmeComposerDraftFromText,serializeArkmeComposerDraft}=await import('../src/client/composer-draft-store.js')
+    const wire='a[jm_emoji:smiling_face][jm_emoji:smiling_face]z[jm_emoji:unknown]'
+    const snapshot=arkmeComposerDraftFromText(wire)
+    expect(snapshot.emojis).toEqual([{emojiId:'smiling_face',startIndex:1},{emojiId:'smiling_face',startIndex:2}])
+    expect(serializeArkmeComposerDraft(snapshot).text).toBe(wire)
   })
 })

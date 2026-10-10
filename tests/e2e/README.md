@@ -14,8 +14,8 @@ bash scripts/run-dsh-input-e2e.sh
 
 目标 Harness 必须是无产品补丁的官方 origin/master 源码；runner 校验 HEAD 与该引用无差异且 tracked 工作区干净。构建也必须来自该官方源码，不能复用曾打过人工来源补丁的构建产物。
 
-真实输入一次文本验证原有归档仍工作，并验证服务返回权威主题类型；SDK 和真实 DSH Tool 读取同一首页策略；实际页面不显示新增发送入口或首页设置开关，只读说明在加载、失败恢复和多选前后保持可用且不请求或修改设置。此测试不证明人工来源识别，不要求专用人工提交接口；程序 user 消息可能被收录的既有行为不在本次修复范围。
+真实输入一次文本验证原有归档仍工作；SDK 和真实 DSH Tool 读取同一首页策略。即使既有首页策略为 true，「发给自己」的目录、时间线和日期记录也不混入 DSH 输入；全局日历显示其正文及 DSH 来源标识，支持失败重试和打开详情，浏览过程不请求或修改首页策略。此测试不证明人工来源识别，不要求专用人工提交接口；程序 user 消息可能被收录的既有行为不在本次修复范围。
 
-身份服务和无关 Chat 上游是固定隔离 fixture，不是生产登录验收。Records/Topics/Home 请求全部转发到 runner 自建的真实 Record 栈。临时证书仅用于回环 HTTPS，未关闭全局证书校验。退出时清理本次浏览器、Host、账号凭据、临时目录和 Compose 栈，不触碰常驻 DIC。
+身份服务和无关 Chat 上游是固定隔离 fixture，不是生产登录验收。Records/Topics/Home/Calendar 请求全部转发到 runner 自建的真实 Record 栈。临时证书仅用于回环 HTTPS，未关闭全局证书校验。退出时清理本次浏览器、Host、账号凭据、临时目录和 Compose 栈，不触碰常驻 DIC。
 
 默认端口探测不是跨进程原子预留。与其他 Record E2E 同时启动时，应通过既有 `JOTMO_RECORD_E2E_PORT_SEARCH_START` / `JOTMO_RECORD_E2E_PORT_SEARCH_END` 指定不重叠范围，或依次启动；不要把端口竞争当作业务断言失败。

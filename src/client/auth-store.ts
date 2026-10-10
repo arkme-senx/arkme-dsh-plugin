@@ -20,6 +20,8 @@ function sameAuth(left: ArkmeAuthSnapshot | undefined, right: ArkmeAuthSnapshot 
     && left?.userId === right?.userId
     && left?.attemptId === right?.attemptId
     && left?.expiresAtMillis === right?.expiresAtMillis
+    && left?.restDaysCancel === right?.restDaysCancel
+    && left?.cancellationNotice === right?.cancellationNotice
 }
 
 export class ArkmeAuthStore {
@@ -45,6 +47,9 @@ export class ArkmeAuthStore {
 
   setAuth(auth: ArkmeAuthSnapshot): void {
     if (sameAuth(this.state.auth, auth) && this.state.checked && !this.state.busy && this.state.error === '') return
+    if (!['authenticated', 'binding-required'].includes(auth.status) && auth.cancellationNotice === undefined && this.state.auth?.cancellationNotice !== undefined) {
+      auth = { ...auth, cancellationNotice: this.state.auth.cancellationNotice }
+    }
     this.authGeneration += 1
     this.publish({ ...this.state, auth, checked: true, busy: false, error: '', revision: nextRevision(this.state) })
   }
@@ -62,11 +67,14 @@ export class ArkmeAuthStore {
       callArkme<ArkmeClientConfig>('auth.config'),
     ]).then(([auth, config]) => {
       const currentAuth = this.state.auth
-      const preservePendingAttempt = currentAuth?.status === 'pending'
+      const preservePendingAttempt = (currentAuth?.status === 'pending' || currentAuth?.status === 'cancellation-pending')
         && (auth.status === 'logged-out' || auth.status === 'expired')
-      const effectiveAuth = this.authGeneration === authGeneration && !preservePendingAttempt
+      let effectiveAuth = this.authGeneration === authGeneration && !preservePendingAttempt
         ? auth
         : currentAuth ?? auth
+      if (!['authenticated', 'binding-required'].includes(effectiveAuth.status) && effectiveAuth.cancellationNotice === undefined && currentAuth?.cancellationNotice !== undefined) {
+        effectiveAuth = { ...effectiveAuth, cancellationNotice: currentAuth.cancellationNotice }
+      }
       this.publish({
         ...this.state,
         auth: effectiveAuth,
@@ -97,3 +105,17 @@ export class ArkmeAuthStore {
 }
 
 export const arkmeAuthStore = new ArkmeAuthStore()
+
+/** The local Host login is shared by tabs and browsers; reconcile on re-entry. */
+export function startArkmeAuthRevalidation(): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {}
+  const refresh = () => { if (document.visibilityState !== 'hidden') void arkmeAuthStore.refresh().catch(() => undefined) }
+  window.addEventListener('focus', refresh)
+  window.addEventListener('online', refresh)
+  document.addEventListener('visibilitychange', refresh)
+  return () => {
+    window.removeEventListener('focus', refresh)
+    window.removeEventListener('online', refresh)
+    document.removeEventListener('visibilitychange', refresh)
+  }
+}

@@ -1,5 +1,10 @@
 import { migrationDownloadProgress } from '../app-migration-shared.js'
 import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
+import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
+import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
+import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
@@ -8,6 +13,10 @@ import { IdentificationCard } from '@phosphor-icons/react/IdentificationCard'
 import { Phone } from '@phosphor-icons/react/Phone'
 import { WarningCircle } from '@phosphor-icons/react/WarningCircle'
 import { WechatLogo } from '@phosphor-icons/react/WechatLogo'
+import { AppleLogo } from '@phosphor-icons/react/AppleLogo'
+import { GoogleLogo } from '@phosphor-icons/react/GoogleLogo'
+import { DeviceMobile } from '@phosphor-icons/react/DeviceMobile'
+import { EnvelopeSimple } from '@phosphor-icons/react/EnvelopeSimple'
 import { X } from '@phosphor-icons/react/X'
 import qrcode from 'qrcode-generator'
 import pluginManifest from '../../package.json' with { type: 'json' }
@@ -23,7 +32,9 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
+import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
+import { publishProfileChange } from './profile-change-store.js'
+import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -44,6 +55,7 @@ import {
 } from './record-input-capture.js'
 import { arkmeUi } from './ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+import { socialBindingDescription } from './ArkmeSocialBindingHint.js'
 
 export type ArkmeBackgroundSoundEligibilityStatus = 'loading' | ArkmeBackgroundSoundEligibilityReason
 export type ArkmeBackgroundSoundCapabilityStatus = 'loading' | 'supported' | 'unsupported'
@@ -63,20 +75,20 @@ export function describeArkmeBackgroundSoundSetting(input: {
   enabled: boolean
   permission: ArkmeMicrophonePermissionState
 }): string {
-  if (input.capability === 'loading') return '正在确认当前 Arkme Host 是否支持文字背景音…'
-  if (input.capability === 'unsupported') return '当前 Arkme Host 不支持文字背景音，请升级后重试'
-  if (input.eligibility === 'loading') return '正在确认当前账号的背景音会员权益…'
-  if (input.eligibility === 'membership-required') return '免费版暂不支持背景音'
-  if (input.eligibility === 'membership-unavailable') return '暂时无法确认会员权益'
-  if (input.enabled && input.permission === 'granted') return '已开启，输入时自动记录环境背景音并随本条快记保存'
+  if (input.capability === 'loading') return tr("正在确认当前 Arkme Host 是否支持文字背景音…")
+  if (input.capability === 'unsupported') return tr("当前 Arkme Host 不支持文字背景音，请升级后重试")
+  if (input.eligibility === 'loading') return tr("正在确认当前账号的背景音会员权益…")
+  if (input.eligibility === 'membership-required') return tr("免费版暂不支持背景音")
+  if (input.eligibility === 'membership-unavailable') return tr("暂时无法确认会员权益")
+  if (input.enabled && input.permission === 'granted') return tr("已开启，输入时自动记录环境背景音并随本条快记保存")
   if (input.enabled) {
-    if (input.permission === 'denied') return '已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许'
-    if (input.permission === 'unavailable') return '账号开关已开启，但当前浏览器不支持麦克风录音'
-    return '已开启，首次输入时会请求麦克风权限'
+    if (input.permission === 'denied') return tr("已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许")
+    if (input.permission === 'unavailable') return tr("账号开关已开启，但当前浏览器不支持麦克风录音")
+    return tr("已开启，首次输入时会请求麦克风权限")
   }
-  if (input.permission === 'denied') return '未开启，麦克风权限已拒绝'
-  if (input.permission === 'unavailable') return '当前浏览器不支持麦克风录音'
-  return '未开启；开启后会在首次输入时请求麦克风权限'
+  if (input.permission === 'denied') return tr("未开启，麦克风权限已拒绝")
+  if (input.permission === 'unavailable') return tr("当前浏览器不支持麦克风录音")
+  return tr("未开启；开启后会在首次输入时请求麦克风权限")
 }
 
 interface SettingsRowProps {
@@ -100,7 +112,7 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
     return <a className="arkme-redesign-setting-row" href={href} target="_blank" rel="noreferrer">{body}</a>
   }
   if (onClick !== undefined) {
-    return <button type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
+    return <button data-arkme-feedback="neutral" type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
   }
   return <div className="arkme-redesign-setting-row">{body}</div>
 }
@@ -120,13 +132,13 @@ export function BackgroundSoundSettingsRow({
 }) {
   const switchDisabled = busy || disabled
   return <div className="arkme-redesign-setting-row">
-    <strong>文字背景音</strong>
+    <strong>{tr("文字背景音")}</strong>
     <span style={{ minWidth: 0, maxWidth: 430, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
       <span className="arkme-redesign-setting-summary" style={{ minWidth: 0 }}>{description}</span>
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         role="switch"
-        aria-label="文字背景音"
+        aria-label={tr("文字背景音")}
         aria-checked={checked}
         aria-busy={busy}
         disabled={switchDisabled}
@@ -167,7 +179,7 @@ interface VersionSettingsRowProps {
   title: string
   version: string
   feedback?: string
-  actionLabel?: '打开 APP 更新'
+  actionLabel?: string
   onAction?: () => void
 }
 
@@ -186,7 +198,7 @@ export function VersionSettingsRow({
     </span>
     {hasAction ?
       <span className="arkme-redesign-version-action-slot">
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         className="arkme-redesign-update-button"
         aria-label={`${actionLabel}：${title}`}
@@ -200,9 +212,9 @@ export function VersionSettingsRow({
   </div>
 }
 
-function SettingsGroup({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
+function SettingsGroup({ title, children, id }: { title?: string; children: ReactNode; id?: string }) {
   return <section className="arkme-redesign-settings-group" {...(id === undefined ? {} : { id })}>
-    <h2>{title}</h2>
+    {title !== undefined && <h2>{title}</h2>}
     <div>{children}</div>
   </section>
 }
@@ -212,26 +224,35 @@ interface AccountInfoRowProps {
   title: string
   value: string
   action?: string
+  valueAccessory?: ReactNode
   disabled?: boolean
   onClick?: (() => void) | undefined
 }
 
-function AccountInfoRow({ icon, title, value, action, disabled = false, onClick }: AccountInfoRowProps) {
-  const content = <>
+function AccountInfoRow({ icon, title, value, action, valueAccessory, disabled = false, onClick }: AccountInfoRowProps) {
+  const copy = <>
     <span className="arkme-account-info-icon" aria-hidden>{icon}</span>
     <span className="arkme-account-info-copy">
       <strong>{title}</strong>
-      <small>{value}</small>
+      {valueAccessory === undefined ? <small>{value}</small> : <span className="arkme-account-info-value"><small>{value}</small>{valueAccessory}</span>}
     </span>
+  </>
+  const trailing = <>
     <span className="arkme-account-info-action">{action}</span>
     {onClick === undefined ? <span className="arkme-redesign-trailing-slot" aria-hidden /> : <CaretRight size={15} aria-hidden />}
   </>
-  if (onClick === undefined) return <div className="arkme-account-info-row">{content}</div>
-  return <button type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+  const className = `arkme-account-info-row${action === undefined ? ' is-status-only' : ''}`
+  if (valueAccessory !== undefined) return <div className={className}>
+    {copy}
+    <button data-arkme-feedback="neutral" type="button" className="arkme-account-info-edit" disabled={disabled || onClick === undefined} onClick={onClick}>{trailing}</button>
+  </div>
+  if (onClick === undefined) return <div className={className}>{copy}{trailing}</div>
+  return <button data-arkme-feedback="neutral" type="button" className={className} disabled={disabled} onClick={onClick}>{copy}{trailing}</button>
 }
 
-export function WechatBindingSettingsRow({ bound, onBind, busy = false }: {
+export function WechatBindingSettingsRow({ bound, nickname, onBind, busy = false }: {
   bound: boolean | undefined
+  nickname?: string | undefined
   // Only an actual authorization adapter may supply this capability.
   onBind?: (() => void) | undefined
   busy?: boolean
@@ -239,9 +260,9 @@ export function WechatBindingSettingsRow({ bound, onBind, busy = false }: {
   const canBind = bound === false && onBind !== undefined
   return <AccountInfoRow
     icon={<WechatLogo size={18} />}
-    title="微信号"
-    value={bound === undefined ? '正在读取…' : bound ? '已绑定' : '未绑定'}
-    {...(canBind ? { action: busy ? '绑定中…' : '绑定' } : {})}
+    title={tr("微信号")}
+    value={bound === undefined ? tr('正在读取…') : bound ? nickname?.trim() || tr('已绑定') : tr('未绑定')}
+    {...(canBind ? { action: tr(busy ? '绑定中…' : '绑定') } : {})}
     disabled={busy}
     onClick={canBind && !busy ? onBind : undefined}
   />
@@ -292,21 +313,21 @@ function copyText(value: string): Promise<void> {
 function localArkmeIdValidation(text: string, minLength: number): string | undefined {
   const value = text.trim()
   if (value === '') return undefined
-  if (!/^[A-Za-z]/.test(value)) return '即我号不能以数字或符号开头'
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) return '即我号仅支持字母、数字、下划线或减号'
+  if (!/^[A-Za-z]/.test(value)) return tr("即我号不能以数字或符号开头")
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return tr("即我号仅支持字母、数字、下划线或减号")
   const length = [...value].length
-  if (length < minLength || length > 20) return minLength === 5 ? '即我号需要5-20个字符' : '即我号需要6-20个字符'
+  if (length < minLength || length > 20) return minLength === 5 ? tr("即我号需要5-20个字符") : tr("即我号需要6-20个字符")
   return undefined
 }
 
 function arkmeIdAvailabilityText(availability: ArkmeIdAvailabilitySnapshot | undefined): string {
   if (availability === undefined) return ''
-  if (availability.available) return '✅ 当前即我号可设置'
+  if (availability.available) return tr("✅ 当前即我号可设置")
   switch (availability.reason) {
     case 'modify_limited': return '❌ 即我号仅可设置一次'
     case 'invalid': return '❌ 即我号格式不正确'
     case 'taken': return '❌ 该即我号已被占用'
-    default: return '服务器繁忙，请稍后重试'
+    default: return tr("服务器繁忙，请稍后重试")
   }
 }
 
@@ -323,7 +344,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button type="button" aria-label="关闭" onClick={onClose}><X size={20} aria-hidden /></button>
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose}><X size={20} aria-hidden /></button>
       </header>
       {children}
     </section>
@@ -339,21 +360,22 @@ function ProfileQrDialog({
   shareWebsite: string | undefined
   onClose: () => void
 }) {
+  useArkmeLocale()
   const shareUrl = buildProfileShareUrl(shareWebsite, profile.arkmeId)
   const [status, setStatus] = useState('')
   const qrDataUrl = useMemo(() => profileQrDataUrlFromShareUrl(shareUrl), [shareUrl])
-  return <SettingsDialog title="我的二维码" onClose={onClose}>
+  return <SettingsDialog title={tr("我的二维码")} onClose={onClose}>
     <div className="arkme-account-qr-card">
-      <ArkmeUserAvatar {...(profile.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={52} label="当前用户头像" />
-      <strong>{profile.displayName || '即我用户'}</strong>
-      <span>即我号：{profile.arkmeId || '-'}</span>
-      <img src={qrDataUrl} alt="我的即我二维码" />
-      <small>扫码查看我的主页</small>
+      <ArkmeUserAvatar {...(profile.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={52} label={tr("当前用户头像")} />
+      <strong>{profile.displayName || tr("即我用户")}</strong>
+      <span>{tr("即我号：")}{profile.arkmeId || '-'}</span>
+      <img src={qrDataUrl} alt={tr("我的即我二维码")} />
+      <small>{tr("扫码查看我的主页")}</small>
     </div>
     <div className="arkme-account-dialog-actions">
-      <button type="button" onClick={() => {
+      <button data-arkme-feedback="neutral" type="button" onClick={() => {
         void copyText(shareUrl).then(() => { setStatus('主页链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
-      }}><Copy size={16} aria-hidden />复制主页链接</button>
+      }}><Copy size={16} aria-hidden />{tr("复制主页链接")}</button>
     </div>
     {status !== '' ? <p className="arkme-account-dialog-status" role="status">{status}</p> : null}
   </SettingsDialog>
@@ -368,6 +390,7 @@ function ArkmeIdDialog({
   onClose: () => void
   onUpdated: (snapshot: ArkmeUserProfileSnapshot) => void
 }) {
+  useArkmeLocale()
   const minLength = profile.accountType === 2 ? 5 : 6
   const [value, setValue] = useState(profile.arkmeId)
   const [availability, setAvailability] = useState<ArkmeIdAvailabilitySnapshot>()
@@ -425,24 +448,94 @@ function ArkmeIdDialog({
   }
 
   const statusText = localError ?? (checking ? '加载中…' : arkmeIdAvailabilityText(availability))
-  return <SettingsDialog title="设置即我号" onClose={onClose}>
+  return <SettingsDialog title={tr("设置即我号")} onClose={onClose}>
     <form className="arkme-account-form" onSubmit={event => { void submit(event) }}>
       <label>
-        <span>即我号</span>
-        <input value={value} maxLength={20} autoFocus placeholder="请输入即我号" onChange={event => { setValue(event.target.value) }} />
+        <span>{tr("即我号")}</span>
+        <input value={value} maxLength={20} autoFocus placeholder={tr("请输入即我号")} onChange={event => { setValue(event.target.value) }} />
       </label>
-      <p className="arkme-account-rule">需字母开头 · 最少{minLength}位 · 暂仅可设置一次</p>
+      <p className="arkme-account-rule">{tr("需字母开头 · 最少")}{minLength}{tr("位 · 暂仅可设置一次")}</p>
       {statusText !== '' ? <p className={`arkme-account-dialog-status${localError !== undefined || availability?.available === false || error !== '' ? ' is-error' : ''}`} role="status">{statusText}</p> : null}
       {error !== '' ? <p className="arkme-account-dialog-status is-error" role="alert">{error}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}确认创建</button>
+        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{tr("确认创建")}</button>
       </div>
     </form>
   </SettingsDialog>
 }
 
-function PhoneBindDialog({
+export function EmailBindDialog({ profile, onClose, onUpdated }: {
+  profile: ArkmeUserProfile
+  onClose: () => void
+  onUpdated: (snapshot: ArkmeUserProfileSnapshot) => void
+}) {
+  useArkmeLocale()
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [bound, setBound] = useState(false)
+  const [status, setStatus] = useState('')
+  const [failed, setFailed] = useState(false)
+  const [countdown, setCountdown] = useState(0)
+  const busyRef = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = window.setTimeout(() => { setCountdown(value => value - 1) }, 1000)
+    return () => { window.clearTimeout(timer) }
+  }, [countdown])
+  const valid = email.trim().length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const run = async (sending: boolean) => {
+    if (busyRef.current || sending && (countdown > 0 || bound) || !bound && (!valid || !sending && !/^[0-9]{4}$/.test(code))) return
+    busyRef.current = true
+    setBusy(true); setStatus(''); setFailed(false)
+    try {
+      if (sending) {
+        await callArkme('auth.email.send', { expectedUserId: profile.userId, email: email.trim() })
+        if (!mounted.current) return
+        setCountdown(60); setStatus('验证码已发送，请查收邮箱')
+      } else {
+        if (!bound) {
+          await callArkme('auth.email.bind', { expectedUserId: profile.userId, email: email.trim(), code })
+          if (!mounted.current) return
+          setBound(true)
+        }
+        const snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+        if (!mounted.current) return
+        if (snapshot.profile?.userId !== profile.userId) throw new Error('账号已切换，请重新打开账号设置')
+        onUpdated(snapshot); onClose()
+      }
+    } catch (error) {
+      if (mounted.current) { setFailed(true); setStatus(error instanceof Error ? error.message : String(error)) }
+    } finally {
+      busyRef.current = false
+      if (mounted.current) setBusy(false)
+    }
+  }
+  return <SettingsDialog title={tr('绑定邮箱')} onClose={() => { if (!busyRef.current) onClose() }}>
+    <form className="arkme-account-form" onSubmit={event => { event.preventDefault(); void run(false) }}>
+      <label><span>{tr('邮箱')}</span><input autoFocus type="email" autoComplete="email" value={email} disabled={busy || bound}
+        placeholder={tr('请输入邮箱地址')} onChange={event => { setEmail(event.target.value); setCode(''); setStatus('') }} /></label>
+      <label><span>{tr('验证码')}</span><span className="arkme-account-code-row">
+        <input inputMode="numeric" autoComplete="one-time-code" maxLength={4} value={code} disabled={busy || bound}
+          placeholder={tr('请输入4位邮箱验证码')} onChange={event => { setCode(event.target.value.replace(/\D/g, '').slice(0, 4)) }} />
+        <button data-arkme-feedback="neutral" type="button" disabled={busy || bound || !valid || countdown > 0} onClick={() => { void run(true) }}>{countdown > 0 ? `${countdown}s` : tr('发送验证码')}</button>
+      </span></label>
+      {bound && <p className="arkme-account-rule">{tr('邮箱已绑定，正在刷新账号信息；刷新失败时可重试。')}</p>}
+      {status && <p className={`arkme-account-dialog-status${failed ? ' is-error' : ''}`} role={failed ? 'alert' : 'status'}>{tr(status)}</p>}
+      <div className="arkme-account-dialog-actions">
+        <button data-arkme-feedback="neutral" type="button" disabled={busy} onClick={onClose}>{tr('取消')}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={busy || !bound && (!valid || !/^[0-9]{4}$/.test(code))}>
+          {busy && <CircleNotch className="arkme-icon-spin" size={16} aria-hidden />}{tr(bound ? '刷新账号信息' : '绑 定')}
+        </button>
+      </div>
+    </form>
+  </SettingsDialog>
+}
+
+export function PhoneBindDialog({
   config,
   profile,
   onClose,
@@ -453,14 +546,19 @@ function PhoneBindDialog({
   onClose: () => void
   onUpdated: (snapshot: ArkmeUserProfileSnapshot, auth: ArkmeAuthSnapshot) => void
 }) {
+  const [unbind, setUnbind] = useState(false)
+  const busyRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  useArkmeLocale()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
-  const phoneValid = /^1[3-9][0-9]{9}$/.test(phone.replace(/[\s-]/g, ''))
+  const phoneValid = unbind || /^1[3-9][0-9]{9}$/.test(phone.replace(/[\s-]/g, ''))
   const codeValid = /^[0-9]{6}$/.test(code.trim())
-  const actionLabel = profile.contact.phoneMasked === undefined ? '绑定手机号' : '更换手机号'
+  const actionLabel = tr(unbind ? '解绑手机号' : profile.contact.phoneMasked === undefined ? '绑定手机号' : '更换手机号')
 
   useEffect(() => {
     if (countdown <= 0) return
@@ -468,66 +566,110 @@ function PhoneBindDialog({
     return () => { window.clearTimeout(timer) }
   }, [countdown])
 
+  const changePhoneMode = async () => {
+    if (busyRef.current) return
+    if (unbind) {
+      setUnbind(false)
+      setCode(''); setStatus(''); setCountdown(0)
+      return
+    }
+    busyRef.current = true
+    setPhoneBusy(true)
+    setStatus('')
+    try {
+      const result = await callArkme<{ allowed: boolean }>('auth.phone.unbind.check', { expectedUserId: profile.userId })
+      if (!mountedRef.current) return
+      if (result.allowed !== true) {
+        setStatus(result.allowed === false ? tr('当前仅绑定了手机号，请先绑定其他登录方式') : tr('账号状态未确认，请重新打开账号设置'))
+        return
+      }
+      setUnbind(true)
+      setCode(''); setCountdown(0)
+    } catch (caught) {
+      if (mountedRef.current) setStatus(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
+    }
+  }
+
   const sendCode = async () => {
+    if (busyRef.current || countdown > 0) return
     if (!phoneValid) {
       setStatus('请输入正确的手机号')
       return
     }
+    busyRef.current = true
     setPhoneBusy(true)
     setStatus('')
     try {
       const captcha = await verifyPhoneCaptcha(config?.captchaId ?? '', phone)
-      await callArkme('auth.phone.send', { phone, captcha })
+      await callArkme(unbind ? 'auth.phone.unbind.send' : 'auth.phone.send', unbind ? { captcha } : { phone, captcha })
+      if (!mountedRef.current) return
       setCountdown(60)
       setStatus('已发送验证码')
     } catch (caught) {
+      if (!mountedRef.current) return
       setStatus(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setPhoneBusy(false)
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
     }
   }
 
   const verify = async (event: FormEvent) => {
     event.preventDefault()
+    if (busyRef.current) return
     if (!phoneValid || !codeValid) {
       setStatus('请输入正确的手机号和验证码')
       return
     }
+    busyRef.current = true
     setPhoneBusy(true)
     setStatus('')
     try {
-      const auth = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code })
+      const auth = await callArkme<ArkmeAuthSnapshot>(unbind ? 'auth.phone.unbind' : 'auth.phone.verify', unbind ? { code } : { phone, code })
+      if (!mountedRef.current) return
       arkmeAuthStore.setAuth(auth)
+      if (unbind && auth.status === 'binding-required') {
+        onClose()
+        return
+      }
       const snapshot = await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+      if (!mountedRef.current) return
       onUpdated(snapshot, auth)
       onClose()
     } catch (caught) {
+      if (!mountedRef.current) return
       setStatus(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setPhoneBusy(false)
+      busyRef.current = false
+      if (mountedRef.current) setPhoneBusy(false)
     }
   }
 
-  return <SettingsDialog title={actionLabel} onClose={onClose}>
+  return <SettingsDialog title={actionLabel} onClose={() => { if (!busyRef.current) onClose() }}>
     <form className="arkme-account-form" onSubmit={event => { void verify(event) }}>
-      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">当前绑定的手机号码为 {profile.contact.phoneMasked}</p> : null}
+      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p>
+        : <p className="arkme-account-rule">{tr(socialBindingDescription)}</p>}
+      {!unbind && <label>
+        <span>{tr("手机号")}</span>
+        <input value={phone} autoFocus inputMode="tel" placeholder={tr("请输入手机号")} onChange={event => { setPhone(event.target.value) }} />
+      </label>}
       <label>
-        <span>手机号</span>
-        <input value={phone} autoFocus inputMode="tel" placeholder="请输入手机号" onChange={event => { setPhone(event.target.value) }} />
-      </label>
-      <label>
-        <span>验证码</span>
+        <span>{tr("验证码")}</span>
         <span className="arkme-account-code-row">
-          <input value={code} inputMode="numeric" maxLength={6} placeholder="请输入验证码" onChange={event => { setCode(event.target.value) }} />
-          <button type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
+          <input value={code} inputMode="numeric" maxLength={6} placeholder={tr("请输入验证码")} onChange={event => { setCode(event.target.value) }} />
+          <button data-arkme-feedback="neutral" type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
             {countdown > 0 ? `${countdown}s` : '发送验证码'}
           </button>
         </span>
       </label>
       {status !== '' ? <p className={`arkme-account-dialog-status${status.includes('失败') || status.includes('错误') || status.includes('请输入') || status.includes('已绑定') ? ' is-error' : ''}`} role="status">{status}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? '绑 定' : '更 换'}</button>
+        {profile.contact.phoneMasked !== undefined && <button data-arkme-feedback="neutral" className="arkme-phone-mode-action" type="button" disabled={phoneBusy} onClick={() => { void changePhoneMode() }}>{tr(unbind ? '返回更换手机号' : '解绑手机号')}</button>}
+        <button data-arkme-feedback="neutral" type="button" disabled={phoneBusy} onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{tr(unbind ? '确认解绑' : profile.contact.phoneMasked === undefined ? '绑 定' : '更 换')}</button>
       </div>
     </form>
   </SettingsDialog>
@@ -584,7 +726,7 @@ export function aboutHarnessVersion(
 }
 
 export function updateVersionText(current: string, latest: string): string {
-  if (current === 'v…') return '当前版本读取中…'
+  if (current === 'v…') return tr("当前版本读取中…")
   if (latest === 'v…') return `当前 ${current}`
   return current === latest ? `当前 ${current} · 已是最新版本` : `当前 ${current} → 最新 ${latest}`
 }
@@ -627,15 +769,16 @@ export function buildArkmeAppUpdateRow(input: {
 
 export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotificationPermission): string {
   return permission === 'granted'
-    ? '已开启'
+    ? tr("已开启")
     : permission === 'denied'
-      ? '系统通知未开启，点击前往设置'
+      ? tr("系统通知未开启，点击前往设置")
       : permission === 'default'
-        ? '尚未授权，点击开启'
-        : permission === 'system-managed' ? '由系统管理' : '不可用'
+        ? tr("尚未授权，点击开启")
+        : permission === 'system-managed' ? tr("由系统管理") : tr("不可用")
 }
 
 export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 'general' | 'about' } = {}) {
+  useArkmeLocale()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const migrationView = useSyncExternalStore(appMigrationStore.subscribe, appMigrationStore.getSnapshot, appMigrationStore.getSnapshot)
@@ -644,10 +787,12 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const [clientConfig, setClientConfig] = useState<ArkmeClientConfig>()
   const [logoutBusy, setLogoutBusy] = useState(false)
+  const [cancellationBusy, setCancellationBusy] = useState(false)
   const [notificationBusy, setNotificationBusy] = useState(false)
   const [error, setError] = useState('')
   const [accountFeedback, setAccountFeedback] = useState('')
-  const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | null>(null)
+  const [emailBoundToast, setEmailBoundToast] = useState(false)
+  const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | 'email' | null>(null)
   const notificationPermission = useSyncExternalStore(
     arkmeDesktopNotifications.subscribePermission,
     arkmeDesktopNotifications.getPermissionSnapshot,
@@ -680,10 +825,16 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
     setProfile(undefined)
     setError('')
     void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, signal)
-      .then(async snapshot => snapshot.profile === null
-        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
-        : snapshot)
-      .then(snapshot => { if (!signal?.aborted) applyProfileSnapshot(snapshot) })
+      .then(async snapshot => {
+        if (signal?.aborted) return snapshot
+        if (snapshot.profile !== null) applyProfileSnapshot(snapshot)
+        return await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
+      })
+      .then(snapshot => {
+        if (signal?.aborted) return
+        applyProfileSnapshot(snapshot)
+        publishProfileChange(snapshot)
+      })
       .catch(caught => {
         if (!signal?.aborted) setError(caught instanceof Error ? caught.message : String(caught))
       })
@@ -921,66 +1072,71 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
     }
   }
 
-  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface data-arkme-settings-view={view} aria-label="Arkme 设置">
+  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface data-arkme-settings-view={view} aria-label={tr("Arkme 设置")}>
     <div className="arkme-redesign-settings-shell">
       {view === 'account' && <>
-      <div className="arkme-redesign-settings-profile">
-        <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label="当前用户头像" />
+      {!authenticated && <div className="arkme-redesign-settings-profile">
+        <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label={tr("当前用户头像")} />
         <div>
           <h1>{displayName}</h1>
           {!authenticated && <p><span>{accountDescription}</span></p>}
         </div>
-            {authenticated ? <button
-              type="button"
-              className="arkme-account-profile-qr"
-              aria-label="查看我的二维码"
-              disabled={profile === undefined || currentArkmeId === ''}
-              onClick={() => { setActiveAccountDialog('qr'); setAccountFeedback('') }}
-            >
-              <WorldShareQrIcon />
-            </button> : null}
-      </div>
+      </div>}
+      {authenticated && profile && authenticatedAccountKey && <ArkmeProfileEditor key={authenticatedAccountKey} profile={profile} accountScope={authenticatedAccountKey} onUpdated={applyProfileSnapshot} />}
 
-      {!authenticated && <SettingsGroup title="账户">
+      {!authenticated && <SettingsGroup title={tr("账户")}>
         <SettingsRow
-          title={bindingRequired ? '待完成登录' : authState.checked ? '当前未登录' : '正在读取登录状态…'}
-          description={bindingRequired ? '完成手机号绑定后即可登录' : '登录 Arkme 后可管理账户'}
+          title={bindingRequired ? tr("待完成登录") : authState.checked ? tr("当前未登录") : tr("正在读取登录状态…")}
+          description={bindingRequired ? tr("完成手机号绑定后即可登录") : tr("登录 Arkme 后可管理账户")}
         />
       </SettingsGroup>}
 
-      {authenticated && <SettingsGroup title="账号信息">
+      {authenticated && <SettingsGroup title={tr("账号信息")}>
         <AccountInfoRow
           icon={<IdentificationCard size={18} />}
-          title="即我号"
-          value={currentArkmeId === '' ? '暂未获取到即我号' : currentArkmeId}
-          action={profile?.canUpdateArkmeId === false ? '不可修改' : '修改'}
+          title={tr("即我号")}
+          valueAccessory={<button type="button" className="arkme-account-profile-qr" aria-label={tr('查看我的二维码')} disabled={!profile || !currentArkmeId} onClick={() => { setActiveAccountDialog('qr') }}><WorldShareQrIcon /></button>}
+          value={currentArkmeId === '' ? tr('暂未获取到即我号') : currentArkmeId}
+          action={tr(profile?.canUpdateArkmeId === false ? '不可修改' : '修改')}
           disabled={profile === undefined || profile.canUpdateArkmeId === false}
           onClick={profile !== undefined && profile.canUpdateArkmeId !== false ? () => { setActiveAccountDialog('arkme-id'); setAccountFeedback('') } : undefined}
         />
         <AccountInfoRow
           icon={<Phone size={18} />}
-          title="手机号"
-          value={phoneMasked ?? '未绑定'}
-          action={phoneMasked === undefined ? '绑定' : '换绑'}
+          title={tr("手机号")}
+          value={phoneMasked ?? tr('未绑定')}
+          action={tr(phoneMasked === undefined ? '绑定' : '解/换绑')}
           disabled={profile === undefined}
           onClick={profile !== undefined ? () => { setActiveAccountDialog('phone'); setAccountFeedback('') } : undefined}
         />
         {/* DSH currently has no WeChat authorization adapter. Never substitute an explanatory dialog. */}
-        <WechatBindingSettingsRow bound={profile === undefined ? undefined : profile.bindings?.wechat === true} />
+        <WechatBindingSettingsRow bound={profile === undefined ? undefined : profile.bindings?.wechat === true} nickname={profile?.bindingNames?.wechat} />
+        {/* Binding metadata is distinct from the Arkme profile. Do not show the Arkme
+            avatar as a provider avatar when the profile API does not supply one. */}
+        {profile?.bindings?.apple && <AccountInfoRow icon={<AppleLogo size={18} />} title="Apple ID" value={profile.bindingNames?.apple || tr('已绑定')} />}
+        {profile?.bindings?.google && <AccountInfoRow icon={<GoogleLogo size={18} />} title="Google" value={profile.bindingNames?.google || tr('已绑定')} />}
+        {profile?.bindings?.huawei && <AccountInfoRow icon={<DeviceMobile size={18} />} title={tr("华为 ID")} value={tr('已绑定')} />}
+        <AccountInfoRow icon={<EnvelopeSimple size={18} />} title={tr('邮箱')} value={profile?.contact.emailMasked || ''}
+          {...(!profile?.contact.emailMasked ? { action: tr('绑定'), disabled: profile === undefined,
+            onClick: () => { setActiveAccountDialog('email'); setAccountFeedback('') } } : {})} />
         {accountFeedback !== '' ? <p className="arkme-account-feedback" role="status"><WarningCircle size={14} aria-hidden />{accountFeedback}</p> : null}
       </SettingsGroup>}
-      {authenticated && <SettingsGroup title="账户余额">
-        <ArkmeBillingSettings />
-      </SettingsGroup>}
       {authenticated && <div className="arkme-account-logout">
-        <button type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? '正在退出…' : '退出登录'}</button>
+        <button className="arkme-account-logout-confirm" data-arkme-feedback="danger" type="button" disabled={logoutBusy || cancellationBusy} onClick={() => { void logout() }}>{logoutBusy ? tr("正在退出…") : tr("退出登录")}</button>
+        {authenticatedUserId !== undefined ? <ArkmeAccountCancellation key={authenticatedAccountKey} userId={authenticatedUserId} disabled={logoutBusy}
+          onBusyChange={setCancellationBusy} onComplete={result => {
+            arkmeAuthStore.setAuth({ status: 'logged-out', environment: authState.auth!.environment,
+              cancellationNotice: result.status === 'done' ? 'done' : 'waiting' })
+            clearLastNavigationCache()
+            arkmeUi.authChanged(false)
+          }} /> : null}
       </div>}
       </>}
 
       {view === 'general' && <>
-      <SettingsGroup title="通用">
+      <SettingsGroup title={tr("通用")}>
         <SettingsRow
-          title="通知"
+          title={tr("通知")}
           description={notificationLabel}
           disabled={notificationBusy}
           {...(notificationPermission === 'default'
@@ -989,9 +1145,11 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
               ? { onClick: () => { void openNotificationSettings() } }
               : {})}
         />
+        <ArkmeScreenshotShortcutSetting />
       </SettingsGroup>
 
-      {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title="隐私与权限">
+      {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title={tr("隐私与权限")}>
+        {authenticatedAccountKey && <ArkmeReactionHistoryLock key={authenticatedAccountKey} scope={authenticatedAccountKey} />}
         <BackgroundSoundSettingsRow
           checked={backgroundSoundCapability === 'supported' && backgroundSoundEligibility === 'eligible' && backgroundSoundEnabled}
           busy={backgroundSoundBusy || backgroundSoundCapability === 'loading' || backgroundSoundEligibility === 'loading'}
@@ -1004,30 +1162,34 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
       </>}
 
       {view === 'about' && <>
-      <h1 className="arkme-about-heading">关于</h1>
-      <SettingsGroup title="更新" id="arkme-settings-about">
+      <ArkmeAboutProduct />
+      <SettingsGroup id="arkme-settings-about">
         <VersionSettingsRow
-          title="ArkME 客户端"
+          title={tr("ArkME 客户端")}
           version={aboutArkmeVersion(appUpdateState.status?.currentVersion)}
-          feedback={migrationEnabled ? (migrationView.error || migrationView.status?.error || ({ downloading: `正在下载 · ${migrationDownloadProgress(migrationView.status)}`, completed: '下载完成，请手动运行安装包', available: `即我 ${migrationView.status?.target?.version ?? '3.0'} 已发布`, checking: '正在检查更新…', idle: '暂无可下载的新版本', failed: '下载失败，请重试', disabled: '迁移下载不可用' }[migrationView.status?.phase ?? 'idle'])) : `${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${appUpdateRow.feedback ?? '正在读取更新状态…'}`}
-          actionLabel="打开 APP 更新"
+          feedback={migrationEnabled ? (migrationView.error || migrationView.status?.error || ({ downloading: `正在下载 · ${migrationDownloadProgress(migrationView.status)}`, completed: '下载完成，请手动运行安装包', available: `即我 ${migrationView.status?.target?.version ?? '3.0'} 已发布`, checking: '正在检查更新…', idle: '暂无可下载的新版本', failed: '下载失败，请重试', disabled: '迁移下载不可用' }[migrationView.status?.phase ?? 'idle'])) : `${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${tr(appUpdateRow.feedback ?? '正在读取更新状态…')}`}
+          actionLabel={tr("打开 APP 更新")}
           onAction={() => { if (migrationEnabled) void appMigrationStore.open(); else void arkmeAppUpdateStore.open() }}
         />
-        <VersionSettingsRow title="ArkME 插件" version={`v${pluginManifest.version}`} />
+        <VersionSettingsRow title={tr("ArkME 插件")} version={`v${pluginManifest.version}`} />
         <VersionSettingsRow title="DeepSeek Harness" version={aboutHarnessVersion()} />
-        <SettingsRow title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
-        <SettingsRow title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
+        <SettingsRow title={tr("用户协议")} description={tr("查看 Arkme 用户协议")} href="https://www.arkme.ai/article/user-aggrement-v1.html" />
+        <SettingsRow title={tr("隐私条款")} description={tr("查看 Arkme 隐私条款")} href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
       </SettingsGroup>
+      <ArkmeAboutDetails accountScope={authenticatedAccountKey} />
       </>}
 
       {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>
+    {emailBoundToast && <Toast text={tr('邮箱绑定成功')} anchor={surfaceRef.current} icon={<IconCheckOutline16 />} onDone={() => { setEmailBoundToast(false) }} />}
     {activeAccountDialog === 'qr' && profile !== undefined
       ? <ProfileQrDialog profile={profile} shareWebsite={clientConfig?.shareWebsite} onClose={() => { setActiveAccountDialog(null) }} />
       : null}
     {activeAccountDialog === 'arkme-id' && profile !== undefined
       ? <ArkmeIdDialog profile={profile} onClose={() => { setActiveAccountDialog(null) }} onUpdated={applyProfileSnapshot} />
       : null}
+    {activeAccountDialog === 'email' && profile !== undefined
+      ? <EmailBindDialog key={profile.userId} profile={profile} onClose={() => { setActiveAccountDialog(null) }} onUpdated={snapshot => { applyProfileSnapshot(snapshot); setAccountFeedback(''); setEmailBoundToast(true) }} /> : null}
     {activeAccountDialog === 'phone' && profile !== undefined
       ? <PhoneBindDialog
           config={clientConfig}

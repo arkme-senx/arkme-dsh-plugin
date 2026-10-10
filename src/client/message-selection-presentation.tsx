@@ -16,7 +16,7 @@ export const messageSelectionStyles = {
     display: 'grid', gridTemplateColumns: `${ARKME_MESSAGE_SELECT_CARD_RAIL_SIZE}px minmax(0, 1fr) ${ARKME_MESSAGE_SELECT_CARD_RAIL_SIZE}px`,
     alignItems: 'center', marginBottom: 42, cursor: 'pointer',
   },
-  rowSelectedForAction: { background: arkmeTheme.layer2 },
+  rowSelectedForAction: { background: arkmeTheme.active },
   selectCheck: {
     width: ARKME_MESSAGE_SELECT_HIT_SIZE, height: ARKME_MESSAGE_SELECT_HIT_SIZE, display: 'grid', placeItems: 'center', border: 0, padding: 0,
     borderRadius: 999, background: 'transparent', color: arkmeTheme.foreground, cursor: 'pointer',
@@ -25,7 +25,7 @@ export const messageSelectionStyles = {
   selectCheckCardCenter: { justifySelf: 'center' },
   selectCheckCircle: {
     width: 22, height: 22, display: 'grid', placeItems: 'center', boxSizing: 'border-box',
-    border: `1.5px solid ${arkmeTheme.tertiary}`, borderRadius: 999, background: 'transparent',
+    borderWidth: 1.5, borderStyle: 'solid', borderColor: arkmeTheme.tertiary, borderRadius: 999, background: 'transparent',
     color: arkmeTheme.foreground,
   },
   selectCheckActive: { borderColor: arkmeTheme.accent, background: arkmeTheme.accent },

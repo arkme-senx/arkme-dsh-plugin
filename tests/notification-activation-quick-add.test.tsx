@@ -21,6 +21,23 @@ afterEach(() => {
 })
 
 describe('notification activation quick-add cleanup', () => {
+  it('puts the DSH shortcut first, keeps failures reviewable, and closes after a successful native action', async () => {
+    const createSession = vi.fn().mockImplementationOnce(() => { throw new Error('DSH 尚未准备好，请稍后再试') })
+    let renderer: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeQuickAddButton onNewDshSession={createSession} onContactAdd={vi.fn()} onSourceCreated={vi.fn()} />) })
+    await act(async () => { renderer.root.findByProps({ 'aria-haspopup': 'menu' }).props.onClick() })
+    const items = renderer!.root.findAllByProps({ role: 'menuitem' })
+    expect(items).toHaveLength(5)
+    expect(items[0]!.findAll(node => node.children.includes('新建 DSH 会话'))).not.toHaveLength(0)
+    await act(async () => { items[0]!.props.onClick() })
+    expect(renderer!.root.findAllByProps({ role: 'menu' })).toHaveLength(1)
+    expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('DSH 尚未准备好，请稍后再试')
+    await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' })[0]!.props.onClick() })
+    expect(createSession).toHaveBeenCalledTimes(2)
+    expect(renderer!.root.findAllByProps({ role: 'menu' })).toHaveLength(0)
+    await act(async () => { renderer!.unmount() })
+  })
+
   it('closes menu/idle dialog on revision and retains a busy dialog until its request settles', async () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'quick-add-request' })
     const visibility = vi.fn()
@@ -34,7 +51,7 @@ describe('notification activation quick-add cleanup', () => {
     await act(async () => { renderer = create(render(1)); await Promise.resolve() })
 
     const openMenu = async () => {
-      await act(async () => { renderer.root.findByProps({ 'aria-label': '添加联系人、群聊或 Bot' }).props.onClick() })
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '添加联系人、群聊、发起通话或添加 Bot' }).props.onClick() })
     }
     const openGroup = async () => {
       await openMenu()

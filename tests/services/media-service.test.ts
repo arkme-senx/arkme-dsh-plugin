@@ -17,6 +17,22 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it.each([true, false])('loads the recorded asset rather than the current avatar (asset available: %s)', async available => {
+    const fetchImpl = vi.fn(async () => new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64'), { headers: { 'Content-Type': 'image/png' } }))
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const currentProfile = vi.spyOn(profile, 'publicProfilesByUserIds')
+    const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+    const assets = vi.spyOn(runtime, 'authenticatedPost').mockResolvedValue({ items: available ? [{
+      file_asset_uid: 'old-avatar', status: 'ready',
+      preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
+    }] : [] })
+    if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 70 })
+    else await expect(media.readImage('file_asset://old-avatar')).rejects.toMatchObject({ code: 'image-ref-unavailable' })
+    expect(assets).toHaveBeenCalledWith('/api/v1/files/assets/query', { file_asset_uids: ['old-avatar'] }, expect.objectContaining({ userId: 42 }), undefined, { lane: 'interactive-read' })
+    expect(currentProfile).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(available ? 1 : 0)
+  })
   it.each([1, 2])('projects an explicit Live pair for cover render role %s', async (coverRenderRole) => {
     const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
     const refs = [
@@ -398,4 +414,21 @@ it('restores expired Bot image bytes offline only from the current account cache
   const secondMedia = new MediaService(secondRuntime, {} as never, {} as never, { recordUid: () => '' }, { openBotImageRef } as never)
   await expect(secondMedia.readImage('arkme-bot-image-v1.fixture')).rejects.toThrow('foreign account')
   expect(state.readAvatarCache).toHaveBeenCalledTimes(2)
+})
+
+it('keeps all 100 long article snapshot images with local inline aliases', () => {
+  const media = new MediaService({config} as ServiceRuntime, {} as never, {} as never, {} as never)
+  const files = Array.from({length:100}, (_, i) => ({type:1,name:`${i}.png`,mime_type:'image/png',file_asset_uid:`private-${i}`,inline_ref:`arkme-asset:media-${i}`,preview_url:`https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/${i}.png`}))
+  const blocks = media.forwardContentBlocks(files,42,{longArticle:true})
+  expect(blocks).toHaveLength(100)
+  expect(blocks[99]!.fileAssetUid).toBe('media-99')
+  expect(JSON.stringify(blocks)).not.toContain('private-')
+})
+
+it('does not treat hidden rich media as a complete original-attachment export', () => {
+  const media = new MediaService({ config: { richMediaRenderEnabled: false } } as never, {} as never, {} as never, { recordUid: () => 'one' })
+  const raw = { content_payload: { media_refs: [{ file_asset_uid: 'original', file_kind: 4 }] } }
+  expect(media.recordMediaUnavailable(raw, [])).toBe(false)
+  expect(media.recordMediaUnavailable(raw, [], true)).toBe(true)
+  expect(media.recordMediaUnavailable({ payload: {} }, [], true)).toBe(false)
 })

@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
 import { ARKME_DSH_INPUT_TOPIC_TITLE, ARKME_DSH_INPUT_TOPIC_DESCRIPTION } from '../topic-policy.js'
@@ -12,8 +13,8 @@ const styles: Record<string, CSSProperties> = {
 
 /** Explains the absent composer without adding archive-only settings. */
 export function ArkmeTopicReadOnlyNotice() {
-  return <footer aria-label="系统主题说明" style={styles.footer}>
-    <div style={styles.title}>系统主题 · {ARKME_DSH_INPUT_TOPIC_TITLE}</div>
+  return <footer aria-label={tr("系统主题说明")} style={styles.footer}>
+    <div style={styles.title}>{tr("系统主题 ·")} {ARKME_DSH_INPUT_TOPIC_TITLE}</div>
     <div style={styles.hint}>{ARKME_DSH_INPUT_TOPIC_DESCRIPTION}</div>
   </footer>
 }

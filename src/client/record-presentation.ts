@@ -1,3 +1,4 @@
+import { arkmeIntlLocale } from './locale.js'
 import type { ArkmeSelfRecordItem } from '../types.js'
 
 export function chronologicalRecords(items: readonly ArkmeSelfRecordItem[]): ArkmeSelfRecordItem[] {
@@ -24,14 +25,14 @@ export function recordDayKey(millis: number): string {
 
 export function recordDayLabel(millis: number): string {
   if (millis <= 0) return '时间未知'
-  return new Date(millis).toLocaleDateString('zh-CN', {
+  return new Date(millis).toLocaleDateString(arkmeIntlLocale(), {
     year: 'numeric', month: '2-digit', day: '2-digit',
   })
 }
 
 export function recordTimeLabel(millis: number): string {
   if (millis <= 0) return ''
-  return new Date(millis).toLocaleTimeString('zh-CN', {
+  return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false,
   })
 }

@@ -26,6 +26,17 @@ it('keeps all rows reachable without IntersectionObserver', () => {
   act(() => { view!.unmount() })
 })
 
+it('estimates offscreen chunks with the same relaxed row height as visible cards', () => {
+  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
+  let view: ReturnType<typeof create>
+  act(() => { view = create(<ArkmeDirectoryWindow>{Array.from({ length: 45 }, (_, i) => <button key={i}>Row {i}</button>)}</ArkmeDirectoryWindow>) })
+  const chunks = view!.root.findAllByProps({ 'data-arkme-directory-chunk': true })
+  expect(chunks[0]!.props.style).toBeUndefined()
+  expect(chunks[1]!.props.style.height).toBe(20 * (58 + 2))
+  expect(chunks[2]!.props.style.height).toBe(5 * (58 + 2))
+  act(() => { view!.unmount() })
+})
+
 it('does not unmount keyboard focus when its chunk leaves the viewport', () => {
   let notify!: (entries: { isIntersecting: boolean }[]) => void
   vi.stubGlobal('IntersectionObserver', class { constructor(callback: typeof notify) { notify = callback } observe() {} disconnect() {} })
@@ -65,4 +76,29 @@ it('materializes an unread jump chunk without changing or unmounting the active 
   expect(view!.root.findAllByType('button')).toHaveLength(60)
   expect(view!.root.findAllByType('button').some(row => row.props.children[1] === 201)).toBe(true)
   act(() => { view!.unmount() })
+})
+
+it('uses the owning scroll container so overscan works inside a drawer', () => {
+  const roots: (Element | Document | null | undefined)[] = []
+  const margins: (string | undefined)[] = []
+  const disconnect = vi.fn()
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(_callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      roots.push(options?.root); margins.push(options?.rootMargin)
+    }
+    observe() {}
+    disconnect = disconnect
+  })
+  const drawer = {} as HTMLDivElement
+  const tree = {} as HTMLElement
+  const scrollRootRef = { current: drawer }
+  let view: ReturnType<typeof create>
+  act(() => { view = create(<ArkmeDirectoryWindow scrollRootRef={scrollRootRef}>{Array.from({ length: 45 }, (_, i) => <button key={i}>Row {i}</button>)}</ArkmeDirectoryWindow>, {
+    createNodeMock: () => ({ closest: () => tree }),
+  }) })
+  expect(roots).toHaveLength(3)
+  for (const root of roots) expect(root).toBe(drawer)
+  expect(margins).toEqual(['600px', '600px', '600px'])
+  act(() => { view!.unmount() })
+  expect(disconnect).toHaveBeenCalledTimes(3)
 })

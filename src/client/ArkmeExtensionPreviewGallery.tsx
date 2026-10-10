@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties } from 'react'
 import type { ArkmeExtensionPreviewItem } from '../extensions/types.js'
 
@@ -53,6 +54,7 @@ export function ArkmeExtensionPreviewGallery({ extensionId, extensionName, previ
   extensionName: string
   previews: readonly ArkmeExtensionPreviewItem[]
 }) {
+  useArkmeLocale()
   const valid = validPreviewItems(previews)
   const [selectedRef, setSelectedRef] = useState<string>()
   const [failedRefs, setFailedRefs] = useState<Set<string>>(() => new Set())
@@ -64,14 +66,14 @@ export function ArkmeExtensionPreviewGallery({ extensionId, extensionName, previ
     setFailedRefs(current => current.has(previewRef) ? current : new Set([...current, previewRef]))
   }
 
-  return <section style={styles.section} aria-label="扩展预览图">
-    <div style={styles.label}>预览</div>
+  return <section style={styles.section} aria-label={tr("扩展预览图")}>
+    <div style={styles.label}>{tr("预览")}</div>
     <div style={styles.viewport}>
       {activeFailed
-        ? <div style={styles.failure} role="status">这张预览图暂时无法加载</div>
+        ? <div style={styles.failure} role="status">{tr("这张预览图暂时无法加载")}</div>
         : <img
             src={arkmeExtensionPreviewUrl(extensionId, activeRef)}
-            alt={`${extensionName}的第 ${activeIndex + 1} 张预览图`}
+            alt={tr("{v0}的第 {v1} 张预览图", { v0: extensionName, v1: activeIndex + 1 })}
             draggable={false}
             loading="lazy"
             decoding="async"
@@ -79,14 +81,14 @@ export function ArkmeExtensionPreviewGallery({ extensionId, extensionName, previ
             onError={() => { markFailed(activeRef) }}
           />}
     </div>
-    {valid.length > 1 && <div style={styles.thumbnails} role="group" aria-label="切换扩展预览图">
+    {valid.length > 1 && <div style={styles.thumbnails} role="group" aria-label={tr("切换扩展预览图")}>
       {valid.map((item, index) => {
         const selected = item.preview_ref === activeRef
         const failed = failedRefs.has(item.preview_ref)
         return <button
           key={item.preview_ref}
           type="button"
-          aria-label={`查看第 ${index + 1} 张预览图`}
+          aria-label={tr("查看第 {v0} 张预览图", { v0: index + 1 })}
           aria-pressed={selected}
           style={{
             ...styles.thumbnail,

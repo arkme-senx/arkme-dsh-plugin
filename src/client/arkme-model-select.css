@@ -17,3 +17,11 @@
 .arkme-model-status, .arkme-model-error { padding: 8px 10px; font-size: 12px; }
 .arkme-model-error { color: var(--dsw-alias-state-error-primary, #b54841); }
 .arkme-model-error button { border: 0; color: inherit; background: transparent; text-decoration: underline; }
+
+.arkme-model-price { margin-top: 4px; padding: 10px; border-top: 1px solid var(--dsw-alias-border-inverted, #e8e8eb); font-size: 12px; color: var(--dsw-alias-label-tertiary, #8a8e96); }
+.arkme-model-price summary { cursor: pointer; }
+.arkme-model-price summary:focus-visible { outline: 2px solid #3578e5; outline-offset: 2px; }
+.arkme-model-price dl { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.arkme-model-price dl > div { margin-top: 10px; }
+.arkme-model-price dt { color: var(--dsw-alias-label-primary, #20232c); }
+.arkme-model-price dd { margin: 2px 0 0; }

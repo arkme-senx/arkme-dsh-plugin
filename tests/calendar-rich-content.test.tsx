@@ -10,14 +10,18 @@ import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 import { ArkmeCalendarSurface } from '../src/client/ArkmeCalendarSurface.js'
 
 let root: Root, host: HTMLDivElement
+const today = new Date(2026, 8, 15, 12)
 const record: ArkmeCalendarRecordItem = {
-  recordUid: 'rich', sendAtMillis: Date.now(), accessState: 'available', title: '', textContent: '旧摘要', preview: '旧摘要',
+  recordUid: 'rich', sendAtMillis: today.getTime(), accessState: 'available', title: '', textContent: '旧摘要', preview: '旧摘要',
   sourceKind: 'self', creationSource: 0, templateKind: 1, displayKind: 0, protected: false,
-  content: { itemUid: 'rich', senderName: '我', isMe: true, status: 1, sendAtMillis: Date.now(), title: '',
+  content: { itemUid: 'rich', senderName: '我', isMe: true, status: 1, sendAtMillis: today.getTime(), title: '',
     textFormat: 'markdown', textContent: '**完整正文** [链接](https://example.com)',
     contentBlocks: [{ kind: 'image', mediaRef: 'safe-image', fileName: '图片.png', sortOrder: 0 }] },
 }
 beforeEach(() => {
+  // Keep another past day selectable in the current month, even when run on the 1st.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(today)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   api.call.mockReset().mockImplementation(async (op: string) => {
@@ -27,7 +31,7 @@ beforeEach(() => {
     throw new Error(`unexpected operation ${op}`)
   })
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers() })
 const render = () => act(async () => { root.render(<ArkmeCalendarSurface />) })
 const click = async (selector: string) => act(async () => { const node = host.querySelector<HTMLElement>(selector); expect(node).not.toBeNull(); node!.click() })
 it('renders rich content, opens existing detail from body and returns focus without another data request', async () => {
@@ -172,6 +176,20 @@ it('renders chat source badges even when topicTitle is absent', async () => {
   expect(host.querySelector('[aria-label="来源：项目群"]')).not.toBeNull()
 })
 
+it('shows DSH provenance without a link back to the hidden personal topic', async () => {
+  api.call.mockImplementation(async (op: string) => op === 'user.profile' ? { profile: {} }
+    : op === 'calendar.buckets' ? { days: [] }
+      : { items: [{ ...record, creationSource: 3, topicTitle: 'DSH Agent Input',
+        source: { kind: 'topic', displayName: '发给 DSH 的消息', sourceRef: 'system-topic' } }], hasMore: false })
+  await render()
+  expect(host.querySelector('[data-arkme-dsh-agent-input-marker]')).not.toBeNull()
+  expect(host.querySelector('[aria-label^="来源："]')).toBeNull()
+  expect(host.textContent).not.toContain('DSH Agent Input')
+  await click('strong')
+  expect(host.querySelector('[aria-label="快记详情"]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="快记详情"] [aria-label^="来源："]')).toBeNull()
+})
+
 
 it('renders private and group avatars inside source badges through the shared avatar renderer', async () => {
   arkmeAvatarImages.activateScope('calendar-badge-avatars')
@@ -225,4 +243,29 @@ it('keeps the source badge in forwarded record details', async () => {
   await render()
   await click('[aria-label="打开快记详情"]')
   expect(host.querySelector('[aria-label="转发快记详情"] [aria-label="来源：项目"]')).not.toBeNull()
+})
+
+it('keeps the frozen role name and avatar when opening personal calendar detail', async () => {
+  api.call.mockImplementation(async (op: string) => op === 'user.profile' ? { profile: {} }
+    : op === 'calendar.buckets' ? { days: [] }
+      : { items: [{ ...record, sourceKind: 'self', content: { ...record.content, selfRole: { roleId: 'frozen-role', name: '冻结的角色' } } }], hasMore: false })
+  await render()
+  expect(host.querySelector('[data-arkme-calendar-role="frozen-role"]')?.textContent).toContain('冻结的角色')
+  await click('strong')
+  expect(host.querySelector('[aria-label="快记详情"]')?.textContent).toContain('冻结的角色')
+})
+
+it.each(['self', 'chat', 'team'] as const)('renders emoji in %s calendar records and their detail drawer', async sourceKind => {
+  const text = '[im_emoji:yummy_face] [jm_emoji:thumb_up] [im_emoji:unknown]'
+  const original = api.call.getMockImplementation()!
+  api.call.mockImplementation(async (op: string, ...args: unknown[]) => op === 'calendar.records'
+    ? {items:[{...record,sourceKind,content:{...record.content,textContent:text,textFormat:'plain',contentBlocks:[]}}],hasMore:false}
+    : original(op,...args))
+  await render()
+  const bubble = host.querySelector('[aria-label="打开快记详情"]')!
+  expect([...bubble.querySelectorAll('[data-arkme-rich-emoji]')].map(node=>node.getAttribute('data-arkme-rich-emoji'))).toEqual(['yummy_face','thumb_up'])
+  expect(bubble.textContent).toContain('[im_emoji:unknown]')
+  expect(bubble.textContent).not.toContain('[im_emoji:yummy_face]')
+  await click('[aria-label="打开快记详情"]')
+  expect(host.querySelector('[data-arkme-content-presentation="detail"] [data-arkme-rich-emoji="yummy_face"]')).not.toBeNull()
 })

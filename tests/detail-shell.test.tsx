@@ -31,6 +31,21 @@ it('uses latest close callback and removes its Escape listener on unmount', asyn
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
   expect(latest).toHaveBeenCalledTimes(1)
 })
+it('replaces the title row with a compact author block while keeping close and accessible label', async () => {
+  const close = vi.fn()
+  await act(async () => root.render(<ArkmeDetailShell title="快记详情" label="快记详情"
+    headerContent={<div data-arkme-detail-author>何宏顺<small>2026年9月18日 18:04</small></div>}
+    onClose={close}><p>正文内容</p></ArkmeDetailShell>))
+  const panel = host.querySelector('[role="dialog"]')!
+  expect(panel.getAttribute('aria-label')).toBe('快记详情')
+  expect(panel.hasAttribute('aria-labelledby')).toBe(false)
+  expect(panel.querySelector('h3')).toBeNull()
+  expect(panel.textContent).not.toContain('快记详情')
+  expect(panel.querySelector('header [data-arkme-detail-author]')).not.toBeNull()
+  expect(panel.querySelectorAll('[data-arkme-detail-author]')).toHaveLength(1)
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭详情"]')!.click())
+  expect(close).toHaveBeenCalledOnce()
+})
 it('does not steal focus back after the user moves to another control', async () => {
   const elsewhere = document.createElement('button'); document.body.append(elsewhere)
   await act(async () => { root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}}>正文</ArkmeDetailShell>) })
@@ -38,4 +53,52 @@ it('does not steal focus back after the user moves to another control', async ()
   await act(async () => { root.render(null) })
   expect(document.activeElement).toBe(elsewhere)
   elsewhere.remove()
+})
+it('keeps the footer mounted and focuses back when a history subview opens', async () => {
+  const footer = <input aria-label="保留草稿" defaultValue="未发送" />
+  await act(async () => root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}} footer={footer}>正文</ArkmeDetailShell>))
+  const input = host.querySelector('input')
+  await act(async () => root.render(<ArkmeDetailShell title="历史" label="历史" onClose={() => {}} onBack={() => {}} backLabel="返回详情" footer={footer} footerHidden>历史正文</ArkmeDetailShell>))
+  expect(host.querySelector('input')).toBe(input)
+  expect(host.querySelector('footer')?.hidden).toBe(true)
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('返回详情')
+})
+it('returns focus to the original trigger after opening and closing a subview', async () => {
+  const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
+  await act(async () => root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}}>正文</ArkmeDetailShell>))
+  await act(async () => root.render(<ArkmeDetailShell title="历史" label="历史" onClose={() => {}} onBack={() => {}}>历史</ArkmeDetailShell>))
+  await act(async () => root.render(null))
+  expect(document.activeElement).toBe(trigger)
+  trigger.remove()
+})
+
+it('keeps keyboard focus in the detail after the back button disappears', async () => {
+  const render = async (history: boolean) => act(async () => root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}}
+    {...(history ? { onBack: () => {}, backLabel: '返回详情' } : {})}>内容</ArkmeDetailShell>))
+  await render(false); await render(true)
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('返回详情')
+  await render(false)
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭详情')
+})
+it('does not steal external focus when a subview is dismissed programmatically', async () => {
+  const elsewhere = document.createElement('button'); document.body.append(elsewhere)
+  await act(async () => root.render(<ArkmeDetailShell title="历史" label="历史" onClose={() => {}} onBack={() => {}}>历史</ArkmeDetailShell>))
+  elsewhere.focus()
+  await act(async () => root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}}>正文</ArkmeDetailShell>))
+  expect(document.activeElement).toBe(elsewhere)
+  elsewhere.remove()
+})
+
+it('closes inside a parent modal but lets a nested preview own Escape', async () => {
+  const close = vi.fn()
+  await act(async () => root.render(<section role="dialog" aria-modal="true">
+    <ArkmeDetailShell title="详情" label="详情" onClose={close}>正文</ArkmeDetailShell>
+  </section>))
+  const preview = document.createElement('div')
+  preview.setAttribute('aria-modal', 'true'); document.body.append(preview)
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+  expect(close).not.toHaveBeenCalled()
+  preview.remove()
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+  expect(close).toHaveBeenCalledOnce()
 })

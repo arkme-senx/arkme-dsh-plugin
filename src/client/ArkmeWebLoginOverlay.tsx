@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
@@ -21,6 +22,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function ArkmeWebLoginOverlayContent({ t }: ArkmeWebLoginOverlayProps) {
+  useArkmeLocale()
   const flow = useArkmeAuthFlow({ retainWebLoginDialogOnBindingRequired: true }, t)
   const closeRef = useRef<HTMLButtonElement>(null)
 
@@ -38,9 +40,9 @@ function ArkmeWebLoginOverlayContent({ t }: ArkmeWebLoginOverlayProps) {
     style={styles.overlay}
     role="dialog"
     aria-modal="true"
-    aria-label="Arkme 登录"
+    aria-label={tr("Arkme 登录")}
   >
-    <button ref={closeRef} type="button" style={styles.close} aria-label="关闭登录" onClick={() => { arkmeUi.closeWebLoginDialog() }}>×</button>
+    <button ref={closeRef} type="button" style={styles.close} aria-label={tr("关闭登录")} onClick={() => { arkmeUi.closeWebLoginDialog() }}>×</button>
     <ArkmeLogin {...flow.loginProps} />
   </div>
 
@@ -51,6 +53,7 @@ export type ArkmeWebLoginOverlayProps = PropsLocale<typeof ARKME_LOGIN_LOCALE_NA
 
 /** Web keeps Harness in place until this full-app login overlay is explicitly requested. */
 export function ArkmeWebLoginOverlay({ t }: ArkmeWebLoginOverlayProps) {
+  useArkmeLocale()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const open = !startupAuthGateEnabled()

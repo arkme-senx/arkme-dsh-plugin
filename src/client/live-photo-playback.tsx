@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeContentBlock } from '../types.js'
 import { arkmeLocalFileUrl, useArkmeOriginal } from './ArkmeFileViewer.js'
@@ -37,8 +38,8 @@ export function useArkmeLivePhotoPlayback(cover: ArkmeContentBlock) {
   return {
     playing: phase === 'playing',
     video: active && reception.localRef !== undefined ? <video
-      key={identity} ref={videoRef} src={arkmeLocalFileUrl(reception.localRef)} playsInline
-      aria-label={`实况 ${cover.fileName}`}
+      key={identity} ref={videoRef} src={arkmeLocalFileUrl(reception.localRef)} muted playsInline
+      aria-label={tr("实况 {v0}", { v0: cover.fileName })}
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', visibility: phase === 'playing' ? 'visible' : 'hidden' }}
       onCanPlay={event => {
         const video = event.currentTarget
@@ -51,11 +52,10 @@ export function useArkmeLivePhotoPlayback(cover: ArkmeContentBlock) {
       <button type="button" data-arkme-live-photo-control
         aria-label={phase === 'loading' ? '实况加载中' : motion === undefined ? '实况动态片段不可用' : '播放实况'}
         aria-busy={phase === 'loading'}
-        title={phase === 'loading' ? '实况加载中' : motion === undefined ? '实况动态片段不可用' : '播放实况'}
+        title={motion === undefined ? '实况动态片段不可用' : '播放实况'}
         disabled={active || motion === undefined} onClick={start}
         style={{ visibility: phase === 'playing' ? 'hidden' : 'visible', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, borderRadius: 16, padding: 0, background: 'transparent', color: '#fff', fontSize: 12, cursor: active ? 'progress' : motion === undefined ? 'default' : 'pointer' }}>
         <ArkmeLivePhotoBadge />
-        {phase === 'loading' && <span role="status">加载中</span>}
       </button>
       {phase === 'failed' && <span role="alert" style={{ position: 'absolute', bottom: 40, left: 0, width: 'max-content', maxWidth: 'min(320px, 70vw)', textAlign: 'left', fontSize: 12 }}>{state?.error}</span>}
     </span>,

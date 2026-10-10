@@ -1,7 +1,9 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import { ArkmeBillingSettings, formatArkmeNanoCny } from './ArkmeBillingSettings.js'
+import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
+import { ArkmeModelPricing } from './ArkmeModelPricing.js'
 import css from './arkme-model-select.css?inline'
 
 /** The public ModelDirectory face; DSH remains the sole directory and selection owner. */
@@ -22,6 +24,7 @@ export function ArkmeModelSelect({ directory, locked, available }: {
   locked: boolean
   available: boolean
 }) {
+  useArkmeLocale()
   const state = useSyncExternalStore(directory.store.subscribe, directory.store.getSnapshot)
   const [pane, setPane] = useState<'model' | 'effort' | null>(null)
   const root = useRef<HTMLDivElement>(null)
@@ -56,7 +59,7 @@ export function ArkmeModelSelect({ directory, locked, available }: {
     if (pane === null) return
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const items = [...(root.current?.querySelectorAll<HTMLButtonElement>('[role="menu"] button:not(:disabled)') ?? [])]
+    const items = [...(root.current?.querySelectorAll<HTMLElement>('[role="menu"] button:not(:disabled), [role="menu"] summary') ?? [])]
     if (items.length === 0) return
     event.preventDefault()
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
@@ -70,14 +73,14 @@ export function ArkmeModelSelect({ directory, locked, available }: {
       onBlur={event => { if (event.relatedTarget instanceof Node && !root.current?.contains(event.relatedTarget)) close() }}>
       <style>{css}</style>
       <button ref={trigger} type="button" className="arkme-model-trigger" disabled={locked}
-        aria-label={`选择模型：${model?.name ?? '选择模型'}`} aria-haspopup="menu" aria-expanded={pane !== null}
+        aria-label={tr("选择模型：{v0}", { v0: model?.name ?? tr("选择模型") })} aria-haspopup="menu" aria-expanded={pane !== null}
         aria-controls={pane === null ? undefined : id}
         onClick={() => { if (pane !== null) close(); else { setPane('model'); reload() } }}>
-        <span>{model?.name ?? '选择模型'}</span>{reasoning && <small> · {effortLabel}</small>}<span aria-hidden>⌄</span>
+        <span>{model?.name ?? tr("选择模型")}</span>{reasoning && <small> · {effortLabel}</small>}<span aria-hidden>⌄</span>
       </button>
-      {pane !== null && <div id={id} className="arkme-model-menu" role="menu" aria-label="模型选择" aria-busy={state.status === 'loading' || busy}>
+      {pane !== null && <div id={id} className="arkme-model-menu" role="menu" aria-label={tr("模型选择")} aria-busy={state.status === 'loading' || busy}>
         {pane === 'effort' ? <>
-          <button type="button" role="menuitem" className="arkme-model-option" onClick={() => setPane('model')}>‹ 返回模型列表</button>
+          <button type="button" role="menuitem" className="arkme-model-option" onClick={() => setPane('model')}>{tr("‹ 返回模型列表")}</button>
           {reasoning && [{ id: undefined, name: '默认', description: undefined }, ...reasoning.efforts].map(item =>
             <button key={item.id ?? 'default'} type="button" role="menuitemradio" className="arkme-model-option"
               aria-checked={item.id === (state.current?.reasoningEffort ?? undefined)} disabled={busy}
@@ -88,34 +91,36 @@ export function ArkmeModelSelect({ directory, locked, available }: {
             </button>)}
         </> : <>
           {reasoning && <button type="button" role="menuitem" className="arkme-model-option" disabled={busy} onClick={() => setPane('effort')}>
-            <span>思考强度</span><small>{effortLabel} ›</small>
+            <span>{tr("思考强度")}</span><small>{effortLabel} ›</small>
           </button>}
-          {state.status === 'loading' && <div className="arkme-model-status" role="status">正在加载模型…</div>}
+          {state.status === 'loading' && <div className="arkme-model-status" role="status">{tr("正在加载模型…")}</div>}
           {state.failures.map(failure => <div key={failure.id} className="arkme-model-error" role="alert">{failure.name}：{failure.message}</div>)}
           {state.groups.map(provider => <section role="group" aria-labelledby={`${id}-${provider.id}`} key={provider.id}>
             <div className="arkme-model-group-heading">
               <span id={`${id}-${provider.id}`}>{provider.id === 'arkme-managed' ? 'Arkme' : provider.name}
                 {provider.id === 'arkme-managed' && <span aria-live="polite"> · {quotaState.kind === 'ready'
-                  ? formatArkmeNanoCny(quotaState.quota.availableNanoCny)
-                  : quotaState.kind === 'loading' ? '余额加载中…' : '余额读取失败'}</span>}
+                  ? formatArkmePoints(quotaState.quota.availableNanoCny)
+                  : quotaState.kind === 'loading' ? '积分加载中…' : '积分读取失败'}</span>}
               </span>
               {provider.id === 'arkme-managed' && <span className="arkme-model-balance-actions">
-                {quotaState.kind === 'error' && <button type="button" onClick={onRefresh}>重试</button>}
-                <button type="button" onClick={() => { close(true); onOpen() }}>去充值</button>
+                {quotaState.kind === 'error' && <button type="button" onClick={onRefresh}>{tr("重试")}</button>}
+                <button type="button" onClick={() => { close(true); onOpen() }}>{tr("去充值")}</button>
               </span>}
             </div>
             {provider.models.map(item => {
               const selected = state.current?.provider === provider.id && state.current.model === item.id
-              return <button type="button" role="menuitemradio" key={item.id} className="arkme-model-option"
+              return <div key={item.id}><button type="button" role="menuitemradio" className="arkme-model-option"
                 aria-checked={selected} disabled={busy} onClick={() => selected ? close(true) : choose({ provider: provider.id, model: item.id })}>
-                <span>{item.name}{item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
+                <span>{item.name}{provider.id !== 'arkme-managed' && item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
               </button>
+              </div>
             })}
           </section>)}
-          {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">暂无可用模型</div>}
+          <ArkmeModelPricing models={state.groups.filter(provider => provider.id === 'arkme-managed').flatMap(provider => provider.models)} />
+          {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">{tr("暂无可用模型")}</div>}
         </>}
         {(state.error || state.failures.length > 0) && <div className="arkme-model-error" role="alert">
-          <span>{state.error}</span><button type="button" disabled={busy} onClick={reload}>重新加载</button>
+          <span>{state.error}</span><button type="button" disabled={busy} onClick={reload}>{tr("重新加载")}</button>
         </div>}
       </div>}
     </div>} />

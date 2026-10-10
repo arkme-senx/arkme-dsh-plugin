@@ -45,6 +45,59 @@ function htmlWithGraph(
 }
 
 describe('core-only DeepSeek Harness iframe route', () => {
+  it('advertises optional selection without adding it to native boot dependencies', async () => {
+    const full = graph()
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [], selectionClientRevision: 'abcd1234',
+      readRootHtml: async () => htmlWithGraph(full),
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=abcd1234">')
+    const projected = projectHarnessBootGraph(full, [])
+    expect(response.body()).toContain(bootAssignment(projected, 'dsh-v0.1.1-rc.2'))
+    expect(projected.entries.some(entry => entry.id.includes('native-selection'))).toBe(false)
+  })
+  it('loads the account-aware settings contribution only with the native sidebar, preserving boot batches', async () => {
+    const full = graph()
+    const sidebarClient = { id: '@senguoyun/dsh-arkme/harness-sidebar', url: '/sidebar-client.js', rev: 'sidebar' }
+    expect(projectHarnessBootGraph(full, [], undefined, undefined, sidebarClient).entries.some(entry => entry.id === sidebarClient.id)).toBe(false)
+    full.entries.push({ id: '@deepseek-ai/dsh-client-ui-sidebar', url: '/native-sidebar.js', rev: 'native' })
+    full.batches = [{ phase: 'application', url: '/native-batch.js', rev: 'native', entries: full.entries.map(entry => entry.id) }]
+    const projected = projectHarnessBootGraph(full, [], undefined, undefined, sidebarClient)
+    expect(projected.entries.at(-1)).toEqual({ ...sidebarClient, inject: ['@deepseek-ai/dsh-client-ui-sidebar'] })
+    expect(projected.batches?.flatMap(batch => batch.entries)).toEqual(projected.entries.map(entry => entry.id))
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [], sidebarClient,
+      readRootHtml: async () => htmlWithGraph(full),
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('/sidebar-client.js')
+  })
+
+  it('adds trajectory navigation only when native views and the original menu are available', async () => {
+    const full = graph()
+    const required = ['@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-trajectory', '@deepseek-ai/dsh-session-log-export']
+    for (const id of required) full.entries.push({ id, url: `/${id.split('/').at(-1)}.js`, rev: 'native' })
+    full.batches = [{ phase: 'application', url: '/native-batch.js', rev: 'native', entries: full.entries.map(entry => entry.id) }]
+    const trajectoryClient = { id: '@senguoyun/dsh-arkme/harness-trajectory', url: '/trajectory-client.js', rev: 'trajectory' }
+    const projected = projectHarnessBootGraph(full, [], undefined, trajectoryClient)
+    expect(projected.entries.at(-1)).toEqual({ ...trajectoryClient, inject: required })
+    expect(projected.batches?.flatMap(batch => batch.entries)).toEqual(projected.entries.map(entry => entry.id))
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [], trajectoryClient,
+      readRootHtml: async () => htmlWithGraph(full),
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('/trajectory-client.js')
+    for (const missing of required) {
+      const partial = { rev: full.rev, entries: full.entries.filter(entry => entry.id !== missing) }
+      expect(projectHarnessBootGraph(partial, [], undefined, trajectoryClient).entries.some(entry => entry.id === trajectoryClient.id)).toBe(false)
+    }
+  })
+
   it('loads the onboarding completion bridge after native onboarding packages', async () => {
     const full = graph()
     full.entries.push({ id: '@deepseek-ai/dsh-client-ui-settings-models', url: '/welcome.js', rev: 'welcome' })

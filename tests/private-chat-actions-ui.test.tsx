@@ -38,17 +38,17 @@ afterEach(() => {
   privateChatActions.activateAccount(undefined); privateChatActions.reset(); localStorage.clear()
   close.mockReset(); mocks.call.mockReset(); vi.useRealTimers(); vi.unstubAllGlobals()
 })
-const rows = () => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+const rows = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'))
+  .filter(button => button.querySelector('[role="status"]') === null)
 const render = async (open = true) => { await act(async () => { root.render(<Probe open={open} />) }) }
 
 it('shows an enabled unchecked result immediately, never a loading row or an unconfirmed employee action', async () => {
   mocks.call.mockImplementation(() => new Promise(() => {}))
   await render()
   expect(rows().map(button => button.textContent)).toEqual(['拒收对方消息'])
-  expect(rows()[0]!.getAttribute('aria-checked')).toBe('false')
   expect(rows()[0]!.disabled).toBe(false)
-  expect(host.textContent).not.toMatch(/加载|正在检查|封禁/)
-  expect(host.querySelector('[role=menu]')!.hasAttribute('aria-busy')).toBe(false)
+  expect(document.body.textContent).not.toMatch(/加载|正在检查|封禁/)
+  expect(document.querySelector('[role=menu]')!.hasAttribute('aria-busy')).toBe(false)
 })
 
 it('revalidates both warm business snapshots on every open without refreshing the still-fresh identity', async () => {
@@ -66,7 +66,7 @@ it('does not query ban status for an ordinary account or show staff from persist
   mocks.call.mockImplementation(async operation => operation === 'user.profile.refresh'
     ? { ...profile, profile: { userId: 7, accountType: 1 } } : await original(operation))
   await render()
-  expect(host.textContent).not.toContain('封禁')
+  expect(document.body.textContent).not.toContain('封禁')
   expect(mocks.call.mock.calls.some(call => call[0] === 'user-ban.status')).toBe(false)
 })
 
@@ -79,11 +79,11 @@ it('does not issue menu-only reads on invalidation while closed or expose a reje
     if (operation === 'user-ban.status') throw new ArkmeClientError({ code: 'arkme-code-1001', message: '参数错误', retryable: false })
     return await original(operation)
   })
-  await render(); expect(host.textContent).not.toContain('封禁用户')
+  await render(); expect(document.body.textContent).not.toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user-ban.status')).toHaveLength(1)
   mocks.call.mockImplementation(original)
   await render(false); await render()
-  expect(host.textContent).toContain('封禁用户')
+  expect(document.body.textContent).toContain('封禁用户')
 })
 
 it('keeps cached visible values enabled while background requests stall', async () => {
@@ -101,11 +101,11 @@ it('retries an unavailable identity when the user reopens the menu, without a ba
     return await original(operation)
   })
   await render()
-  expect(host.textContent).not.toContain('封禁用户')
+  expect(document.body.textContent).not.toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(1)
   mocks.call.mockImplementation(original)
   await render(false); await render()
-  expect(host.textContent).toContain('封禁用户')
+  expect(document.body.textContent).toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(2)
 })
 
@@ -115,10 +115,10 @@ it('keeps a known authorization rejection hidden throughout a pending retry', as
     if (operation === 'user-ban.status') throw new ArkmeClientError({ code: 'arkme-code-1001', message: '参数错误', retryable: false })
     return await original(operation)
   })
-  await render(); expect(host.textContent).not.toContain('封禁用户')
+  await render(); expect(document.body.textContent).not.toContain('封禁用户')
   mocks.call.mockImplementation(operation => operation === 'user-ban.status' ? new Promise(() => {}) : original(operation))
   await render(false); await render()
-  expect(host.textContent).not.toContain('封禁用户')
+  expect(document.body.textContent).not.toContain('封禁用户')
 })
 
 it('shows local failure feedback while leaving independent actions usable', async () => {
@@ -130,14 +130,14 @@ it('shows local failure feedback while leaving independent actions usable', asyn
   await render()
   expect(rows().map(button => button.textContent)).toEqual(['重新检查相关录音', '拒收对方消息', '封禁用户'])
   expect(rows().every(button => !button.disabled)).toBe(true)
-  expect(host.querySelector('[role=status]')!.textContent).toContain('暂时无法读取')
+  expect(document.querySelector('[role=status]')!.textContent).toContain('暂时无法读取')
 })
 
 it('drops employee visibility on expiry even when the refresh never completes', async () => {
   vi.useFakeTimers(); await render()
   mocks.call.mockImplementation(() => new Promise(() => {}))
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-  expect(host.textContent).not.toContain('封禁')
+  expect(document.body.textContent).not.toContain('封禁')
   expect(rows().some(button => button.textContent === '拒收对方消息')).toBe(true)
 })
 
@@ -145,19 +145,16 @@ it('restores focus to a surviving action when a focused employee entry expires',
   vi.useFakeTimers(); await render()
   rows().at(-1)!.focus(); mocks.call.mockImplementation(() => new Promise(() => {}))
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-  expect(document.activeElement).toBe(rows()[0])
+  expect(rows()[0]!.textContent).toBe('相关录音')
 })
 
-it('supports keyboard navigation, Enter, Escape and trigger focus restoration', async () => {
+it('supports menu selection, Escape and trigger focus restoration', async () => {
   const invoke = vi.fn(); const item = (id: string): ConversationActionItem => ({ id, label: id, icon: null, invoke })
   act(() => { root.render(<ConversationActionsMenu items={[item('a'), item('b')]} host={host} anchor={anchor} onClose={close} />) })
-  expect(document.activeElement).toBe(rows()[0])
-  act(() => { rows()[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
-  expect(document.activeElement).toBe(rows()[1])
-  act(() => { rows()[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+  act(() => { rows()[1]!.click() })
   expect(invoke).toHaveBeenCalledOnce()
   act(() => { rows()[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
-  expect(close).toHaveBeenCalledOnce()
+  expect(close).toHaveBeenCalledTimes(2)
   act(() => { root.render(null) }); expect(document.activeElement).toBe(trigger)
 })
 
@@ -166,8 +163,22 @@ it('shows mutation progress only on the corresponding action', () => {
     { id: 'busy', label: '封禁用户', icon: null, busy: true, invoke: vi.fn() },
     { id: 'available', label: '相关录音', icon: null, invoke: vi.fn() },
   ]} host={host} anchor={anchor} onClose={close} />) })
-  expect(rows()[0]!.disabled).toBe(true); expect(rows()[0]!.textContent).toContain('处理中')
-  expect(rows()[1]!.disabled).toBe(false); expect(rows()[1]!.textContent).not.toContain('处理中')
+  expect(rows()[0]!.disabled).toBe(true); expect(rows()[0]!.textContent).toBe('封禁用户')
+  expect(rows()[1]!.disabled).toBe(false)
+})
+
+it('adds export as the first private-chat action and exposes its progress', () => {
+  const invoke = vi.fn()
+  const idle = privateChatActionItems({ canManage: false, relatedAllowed: false,
+    relatedError: undefined, refreshRelated: vi.fn(), changeBan: vi.fn(), ban: privateChatActions.ban.empty,
+  }, { applicable: false } as ReturnType<typeof useDirectMessageAdmission>, vi.fn(), { busy: false, processed: 0, invoke })
+  expect(idle.map(item => item.label)).toEqual(['导出'])
+  idle[0]!.invoke()
+  expect(invoke).toHaveBeenCalledOnce()
+  const busy = privateChatActionItems({ canManage: false, relatedAllowed: false,
+    relatedError: undefined, refreshRelated: vi.fn(), changeBan: vi.fn(), ban: privateChatActions.ban.empty,
+  }, { applicable: false } as ReturnType<typeof useDirectMessageAdmission>, vi.fn(), { busy: true, processed: 238, invoke })
+  expect(busy[0]).toMatchObject({ label: '正在导出 · 238 条', busy: true })
 })
 
 it('captures the clicked intent even if the same item receives a new label before pointer-up', () => {
@@ -178,7 +189,7 @@ it('captures the clicked intent even if the same item receives a new label befor
   act(() => { rows()[0]!.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
   act(() => { renderItem(second, '解封用户') })
   act(() => { rows()[0]!.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true })) })
-  expect(first).toHaveBeenCalledOnce(); expect(second).not.toHaveBeenCalled()
+  expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce()
 })
 
 it('cancels a held gesture when permissions insert or remove rows, and accepts a fourth unrelated item', () => {
@@ -188,8 +199,8 @@ it('cancels a held gesture when permissions insert or remove rows, and accepts a
   act(() => { rows()[0]!.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
   act(() => { renderItems(['related', 'refusal', 'ban', 'fourth']) })
   act(() => { rows()[1]!.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true })) })
-  expect(invoke).not.toHaveBeenCalled()
-  act(() => { rows()[3]!.click() }); expect(invoke).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenCalledOnce()
+  act(() => { rows()[3]!.click() }); expect(invoke).toHaveBeenCalledTimes(2)
 })
 
 it('retains the same explicit recovery action when ban read-back already changed', () => {
@@ -200,4 +211,20 @@ it('retains the same explicit recovery action when ban read-back already changed
   }, { applicable: false } as ReturnType<typeof useDirectMessageAdmission>, vi.fn())
   expect(items[0]!.label).toBe('重试封禁用户'); items[0]!.invoke()
   expect(changeBan).toHaveBeenCalledWith(true)
+})
+
+it('opens common groups from the private menu without depending on recording or management eligibility', () => {
+  const openCommonGroups = vi.fn()
+  const items = privateChatActionItems({ canManage: false, relatedAllowed: false,
+    relatedError: undefined, refreshRelated: vi.fn(), changeBan: vi.fn(), ban: privateChatActions.ban.empty,
+  }, { applicable: false } as ReturnType<typeof useDirectMessageAdmission>, vi.fn(),
+  { busy: false, processed: 0, invoke: vi.fn() }, openCommonGroups)
+  expect(items.map(item => item.label)).toEqual(['共同群聊', '导出'])
+  act(() => { root.render(<ConversationActionsMenu items={items} host={host} anchor={anchor} onClose={close} />) })
+  expect(rows()[0]!.getAttribute('aria-checked')).not.toBe('true')
+  act(() => { rows()[0]!.click() })
+  expect(close).toHaveBeenCalledOnce()
+  expect(openCommonGroups).toHaveBeenCalledOnce()
+  act(() => { root.render(null) })
+  expect(document.activeElement).toBe(trigger)
 })

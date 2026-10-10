@@ -219,7 +219,25 @@ jobs:
             fi
             echo "npm 包 ${package_name}@${version} 已发布且内容一致，跳过重复发布。"
           else
-            npm publish "$RELEASE_TARBALL" --access public --provenance
+            publish_log=$(mktemp)
+            # npm 可能已接受请求，但精确版本尚不可读；重跑会返回 staged 409。
+            # 超时也不代表服务端未接受，交给下一步严格回读判定最终结果。
+            if timeout 180s npm publish "$RELEASE_TARBALL" --access public --provenance >"$publish_log" 2>&1; then
+              cat "$publish_log"
+            else
+              publish_status=$?
+              cat "$publish_log"
+              if [ "$publish_status" -eq 124 ] \
+                || grep -Eq '^npm error code (ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET)$' "$publish_log" \
+                || { grep -Eq '^npm error code E(409|403)$' "$publish_log" \
+                  && grep -Eiq 'cannot publish over (the previously published versions|previously staged version)' "$publish_log"; }; then
+                echo "::warning::npm 发布结果待确认（exit ${publish_status}），继续回读 ${package_name}@${version} 的 integrity 与 provenance。"
+              else
+                rm -f "$publish_log"
+                exit "$publish_status"
+              fi
+            fi
+            rm -f "$publish_log"
           fi
           echo "package_name=${package_name}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"

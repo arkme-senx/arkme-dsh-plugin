@@ -12,7 +12,7 @@ npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为
 
 每次普通 PR 发版时，会查询当前 master 版本对应的 `release/v<版本号>` PR 是否已合并。已经合并表示该版本已分配，即使 npm latest 仍落后，新一轮发版也会递增 patch，避免复用可能已经上线的 Runtime 版本。未分配的显式版本递增仍保持原版本；重跑同一次发版时，先复用已有 `release_sha`，并从该提交读取原版本，不重复分配。
 
-npm 失败时，Runtime 可以先完成上线，对应的 Git Tag 和 GitHub Release 可能暂未创建。可重跑 npm 所在工作流的失败 job，继续发布同一提交的 npm 包。两条链路的结果分别查看 npm Action 与生产 Runtime Action；派发成功仅表示事件已发出。
+npm 失败时，Runtime 可以先完成上线，对应的 Git Tag 和 GitHub Release 可能暂未创建。可重跑 npm 所在工作流的失败 job，继续发布同一提交的 npm 包。若版本已经可读且 integrity 一致，则跳过重复发布；若发布返回版本已暂存（staged 409）或已发布的冲突，则继续进入上述回读校验。发布命令最多等待 180 秒，命令超时或网络超时/连接重置同样转入回读，避免服务端已经接受请求、客户端却认为失败。权限、认证及其他错误仍立即失败；冲突或超时本身不算发布成功，必须通过 integrity 与 provenance 校验才能继续后续流程。若 npm 一直没有对外提供该版本，回读仍会超时报错。两条链路的结果分别查看 npm Action 与生产 Runtime Action；派发成功仅表示事件已发出。
 
 `pre-release` 分支的每次 push 会走同一套 Runtime 发布链路，但不会发布 npm。测试版本由稳定基准版本的下一补丁与 GitHub run number 组成，例如 `0.1.34` 在 run `128` 中生成 `0.1.35-pre.128`；版本修改只存在于 Action 临时工作区。
 

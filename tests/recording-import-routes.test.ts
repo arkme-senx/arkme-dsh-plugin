@@ -60,6 +60,7 @@ describe('recording import route', () => {
         'x-arkme-file-name': encodeURIComponent('会议.wav'),
         'x-arkme-start-at': '1725000000000',
         'x-arkme-belong-user': '42',
+        'x-arkme-recording-kind': '1',
       },
       body: Buffer.from('recording-bytes'),
     })
@@ -67,7 +68,7 @@ describe('recording import route', () => {
     await expect(response.json()).resolves.toMatchObject({ ok: true, value: { importRef: 'opaque' } })
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.stringMatching(/\.upload$/), expect.objectContaining({
       fileName: '会议.wav', mimeType: 'audio/wav', fileSize: 15,
-      startAtMillis: 1_725_000_000_000, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      startAtMillis: 1_725_000_000_000, recordingKind: 1, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), 42)
     const temporaryPath = acceptRecordingImport.mock.calls[0]?.[0]
     expect((await stat(temporaryPath!)).mode & 0o777).toBe(0o600)
@@ -101,7 +102,7 @@ describe('recording import route', () => {
 
     expect(response.status).toBe(202)
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      startAtMillis: lowerBound,
+      startAtMillis: lowerBound, recordingKind: 0,
     }), 42)
   })
 
@@ -159,6 +160,9 @@ describe('recording import route', () => {
     })).resolves.toMatchObject({ status: 400 })
     await expect(rawRequest(address.port, {
       headers: { ...baseHeaders, 'content-length': '5', 'x-arkme-belong-user': '' }, body: 'voice',
+    })).resolves.toMatchObject({ status: 400 })
+    await expect(rawRequest(address.port, {
+      headers: { ...baseHeaders, 'content-length': '5', 'x-arkme-recording-kind': '2' }, body: 'voice',
     })).resolves.toMatchObject({ status: 400 })
     await expect(rawRequest(address.port, {
       headers: { ...baseHeaders, 'content-length': String(1024 * 1024 * 1024 + 1) },

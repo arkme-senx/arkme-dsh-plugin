@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -6,8 +6,8 @@ const clientRoot = resolve(import.meta.dirname, '../src/client')
 
 describe('Arkme directory slot contract', () => {
   it('keeps row rendering owned by Arkme instead of leaking style or surface hooks', () => {
-    const contract = readFileSync(resolve(clientRoot, 'slots-contract.ts'), 'utf8')
-    const workspace = readFileSync(resolve(clientRoot, 'ArkmeVirtualWorkspace.tsx'), 'utf8')
+    const contract = readUiSource(resolve(clientRoot, 'slots-contract.ts'), 'utf8')
+    const workspace = readUiSource(resolve(clientRoot, 'ArkmeVirtualWorkspace.tsx'), 'utf8')
 
     expect(contract).toContain('renderRow')
     expect(contract).toContain('ArkmeDirectoryRowProps')
@@ -18,8 +18,8 @@ describe('Arkme directory slot contract', () => {
   })
 
   it('keeps consumer directory entries mutually exclusive with native navigation', () => {
-    const contract = readFileSync(resolve(clientRoot, 'slots-contract.ts'), 'utf8')
-    const workspace = readFileSync(resolve(clientRoot, 'ArkmeVirtualWorkspace.tsx'), 'utf8')
+    const contract = readUiSource(resolve(clientRoot, 'slots-contract.ts'), 'utf8')
+    const workspace = readUiSource(resolve(clientRoot, 'ArkmeVirtualWorkspace.tsx'), 'utf8')
 
     expect(contract).toContain('activeEntryId?: string')
     expect(contract).toContain('activateEntry(entryId?: string): void')
@@ -30,7 +30,7 @@ describe('Arkme directory slot contract', () => {
     expect(workspace).not.toContain('activateNativeEntry(); arkmeUi.showSearch()')
     expect(workspace).not.toContain('<ArkmeSearchRow')
     expect(workspace).toContain('<ArkmeGlobalSearchDialog')
-    expect(workspace).toContain('placeholder="搜索对话或消息"')
+    expect(workspace).toContain('aria-label="搜索对话或消息"')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showContactAdd()')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showArko()')
     expect(workspace).toMatch(

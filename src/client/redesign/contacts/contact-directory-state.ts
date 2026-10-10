@@ -22,7 +22,7 @@ export type ArkmeDirectorySelection =
   | { kind: 'none' }
   | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' }>
   | { kind: 'contact'; contactRef: string }
-  | { kind: 'team'; teamRef: string }
+  | { kind: 'team'; teamRef: string; view?: 'members' | 'activity' }
   | { kind: 'unmarked-speaker'; candidateRef: string }
 
 export interface ContactDirectorySectionState {

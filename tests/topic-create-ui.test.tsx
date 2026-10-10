@@ -29,6 +29,7 @@ import {
 } from '../src/client/ArkmeVirtualWorkspace.js'
 import { arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 function renderDialog(mode: 'topic' | 'child', parentTopicPath?: readonly string[]): string {
   return renderToStaticMarkup(<ArkmeTopicCreateDialog
@@ -76,7 +77,7 @@ describe('topic create UI', () => {
     visit(file)
     expect(toolbars).toHaveLength(1)
     const toolbar = toolbars[0]!.getText(file)
-    const addIndex = toolbar.indexOf('aria-label="添加内容"')
+    const addIndex = toolbar.indexOf('aria-label={tr("添加内容")}')
     const sendIndex = toolbar.indexOf('<ArkmeComposerSendButton')
     expect(addIndex).toBeGreaterThanOrEqual(0)
     expect(sendIndex).toBeGreaterThanOrEqual(0)
@@ -98,15 +99,9 @@ describe('topic create UI', () => {
     expect(control).toContain('z-index:40')
     expect(control).toContain('默认')
     expect(menu).toContain('role="menu"')
-    expect(menu).toContain('width:80px')
-    expect(menu).toContain('height:28px')
-    expect(menu).toContain('right:-8px')
-    expect(menu).toContain('justify-content:center')
-    expect(menu).toContain('text-align:center')
-    expect(menu).toContain('border-radius:10px')
-    expect(menu).toContain('--dsw-specific-menu')
-    expect(menu).toContain('--dsw-shadow-lv3')
-    expect(menu).toContain('aria-checked="true"')
+    expect(menu).toContain('data-arkme-command-menu="排序方式"')
+    expect(menu).not.toContain('width:80px')
+    expect(menu).not.toContain('box-shadow:')
     expect(menu).toContain('最新')
     expect(menu).toContain('最多')
     expect(menu).toContain('默认')
@@ -233,12 +228,12 @@ describe('topic create UI', () => {
     expect(hovered).not.toContain('＋')
     expect(resting).not.toContain('transition:')
     expect(hovered).not.toContain('transition:')
-    expect(selected).toContain('background:#f1f2f6')
-    expect(selected).toContain('inset 2px 0 #9eadff')
-    expect(created).toContain('background:#f1f2f6')
+    expect(selected).toContain(`background:${arkmeTheme.active}`)
+    expect(selected).toContain(`inset 2px 0 ${arkmeTheme.accent}`)
+    expect(created).toContain(`background:${arkmeTheme.active}`)
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
-    expect(created).not.toContain('inset 2px 0 #9eadff')
+    expect(created).not.toContain(`inset 2px 0 ${arkmeTheme.accent}`)
     expect(nestedBranch).toContain('left:14px')
     expect(nestedBranch).toContain('margin-left:20px')
     expect(nestedLeaf).toContain('left:14px')

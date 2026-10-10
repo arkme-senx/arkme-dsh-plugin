@@ -33,6 +33,49 @@ function source(sourceRef: string, kind: ArkmeSourceItem['kind'], displayName: s
 }
 
 describe('interwoven conversation projection', () => {
+  it('keeps a calendar target inline even before the oldest loaded message without duplicating the prelude', () => {
+    const cards = [moment('old', 10), moment('target', 20), moment('later', 50)]
+    expect(projectInterwovenWindow([message('latest', 40)], cards, true).inline.map(item => item.momentId)).toEqual(['later'])
+    const window = projectInterwovenWindow([message('latest', 40)], cards, true, 20)
+    expect(window.inline.map(item => item.momentId)).toEqual(['target', 'later'])
+    expect(window.prelude).toEqual([])
+    const html = renderToStaticMarkup(<ArkmeInterwovenMentionCard moment={cards[1]!} rowId="moment:target" highlighted onOpen={() => {}} />)
+    expect(html).toContain('data-arkme-conversation-row="moment:target"')
+    expect(html).toContain('outline:1px solid')
+  })
+  it('keeps a same-time forward comment after its card by chat sequence among events', () => {
+    const card = { ...message('forward_record_example', 20), sequence: 41 }
+    const comment = { ...message('forward_comment_record_example', 20), sequence: 42 }
+    const event = { eventId: 'leave', type: 'left' as const, occurredAtMillis: 20, displayName: '同事' }
+    const rows = mergeConversationRows([comment, card], [moment('moment', 20)], [event])
+    expect(rows.map(row => row.id)).toEqual([
+      'member-event:leave', 'message:forward_record_example',
+      'message:forward_comment_record_example', 'moment:moment',
+    ])
+  })
+
+  it('keeps time ahead of sequence and preserves identity order without chat sequences', () => {
+    const rows = mergeConversationRows([
+      { ...message('early', 10), sequence: 100 },
+      { ...message('late', 20), sequence: 1 },
+      message('z-self', 30), message('a-self', 30),
+    ], [])
+    expect(rows.map(row => row.id)).toEqual(['message:early', 'message:late', 'message:a-self', 'message:z-self'])
+  })
+
+  it('keeps mixed-row order independent of input order for tied times', () => {
+    const messages = [
+      { ...message('forward_record_x', 20), sequence: 5 },
+      { ...message('forward_comment_record_x', 20), sequence: 6 },
+      message('pending', 20),
+    ]
+    const events = [{ eventId: 'left', type: 'left' as const, occurredAtMillis: 20, displayName: '同事' }]
+    const expected = ['member-event:left', 'message:pending', 'message:forward_record_x', 'message:forward_comment_record_x', 'moment:a']
+    for (const order of [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]]) {
+      expect(mergeConversationRows(order.map(i => messages[i]!), [moment('a', 20)], events).map(row => row.id)).toEqual(expected)
+    }
+  })
+
   it('collapses all early cards without dropping them from the prelude', async () => {
     const cards = Array.from({ length: 21 }, (_, i) => moment(String(i), i + 1))
     const projection = projectInterwovenWindow([message('latest', 100)], cards, true)
@@ -178,15 +221,22 @@ describe('interwoven UI', () => {
     expect(scrollBody.scrollTop).toBe(211)
   })
 
-  it('renders the centered transparent 18px-avatar card as a native keyboard button', () => {
+  it('renders a centered row with a compact sender avatar as a native keyboard button', () => {
     const markup = renderToStaticMarkup(
       <ArkmeInterwovenMentionCard moment={moment('one', Date.now())} rowId="moment:one" onOpen={vi.fn()} />,
     )
 
-    expect(markup).toContain('<button type="button"')
+    expect(markup).toContain('type="button"')
     expect(markup).toContain('打开快记详情')
     expect(markup).toContain('即我大群，小林：@我 one')
-    expect(markup).toContain('width:18px')
+    expect(markup).toContain('data-arkme-interwoven-avatar')
+    expect(markup).toContain('width:20px;height:20px;min-width:20px')
+    expect(markup).not.toContain(' title=')
+    expect(markup).toContain('>小</span>')
+    expect(markup).not.toContain('data-arkme-interwoven-direction')
+    expect(markup).toContain('>@我 one</span>')
+    expect(markup.indexOf('data-arkme-interwoven-content')).toBeLessThan(markup.indexOf('data-arkme-interwoven-origin'))
+    expect(markup).toContain('max-width:min(9em, 24%)')
     expect(markup).toContain('gap:8px')
     expect(markup).toContain('font-size:13px')
     expect(markup).toContain('background:transparent')

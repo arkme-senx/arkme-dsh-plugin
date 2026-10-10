@@ -6,10 +6,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeTopicDirectoryPopover, type ArkmeTopicCreateOpener } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
 import { readNavigationCache } from '../src/client/navigation-cache.js'
+import { resetSelfTopicDirectories, selfTopicDirectory, type SelfTopicDirectoryCache } from '../src/client/self-topic-directory-cache.js'
 import { callArkme } from '../src/client/api.js'
+import { createSelfTopic } from '../src/client/create-self-topic.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeSourceItem, ArkmeTopicCreateResult } from '../src/types.js'
 
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
+vi.mock('../src/client/create-self-topic.js', () => ({
+  createSelfTopic: vi.fn(async (params: Record<string, unknown>, directory: SelfTopicDirectoryCache) => {
+    const result = await callArkme<ArkmeTopicCreateResult>('topic.create', params)
+    directory.upsert(result.source)
+    return result
+  }),
+}))
+// State-transition tests use the test renderer; DOM tests below keep real portals.
+const portalMode = vi.hoisted(() => ({ dom: false }))
+vi.mock('react-dom', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-dom')>()
+  return { ...actual, createPortal: (...args: Parameters<typeof actual.createPortal>) =>
+    portalMode.dom ? actual.createPortal(...args) : args[0] }
+})
 const self: ArkmeSourceItem = { sourceRef: 'self', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
 const uncategorized: ArkmeSourceItem = { ...self, sourceRef: 'default', kind: 'default_category', displayName: '未分类' }
 const parent: ArkmeSourceItem = { ...self, sourceRef: 'parent', topicHierarchyKey: 'topic-key-parent', kind: 'topic', displayName: '父主题' }
@@ -19,6 +36,8 @@ let resolveCreate: (value: ArkmeTopicCreateResult) => void
 let rejectCreate: (error: Error) => void
 
 beforeEach(() => {
+  portalMode.dom = false
+  resetSelfTopicDirectories()
   localStorage.clear()
   vi.mocked(callArkme).mockReset()
   vi.mocked(callArkme).mockImplementation(async method => {
@@ -52,6 +71,47 @@ function submit() {
 }
 
 describe('navigate to a newly created self topic', () => {
+  it('revalidates a created topic directory membership when an ancestor was archived before its reply', async () => {
+    const actual = await vi.importActual<typeof import('../src/client/create-self-topic.js')>('../src/client/create-self-topic.js')
+    vi.mocked(createSelfTopic).mockImplementationOnce(actual.createSelfTopic)
+    const onSelect = await openCreate(true)
+    const inherited = {...created, parentSourceRef: parent.sourceRef}
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return {items: [self, uncategorized], hasMore: false}
+      if (method === 'archives.state') return [{ownerAvailable: true, effectiveArchived: true}]
+      if (method === 'topic.create') return new Promise(resolve => { resolveCreate = resolve })
+      if (method === 'topic.hierarchy.move') return {sourceRef: created.sourceRef, siblingOrder: 1024}
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { submit(); resolveCreate({source: inherited}) })
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({...inherited, siblingOrder: 1024})
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+    expect(selfTopicDirectory(10001, 'prod').getSnapshot().sources).toEqual([self, uncategorized])
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
+    expect(readNavigationCache(10001)?.sources.send_to_self).toEqual([self, uncategorized])
+  })
+  it('refreshes directory membership on record invalidation without clearing an archived scene', async () => {
+    const onSelect = vi.fn()
+    const onInvalidated = vi.fn()
+    const onResolution = vi.fn()
+    await act(async () => {
+      renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={parent} trigger="none"
+        onSelect={onSelect} onSelectionInvalidated={onInvalidated} onSelfSourcesResolution={onResolution}
+        onCreateWarning={vi.fn()} />)
+    })
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return {items: [self, uncategorized], hasMore: false}
+      if (method === 'archives.state') return [{ownerAvailable: true, effectiveArchived: true}]
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    onSelect.mockClear()
+    await act(async () => { arkmeUi.recordChanged() })
+    expect(onResolution).toHaveBeenLastCalledWith(10001, expect.objectContaining({sources: [self, uncategorized], loading: false}))
+    expect(onInvalidated).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(parent.sourceRef)
+    expect(readNavigationCache(10001)?.sources.send_to_self).toEqual([self, uncategorized])
+  })
   it.each([false, true])('opens the acknowledged topic and preserves it in the navigation cache (child=%s)', async child => {
     const onSelect = await openCreate(child)
     await act(async () => { submit() })
@@ -119,6 +179,7 @@ describe('navigate to a newly created self topic', () => {
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
     await act(async () => renderer!.unmount())
     const refreshed = { ...created, sourceRef: 'created-current-ref', displayName: '新主题改名' }
+    selfTopicDirectory(10001, 'prod').invalidate()
     vi.mocked(callArkme).mockResolvedValueOnce({ items: [self, uncategorized, parent, refreshed], hasMore: false })
     onSelect.mockClear()
     await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover {...props} selectedSource={created} />) })
@@ -127,11 +188,12 @@ describe('navigate to a newly created self topic', () => {
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(refreshed.sourceRef)
   })
 
-  it('keeps the selected destination while the original per-page cache loads later topics', async () => {
+  it('keeps the selected destination and full cached list while refresh pages load later topics', async () => {
     const onSelect = await openCreate()
     await act(async () => { submit(); resolveCreate({ source: created }) })
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
     await act(async () => renderer!.unmount())
+    selfTopicDirectory(10001, 'prod').invalidate()
     let finishPage!: (value: unknown) => void
     vi.mocked(callArkme).mockResolvedValueOnce({ items: [self, uncategorized, parent], hasMore: true, nextCursor: 'page-2' })
       .mockImplementationOnce(async () => await new Promise(resolve => { finishPage = resolve }))
@@ -140,7 +202,7 @@ describe('navigate to a newly created self topic', () => {
     expect(props.onSelectionInvalidated).not.toHaveBeenCalled()
     expect(onSelect).not.toHaveBeenCalled()
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
-    expect(readNavigationCache(10001)?.sources.send_to_self?.map(source => source.sourceRef)).toEqual(['self', 'default', 'parent'])
+    expect(readNavigationCache(10001)?.sources.send_to_self?.map(source => source.sourceRef)).toEqual(['self', 'default', 'parent', 'created'])
     await act(async () => { finishPage({ items: [created], hasMore: false }) })
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(created)
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
@@ -248,6 +310,7 @@ describe('navigate to a newly created self topic', () => {
   })
 
   it.each([false, true])('opens the created topic through the real form and keyed remount (old read pending=%s)', async oldReadPending => {
+    portalMode.dom = true
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     let accepted = false
     let delayOldRead = false
@@ -287,17 +350,17 @@ describe('navigate to a newly created self topic', () => {
         expect(finishOldRead).toBeDefined()
       }
       await act(async () => host.querySelector('button')!.click())
-      const input = host.querySelector('input')!
+      const input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '新主题')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })
-      await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+      await act(async () => document.querySelector('form[role="dialog"]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
       if (finishOldRead !== undefined) {
         await act(async () => { finishOldRead!({ items: [self, uncategorized, parent], hasMore: false }) })
       }
       expect(host.querySelector('h1')?.textContent).toBe('新主题')
-      expect(host.querySelector('form')).toBeNull()
+      expect(document.querySelector('form[role="dialog"]')).toBeNull()
       expect(onInvalidated).not.toHaveBeenCalled()
       expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
       expect(vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'topic.create')).toHaveLength(1)

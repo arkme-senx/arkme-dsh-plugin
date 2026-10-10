@@ -38,6 +38,47 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
   return { scrollTop: root.scrollTop, stickToBottom: false }
 }
 
+/** Read actual message/interaction rows only when opening a calendar; never count system notices. */
+export function arkmeConversationReadingDate(root: HTMLDivElement | null, rows: readonly {
+  id: string; kind: string; occurredAtMillis: number
+}[]): string | undefined {
+  if (root === null || root.clientHeight <= 0) return undefined
+  const messages = rows.filter(row => row.kind === 'message' || row.kind === 'moment')
+  // Use the actual bottom, not the wider auto-follow threshold: nearby history must retain its date.
+  const atBottom = root.scrollHeight - root.scrollTop - root.clientHeight <= 2
+  const rect = root.getBoundingClientRect()
+  const ids = new Set(messages.map(row => row.id))
+  const visible = [...root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')].find(row => {
+    const bounds = row.getBoundingClientRect()
+    return ids.has(row.dataset.arkmeConversationRow ?? '') && bounds.bottom > rect.top && bounds.top < rect.bottom
+  })
+  const anchorId = atBottom ? messages.at(-1)?.id : visible?.dataset.arkmeConversationRow
+  const timestamp = messages.find(row => row.id === anchorId)?.occurredAtMillis
+  if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0) return undefined
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime())) return undefined
+  return [String(date.getFullYear()).padStart(4, '0'), String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')].join('-')
+}
+
+export function arkmeConversationTargetScrollTop(root: HTMLDivElement, row: HTMLElement, align: 'start' | 'center'): number {
+  const rootRect = root.getBoundingClientRect()
+  const rowRect = row.getBoundingClientRect()
+  const rowHeight = rowRect.height || rowRect.bottom - rowRect.top
+  const offset = align === 'start' ? 0 : (root.clientHeight - rowHeight) / 2
+  const top = root.scrollTop + rowRect.top - rootRect.top - offset
+  return Math.max(0, Math.min(Math.max(0, root.scrollHeight - root.clientHeight), top))
+}
+
+export function arkmeConversationTargetRow(root: HTMLDivElement | null, target: { itemUid: string; momentId?: string }): HTMLElement | undefined {
+  if (!root) return undefined
+  if (!target.momentId) return [...root.querySelectorAll<HTMLElement>('[data-arkme-message-item-uid]')]
+    .find(row => row.dataset.arkmeMessageItemUid === target.itemUid)
+  const id = `moment:${target.momentId}`
+  return [...root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')]
+    .find(row => row.dataset.arkmeConversationRow === id)
+}
+
 export function arkmeConversationAnchorOffset(root: HTMLDivElement, anchorId: string | undefined): number | undefined {
   if (anchorId === undefined) return undefined
   const rootTop = root.getBoundingClientRect().top

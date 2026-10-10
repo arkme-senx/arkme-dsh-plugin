@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
 import { Lightbulb } from '@phosphor-icons/react/dist/icons/Lightbulb'
@@ -29,17 +30,17 @@ const buttonStyle: CSSProperties = {
 export function ArkmeBetaCommunityWelcome({ title, disabled, onChoose }: {
   title: string; disabled?: boolean; onChoose(text: string): void
 }) {
-  return <section aria-label="入群欢迎" style={{
+  return <section aria-label={tr("入群欢迎")} style={{
     width: '100%', maxWidth: 610, boxSizing: 'border-box', margin: '16px auto',
     padding: '22px 24px', borderRadius: 16, textAlign: 'left', fontSize: 14,
     border: `1px solid ${arkmeTheme.borderSoft}`,
     background: `color-mix(in srgb, ${arkmeTheme.text} 4%, ${arkmeTheme.base})`,
     color: arkmeTheme.text,
   }}>
-    <h3 style={{ fontSize: 16, lineHeight: 1.6, margin: '0 0 12px', fontWeight: 600 }}>欢迎加入 {title} 👋</h3>
-    <p style={{ lineHeight: 1.85, margin: 0 }}>群里有 Arkme 的内测用户、作者（群主）和团队伙伴。</p>
-    <p style={{ lineHeight: 1.85, margin: '10px 0 0' }}>来唠唠嗑、反馈 Bug、问问题、提建议，都可以～你的想法，或许会成为 Arkme 的下一次改变。</p>
-    <p style={{ margin: '20px 0 9px', fontSize: 13, color: arkmeTheme.secondary }}>刚开始用 Arkme？可以先逛逛：</p>
+    <h3 style={{ fontSize: 16, lineHeight: 1.6, margin: '0 0 12px', fontWeight: 600 }}>{tr("欢迎加入")} {title} 👋</h3>
+    <p style={{ lineHeight: 1.85, margin: 0 }}>{tr("群里有 Arkme 的内测用户、作者（群主）和团队伙伴。")}</p>
+    <p style={{ lineHeight: 1.85, margin: '10px 0 0' }}>{tr("来唠唠嗑、反馈 Bug、问问题、提建议，都可以～你的想法，或许会成为 Arkme 的下一次改变。")}</p>
+    <p style={{ margin: '20px 0 9px', fontSize: 13, color: arkmeTheme.secondary }}>{tr("刚开始用 Arkme？可以先逛逛：")}</p>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {destinations.map(([label, description, Icon, navigate]) => <button key={label} type="button"
         onClick={navigate} style={{ ...buttonStyle, width: '100%', padding: '11px 13px', gap: 12, textAlign: 'left' }}>
@@ -52,7 +53,7 @@ export function ArkmeBetaCommunityWelcome({ title, disabled, onChoose }: {
       </button>)}
     </div>
     <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${arkmeTheme.borderSoft}` }}>
-    <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.85, color: arkmeTheme.secondary }}>先去试试，用着有疑问或新想法，随时回来聊。</p>
+    <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.85, color: arkmeTheme.secondary }}>{tr("先去试试，用着有疑问或新想法，随时回来聊。")}</p>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
       {actions.map(([label, text, Icon]) => <button key={label} type="button" disabled={disabled}
         style={{ ...buttonStyle, ...(disabled ? { opacity: 0.5, cursor: 'default' } : {}) }}

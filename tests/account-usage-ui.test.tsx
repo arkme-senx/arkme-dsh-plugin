@@ -1,0 +1,338 @@
+// @vitest-environment jsdom
+import { act, createRef } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { ArkmeAccountUsage, ArkmeAccountUsageDetails, ArkmeAccountUsageDialog, formatCompactTokens, formatUsageBytes, formatUsageSeconds, usageLevel } from '../src/client/ArkmeAccountUsage.js'
+import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
+const mocks = vi.hoisted(() => ({ call: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
+vi.mock('../src/client/account-usage.css?inline', async () => ({ default: (await import('node:fs')).readFileSync(`${process.cwd()}/src/client/account-usage.css`, 'utf8') }))
+let root: Root, host: HTMLDivElement
+const onViewMembership = vi.fn()
+const points = { accountScope: 'prod:11', unit: 'ai_points', availablePoints: '1250', reservedPoints: '250', grantedPoints: '100', purchasedPoints: '1150', observedAt: 1, grants: [{ source: 'membership', availablePoints: '100', expiresAt: 1790784000000 }] }
+const storage = { accountScope: 'prod:11', usedBytes: 1024 ** 3, totalBytes: 10 * 1024 ** 3 }
+const voice = { accountScope: 'prod:11', usedSeconds: 300, remainingSeconds: 6900 }
+const balance = { availableNanoCny: '12500000000', totalNanoCny: '15000000000', reservedNanoCny: '2500000000', currency: 'CNY' }
+const recording = { accountScope: 'prod:11', month: '2026-09', totalSeconds: 1296000, usedSeconds: 3600, remainingSeconds: 1292400, pendingChildCount: 2, statisticsStartedAtMicros: 1,
+  breakdown: [1, 2, 3].map(recordingKind => ({ recordingKind, recordingDurationMillis: recordingKind === 3 ? null : 3600000, speechDurationMillis: 1200000, requestedSeconds: 1200, deductedSeconds: 1200, waivedSeconds: 0 })) }
+const defaultValue = (operation: string) => operation === 'account.usage.recording' ? recording : operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.points.query' ? points : storage
+beforeEach(() => {
+  connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} });
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  mocks.call.mockReset(); onViewMembership.mockReset()
+  mocks.call.mockImplementation(async operation => defaultValue(operation))
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
+})
+afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+async function render(scope = 'prod:11') { await act(async () => root.render(<ArkmeAccountUsageDetails accountScope={scope} onViewMembership={onViewMembership} />)) }
+async function openGiftDetails() {
+  expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  const button = host.querySelector<HTMLButtonElement>('.arkme-usage-grant-help')
+  if (button) await act(async () => { button.focus(); button.click() })
+}
+const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
+
+describe('account points and independent usage', () => {
+  it('toggles gift details, dismisses outside or Escape, and stays inside the owning modal', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={onClose} />))
+    const button = document.querySelector<HTMLButtonElement>('.arkme-usage-grant-help')!
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => { button.focus(); button.click() })
+    expect(document.querySelector('dialog [role="tooltip"]')?.textContent).toContain('月度 100')
+    await act(async () => button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(button)
+    await act(async () => button.click())
+    await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => button.click())
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => root.render(null))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  })
+  it('closes explanations on account change without leaking old grant details', async () => {
+    await render()
+    await openGiftDetails()
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull()
+    mocks.call.mockImplementation(async operation => ({ ...defaultValue(operation), accountScope: 'prod:22', ...(operation === 'account.points.query' ? { availablePoints: '1150', grantedPoints: '0', grants: [] } : {}) }))
+    await render('prod:22')
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(host.querySelector('.arkme-usage-grant-help')).toBeNull()
+  })
+
+  it.each(['320', '0'])('hides exhausted welcome gifts with monthly balance %s', async monthly => {
+    const account = { ...points, availablePoints: String(Number(monthly) + 1150), grantedPoints: monthly, grants: [
+      { source: 'welcome', availablePoints: '0', expiresAt: 0 },
+      { source: 'membership', availablePoints: monthly, expiresAt: Date.UTC(2026, 9, 31, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(monthly === '0' ? [] : ['月度 320（10/31 到期）'])
+  })
+  it('shows just the permanent balance when the monthly gift is exhausted', async () => {
+    const account = { ...points, availablePoints: '3150', grantedPoints: '2000', grants: [
+      { source: 'welcome', availablePoints: '2000', expiresAt: 0 },
+      { source: 'membership', availablePoints: '0', expiresAt: Date.UTC(2026, 9, 31, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('永久 2,000')
+  })
+  it.each(['zh', 'en'])('distinguishes permanent welcome points from monthly expiry in %s', async locale => {
+    connectArkmeLocale({ getLocale: () => ({ active: locale }), subscribe: () => () => {} })
+    const account = { ...points, availablePoints: '4075', grantedPoints: '2340', purchasedPoints: '1735', grants: [
+      { source: 'welcome', availablePoints: '20', expiresAt: 0 },
+      { source: 'welcome', availablePoints: '2000', expiresAt: 0 },
+      { source: 'membership', availablePoints: '320', expiresAt: Date.UTC(2026, 9, 31, 16) },
+      { source: 'membership', availablePoints: '0', expiresAt: Date.UTC(2026, 8, 30, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(locale === 'zh' ? ['永久 2,020 · 月度 320（10/31 到期）'] : ['Permanent 2,020 · Monthly 320 (expires 10/31)'])
+    expect(host.textContent).not.toContain('赠送积分到期时间')
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])
+  })
+  it('shows remaining permanent gifts and preserves separate future-source expiries', async () => {
+    const account = { ...points, availablePoints: '1178.1234568', grantedPoints: '28.1234568', grants: [
+      { source: 'welcome', availablePoints: '18.1234567', expiresAt: 0 },
+      { source: 'future-source', availablePoints: '0.0000001', expiresAt: Date.UTC(2026, 9, 31, 16) },
+      { source: 'future-source', availablePoints: '10', expiresAt: Date.UTC(2026, 10, 30, 16) },
+    ] }
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    await openGiftDetails()
+    const notes = [...document.querySelectorAll('[role="tooltip"]')].map(note => note.textContent)
+    expect(notes).toEqual(['永久 18.12 · 赠送 < 0.01（2026/10/31 到期） · 赠送 10（2026/11/30 到期）'])
+    expect(host.querySelector('[data-usage-kind="ai-points"]')?.textContent).not.toContain('月度')
+  })
+  it.each([
+    ['1980.43', '245.16', '1735.27', '可用 1,980 积分赠送 245 · 充值 1,735'],
+    ['1.9999999', '0.9999999', '1', '可用 1 积分赠送 0 · 充值 1'],
+    ['0', '0', '0', '可用 0 积分赠送 0 · 充值 0'],
+  ])('floors only the balance overview for %s exact points', async (availablePoints, grantedPoints, purchasedPoints, label) => {
+    const account = Object.freeze({ ...points, availablePoints, grantedPoints, purchasedPoints })
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? account : defaultValue(operation))
+    await render()
+    expect(host.querySelector('.arkme-usage-points-balance')?.textContent).toBe(label)
+    expect(account.availablePoints).toBe(availablePoints)
+  })
+  it('loads settled consumption only after opening details and cancels on close', async () => {
+    await render()
+    expect(mocks.call.mock.calls.some(call => call[0] === 'account.points.consumption')).toBe(false)
+    let signal: AbortSignal | undefined
+    mocks.call.mockImplementation((_operation, _params, value) => { signal = value; return new Promise(() => {}) })
+    const toggle = () => host.querySelector<HTMLButtonElement>('[aria-controls][aria-expanded]')!
+    await act(async () => toggle().click())
+    expect(host.querySelector('[data-usage-detail="points"]')).not.toBeNull()
+    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.consumption')
+    await act(async () => toggle().click())
+    expect(signal?.aborted).toBe(true)
+    expect(host.querySelector('[data-usage-detail="points"]')).toBeNull()
+  })
+  it('shows one point unit and distinct funding, retaining storage and voice units', async () => {
+    await render()
+    expect(host.querySelectorAll('.arkme-usage-metric')).toHaveLength(4)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+    expect(host.textContent).toContain('可用 1,250 积分')
+    const balanceLine = host.querySelector('[data-usage-kind="ai-points"] p')!
+    expect(balanceLine.textContent).toContain('可用 1,250 积分')
+    expect(balanceLine.textContent).toContain('赠送 100 · 充值 1,150')
+    expect(host.textContent).not.toContain('优先使用')
+    expect(host.textContent).not.toContain('1 元 = 100 积分')
+    expect(host.querySelector('[data-usage-kind="ai-points"] .arkme-usage-label')?.textContent).not.toContain('消费记录')
+    expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.textContent).not.toMatch(/暂占|使用中/)
+    expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
+    expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')
+    expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.textContent).toContain('360 小时')
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])
+    for (const text of ['Token', '实体提取', '阿森有想法', '¥', '永久免费']) expect(host.textContent).not.toContain(text)
+  })
+  it('loads fresh quotas after leaving and reopening without a refresh button', async () => {
+    await render()
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '300', purchasedPoints: '200' } : operation === 'account.usage.voice' ? { ...voice, usedSeconds: 600, remainingSeconds: 6600 } : defaultValue(operation))
+    await act(async () => root.render(null))
+    await render()
+    expect(host.textContent).toContain('可用 300 积分')
+    expect(host.textContent).toContain('已用 10 分 / 剩余 1 小时 50 分')
+    expect(mocks.call).toHaveBeenCalledTimes(8)
+    expect(host.querySelector('[aria-label="刷新用量与额度"]')).toBeNull()
+  })
+  it.each(['account.points.query', 'account.usage.storage', 'account.usage.voice', 'account.usage.recording'])('isolates and retries %s failure without inventing zeros', async failed => {
+    mocks.call.mockImplementation(async operation => { if (operation === failed) throw new Error('offline'); return defaultValue(operation) })
+    await render()
+    expect(host.textContent).toContain('暂时无法读取')
+    expect(host.textContent).not.toContain('已用 0')
+    if (failed !== 'account.points.query') expect(host.textContent).toContain('可用 1,250 积分')
+    if (failed !== 'account.usage.storage') expect(host.textContent).toContain('已用 1 GB')
+    expect(retry().disabled).toBe(false)
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => retry().click())
+    expect(host.textContent).not.toContain('无法读取')
+  })
+  it('retains membership actions for depleted storage and voice without creating an order', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? recording : operation === 'account.points.query' ? points : operation === 'account.usage.voice' ? { ...voice, remainingSeconds: 0 } : { ...storage, usedBytes: storage.totalBytes * 1.2 })
+    await render()
+    expect(host.querySelectorAll('[data-usage-level="exhausted"]')).toHaveLength(2)
+    expect([...host.querySelectorAll('[data-usage-level="exhausted"] [role="progressbar"]')].every(bar => bar.getAttribute('aria-valuenow') === '100')).toBe(true)
+    const membership = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('查看存储权益'))!
+    await act(async () => membership.click())
+    expect(onViewMembership).toHaveBeenCalledOnce()
+    expect(mocks.call.mock.calls.some(call => call[0].startsWith('billing.order.'))).toBe(false)
+  })
+  it('hides previous results immediately while another account loads', async () => {
+    await render()
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await render('prod:12')
+    for (const text of ['1,250', '1 GB', '1 小时 55 分']) expect(host.textContent).not.toContain(text)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
+    expect(host.textContent).toContain('读取中…')
+  })
+  it('ignores late results after environment changes', async () => {
+    const pending: Array<(value: unknown) => void> = []
+    mocks.call.mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+    await render()
+    mocks.call.mockImplementation(async operation => ({ ...defaultValue(operation), accountScope: 'test:11', ...(operation === 'account.points.query' ? { availablePoints: '88' } : {}) }))
+    await render('test:11')
+    await act(async () => { pending[0]!(points); pending[1]!(storage); pending[2]!(voice); pending[3]!(recording) })
+    expect(host.textContent).toContain('可用 88 积分')
+    expect(host.textContent).not.toContain('1,250')
+  })
+  it('shows authoritative zero without a fabricated progress percentage', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '0', grantedPoints: '0', purchasedPoints: '0', reservedPoints: '0', grants: [] } : defaultValue(operation))
+    await render()
+    const row = host.querySelector('[data-usage-kind="ai-points"]')!
+    expect(row.textContent).toContain('可用 0 积分')
+    expect(row.textContent).not.toContain('暂占')
+    expect(row.querySelector('[role="progressbar"]')).toBeNull()
+  })
+  it('expands the three recording sources and shows pending settlement', async () => {
+    await render()
+    const card = host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card.querySelector('table')).toBeNull()
+    expect(card.textContent).toContain('还有 2 段录音待结算')
+    await act(async () => card.querySelector<HTMLButtonElement>('button')!.click())
+    expect([...card.querySelectorAll('tbody th')].map(row => row.textContent)).toEqual(['长录音', '全天候录音', '文件上传'])
+    expect(card.querySelectorAll('tbody tr')).toHaveLength(3)
+    expect([...card.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual(['来源', '录音总时长', '人声时长'])
+    expect(card.querySelector('tbody')?.textContent).toContain('1 小时20 分')
+    expect(card.querySelector('tbody tr:last-child')?.textContent).toContain('—')
+    expect(card.querySelector('table')?.textContent).not.toContain('减免')
+  })
+  it('distinguishes recording rollout disabled from network errors and retries', async () => {
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.recording') throw { code: 'arkme-code-3003' }; return defaultValue(operation) })
+    await render()
+    const card = () => host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card().textContent).toContain('统计尚未启用')
+    expect(card().querySelector('[role="progressbar"]')).toBeNull()
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.recording') throw new Error('offline'); return defaultValue(operation) })
+    await act(async () => root.render(null)); await render()
+    expect(card().textContent).toContain('暂时无法读取')
+    expect(card().textContent).not.toContain('已用 0')
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => root.render(null)); await render()
+    expect(card().textContent).toContain('剩余 359 小时')
+  })
+  it('bounds recording progress after downgrade and leaves unknown totals unmeasured', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? { ...recording, usedSeconds: 86401, totalSeconds: 86400, remainingSeconds: 0 } : defaultValue(operation))
+    await render()
+    const card = () => host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(card().querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100')
+    expect(card().textContent).toContain('每月 24 小时')
+    expect(card().textContent).toContain('录音按人声时长计量，录音静音时长不计量')
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.recording' ? { ...recording, totalSeconds: null, remainingSeconds: null } : defaultValue(operation))
+    await act(async () => root.render(null)); await render()
+    expect(card().querySelector('[role="progressbar"]')).toBeNull()
+    expect(card().textContent).not.toContain('/ 剩余')
+    expect(card().textContent).toContain('已用 1 小时')
+  })
+  it('formats durations without rounding seconds into fake zero usage', () => {
+    expect(formatUsageSeconds(0)).toBe('0 秒')
+    expect(formatUsageSeconds(1)).toBe('1 秒')
+    expect(formatUsageSeconds(60)).toBe('1 分')
+    expect(formatUsageSeconds(61)).toBe('1 分 1 秒')
+    expect(formatUsageSeconds(61.123)).toBe('1 分 1 秒')
+    expect(formatUsageSeconds(59.9)).toBe('1 分')
+    expect(formatUsageSeconds(743.77)).toBe('12 分 24 秒')
+    expect(formatUsageSeconds(3661)).toBe('1 小时 1 分 1 秒')
+    expect(formatUsageSeconds(1200 * 60)).toBe('20 小时')
+  })
+  it('opens recharge above details without placing an order and restores focus', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'billing.products' ? { items: [] } : defaultValue(operation))
+    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={() => {}} />))
+    const recharge = document.querySelector<HTMLButtonElement>('[data-usage-kind="ai-points"] button')!
+    recharge.focus(); await act(async () => recharge.click())
+    expect(document.querySelector<HTMLDialogElement>('.arkme-billing-modal-host')?.open).toBe(true)
+    expect(document.querySelector('[aria-label="积分充值"]')).not.toBeNull()
+    expect(mocks.call.mock.calls.some(call => call[0].startsWith('billing.order.'))).toBe(false)
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭充值弹窗"]')!.click())
+    expect(document.querySelector('.arkme-billing-modal-host')).toBeNull()
+    expect(document.activeElement).toBe(recharge)
+  })
+  it('retains exact unrelated duration/storage formatting and depletion thresholds', () => {
+    for (const [value, text] of [[0, '0 秒'], [1, '1 秒'], [61, '1 分 1 秒'], [3661, '1 小时 1 分 1 秒']] as const) expect(formatUsageSeconds(value)).toBe(text)
+    expect(formatUsageBytes(0)).toBe('0 B'); expect(formatUsageBytes(1024)).toBe('1 KB'); expect(formatUsageBytes(1024 ** 4)).toBe('1 TB')
+    expect(usageLevel(0, 0)).toBe('exhausted'); expect(usageLevel(90, 100)).toBe('low'); expect(usageLevel(89, 100)).toBe('normal')
+    expect(formatCompactTokens(50_000_000)).toBe('5,000 万')
+  })
+  it('keeps semantic-theme and viewport bounds', () => {
+    const dispose = installArkmeRedesignStyles()
+    expect(document.head.textContent).toContain('max-height: calc(100dvh - 28px)')
+    expect(document.head.textContent).toContain('var(--dsw-alias-label-primary'); dispose()
+    expect(readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')).toContain('<ArkmeAccountUsage key={memberScope}')
+  })
+})
+
+describe('compact summary and dialog', () => {
+  it('shows unknown values as pending while retaining all independent quota rows', async () => {
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={() => {}} />))
+    expect(host.querySelectorAll('.arkme-usage-summary-row')).toHaveLength(4)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['读取中…', '读取中…', '读取中…', '读取中…'])
+  })
+  it('floors available points in the compact summary and preserves measured storage/voice bars', async () => {
+    const open = vi.fn()
+    mocks.call.mockImplementation(async operation => operation === 'account.points.query' ? { ...points, availablePoints: '1980.9999999' } : defaultValue(operation))
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['1,980 积分', '10 GB', '2 小时', '360 小时'])
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+    expect(host.textContent).not.toContain('Token')
+    expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('10')
+    await act(async () => host.querySelector('button')!.click()); expect(open).toHaveBeenCalledOnce()
+  })
+  it('keeps a genuine zero voice quota exhausted and usable detail navigation on failures', async () => {
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.storage') throw new Error('offline'); return operation === 'account.usage.voice' ? { ...voice, usedSeconds: 0, remainingSeconds: 0 } : defaultValue(operation) })
+    const open = vi.fn(); await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
+    const speech = host.querySelector('[data-usage-kind="voice-transcription"]')!
+    expect(speech.getAttribute('data-usage-level')).toBe('exhausted')
+    expect(speech.querySelector('.arkme-usage-summary-total')?.textContent).toBe('0 秒')
+    expect(host.textContent).toContain('暂不可用')
+    await act(async () => host.querySelector('button')!.click()); expect(open).toHaveBeenCalledOnce()
+  })
+  it('supports dialog cancellation and focus restoration', async () => {
+    const close = vi.fn(), ref = createRef<HTMLButtonElement>()
+    await act(async () => root.render(<><button ref={ref}>头像</button><ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={close} returnFocusRef={ref} /></>))
+    const dialog = document.querySelector('dialog')!
+    expect(dialog.open).toBe(true); expect(dialog.textContent).toContain('可用 1,250 积分')
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭用量与额度详情"]')!.click())
+    await act(async () => dialog.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true })))
+    expect(close).toHaveBeenCalledTimes(2)
+    await act(async () => root.render(<button ref={ref}>头像</button>))
+    expect(document.activeElement).toBe(ref.current)
+  })
+})

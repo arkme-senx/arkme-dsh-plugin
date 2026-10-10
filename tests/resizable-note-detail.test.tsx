@@ -5,7 +5,7 @@ import { clampNoteDetailWidth, NOTE_DETAIL_WIDTH_KEY, useResizableNoteDetail } f
 
 afterEach(() => vi.unstubAllGlobals())
 
-function mountResize(options: { storageThrows?: boolean; observer?: boolean } = {}) {
+function mountResize(options: { storageThrows?: boolean; observer?: boolean; preferenceKey?: string; defaultWidth?: number } = {}) {
   const parent = { clientWidth: 1000 }
   const values = new Map<string, string>()
   const style = { cursor: 'default', userSelect: 'text' }
@@ -26,7 +26,7 @@ function mountResize(options: { storageThrows?: boolean; observer?: boolean } = 
   })
   const ref = { current: { parentElement: parent, getBoundingClientRect: () => ({ width: resize.style.width }) } } as unknown as ReturnType<typeof createRef<HTMLElement>>
   let resize: ReturnType<typeof useResizableNoteDetail>
-  function Harness() { resize = useResizableNoteDetail(ref); return resize.handle }
+  function Harness() { resize = useResizableNoteDetail(ref, options.preferenceKey, undefined, options.defaultWidth); return resize.handle }
   let renderer: ReactTestRenderer
   act(() => { renderer = create(<Harness />) })
   const handle = () => renderer!.root.findByProps({ role: 'separator' })
@@ -51,6 +51,18 @@ it('tracks container resize, preserves preference and disconnects listeners', ()
   h.unmount()
   expect(h.disconnect).toHaveBeenCalledTimes(1)
   expect(h.removeEventListener).toHaveBeenCalledWith('resize', h.addEventListener.mock.calls[0]![1])
+})
+it('supports a separate group member preference without changing the note drawer default', () => {
+  const h = mountResize({ preferenceKey: 'arkme:group-members-width:v1', defaultWidth: 262 })
+  expect(h.width()).toBe(262)
+  h.down(); h.move()
+  act(() => h.handle().props.onPointerUp({ pointerId: 1 }))
+  expect(h.width()).toBe(462)
+  expect(h.values.get('arkme:group-members-width:v1')).toBe('462')
+  expect(h.values.has(NOTE_DETAIL_WIDTH_KEY)).toBe(false)
+  h.key('Enter'); expect(h.width()).toBe(262)
+  h.parent.clientWidth = 240; h.measure(); expect(h.width()).toBe(240)
+  h.unmount()
 })
 
 it.each(['onPointerCancel', 'onLostPointerCapture'])('%s ends only the active drag and allows the next drag', event => {

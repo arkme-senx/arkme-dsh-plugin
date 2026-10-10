@@ -17,7 +17,19 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme navigation cache', () => {
-  it('retains system topic kind and presents its name without renaming ordinary topics', () => {
+  it('restores persisted custom topic ranks and rejects malformed ranks', () => {
+    const storage = new MemoryStorage()
+    writeNavigationCache({
+      version: 1, userId: 42, directory: 'send_to_self', updatedAtMillis: 1,
+      sources: { send_to_self: [1024, 2048, -1, 0, 1.5, Infinity].map((siblingOrder, index) => ({
+        sourceRef: `topic-${index}`, kind: 'topic', displayName: `主题 ${index}`,
+        activeAtMillis: 1, unreadCount: 0, siblingOrder,
+      })) },
+    }, storage)
+    expect(readNavigationCache(42, storage)?.sources.send_to_self?.map(item => item.siblingOrder))
+      .toEqual([1024, 2048, undefined, undefined, undefined, undefined])
+  })
+  it('removes cached DSH topic and its selection without renaming same-name ordinary topics', () => {
     const storage = new MemoryStorage()
     const sources = [3, 1, 2].map(topicKind => ({
       sourceRef: 'topic-' + String(topicKind), kind: 'topic' as const, topicKind,
@@ -29,9 +41,10 @@ describe('Arkme navigation cache', () => {
     }, storage)
     const restored = readNavigationCache(42, storage)!
     expect(restored.sources.send_to_self?.map(source => [source.topicKind, source.displayName])).toEqual([
-      [3, '发给 DSH 的消息'], [1, 'DSH Agent Input'], [2, 'DSH Agent Input'],
+      [1, 'DSH Agent Input'], [2, 'DSH Agent Input'],
     ])
-    expect(cachedSelectedSource(restored)?.sourceRef).toBe('topic-3')
+    expect(restored.selectedSourceRef).toBeUndefined()
+    expect(cachedSelectedSource(restored)?.sourceRef).not.toBe('topic-3')
     expect(sources[0]?.displayName).toBe('DSH Agent Input')
   })
   it('replaces a rotated chat projection by stable identity when prepending it', () => {

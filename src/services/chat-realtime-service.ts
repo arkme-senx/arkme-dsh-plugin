@@ -2,6 +2,8 @@ import {
   ArkmeChatRealtimeRuntime,
   type ArkmeChatRealtimeNotice,
   type ArkmeChatReceiveHint,
+  type ArkmeChatPolicyUpdatedHint,
+  type ArkmeConversationListPreferenceUpdatedHint,
 } from '../chat-realtime.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -39,7 +41,6 @@ export interface ArkmeNativeAttentionDispatcher {
 
 const MAX_PROJECTION_RETRIES = 5
 const MAX_ATTENTION_SUMMARY_RETRY_DELAY_MS = 30_000
-const MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY = 3
 const MAX_NOTIFICATION_HINTS_PER_TIMELINE_READ = 50
 const NOTIFICATION_EXPIRY_MILLIS = 5 * 60_000
 const CHAT_NOTIFICATION_DIAGNOSTICS = process.env.ARKME_CHAT_NOTIFICATION_DIAGNOSTICS === '1'
@@ -132,6 +133,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  directoryInvalidation?: (hint: ArkmeChatPolicyUpdatedHint | ArkmeConversationListPreferenceUpdatedHint) => Promise<void>
   directoryAttention?: (retry: boolean) => Promise<ArkmeChatAttentionSummary>
   directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
   private disposed = false
@@ -195,6 +197,7 @@ export class ChatRealtimeService {
 
   dispose(): void {
     this.disposed = true
+    this.attentionOwnerGeneration += 1
     this.attentionController.abort()
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     if (this.connectionBaselineRetryTimer !== undefined) clearTimeout(this.connectionBaselineRetryTimer)
@@ -211,6 +214,8 @@ export class ChatRealtimeService {
     this.notificationBaselineOwnerGeneration = 0
     this.chatClientListeners.clear()
   }
+
+  selfRoleInvalidation?: () => Promise<void>
 
   startChatRealtime(): () => void {
     this.attentionStopped = false
@@ -261,6 +266,14 @@ export class ChatRealtimeService {
   }
 
   handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
+    if (notice.cause === 'team-invalidation') {
+      void this.runtime.accountScopedSession().then(session => {
+        if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) {
+          this.emitChatClientEvent({ type: 'team-invalidated', revision: this.nextChatClientRevision() })
+        }
+      }).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'chat-policy-invalidation' && notice.policyUpdated !== undefined) {
       void this.invalidateChatPolicyForCurrentSession(notice)
       return
@@ -270,6 +283,7 @@ export class ChatRealtimeService {
       return
     }
     if (notice.cause === 'reconcile') {
+      void this.selfRoleInvalidation?.().catch(() => undefined)
       const generation = notice.state.connectionGeneration
       if (notice.connectionUserId !== undefined) this.activateAttentionOwner(notice.connectionUserId)
       this.notificationBaselineGeneration = 0
@@ -295,6 +309,23 @@ export class ChatRealtimeService {
       return
     }
     if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'entity_archive') {
+      void this.invalidateTopicDirectoryProjection()
+      return
+    }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'self_role') {
+      void this.selfRoleInvalidation?.().then(() => this.emitChatClientEvent({type:'projection-invalidated',projection:'self_role',revision:this.nextChatClientRevision()})).catch(() => undefined)
+      return
+    }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'official_notification') {
+      void this.runtime.sessionStore.read().then(session => {
+        if (!session || notice.connectionSignal?.aborted || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return
+        this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'owner-read:official-notifications:')
+        this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'official_notification', revision: this.nextChatClientRevision() })
+      }).catch(() => undefined)
+      return
+    }
+    if (notice.cause === 'projection-invalidation'
       && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()
       return
@@ -303,6 +334,7 @@ export class ChatRealtimeService {
       && notice.conversationListPreferenceUpdated !== undefined) {
       void this.invalidateConversationListPreferenceForCurrentSession(
         notice.conversationListPreferenceUpdated.userId,
+        notice.conversationListPreferenceUpdated,
       )
       return
     }
@@ -483,7 +515,23 @@ export class ChatRealtimeService {
     }
   }
 
-  async invalidateRecordProjection(): Promise<void> {
+  /** Archive changes directory membership, not record content, privacy or calendar. */
+  async invalidateTopicDirectoryProjection(): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'owner-read:archives:')
+      this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.emitChatClientEvent({
+        type: 'projection-invalidated', projection: 'topic-directory',
+        revision: this.nextChatClientRevision(),
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Topic directory invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
+  async invalidateRecordProjection(options: { contentOnly?: boolean } = {}): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
@@ -493,6 +541,7 @@ export class ChatRealtimeService {
         type: 'projection-invalidated',
         revision: this.nextChatClientRevision(),
         projection: 'record',
+        ...(options.contentOnly ? { retainTopicCounts: true } : {}),
       })
     } catch (error) {
       console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))
@@ -697,21 +746,28 @@ export class ChatRealtimeService {
       const session = await this.runtime.sessionStore.read()
       if (this.disposed || notice.connectionSignal?.aborted || session?.userId !== hint.userId) return
       this.source.invalidateSourceListCache(session.userId, 'root')
-      this.emitChatClientEvent({ type: 'chat-policy-invalidated', revision: this.nextChatClientRevision() })
+      if (this.directoryInvalidation !== undefined) await this.directoryInvalidation(hint)
+      if (this.disposed || notice.connectionSignal?.aborted) return
+      this.emitChatClientEvent({ type: 'chat-policy-invalidated', revision: this.nextChatClientRevision(),
+        ...(this.directoryInvalidation === undefined ? {} : { refresh: 'none' as const }) })
     } catch (error) {
       console.warn('dsh-arkme: Chat policy invalidation failed:', safeFailureMessage(error))
     }
   }
 
   /** Browser invalidation only; raw source/Bot caches belong to different projections. */
-  async invalidateConversationListPreferenceForCurrentSession(expectedUserId?: number): Promise<void> {
+  async invalidateConversationListPreferenceForCurrentSession(expectedUserId?: number, hint?: ArkmeConversationListPreferenceUpdatedHint): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
-      if (session === undefined
+      if (this.disposed || session === undefined
         || expectedUserId !== undefined && session.userId !== expectedUserId) return
+      const managed = hint !== undefined && this.directoryInvalidation !== undefined
+      if (managed) await this.directoryInvalidation!(hint)
+      if (this.disposed) return
       this.emitChatClientEvent({
         type: 'conversation-list-preference-invalidated',
         revision: this.nextChatClientRevision(),
+        ...(managed ? { refresh: 'none' as const } : {}),
       })
     } catch (error) {
       console.warn('dsh-arkme: Conversation-list preference invalidation failed:', safeFailureMessage(error))
@@ -813,7 +869,7 @@ export class ChatRealtimeService {
       accountUserId: notificationHint?.accountUserId ?? current?.accountUserId,
       accountOwnerGeneration: notificationHint?.accountOwnerGeneration ?? current?.accountOwnerGeneration,
     })
-    this.scheduleProjectionFlush(200)
+    this.scheduleProjectionFlush(0)
   }
 
   private scheduleProjectionFlush(delayMillis: number): void {
@@ -834,7 +890,7 @@ export class ChatRealtimeService {
     const now = Date.now()
     let delay = Number.POSITIVE_INFINITY
     for (const projection of this.pendingChatProjections.values()) {
-      if (projection.refreshSource !== false) delay = Math.min(delay, 200)
+      if (projection.refreshSource !== false) delay = 0
       for (const candidate of projection.notificationHints) {
         const dueAtMillis = candidate.nextAttemptAtMillis ?? now + notificationRetryDelay(candidate.attempts)
         delay = Math.min(delay, Math.max(0, dueAtMillis - now))
@@ -992,35 +1048,40 @@ export class ChatRealtimeService {
       }
     }
     const sourcePending = pending.filter(([, projection]) => projection.refreshSource !== false)
-    const bundles = new Map<string, Record<string, unknown>>()
-    if (sourcePending.length > 0) {
-      const sessionUids = sourcePending.map(([uid]) => uid).sort()
-      const projectionBatchKey = sessionUids.join('|')
-      const displayData = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/display-snapshots', { chat_session_uids: sessionUids }, session,
-        undefined,
-        {
-          lane: sourcePending.some(([, projection]) => projection.notificationHints.length > 0)
-            ? 'interactive-read' : 'background-read',
-          key: `projection:display:${projectionBatchKey}`,
-        },
-      )
-      for (const raw of listValue(displayData.items)) {
-        const bundle = objectValue(raw)
-        const uid = stringValue(objectValue(bundle.session).chat_session_uid).trim()
-        if (uid !== '') bundles.set(uid, bundle)
+    const displayReady = (async () => {
+      const bundles = new Map<string, Record<string, unknown>>()
+      if (sourcePending.length > 0) {
+        const sessionUids = sourcePending.map(([uid]) => uid).sort()
+        const projectionBatchKey = sessionUids.join('|')
+        const displayData = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/display-snapshots', { chat_session_uids: sessionUids }, session,
+          undefined,
+          {
+            lane: sourcePending.some(([, projection]) => projection.notificationHints.length > 0)
+              ? 'interactive-read' : 'background-read',
+            key: `projection:display:${projectionBatchKey}`,
+          },
+        )
+        for (const raw of listValue(displayData.items)) {
+          const bundle = objectValue(raw)
+          const uid = stringValue(objectValue(bundle.session).chat_session_uid).trim()
+          if (uid !== '') bundles.set(uid, bundle)
+        }
       }
-    }
-    const tailItemsByUid = new Map<string, {
-      items: ArkmeTimelineItem[]
-      notificationIdentities: ArkmeTimelineNotificationIdentity[]
-    }>()
-    const failedUids = new Set<string>()
-    const timelinePending = pending.filter(([, projection]) => projection.refreshSource !== false
-      || projection.notificationHints.some(candidate => candidate.resolvedNotification === undefined))
-    for (let offset = 0; offset < timelinePending.length; offset += 3) {
-      const chunk = timelinePending.slice(offset, offset + 3)
-      const results = await Promise.allSettled(chunk.map(async ([uid, projection]) => {
+      return bundles
+    })().catch(() => undefined)
+    const failed: Array<[string, PendingChatProjection]> = []
+    // Three notification lanes preserve per-session order without occupying
+    // the three body-projection workers. The batch owns and awaits both groups.
+    const notificationLanes = Array.from({ length: 3 }, () => Promise.resolve())
+    let nextNotificationLane = 0
+    const project = async ([uid, projection]: [string, PendingChatProjection]) => {
+      let timelineProjection: {
+        items: ArkmeTimelineItem[]
+        notificationIdentities: ArkmeTimelineNotificationIdentity[]
+      } | undefined
+      if (projection.refreshSource !== false
+        || projection.notificationHints.some(candidate => candidate.resolvedNotification === undefined)) {
         const cached = this.source.cachedChatSourceByKey(`${String(session.userId)}:${uid}`)
         const unresolvedHints = projection.notificationHints
           .filter(candidate => candidate.resolvedNotification === undefined)
@@ -1042,13 +1103,15 @@ export class ChatRealtimeService {
             key: `projection:tail:${uid}:${String(afterSequence)}:${String(notificationAttempt)}`,
           },
         )
-        const bundle = bundles.get(uid)
+        const bundles = await displayReady
+        if (bundles === undefined && projection.refreshSource !== false) throw new Error('Chat display projection failed')
+        const bundle = bundles?.get(uid)
         const sessionKind = numberValue(objectValue(bundle).session_kind
           ?? objectValue(objectValue(bundle).session).session_kind)
         const sourceKind = sessionKind === 2 ? 'group_chat'
           : sessionKind === 1 || sessionKind === 3 ? 'private_chat'
             : cached?.kind === 'group_chat' || cached?.kind === 'private_chat' ? cached.kind : undefined
-        return [uid, {
+        timelineProjection = {
           items: await this.projectionReader.chatTimelineItems(
             data,
             session,
@@ -1057,98 +1120,214 @@ export class ChatRealtimeService {
             bundle,
           ),
           notificationIdentities: timelineNotificationIdentities(data),
-        }] as const
-      }))
-      results.forEach((result, index) => {
-        const uid = chunk[index]?.[0]
-        if (uid === undefined) return
-        if (result.status === 'fulfilled') tailItemsByUid.set(result.value[0], result.value[1])
-        else failedUids.add(uid)
-      })
-    }
-    if (ownerGeneration !== this.attentionOwnerGeneration) return []
-    const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
-    const sidebarNotificationHints: Array<{ uid: string; candidate: PendingChatNotificationHint }> = []
-    const notifications: Array<{
-      notification: ArkmeMessageNotification
-      candidate: PendingChatNotificationHint
-      uid: string
-      latestSequence: number
-    }> = []
-    for (const [uid, projection] of pending) {
-      const bundle = bundles.get(uid)
-      if ((projection.refreshSource !== false && bundle === undefined) || failedUids.has(uid)) {
-        failedUids.add(uid)
-        continue
+
+        }
       }
-      const cacheKey = `${String(session.userId)}:${uid}`
-      const timelineProjection = tailItemsByUid.get(uid)
-      const timelineItems = timelineProjection?.items ?? []
-      try {
-        const cachedSource = this.source.cachedChatSourceByKey(cacheKey)
-        const source = projection.refreshSource === false
-          ? cachedSource
-          : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems)
-        if (source === undefined) {
-          this.mergePendingChatProjection(uid, { ...projection, refreshSource: true })
-          failedUids.add(uid)
-          continue
-        }
-        if (ownerGeneration !== this.attentionOwnerGeneration) return []
-        if (projection.refreshSource !== false) this.source.setChatSourceByKey(cacheKey, source)
-        const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
-        if (ownerGeneration !== this.attentionOwnerGeneration) return []
-        if (projection.refreshSource !== false) {
-          updates.push({ sourceKey, source, timelineItems })
-          for (const candidate of projection.notificationHints.filter(item => item.attempts === 0)) {
-            sidebarNotificationHints.push({ uid, candidate })
+      if (ownerGeneration !== this.attentionOwnerGeneration) return []
+      const bundles = await displayReady
+      const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
+      const sidebarNotificationHints: Array<{ uid: string; candidate: PendingChatNotificationHint }> = []
+      const notifications: Array<{
+        notification: ArkmeMessageNotification
+        candidate: PendingChatNotificationHint
+        uid: string
+        latestSequence: number
+      }> = []
+        const bundle = bundles?.get(uid)
+        if (projection.refreshSource !== false && bundle === undefined) return [[uid, projection] as [string, PendingChatProjection]]
+        const cacheKey = `${String(session.userId)}:${uid}`
+        const timelineItems = timelineProjection?.items ?? []
+        try {
+          const cachedSource = this.source.cachedChatSourceByKey(cacheKey)
+          const source = projection.refreshSource === false
+            ? cachedSource
+            : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems)
+          if (source === undefined) {
+            this.mergePendingChatProjection(uid, { ...projection, refreshSource: true })
+            return [[uid, projection] as [string, PendingChatProjection]]
           }
-        }
-        if (source.kind === 'private_chat' || source.kind === 'group_chat') {
-          for (const candidate of projection.notificationHints
-            .sort((left, right) => left.hint.latestSequence - right.hint.latestSequence)) {
-            const state = this.chatRealtime.state()
-            let liveCandidate = candidate
-            if (candidate.baselinePassed === true) {
-              if (candidate.accountUserId !== session.userId
-                || candidate.accountOwnerGeneration !== ownerGeneration) continue
-            } else {
-              if (candidate.accountUserId !== undefined && candidate.accountUserId !== session.userId) continue
-              if (candidate.connectionGeneration !== state.connectionGeneration) continue
-              if (this.notificationBaselineGeneration !== candidate.connectionGeneration
-                || this.notificationBaselineUserId !== session.userId) {
-                this.mergePendingChatProjection(uid, {
-                  latestSequence: projection.latestSequence,
-                  notificationHints: [{ ...candidate, nextAttemptAtMillis: Date.now() + 200 }],
-                  refreshSource: false,
+          if (ownerGeneration !== this.attentionOwnerGeneration) return []
+          if (projection.refreshSource !== false) this.source.setChatSourceByKey(cacheKey, source)
+          const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
+          if (ownerGeneration !== this.attentionOwnerGeneration) return []
+          if (projection.refreshSource !== false) {
+            updates.push({ sourceKey, source, timelineItems })
+            for (const candidate of projection.notificationHints.filter(item => item.attempts === 0)) {
+              sidebarNotificationHints.push({ uid, candidate })
+            }
+          }
+          if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+            for (const candidate of projection.notificationHints
+              .sort((left, right) => left.hint.latestSequence - right.hint.latestSequence)) {
+              const state = this.chatRealtime.state()
+              let liveCandidate = candidate
+              if (candidate.baselinePassed === true) {
+                if (candidate.accountUserId !== session.userId
+                  || candidate.accountOwnerGeneration !== ownerGeneration) continue
+              } else {
+                if (candidate.accountUserId !== undefined && candidate.accountUserId !== session.userId) continue
+                if (candidate.connectionGeneration !== state.connectionGeneration) continue
+                if (this.notificationBaselineGeneration !== candidate.connectionGeneration
+                  || this.notificationBaselineUserId !== session.userId) {
+                  this.mergePendingChatProjection(uid, {
+                    latestSequence: projection.latestSequence,
+                    notificationHints: [{ ...candidate, nextAttemptAtMillis: Date.now() + 200 }],
+                    refreshSource: false,
+                    accountUserId: session.userId,
+                    accountOwnerGeneration: ownerGeneration,
+                  })
+                  continue
+                }
+                const baselineSequence = this.notificationBaselineSequences.get(uid) ?? 0
+                if (candidate.hint.latestSequence <= baselineSequence) continue
+                liveCandidate = {
+                  ...candidate,
                   accountUserId: session.userId,
                   accountOwnerGeneration: ownerGeneration,
-                })
-                continue
+                  baselinePassed: true,
+                }
               }
-              const baselineSequence = this.notificationBaselineSequences.get(uid) ?? 0
-              if (candidate.hint.latestSequence <= baselineSequence) continue
-              liveCandidate = {
-                ...candidate,
-                accountUserId: session.userId,
-                accountOwnerGeneration: ownerGeneration,
-                baselinePassed: true,
+              if (candidate.hint.senderUserId === session.userId || source.notificationAllowed !== true) continue
+              let notification = liveCandidate.resolvedNotification
+              if (notification === undefined) {
+                const message = notificationTimelineItem(
+                  timelineItems,
+                  timelineProjection?.notificationIdentities ?? [],
+                  candidate.hint,
+                )
+                if (message === undefined) {
+                  const attempts = candidate.attempts + 1
+                  this.mergePendingChatProjection(uid, {
+                    latestSequence: projection.latestSequence,
+                    notificationHints: [{
+                      ...liveCandidate,
+                      attempts,
+                      nextAttemptAtMillis: Date.now() + notificationRetryDelay(attempts),
+                    }],
+                    refreshSource: false,
+                    accountUserId: session.userId,
+                    accountOwnerGeneration: ownerGeneration,
+                  })
+                  continue
+                }
+                const richPreview = arkmeTimelineConversationPreview(message)
+                const body = arkmeEmojiPlainText(arkmeEmojiTokenSafePrefix(
+                  source.kind === 'group_chat' ? `${message.senderName}：${richPreview}` : richPreview,
+                  120,
+                ))
+                notification = {
+                  eventUid: candidate.hint.eventUid,
+                  sourceRef: source.sourceRef,
+                  sourceKey,
+                  sourceKind: source.kind,
+                  title: source.displayName,
+                  body,
+                  eventAtMillis: candidate.hint.eventAtMillis,
+                }
+                liveCandidate = { ...liveCandidate, resolvedNotification: notification }
               }
+              notifications.push({ notification, candidate: liveCandidate, uid, latestSequence: projection.latestSequence })
             }
-            if (candidate.hint.senderUserId === session.userId || source.notificationAllowed !== true) continue
-            let notification = liveCandidate.resolvedNotification
-            if (notification === undefined) {
-              const message = notificationTimelineItem(
-                timelineItems,
-                timelineProjection?.notificationIdentities ?? [],
-                candidate.hint,
-              )
-              if (message === undefined) {
+          }
+        } catch {
+          return [[uid, projection] as [string, PendingChatProjection]]
+        }
+      if (ownerGeneration !== this.attentionOwnerGeneration) return []
+      if (updates.length > 0) {
+        this.source.invalidateSourceListCache(session.userId, 'root')
+        this.runtime.invalidateCalendarDates(this.runtime.requestScope(session.userId), updates.flatMap(update => [
+          update.source.activeAtMillis, ...update.timelineItems.map(item => item.sendAtMillis),
+        ]))
+        this.emitChatClientEvent({
+          type: 'sessions-delta',
+          revision: this.nextChatClientRevision(),
+          updates,
+        })
+        const emittedAtMillis = Date.now()
+        for (const { candidate } of sidebarNotificationHints) {
+          notificationDiagnostic('notification_sidebar_delta_emitted', {
+            eventUid: candidate.hint.eventUid,
+            connectionGeneration: candidate.connectionGeneration,
+            attempt: candidate.attempts,
+            emittedAtMillis,
+            ...(candidate.receivedAtMillis === undefined ? {} : {
+              durationFromHintMillis: Math.max(0, emittedAtMillis - candidate.receivedAtMillis),
+            }),
+          })
+        }
+        void this.refreshAttentionSummary()
+      }
+      if (notifications.length > 0) {
+        const lane = nextNotificationLane++ % notificationLanes.length
+        notificationLanes[lane] = notificationLanes[lane]!.then(async () => {
+          const deliveries: Array<{
+            entry: (typeof notifications)[number]
+            fallbackToBrowser: boolean
+            outcome: ArkmeDesktopNotificationDispatchResult['outcome'] | 'exception'
+          }> = []
+          for (let offset = 0; offset < notifications.length; offset += 1) {
+            const chunk = notifications.slice(offset, offset + 1)
+            deliveries.push(...await Promise.all(chunk.map(async entry => {
+              const { notification, candidate } = entry
+              if (ownerGeneration !== this.attentionOwnerGeneration) {
+                return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
+              }
+              const dispatchStartedAtMillis = Date.now()
+              try {
+                const outcome = await this.nativeAttention.showNotification({
+                  idempotencyKey: notification.eventUid,
+                  kind: 'chat.message',
+                  occurredAtMillis: notification.eventAtMillis,
+                  expiresAtMillis: notification.eventAtMillis + NOTIFICATION_EXPIRY_MILLIS,
+                  presentation: { title: notification.title, body: notification.body },
+                  activation: {
+                    kind: 'chat-source',
+                    sourceRef: notification.sourceRef,
+                    sourceKey: notification.sourceKey,
+                  },
+                })
+                const completedAtMillis = Date.now()
+                notificationDiagnostic('notification_native_dispatch_completed', {
+                  eventUid: notification.eventUid,
+                  connectionGeneration: candidate.connectionGeneration,
+                  attempt: candidate.attempts,
+                  outcome: outcome.outcome,
+                  completedAtMillis,
+                  dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
+                  ...(candidate.receivedAtMillis === undefined ? {} : {
+                    durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
+                  }),
+                })
+                return { entry, fallbackToBrowser: outcome.fallbackToBrowser, outcome: outcome.outcome }
+              } catch {
+                // Retry only the same idempotency key; an uncertain native attempt must
+                // never fan out into a second Browser delivery.
+                const completedAtMillis = Date.now()
+                notificationDiagnostic('notification_native_dispatch_completed', {
+                  eventUid: notification.eventUid,
+                  connectionGeneration: candidate.connectionGeneration,
+                  attempt: candidate.attempts,
+                  outcome: 'exception',
+                  completedAtMillis,
+                  dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
+                  ...(candidate.receivedAtMillis === undefined ? {} : {
+                    durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
+                  }),
+                })
+                return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
+              }
+            })))
+          }
+          if (ownerGeneration !== this.attentionOwnerGeneration) return []
+          for (const { entry, fallbackToBrowser, outcome } of deliveries) {
+            const { notification, candidate, uid, latestSequence } = entry
+            if (outcome === 'native-failed' || outcome === 'rate-limited' || outcome === 'exception') {
+              if (!notificationExpired(candidate)) {
                 const attempts = candidate.attempts + 1
                 this.mergePendingChatProjection(uid, {
-                  latestSequence: projection.latestSequence,
+                  latestSequence,
                   notificationHints: [{
-                    ...liveCandidate,
+                    ...candidate,
                     attempts,
                     nextAttemptAtMillis: Date.now() + notificationRetryDelay(attempts),
                   }],
@@ -1156,140 +1335,29 @@ export class ChatRealtimeService {
                   accountUserId: session.userId,
                   accountOwnerGeneration: ownerGeneration,
                 })
-                continue
               }
-              const richPreview = arkmeTimelineConversationPreview(message)
-              const body = arkmeEmojiPlainText(arkmeEmojiTokenSafePrefix(
-                source.kind === 'group_chat' ? `${message.senderName}：${richPreview}` : richPreview,
-                120,
-              ))
-              notification = {
-                eventUid: candidate.hint.eventUid,
-                sourceRef: source.sourceRef,
-                sourceKey,
-                sourceKind: source.kind,
-                title: source.displayName,
-                body,
-                eventAtMillis: candidate.hint.eventAtMillis,
-              }
-              liveCandidate = { ...liveCandidate, resolvedNotification: notification }
+              continue
             }
-            notifications.push({ notification, candidate: liveCandidate, uid, latestSequence: projection.latestSequence })
+            if (!fallbackToBrowser) continue
+            this.emitChatClientEvent({
+              type: 'message-notification',
+              revision: this.nextChatClientRevision(),
+              notification,
+            })
           }
-        }
-      } catch {
-        failedUids.add(uid)
+        }).then(() => undefined).catch(() => { failed.push([uid, projection]) })
       }
+      return []
     }
-    if (ownerGeneration !== this.attentionOwnerGeneration) return []
-    if (updates.length > 0) {
-      this.source.invalidateSourceListCache(session.userId, 'root')
-      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
-      this.emitChatClientEvent({
-        type: 'sessions-delta',
-        revision: this.nextChatClientRevision(),
-        updates,
-      })
-      const emittedAtMillis = Date.now()
-      for (const { candidate } of sidebarNotificationHints) {
-        notificationDiagnostic('notification_sidebar_delta_emitted', {
-          eventUid: candidate.hint.eventUid,
-          connectionGeneration: candidate.connectionGeneration,
-          attempt: candidate.attempts,
-          emittedAtMillis,
-          ...(candidate.receivedAtMillis === undefined ? {} : {
-            durationFromHintMillis: Math.max(0, emittedAtMillis - candidate.receivedAtMillis),
-          }),
-        })
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(3, pending.length) }, async () => {
+      while (next < pending.length && ownerGeneration === this.attentionOwnerGeneration) {
+        const entry = pending[next++]!
+        try { failed.push(...await project(entry)) } catch { failed.push(entry) }
       }
-      void this.refreshAttentionSummary()
-    }
-    const deliveries: Array<{
-      entry: (typeof notifications)[number]
-      fallbackToBrowser: boolean
-      outcome: ArkmeDesktopNotificationDispatchResult['outcome'] | 'exception'
-    }> = []
-    for (let offset = 0; offset < notifications.length; offset += MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY) {
-      const chunk = notifications.slice(offset, offset + MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY)
-      deliveries.push(...await Promise.all(chunk.map(async entry => {
-        const { notification, candidate } = entry
-        if (ownerGeneration !== this.attentionOwnerGeneration) {
-          return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
-        }
-        const dispatchStartedAtMillis = Date.now()
-        try {
-          const outcome = await this.nativeAttention.showNotification({
-            idempotencyKey: notification.eventUid,
-            kind: 'chat.message',
-            occurredAtMillis: notification.eventAtMillis,
-            expiresAtMillis: notification.eventAtMillis + NOTIFICATION_EXPIRY_MILLIS,
-            presentation: { title: notification.title, body: notification.body },
-            activation: {
-              kind: 'chat-source',
-              sourceRef: notification.sourceRef,
-              sourceKey: notification.sourceKey,
-            },
-          })
-          const completedAtMillis = Date.now()
-          notificationDiagnostic('notification_native_dispatch_completed', {
-            eventUid: notification.eventUid,
-            connectionGeneration: candidate.connectionGeneration,
-            attempt: candidate.attempts,
-            outcome: outcome.outcome,
-            completedAtMillis,
-            dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
-            ...(candidate.receivedAtMillis === undefined ? {} : {
-              durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
-            }),
-          })
-          return { entry, fallbackToBrowser: outcome.fallbackToBrowser, outcome: outcome.outcome }
-        } catch {
-          // Retry only the same idempotency key; an uncertain native attempt must
-          // never fan out into a second Browser delivery.
-          const completedAtMillis = Date.now()
-          notificationDiagnostic('notification_native_dispatch_completed', {
-            eventUid: notification.eventUid,
-            connectionGeneration: candidate.connectionGeneration,
-            attempt: candidate.attempts,
-            outcome: 'exception',
-            completedAtMillis,
-            dispatchDurationMillis: Math.max(0, completedAtMillis - dispatchStartedAtMillis),
-            ...(candidate.receivedAtMillis === undefined ? {} : {
-              durationFromHintMillis: Math.max(0, completedAtMillis - candidate.receivedAtMillis),
-            }),
-          })
-          return { entry, fallbackToBrowser: false, outcome: 'exception' as const }
-        }
-      })))
-    }
-    if (ownerGeneration !== this.attentionOwnerGeneration) return []
-    for (const { entry, fallbackToBrowser, outcome } of deliveries) {
-      const { notification, candidate, uid, latestSequence } = entry
-      if (outcome === 'native-failed' || outcome === 'rate-limited' || outcome === 'exception') {
-        if (!notificationExpired(candidate)) {
-          const attempts = candidate.attempts + 1
-          this.mergePendingChatProjection(uid, {
-            latestSequence,
-            notificationHints: [{
-              ...candidate,
-              attempts,
-              nextAttemptAtMillis: Date.now() + notificationRetryDelay(attempts),
-            }],
-            refreshSource: false,
-            accountUserId: session.userId,
-            accountOwnerGeneration: ownerGeneration,
-          })
-        }
-        continue
-      }
-      if (!fallbackToBrowser) continue
-      this.emitChatClientEvent({
-        type: 'message-notification',
-        revision: this.nextChatClientRevision(),
-        notification,
-      })
-    }
-    return pending.filter(([uid]) => failedUids.has(uid))
+    }))
+    await Promise.all(notificationLanes)
+    return failed
   }
 
   emitChatClientEvent(event: ArkmeChatClientEvent): void {

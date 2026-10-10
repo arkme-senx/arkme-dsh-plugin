@@ -1,3 +1,4 @@
+import { TimelineTokenCodec } from './timeline-token.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -19,6 +20,7 @@ import type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldPublishResult,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishTextInput,
@@ -334,6 +336,16 @@ function worldImageAssetIdentity(raw: string): string {
 }
 
 export class WorldService {
+  private epoch = 0
+  /** Called only for a Record-owner-authorized received-reaction response. */
+  async reactionReference(recordUid: string): Promise<string> {
+    const session = await this.runtime.requireSession()
+    return this.worldRecordRef(session.userId, recordUid, { ownerUserId: session.userId })
+  }
+  async reactionTarget(recordRef: string): Promise<import('./reaction-service.js').ReactionWireTarget> {
+    const session = await this.runtime.requireSession()
+    return { record_uid: this.openWorldRecordRef(recordRef, session.userId).recordUid }
+  }
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
   private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
   private readonly extensionPublicationShareCache = new Map<string, ArkmeWorldExtensionShareCacheEntry>()
@@ -351,6 +363,7 @@ export class WorldService {
   ) {}
 
   dispose(): void {
+    this.epoch++
     this.worldImageRefs.clear()
     this.worldAvatarResolutionCache.clear()
     this.extensionPublicationShareCache.clear()
@@ -358,6 +371,27 @@ export class WorldService {
     this.worldRecordRefs.clear()
     this.voiceprintSocialCache.clear()
     this.voiceprintSocialInFlight.clear()
+  }
+
+  /** Recheck publication at open time; cached timeline references never grant access to private records. */
+  async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
+    const epoch = this.epoch
+    const session = await this.runtime.requireSession()
+    const recordUid = recordRef.startsWith('atw1.')
+      ? new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), JSON.stringify([this.runtime.config.environment, session.userId])).open(recordRef, 'world-record')
+      : this.openWorldRecordRef(recordRef, session.userId).recordUid
+    signal?.throwIfAborted()
+    const raw = await this.runtime.post<Record<string, unknown>>(
+      this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/detail',
+      { record_uid: recordUid }, undefined, [200], signal,
+    )
+    const resolvedAvatars = await this.resolveWorldAvatarUrls([raw], session, signal)
+    if (epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
+    const item = await this.worldFeedItem(raw, session.userId, resolvedAvatars, signal)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
+    if (!item) throw new ArkmePluginError('world-record-unavailable', '这条公开快记已不可用', false, 404)
+    return item
   }
 
   async listWorldRecords(
@@ -864,6 +898,7 @@ export class WorldService {
       { record_uid: root.recordUid, limit, offset },
       session,
       options.signal,
+      { lane: 'interactive-read' },
     )
     const rawItems = listValue(data.list)
     const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
@@ -876,6 +911,30 @@ export class WorldService {
     const nextOffset = offset + directCount
     const hasMore = data.has_more === true || (directCount > 0 && nextOffset < total)
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/world-interaction/summary', {}, session, signal,
+    )
+    const unreadCount = Math.max(0, Math.trunc(numberValue(data.unread_count ?? data.unreadCount)))
+    const seenThroughSequence = Math.max(0, Math.trunc(numberValue(data.seen_through_sequence ?? data.seenThroughSequence)))
+    return { unreadCount, seenThroughSequence, authoritative: true }
+  }
+
+  async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const session = await this.runtime.requireSession()
+    const sequence = Math.max(0, Math.trunc(seenThroughSequence))
+    if (sequence <= 0) return { unreadCount: 0, seenThroughSequence: 0, authoritative: true }
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/world-interaction/mark-viewed', { seen_through_sequence: sequence }, session, signal,
+    )
+    return {
+      unreadCount: Math.max(0, Math.trunc(numberValue(data.unread_count ?? data.unreadCount))),
+      seenThroughSequence: Math.max(sequence, Math.trunc(numberValue(data.seen_through_sequence ?? data.seenThroughSequence))),
+      authoritative: true,
+    }
   }
 
   async createWorldTextInteraction(input: {

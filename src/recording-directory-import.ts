@@ -41,7 +41,7 @@ export interface RecordingDirectoryResult {
 interface DirectoryRecordingOwner {
   recordingImportUserId(): Promise<number>
   recordingDirectorySnapshot(candidates: readonly RecordingDirectoryCandidate[], expectedUserId: number, signal?: AbortSignal): Promise<RecordingDirectorySnapshot>
-  acceptRecordingImport(sourceHandle: string, metadata: Omit<RecordingImportIdentity, 'userId'> & { mimeType: string }, expectedUserId: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
+  acceptRecordingImport(sourceHandle: string, metadata: Omit<RecordingImportIdentity, 'userId'> & { mimeType: string; recordingKind: 3 }, expectedUserId: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
   retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
   waitRecordingImport(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob>
 }
@@ -234,7 +234,7 @@ export async function importRecordingDirectory(
           const exact = local.find(value => sameRecordingImportIdentity(value.identity, { ...metadata, userId: prepared.expectedUserId }))
           if (local.length > 0) {
             if (exact === undefined) item = { ...item, outcome: 'conflict', message: '同名本地任务与该录音不一致' }
-            else if (exact.task.phase === 'failed' && exact.task.retryable) {
+            else if (exact.task.phase === 'failed' && exact.task.retryable && exact.task.errorCode !== 'recording_storage_exhausted') {
               admitted = await owner.retryRecordingImport(exact.task.importRef, exact.task.revision, signal)
             } else if (exact.task.phase === 'failed') {
               item = { ...item, outcome: 'failed', importRef: exact.task.importRef, revision: exact.task.revision }
@@ -251,7 +251,7 @@ export async function importRecordingDirectory(
             item = { ...item, outcome: uploaded ? 'matched_uploaded' : 'conflict',
               message: uploaded ? '已有元数据匹配且上传已收尾的录音' : '已有同名录音，但无法确认与该文件匹配且上传完成' }
           } else {
-            admitted = await owner.acceptRecordingImport(sourceHandle, metadata, prepared.expectedUserId, signal)
+            admitted = await owner.acceptRecordingImport(sourceHandle, { ...metadata, recordingKind: 3 }, prepared.expectedUserId, signal)
             sourceHandle = undefined // The existing coordinator owns the admitted copy.
           }
           if (admitted !== undefined) {

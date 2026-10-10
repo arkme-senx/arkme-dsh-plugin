@@ -5,6 +5,8 @@ import type {
   ArkmeOutgoingCallMediaType,
   ArkmeOutgoingCallPrepareResult,
   ArkmeOutgoingCallToolResult,
+  ArkmeShareCallLink,
+  ArkmeCallReceiverPrepareResult,
 } from '../outgoing-call-contract.js'
 import { ProfileService } from './profile-service.js'
 import { SourceService } from './source-service.js'
@@ -36,6 +38,55 @@ export class OutgoingCallService {
   dispose(): void {
     callDiag('dispose', {})
     this.broker.dispose()
+  }
+
+  async createShareCallLink(mediaType: ArkmeOutgoingCallMediaType): Promise<ArkmeShareCallLink> {
+    if (mediaType !== 'audio' && mediaType !== 'video') throw new ArkmePluginError('call-media-invalid', '通话类型无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/share-call-link/create', { call_media_type: mediaType === 'video' ? 1 : 0 }, session,
+    )
+    const current = await this.runtime.accountScopedSession()
+    if (current?.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('call-account-changed', '登录账号已变化，请重试', false, 409)
+    }
+    const profile = objectValue(data.sharer_profile)
+    let url: URL
+    try { url = new URL(stringValue(data.call_url), this.runtime.config.webrtcBaseUrl) }
+    catch { throw new ArkmePluginError('call-link-invalid', '通话邀请链接无效，请重试', true, 502) }
+    if (url.origin !== new URL(this.runtime.config.webrtcBaseUrl).origin || url.protocol !== 'https:'
+      || url.pathname !== '/share-call' || !url.searchParams.get('token')?.trim() || url.username || url.password
+      || numberValue(data.expires_at) <= Date.now() || data.call_media_type !== (mediaType === 'video' ? 1 : 0)
+      || numberValue(profile.user_id) !== session.userId) {
+      throw new ArkmePluginError('call-link-invalid', '通话邀请链接无效，请重试', true, 502)
+    }
+    return { callUrl: url.href, expiresAtMillis: numberValue(data.expires_at), mediaType,
+      sharerDisplayName: stringValue(profile.display_name).trim() || 'Arkme 用户' }
+  }
+
+  async prepareCallReceiver(): Promise<ArkmeCallReceiverPrepareResult> {
+    const session = await this.runtime.requireSession()
+    const profile = (await this.profile.refreshProfile()).profile
+    if (profile === null) throw new ArkmePluginError('profile-contract-invalid', '无法读取当前账号资料', true, 502)
+    const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
+    const current = await this.runtime.accountScopedSession()
+    if (current?.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('call-account-changed', '登录账号已变化，请重试', false, 409)
+    }
+    const sdkAppId = numberValue(credentials.sdk_app_id)
+    const userId = stringValue(credentials.user_id).trim()
+    const userSig = stringValue(credentials.user_sig).trim()
+    if (!Number.isSafeInteger(sdkAppId) || sdkAppId <= 0 || userId === '' || userSig === '') {
+      throw new ArkmePluginError('call-credentials-invalid', '桌面通话初始化失败', true, 502)
+    }
+    return { accountUserId: session.userId, bootstrap: {
+      sdkAppId, userId, userSig, nickName: profile.displayName.trim() || 'Arkme 用户', avatar: '', outgoingOnly: false,
+    } }
+  }
+
+  async claimIncomingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
+    const session = await this.runtime.requireSession()
+    return { expiresAtMillis: this.broker.acquireLease(session.userId, callRequestId) }
   }
 
   async requestOutgoingCall(

@@ -136,7 +136,7 @@ function turnStatus(entry: DshRemoteHistoryEntry): DshRemoteTurnProjection['stat
   return 'completed'
 }
 
-function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[] {
+export function projectDshHistoryNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[] {
   const nodes = new Map<string, MutableNode>()
   const assistantBlocks = new Map<string, Array<Record<string, unknown>>>()
   for (const entry of entries) {
@@ -378,7 +378,7 @@ export function projectCompletedTurns(source: Iterable<DshRemoteHistoryEntry>): 
       end_seq: endSeq,
       status: turnStatus(entry),
       presentation_version: DSH_REMOTE_PRESENTATION_VERSION,
-      nodes: projectNodes(active),
+      nodes: projectDshHistoryNodes(active),
     }
     if (Buffer.byteLength(JSON.stringify(projection)) > MAX_TURN_PROJECTION_BYTES) {
       oversizedTurnRefs.push(projection.turn_ref)

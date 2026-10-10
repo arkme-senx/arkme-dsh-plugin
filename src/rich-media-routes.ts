@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import { arkmeCanInlineLocalFile, arkmeNormalizedFileMimeType, arkmePickedFileKind } from './file-transfer-contract.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import type { ArkmePluginResponse, ArkmeUploadedAsset } from './types.js'
+import { MAX_SELF_ROLE_AVATAR_BYTES } from './self-role-avatar-store.js'
 
 export interface ArkmeRichMediaRouteOptions {
   expectedPort: number
@@ -62,7 +63,7 @@ async function assertRouteUser(service: ArkmeService, expectedUserId: number): P
   }
 }
 
-export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions, mode: 'upload' | 'stage' = 'upload') {
+export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions, mode: 'upload' | 'stage' | 'long-article-stage' = 'upload') {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let temporaryPath = ''
     try {
@@ -104,7 +105,9 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
       if (received !== plannedSize) throw new ArkmePluginError('upload-size-mismatch', '上传文件不完整', false, 400)
       await assertRouteUser(service, expectedUserId)
       const uploadedFileKind = normalizedMimeType.startsWith('audio/') ? 2 : arkmePickedFileKind(normalizedMimeType, fileName)
-      const value = mode === 'stage'
+      const value = mode === 'long-article-stage'
+        ? await service.stageLongArticleImage(temporaryPath, { size: received, mimeType: normalizedMimeType, fileName }, expectedUserId)
+        : mode === 'stage'
         ? await service.fileStage(temporaryPath, { size: received, mimeType: normalizedMimeType, fileName }, expectedUserId, retention || undefined)
         : await service.uploadLocalFile(
           temporaryPath,
@@ -117,6 +120,44 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
       writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
     } finally {
       if (temporaryPath !== '') await unlink(temporaryPath).catch(() => undefined)
+    }
+  }
+}
+
+/** Local-only avatar save; unlike `/upload`, this never enters the cloud file API or staged-file cleanup. */
+export function createArkmeSelfRoleAvatarHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
+      assertLocalRequest(req, { ...options, allowNonLoopback: false })
+      const expectedUserId = clientExpectedUserId(req)
+      if (expectedUserId === undefined) throw new ArkmePluginError('self-role-account-invalid', '缺少角色所属账号', false, 400)
+      await assertRouteUser(service, expectedUserId)
+      const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase()
+      if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp') {
+        throw new ArkmePluginError('self-role-avatar-invalid', '仅支持 PNG、JPEG 或 WebP 头像', false, 415)
+      }
+      const plannedSize = Number(headerText(req, 'content-length'))
+      if (!Number.isSafeInteger(plannedSize) || plannedSize <= 0 || plannedSize > MAX_SELF_ROLE_AVATAR_BYTES) {
+        throw new ArkmePluginError('self-role-avatar-invalid', '头像为空或超过 8 MB', false, 413)
+      }
+      const chunks: Buffer[] = []
+      let received = 0
+      for await (const chunk of req) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        received += bytes.length
+        if (received > plannedSize || received > MAX_SELF_ROLE_AVATAR_BYTES) {
+          throw new ArkmePluginError('upload-size-mismatch', '头像大小与声明不一致', false, 400)
+        }
+        chunks.push(bytes)
+      }
+      if (received !== plannedSize) throw new ArkmePluginError('upload-size-mismatch', '头像上传不完整', false, 400)
+      await assertRouteUser(service, expectedUserId)
+      const avatarRef = await service.saveSelfRoleAvatar(expectedUserId, Buffer.concat(chunks), mimeType)
+      writeJson(res, 200, { ok: true, value: { avatarRef } })
+    } catch (error) {
+      const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('self-role-avatar-save-failed', '头像本地保存失败', true, 500, { cause: error })
+      writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
     }
   }
 }
@@ -193,5 +234,33 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
       clearTimeout(timeout)
       res.removeListener('close', abortOnClose)
     }
+  }
+}
+
+/** Team bytes use live Team authority and are never cached as personal or Chat media. */
+export function createArkmeTeamMediaHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => { controller.abort() }, 120_000)
+    const disconnect = () => { controller.abort() }
+    res.once('close', disconnect)
+    try {
+      assertLocalRequest(req, options)
+      if (req.method !== 'GET' && req.method !== 'HEAD') throw new ArkmePluginError('method-not-allowed', '只允许 GET 或 HEAD 请求', false, 405)
+      const ref = new URL(req.url ?? '/', `http://127.0.0.1:${options.expectedPort}`).searchParams.get('ref') || ''
+      const { response, fileName, mimeType } = await service.fetchTeamMedia(ref, headerText(req, 'range') || undefined, controller.signal)
+      const inline = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime)|audio\/(mpeg|mp4|ogg|wav|x-wav|flac))$/.test(mimeType)
+      res.writeHead(response.status, { 'Content-Type': inline ? mimeType : 'application/octet-stream', 'Cache-Control': 'private, no-store',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(fileName)}`, 'X-Content-Type-Options': 'nosniff',
+        ...(response.headers.get('content-range') ? { 'Content-Range': response.headers.get('content-range')! } : {}) })
+      if (req.method === 'HEAD') { await response.body?.cancel(); res.end(); return }
+      if (response.body) await pipeline(Readable.fromWeb(response.body as never), res)
+      else res.end()
+    } catch (error) {
+      const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('team-media-unavailable', '团队附件读取失败', true, 502)
+      if (!res.headersSent) writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
+      else res.destroy(error instanceof Error ? error : undefined)
+    } finally { clearTimeout(timeout); res.off('close', disconnect) }
   }
 }

@@ -7,38 +7,54 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
-  'recentEmojiIds', 'recordRecentEmoji',
+  'readWorldRecord',
+  'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
+  'teamCodexPost',
+  'interwovenReadReceipts', 'sourceMessageExtensionParent',
+  'reactions',
+  'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
+  'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
+  'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
+  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
+  'screenshotCapability', 'captureScreenshot',
+  'searchConversationNames',
+  'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',
+  'listArchives', 'getArchiveStates', 'setArchiveState',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
-  'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileRemove', 'fileSend',
+  'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileOpenLocalFolder', 'fileRemove', 'fileSend',
   'fileSendTasks', 'fileSendRetry', 'fileStageBytes', 'fileSendDiscard', 'fileSendReconcile', 'fileReceive',
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
   'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'createBotSummary', 'revealBotSecret',
   'manageBotProfile', 'updateManagedBot', 'revealManagedBotToken', 'deleteManagedBot', 'botNotificationPreference', 'updateBotNotificationPreference',
   'openBotChat', 'listBotPrivateChatDirectory', 'openBotPrivateChat', 'refreshBotPrivateChat', 'sendBotPrivateChatMessage', 'markBotPrivateChatRead', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
+  'membershipCurrent', 'membershipCatalog',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
-  'listCallHistory', 'callDetail', 'retryCallSummary',
+  'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
+  'listCallHistory', 'callDetail', 'callShareLink', 'callShareViewers', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
-  'resolveLinkMetadata',
+  'resolveLinkMetadata', 'resolveSharePreview',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
   'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
+  'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingDay', 'recordingPlayback',
-  'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
-  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
+  'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
+  'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
+  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
-  'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
+  'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
   'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setBotDirectoryPin', 'setChatDirectoryPin', 'conversationDirectoryVisibilitySnapshot', 'setConversationDirectoryVisibility', 'cachedSourceMembers', 'pageSourceMembers', 'sourceMembersPresentation', 'listSourceMembers', 'sourceMemberRecords',
-  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'interwovenMoments', 'interwovenMomentDetail',
+  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
   'relatedQuickNotesFromMessage', 'relatedQuickNotesFromMoment', 'relatedQuickNoteDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
@@ -50,10 +66,10 @@ const expectedPublicMethods = [
   'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'memberEvents', 'memberEventProfile', 'memberEventPrivateChat',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'copyNativeChatLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions', 'forwardNativeChat',
   'sendSourceText', 'retryGroupAiPolish',
-  'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
-  'putLongArticleDraft', 'removeLongArticleDraft', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
+  'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'ownLongArticle', 'updateLongArticle', 'getLongArticleDraft',
+  'putLongArticleDraft', 'removeLongArticleDraft', 'recordEditHistoryPage', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
   'saveRecordReeditDraft', 'submitRecordReedit', 'recordReeditSubmissions', 'resumeRecordReeditSubmissions',
   'acknowledgeRecordReeditSubmission',
   'prepareDiscardRecordReeditDraft', 'discardRecordReeditDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -62,10 +78,11 @@ const expectedPublicMethods = [
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
-  'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
+  'sendEmailBindCode', 'bindEmail', 'sendPhoneCode', 'verifyPhoneCode', 'checkPhoneUnbindEligibility', 'sendPhoneUnbindCode', 'unbindPhone', 'previewCancellation', 'submitCancellation', 'resolveCancellationLogin', 'logout', 'logoutFailureFeedback', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
-  'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarRecords',
+  'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
+  'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
@@ -74,13 +91,19 @@ const expectedPublicMethods = [
   'myVoiceprint', 'outboundVoiceprintGrants', 'recognizedVoiceprintPeople', 'recognizedVoiceprintPerson',
   'recognizedPersonVoiceprints', 'createVoiceprintInvitation', 'revokeVoiceprintPlaybackGrant', 'restoreVoiceprintPlayback',
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
-  'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
+  'listWorldInteractions', 'worldInteractionSummary', 'markWorldInteractionsViewed', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
   'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
+  'saveSelfRoleAvatar', 'listSelfRoles', 'createSelfRole', 'updateSelfRole', 'deleteSelfRole',
+  'bindSelfRole', 'unbindSelfRole', 'rebindSelfRole',
   'retryPending', 'extensionPost',
 ].sort()
 
 const expectedServiceFiles = [
+  'team-codex-transport.ts',
+  'reaction-service.ts',
+  'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
+  'archive-service.ts',
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',
@@ -89,22 +112,28 @@ const expectedServiceFiles = [
   'topic-record-page.ts',
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
+  'membership-service.ts',
   'file-transfers.ts',
   'record-reedit-attachments.ts',
+  'record-reedit-mentions.ts',
+  'mention-metadata-codec.ts',
   'record-reedit-submissions.ts',
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
-  'member-event-service.ts',
+  'member-event-service.ts', 'official-notification-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'recording-forward-gateway.ts', 'search-service.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts',
+  'recording-presence-writer.ts',
+  'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
-  'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
-  'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
+  'arko-service.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
+  'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
-  'team-service.ts',
+  'speaker-directory-service.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
+  'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
+  'link-metadata-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -253,7 +282,8 @@ describe('Arkme service architecture', () => {
     expect(service).not.toMatch(/from ['"]node:crypto['"]/)
     expect(service).not.toMatch(/\/api\/v1\//)
     expect(service).not.toMatch(/\bServiceRuntime\b|\bSourceService\b|\bBotService\b/)
-    expect(infrastructure).toMatch(/createCipheriv|createDecipheriv/)
+    expect(infrastructure).toContain('EncryptedReferenceCodec')
+    expect(readFileSync(join(root, 'src/encrypted-reference.ts'), 'utf8')).toMatch(/createCipheriv|createDecipheriv/)
     expect(infrastructure).toContain('/api/v1/chats/messages/copy-link/get-or-create')
     expect(infrastructure).toContain('/api/v1/chats/records/forward')
   })
@@ -322,7 +352,7 @@ describe('Arkme service architecture', () => {
   })
 
   it('keeps link recognition separate from asynchronous metadata resolution', () => {
-    const parser = readFileSync(join(root, 'src/client/text-link-parser.ts'), 'utf8')
+    const parser = readFileSync(join(root, 'src/text-link-parser.ts'), 'utf8')
     const presentation = readFileSync(join(root, 'src/client/ArkmeLinkText.tsx'), 'utf8')
     const client = readFileSync(join(root, 'src/client/link-metadata-client.ts'), 'utf8')
     expect(parser).not.toMatch(/\bfetch\s*\(|callArkme|useEffect|useState/)

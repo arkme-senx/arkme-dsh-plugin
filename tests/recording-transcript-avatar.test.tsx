@@ -40,7 +40,7 @@ describe('recording transcript avatar lifecycle', () => {
       />)}</>)
     })
     expect(mocks.call).toHaveBeenCalledTimes(1)
-    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' })
+    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' }, undefined, { priority: 'background' })
     expect(renderer!.root.findAllByType('img')).toHaveLength(0)
     const stopPropagation = vi.fn()
     act(() => {
@@ -68,7 +68,7 @@ describe('recording transcript avatar lifecycle', () => {
       })
       const row = renderer!.root.findByType('li')
       const segment = renderer!.root.findByProps({ 'aria-label': 'HooXi，选择该片段' })
-      const legend = renderer!.root.findByProps({ 'aria-label': '当前窗口说话人图例' })
+      const legend = renderer!.root.findByProps({ 'aria-label': '全天说话人图例' })
       if (avatarRef !== undefined) {
         const rowName = row.findAllByType('span').find(node => node.children[0] === 'HooXi')!
         const legendName = legend.findAllByType('span').find(node => node.children[0] === 'HooXi')!

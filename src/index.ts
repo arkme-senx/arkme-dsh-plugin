@@ -1,7 +1,16 @@
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
+import { DshNativeSocket } from './dsh-remote/native-socket.js'
+import { registerManagedTurnFunding } from './managed-ai/operation.js'
+import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
+import { DshNativeTransport } from './dsh-remote/native-transport.js'
+import { DshAccountSessions } from './dsh-remote/account-sessions.js'
+import { accountSessionTools } from './dsh-remote/account-session-tools.js'
+import { adaptSessionPersistence } from './dsh-remote/session-persistence.js'
 import { currentDesktopSessionTool } from './dsh-remote/current-session-tool.js'
 import { HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
+import { HARNESS_LAYOUT_MODULES, type HarnessLayoutPart } from './harness-conversation-layout-contract.js'
+import { harnessConversationLayoutAsset, readHarnessConversationLayout } from './harness-conversation-layout-assets.js'
 import { readInstalledPluginVersion } from './plugin-update.js'
 import { DshConnectionDiagnostics } from './dsh-remote/connection-diagnostics.js'
 import { createDesktopLifecycleReader } from './services/desktop-attention-bridge.js'
@@ -22,14 +31,14 @@ import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { readDirectoryPage } from './directory-reader.js'
 import { openDshHostPath } from './dsh-host-capabilities.js'
-import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH } from './harness-embed-contract.js'
+import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH, ARKME_HARNESS_TRAJECTORY_CLIENT_PATH, ARKME_HARNESS_SIDEBAR_CLIENT_PATH, ARKME_NATIVE_SELECTION_CLIENT_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
   dshRootDocumentHeaders,
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler } from './rich-media-routes.js'
+import { createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -52,7 +61,8 @@ import {
   validatePluginUpdateServiceOrigin,
 } from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
-import { ArkmeService } from './arkme-service.js'
+import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { TeamCodexService } from './team-codex-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeDesktopExtensionQuarantine } from './extensions/desktop-quarantine.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
@@ -77,11 +87,12 @@ import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
+import { createDshGatewayApi, type DshGatewayLike, type DshConnectionLike } from './dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api-proxy-adapter.js'
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
 import { createDefaultDshRemoteSocket } from './dsh-remote/default-socket-factory.js'
-import { ArkmeRemoteRealtimeHost, type DshRemoteSessionPersistenceLike } from './dsh-remote/host.js'
+import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
 import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
 import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
@@ -95,6 +106,7 @@ export interface Config {
   subjectBaseUrl: string
   recordBaseUrl: string
   dataBaseUrl: string
+  teamBaseUrl: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -117,10 +129,12 @@ export interface Config {
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   interwovenMomentsEnabled: boolean
+  selfCalendarViewsEnabled: boolean
   recordingWorkbenchEnabled: boolean
   chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
   markdownQuickNotesEnabled: boolean
+  markdownLongArticlesEnabled?: boolean
   richMediaSendEnabled: boolean
   maxUploadBytes: number
   stateDirectory: string
@@ -148,6 +162,7 @@ export const Config: Schema<Config> = Schema.object({
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   dataBaseUrl: Schema.string().default(''),
+  teamBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -170,6 +185,7 @@ export const Config: Schema<Config> = Schema.object({
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
+  selfCalendarViewsEnabled: Schema.boolean().default(true),
   recordingWorkbenchEnabled: Schema.boolean().default(true),
   chatMemberJoinEventsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
@@ -185,6 +201,7 @@ export const Config: Schema<Config> = Schema.object({
   updateAllowLocalInstall: Schema.boolean().default(true),
   richMediaRenderEnabled: Schema.boolean().default(true),
   markdownQuickNotesEnabled: Schema.boolean().default(false),
+  markdownLongArticlesEnabled: Schema.boolean().default(true),
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),
@@ -284,7 +301,7 @@ export function apply(ctx: Context, config: Config): void {
   const rawSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
   const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
-  const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files'), recordingImportDirectory: join(stateDirectory, 'recording-imports') }, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files'), recordingImportDirectory: join(stateDirectory, 'recording-imports') }, sessionStore, localDatabase, fetch, pendingSessionStore, undefined, undefined, undefined, () => ctx.get('sessionQuery'))
   const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
     mountMcp: config.openApiMcpEnabled,
@@ -302,6 +319,24 @@ export function apply(ctx: Context, config: Config): void {
     service,
     service.ownerReads,
   )
+  const teamCodex = new TeamCodexService({
+    directory: join(stateDirectory, 'team-codex'),
+    currentUserId: async () => {
+      await service.accountScope.start()
+      return (await service.accountScope.scopedSession())?.userId
+    },
+    profile: () => service.cachedProfile(),
+    teams: teamService,
+    ...(config.environment === 'prod' ? { cloud: {
+      post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
+      selectedTeam: async (teamRef: string, signal: AbortSignal) => (await teamService.listMembers(teamRef, { limit: 1, signal })).team,
+    } } : {}),
+  })
+  ctx.effect(() => {
+    const stop = teamCodex.start()
+    const unsubscribe = service.accountScope.subscribe(() => { teamCodex.fence() })
+    return () => { unsubscribe(); stop() }
+  }, 'dsh-arkme: local Codex team activity')
   ctx.provide('arkmeDirectory', { list: (section, options) => readDirectoryPage(service, teamService, section, options) })
   sessionStore.attach(openApiMcpController)
   ctx.effect(
@@ -315,6 +350,7 @@ export function apply(ctx: Context, config: Config): void {
   service.attachLocalFileOpener(async (path, signal) => {
     await openDshHostPath(ctx, path, signal)
   })
+  let accountSessions: DshAccountSessions | undefined
   let remoteHost: DshRemoteHostFacade | undefined
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({
@@ -407,7 +443,7 @@ export function apply(ctx: Context, config: Config): void {
     requestRestart: async ({ packageName }) => {
       await extensionProfileInstaller.restartDesktopQuarantine({ packageName })
     },
-    isPackageActive: packageName => pluginInventory.list().entries.some(entry =>
+    isPackageActive: async packageName => (await pluginInventory.list()).entries.some(entry =>
       entry.moduleName === packageName && entry.enabled && entry.fiberPhase === 'active'),
   })
   void desktopQuarantine.reconcile().catch(error => {
@@ -430,10 +466,12 @@ export function apply(ctx: Context, config: Config): void {
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
   ctx.inject(['llm'], modelCtx => {
+    const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,
       resolveAttachmentReader: () => modelCtx.get('attachments'),
+      prepareOperation: (request, bearer) => funding.prepare(request, bearer),
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
@@ -508,13 +546,14 @@ export function apply(ctx: Context, config: Config): void {
       tasks.dispose()
     }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
-  ctx.inject(['apiProxy'], apiCtx => {
+  const attachRemoteApi = (apiCtx: Context, publicApi: DshPublicApiProxyLike, nativeTransport?: DshNativeTransport) => {
+    if (remoteHost !== undefined) return
     const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
       currentSelection?: () => unknown
     } | undefined
-    const sessionPersistence = apiCtx.get('sessionPersistence') as DshRemoteSessionPersistenceLike | undefined
+    const sessionPersistence = adaptSessionPersistence(apiCtx.get('sessionPersistence'))
     const apiProxy = new DshApiProxyAdapter(
-      apiCtx.apiProxy as unknown as DshPublicApiProxyLike,
+      publicApi,
       {
         ...(typeof agentDefaultModel?.currentSelection !== 'function'
           ? {}
@@ -525,7 +564,7 @@ export function apply(ctx: Context, config: Config): void {
       try {
         let cursor: string | undefined
         for (let page = 0; page < 200; page += 1) {
-          const sessions = await apiProxy.sessions({ limit: 50, ...(cursor === undefined ? {} : { cursor }) })
+          const sessions = await apiProxy.sessions({ includeUngrouped: true, limit: 50, ...(cursor === undefined ? {} : { cursor }) })
           if (sessions.items.some(session => !session.blank)) return true
           if (sessions.nextCursor === undefined) return false
           cursor = sessions.nextCursor
@@ -569,7 +608,7 @@ export function apply(ctx: Context, config: Config): void {
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
       sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
       controlPlane,
-      realtime, apiProxy,
+      realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
@@ -603,13 +642,37 @@ export function apply(ctx: Context, config: Config): void {
         onFinalized: callbacks.onFinalized,
       }),
     })
+    let historyCache: DshNativeHistoryCache | undefined
+    try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
+    catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
+    const directory = new DshAccountSessions({
+      ...(historyCache ? { historyCache } : {}),
+      onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
+      request: { post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal) },
+      requireAccount: async () => {
+        const session = await service.accountScope.scopedSession()
+        if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
+        return String(session.userId)
+      },
+      localStatus: () => host.getStatus(),
+      createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
+        const session = await service.accountScope.scopedSession()
+        if (!session) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
+        return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
+      }),
+      profileRef: `controller_${profileRef}`, clientRef: 'arkme_directory',
+    })
+    accountSessions = directory
     remoteHost = host
     if (config.toolProfile !== 'disabled') {
       apiCtx.effect(() => apiCtx.tools.register(currentDesktopSessionTool(host)), 'arkme: current DSH session read tool')
+      for (const tool of accountSessionTools(directory)) apiCtx.effect(() => apiCtx.tools.register(tool), `arkme: ${tool.name}`)
     }
     apiCtx.effect(async () => {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
+        directory.close()
+        if (!service.accountScope.ready()) host.cancelPendingConnection()
         lifecycleTail = lifecycleTail.then(
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
@@ -621,11 +684,28 @@ export function apply(ctx: Context, config: Config): void {
       return async () => {
         unsubscribe()
         await lifecycleTail
+        directory.close()
+        historyCache?.close()
+        if (accountSessions === directory) accountSessions = undefined
         if (remoteHost === host) remoteHost = undefined
         await host.stop()
         await diagnostics.close()
       }
     }, 'dsh-arkme: DSH remote Host lifecycle')
+  }
+  ctx.inject(['apiProxy'], apiCtx => {
+    attachRemoteApi(apiCtx, apiCtx.apiProxy)
+  })
+  ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'connection'], apiCtx => {
+    if (apiCtx.get('apiProxy') !== undefined) return
+    const lifetime = new AbortController()
+    apiCtx.effect(() => () => { lifetime.abort() }, 'arkme: DSH Gateway API lifetime')
+    attachRemoteApi(apiCtx, createDshGatewayApi(
+      apiCtx,
+      apiCtx.get('typertGateway') as DshGatewayLike,
+      apiCtx.get('connection') as DshConnectionLike,
+      lifetime.signal,
+    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, apiCtx.get('connection') as DshConnectionLike))
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
@@ -636,9 +716,19 @@ export function apply(ctx: Context, config: Config): void {
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
+    accountSessions: () => accountSessions,
+    remoteUnavailableReason: () => {
+      if (!config.dshRemoteFeatureEnabled) return 'DSH 远控功能未启用'
+      const missing = ['typertGateway', 'sessionController', 'workspaceController', 'connection']
+        .filter(name => ctx.get(name) === undefined)
+      return ctx.get('apiProxy') === undefined && missing.length > 0
+        ? `DSH 远控缺少服务：${missing.join(', ')}（旧版 apiProxy 也不可用）`
+        : 'DSH 远控 Host 正在初始化或初始化失败，请检查 Host 日志'
+    },
     desktopQuarantine,
     openApiMcpController,
     teamService,
+    teamCodex,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -648,13 +738,16 @@ export function apply(ctx: Context, config: Config): void {
     maxUploadBytes: config.maxUploadBytes,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
+  const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)
   const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
+  const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
   const recordingImportHandler = createArkmeRecordingImportHandler(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
+  const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
     expectedPort: ctx.webServer.port,
@@ -673,21 +766,58 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
   })
-  const sessionClient = config.dshRemoteFeatureEnabled ? {
+  const sessionClient = {
     source: readFileSync(new URL('../lib/harness-session-client.js', import.meta.url)),
-    apiPath: config.routePath,
-  } : undefined
-  if (sessionClient !== undefined) {
-    ctx.effect(() => ctx.webServer.register({
-      kind: 'exact', path: HARNESS_SESSION_CLIENT_PATH,
-      handler: (_request, response) => {
-        response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
-        response.end(sessionClient.source)
-      },
-    }), 'arkme: Harness session observer asset')
+    ...(config.dshRemoteFeatureEnabled ? { apiPath: config.routePath } : {}),
   }
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: HARNESS_SESSION_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(sessionClient.source)
+    },
+  }), 'arkme: Harness session observer asset')
   const harnessModelClient = readFileSync(new URL('../lib/harness-model-client.js', import.meta.url))
   const harnessOnboardingClient = readFileSync(new URL('../lib/harness-onboarding-client.js', import.meta.url))
+  const harnessTrajectoryClient = readFileSync(new URL('../lib/harness-trajectory-client.js', import.meta.url))
+  const harnessSidebarClient = readFileSync(new URL('../lib/harness-sidebar-client.js', import.meta.url))
+  for (const part of Object.keys(HARNESS_LAYOUT_MODULES) as HarnessLayoutPart[]) {
+    let source: string | undefined
+    try { source = readHarnessConversationLayout(dshBinPath, part) }
+    catch { ctx.logger.warn(`dsh-arkme: optional native ${part} layout export unavailable`) }
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact', path: HARNESS_LAYOUT_MODULES[part].path,
+      handler: harnessConversationLayoutAsset(source),
+    }), `arkme: optional native ${part} layout asset`)
+  }
+  let selectionClientRevision: string | undefined
+  try {
+    const selectionClient = readFileSync(new URL('../lib/harness-native-selection-client.js', import.meta.url))
+    selectionClientRevision = createHash('sha256').update(selectionClient).digest('hex')
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact', path: ARKME_NATIVE_SELECTION_CLIENT_PATH,
+      handler: (_request, response) => {
+        response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+        response.end(selectionClient)
+      },
+    }), 'arkme: optional native selection asset')
+  } catch {
+    ctx.logger.warn('dsh-arkme: optional native selection asset unavailable')
+  }
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: ARKME_HARNESS_SIDEBAR_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(harnessSidebarClient)
+    },
+  }), 'arkme: Harness sidebar settings asset')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: ARKME_HARNESS_TRAJECTORY_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(harnessTrajectoryClient)
+    },
+  }), 'arkme: Harness trajectory navigation asset')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact', path: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
     handler: (_request, response) => {
@@ -696,15 +826,26 @@ export function apply(ctx: Context, config: Config): void {
     },
   }), 'arkme: Harness onboarding bridge asset')
   const harnessEmbedHandler = createHarnessEmbedRouteHandler({
+    ...(selectionClientRevision === undefined ? {} : { selectionClientRevision }),
+    sidebarClient: {
+      id: '@senguoyun/dsh-arkme/harness-sidebar', url: ARKME_HARNESS_SIDEBAR_CLIENT_PATH,
+      rev: createHash('sha256').update(harnessSidebarClient).digest('hex'),
+    },
+    trajectoryClient: {
+      id: '@senguoyun/dsh-arkme/harness-trajectory', url: ARKME_HARNESS_TRAJECTORY_CLIENT_PATH,
+      rev: createHash('sha256').update(harnessTrajectoryClient).digest('hex'),
+    },
     onboardingClient: {
       id: '@senguoyun/dsh-arkme/harness-onboarding', url: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
       rev: createHash('sha256').update(harnessOnboardingClient).digest('hex'),
       external: ['react'],
     },
-    ...(sessionClient === undefined ? {} : { sessionClient: {
+    sessionClient: {
+      // The desktop supervisor launches DSH in its configured default workspace.
+      defaultWorkspacePath: process.cwd(),
       revision: createHash('sha256').update(sessionClient.source).digest('hex').slice(0, 12),
-      apiPath: sessionClient.apiPath,
-    } }),
+      ...('apiPath' in sessionClient ? { apiPath: sessionClient.apiPath } : {}),
+    },
     modelClient: {
       id: '@senguoyun/dsh-arkme/harness-model',
       url: ARKME_HARNESS_MODEL_CLIENT_PATH,
@@ -737,6 +878,10 @@ export function apply(ctx: Context, config: Config): void {
     openApiMcpController.start()
     return async () => { await openApiMcpController.dispose() }
   }, 'dsh-arkme: managed OpenAPI credential and MCP lifecycle')
+  ctx.effect(async () => {
+    await service.resumeRecordingPresence().catch(() => undefined)
+    return () => undefined
+  }, 'dsh-arkme: recording presence recovery')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
@@ -792,7 +937,14 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/upload`,
     handler: uploadHandler,
   }), 'dsh-arkme: rich content upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/self-role-avatar`,
+    handler: selfRoleAvatarHandler,
+  }), 'dsh-arkme: local self-role avatar route')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/team/media`, handler: teamMediaHandler }), 'dsh-arkme: authorized team media')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -839,12 +991,20 @@ export function apply(ctx: Context, config: Config): void {
       realtimeEvents.close()
     }
   }, 'dsh-arkme: local realtime events route')
+  ctx.effect(() => {
+    const carrier = new DshNativeSocket(() => accountSessions, ctx.webServer.port, config.allowNonLoopback)
+    const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/native-streams`, handler: carrier.handler })
+    return () => { remove(); carrier.close() }
+  }, 'dsh-arkme: native subscription carrier')
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
 export function resolveArkmeConfig(ctx: Context, config: Config): Config {
   const resolved = {
     ...config,
+    teamBaseUrl: config.teamBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
+      : config.teamBaseUrl,
     dataBaseUrl: config.dataBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
       : config.dataBaseUrl,
@@ -867,6 +1027,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.recordBaseUrl,
       config.dataBaseUrl,
       config.chatBaseUrl,
+      config.teamBaseUrl,
       config.botBaseUrl,
       config.imBaseUrl,
       config.webrtcBaseUrl,
@@ -904,6 +1065,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['recordBaseUrl', config.recordBaseUrl],
     ['dataBaseUrl', config.dataBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
+    ['teamBaseUrl', config.teamBaseUrl],
     ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
     ['webrtcBaseUrl', config.webrtcBaseUrl],
@@ -975,6 +1137,9 @@ export type {
   ArkmeImagePayload,
   ArkmeFileAssetDisplayItem,
   ArkmeRecordSearchResult,
+  ArkmeRecordingSearchIdentity,
+  ArkmeRecordingSearchSegment,
+  ArkmeRecordingTarget,
   ArkmeRecordingSearchItem,
   ArkmeRecordingSearchResult,
   ArkmeSearchQueryGuard,
@@ -1075,3 +1240,5 @@ export type {
 } from './outgoing-call-contract.js'
 export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'
+
+export type { ArkmeCommonGroupPage } from './common-groups.js'

@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeGroupMemberRole, ArkmeMessageWithdrawalResult, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -17,6 +18,7 @@ export function ArkmeMessageWithdrawalDialog(props: {
   onClose: () => void
   onWithdrawn: (result: ArkmeMessageWithdrawalResult) => void
 }) {
+  useArkmeLocale()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const requestRef = useRef<AbortController>()
@@ -52,12 +54,12 @@ export function ArkmeMessageWithdrawalDialog(props: {
   const preview = props.item.textContent.trim() || props.item.title.trim() || '非文本消息'
   return <ArkmeConfirmDialog
     titleId="arkme-message-withdraw-title"
-    title="撤回这条消息？"
-    description="撤回后，所有群成员都无法再查看这条消息。此操作不会移除或限制发送者。"
+    title={tr("撤回这条消息？")}
+    description={tr("撤回后，所有群成员都无法再查看这条消息。此操作不会移除或限制发送者。")}
     error={error}
     busy={submitting}
-    confirmLabel="确认撤回"
-    busyLabel="撤回中…"
+    confirmLabel={tr("确认撤回")}
+    busyLabel={tr("撤回中…")}
     confirmTone="danger"
     onClose={props.onClose}
     onConfirm={() => { void submit() }}

@@ -1,6 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ArkmeSourceItem } from '../src/types.js'
+import type { ArkmeBotSummary, ArkmeSourceItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme, ArkmeClientError: class extends Error {} }))
@@ -29,7 +29,7 @@ let rejectPin: (reason: unknown) => void
 function row() {
   return renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.props['aria-label'] === source.displayName)!
 }
-function menu() { return renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.children[0] === '置顶对话' || node.children[0] === '取消置顶')! }
+function menu() { return renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.props['aria-label'] === '置顶对话' || node.props['aria-label'] === '取消置顶')! }
 function pinCalls() { return mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.directory.policy.set') }
 async function openMenu() {
   await act(async () => { row().props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 20 }) })
@@ -38,15 +38,30 @@ async function startPin() {
   await openMenu()
   await act(async () => { menu().props.onClick() })
 }
+async function startRemove(name = source.displayName) {
+  const target = renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.props['aria-label'] === name)!
+  await act(async () => { target.props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 20 }) })
+  await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.props['aria-label'] === '移除')!.props.onClick() })
+}
+function deferRemoval() {
+  let resolve!: () => void
+  let reject!: (reason: unknown) => void
+  const fallback = mocks.callArkme.getMockImplementation()!
+  mocks.callArkme.mockImplementation(async (...args) => args[0] === 'conversation.directory.visibility.set'
+    ? await new Promise<void>((yes, no) => { resolve = yes; reject = no }) : fallback(...args))
+  return { resolve: () => resolve(), reject: (reason: unknown) => reject(reason) }
+}
 
 beforeEach(async () => {
   vi.stubGlobal('window', {
+    location: {search:''},
     addEventListener: vi.fn(), removeEventListener: vi.fn(), innerWidth: 1200, innerHeight: 800,
     matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
     requestAnimationFrame: () => 1, cancelAnimationFrame: vi.fn(), setTimeout, clearTimeout,
   })
   vi.stubGlobal('document', {
     body: {}, visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    querySelector: vi.fn(() => null),
   })
   mocks.callArkme.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {
@@ -73,9 +88,45 @@ afterEach(async () => {
   arkmeUi.showLogin()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('conversation pin interaction', () => {
+  it('does not show Codex for a logged-in new user and shows it after confirmed enrollment',async()=>{
+    const fallback=mocks.callArkme.getMockImplementation()!
+    let bound=false
+    mocks.callArkme.mockImplementation(async(operation:string,...args:unknown[])=>operation==='team.codex.entry-availability'
+      ? {userId:7001,visible:bound,checked:true} : fallback(operation,...args))
+    await act(async()=>{renderer!.update(<ArkmeNavigation showHarnessEntry embeddedProductShell/>)})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(0)
+    await act(async()=>{renderer!.update(<ArkmeNavigation active={false} showHarnessEntry embeddedProductShell/>)})
+    bound=true
+    await act(async()=>{renderer!.update(<ArkmeNavigation showHarnessEntry embeddedProductShell/>)})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(1)
+    await act(async()=>{arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:8002})})
+    expect(renderer!.root.findAllByProps({'data-arkme-codex-entry':true})).toHaveLength(0)
+  })
+  it.each([false, true])('uses a small curved top-left pin without moving content (compact=%s)', async compactDirectory => {
+    await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />) })
+    const before = row().props.style
+    await act(async () => { arkmeChatDirectory.publish([{ ...source, isPinned: true }]) })
+    const corner = row().findByProps({ role: 'img', 'aria-label': '已置顶' })
+    expect(corner.props.style).toMatchObject({
+      position: 'absolute', inset: 0, borderRadius: 4, overflow: 'hidden', pointerEvents: 'none',
+    })
+    expect(row().props.style).toMatchObject({ borderRadius: 12.5, overflow: 'visible' })
+    const shape = corner.findByType('svg')
+    expect(shape.props.style).toMatchObject({ top: 0, left: 0, width: 10, height: 9, fill: 'var(--arkme-directory-accent)' })
+    expect(shape.props.style.right).toBeUndefined()
+    expect(shape.props.style.clipPath).toBeUndefined()
+    expect(shape.props['aria-hidden']).toBe(true)
+    expect(shape.props.focusable).toBe('false')
+    expect(shape.findByType('path').props.d).toBe('M0 0H10A19 19 0 0 0 0 9Z')
+    expect(shape.props.style.height).toBeLessThan((row().props.style.height - 33) / 2)
+    expect(row().props.style).toEqual(before)
+    expect(pinCalls()).toHaveLength(0)
+  })
+
   it.each(['private_chat', 'group_chat'] as const)('shows the corner only after a confirmed %s pin and removes it after unpin', async kind => {
     const corners = () => row().findAllByProps({ role: 'img', 'aria-label': '已置顶' })
     await act(async () => { arkmeChatDirectory.publish([{ ...source, kind }]) })
@@ -116,7 +167,7 @@ describe('conversation pin interaction', () => {
     for (const compactDirectory of [true, false]) {
       await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} />) })
       expect(row().props['aria-busy']).toBe(true)
-      expect(row().props.disabled).toBe(false)
+      expect(row().props['aria-disabled']).toBe(false)
       await openMenu()
       expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
       expect(pinCalls()).toHaveLength(1)
@@ -124,7 +175,7 @@ describe('conversation pin interaction', () => {
     await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
     expect(arkmeChatDirectory.getSnapshot().sources[0]?.isPinned).toBe(true)
     await openMenu()
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
   })
 
   it('pins a group through the same Chat operation and current directory projection', async () => {
@@ -134,7 +185,7 @@ describe('conversation pin interaction', () => {
     await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
     expect(arkmeChatDirectory.getSnapshot().sources[0]).toMatchObject({ kind: 'group_chat', isPinned: true })
     await openMenu()
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
   })
 
   it('keeps Bot local pin preferences separate from a Chat with the same directory key', async () => {
@@ -151,9 +202,9 @@ describe('conversation pin interaction', () => {
     expect(pinCalls()).toHaveLength(0)
     expect(arkmeChatDirectory.getSnapshot().sources[0]?.isPinned).toBe(false)
     await act(async () => { botRow().props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 20 }) })
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
     await openMenu()
-    expect(menu().children).toEqual(['置顶对话'])
+    expect(menu().props['aria-label']).toBe('置顶对话')
     expect(botRow().findAllByProps({ role: 'img', 'aria-label': '已置顶' })).toHaveLength(1)
     expect(row().findAllByProps({ role: 'img', 'aria-label': '已置顶' })).toHaveLength(0)
   })
@@ -161,7 +212,7 @@ describe('conversation pin interaction', () => {
   it('keeps an open menu bound to the current pin and current capability for the same conversation', async () => {
     await openMenu()
     await act(async () => { arkmeChatDirectory.publish([{ ...source, sourceRef: 'current-ref', isPinned: true, chatPolicyUpdatedAtMillis: 3000 }]) })
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
     await act(async () => { menu().props.onClick() })
     expect(pinCalls()[0]?.[1]).toEqual({ sourceRef: 'current-ref', pinned: false })
     await act(async () => { resolvePin({ sourceRef: 'current-ref', pinned: false, policyUpdatedAtMillis: 4000 }) })
@@ -215,29 +266,44 @@ describe('conversation pin interaction', () => {
     await startPin()
     await act(async () => { arkmeChatDirectory.publish([{ ...source, sourceRef: 'rotated-ref' }]) })
     expect(row().props['aria-busy']).toBe(true)
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     await openMenu()
     expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
     await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
   })
 
   it.each(['success', 'failure'] as const)('preserves the distinct remove interaction on %s', async outcome => {
+    vi.useFakeTimers()
     let resolveRemove!: () => void
     let rejectRemove!: (reason: unknown) => void
     const fallback = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (...args) => args[0] === 'conversation.directory.visibility.set'
       ? await new Promise<void>((resolve, reject) => { resolveRemove = resolve; rejectRemove = reject }) : fallback(...args))
     await openMenu()
-    await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.children[0] === '移除')!.props.onClick() })
-    expect(row().props.disabled).toBe(true)
+    await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.props['aria-label'] === '移除')!.props.onClick() })
+    expect(row().props['aria-disabled']).toBe(true)
     expect(pinCalls()).toHaveLength(0)
     await act(async () => {
       if (outcome === 'success') resolveRemove()
       else rejectRemove(new Error('移除失败'))
     })
-    if (outcome === 'success') expect(row()).toBeUndefined()
+    if (outcome === 'success') {
+      expect(arkmeChatDirectory.getConversationSnapshot().sources).toHaveLength(0)
+      expect(row().props['data-arkme-removal-phase']).toBe('accepted')
+      expect(row().findByProps({ role: 'status' }).children).toEqual(['已移除对话，可在联系人中找回'])
+      expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(1)
+      await act(async () => { vi.advanceTimersByTime(699) })
+      expect(row().props.style.height).toBe(58)
+      await act(async () => { vi.advanceTimersByTime(1) })
+      expect(row().props['data-arkme-removal-phase']).toBe('collapsing')
+      expect(row().props.style.height).toBe(0)
+      await act(async () => { vi.advanceTimersByTime(219) })
+      expect(row()).toBeDefined()
+      await act(async () => { vi.advanceTimersByTime(1) })
+      expect(row()).toBeUndefined()
+    }
     else {
-      expect(row().props.disabled).toBe(false)
+      expect(row().props['aria-disabled']).toBe(false)
       expect(renderer!.root.findByProps({ role: 'status' }).children).toEqual(['移除失败'])
     }
   })
@@ -261,7 +327,7 @@ describe('conversation pin interaction', () => {
     await startPin()
     expect(pinCalls()).toHaveLength(1)
     expect(pinCalls()[0]?.[1]).toEqual({ sourceRef: 'chat-ref', pinned: true })
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     expect(row().props['aria-busy']).toBe(true)
     await act(async () => { row().props.onClick() })
     expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(source.sourceKey)
@@ -269,24 +335,24 @@ describe('conversation pin interaction', () => {
     expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
     expect(pinCalls()).toHaveLength(1)
     await act(async () => { resolvePin({ sourceRef: 'chat-ref', pinned: true, policyUpdatedAtMillis: 2000 }) })
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     expect(renderer!.root.findByProps({ role: 'status' }).children).toEqual(['已置顶对话'])
     await openMenu()
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
     await act(async () => { menu().props.onClick() })
     expect(pinCalls()[1]?.[1]).toEqual({ sourceRef: 'chat-ref', pinned: false })
     await act(async () => { resolvePin({ sourceRef: 'chat-ref', pinned: false, policyUpdatedAtMillis: 3000 }) })
     await openMenu()
-    expect(menu().children).toEqual(['置顶对话'])
+    expect(menu().props['aria-label']).toBe('置顶对话')
   })
 
   it('restores the original state and allows retry after an owner rejection', async () => {
     await startPin()
     await act(async () => { rejectPin(new Error('没有会话权限')) })
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     expect(renderer!.root.findByProps({ role: 'status' }).children).toEqual(['没有会话权限'])
     await openMenu()
-    expect(menu().children).toEqual(['置顶对话'])
+    expect(menu().props['aria-label']).toBe('置顶对话')
     await act(async () => { menu().props.onClick() })
     expect(pinCalls()).toHaveLength(2)
     await act(async () => { resolvePin({ sourceRef: 'chat-ref', pinned: true, policyUpdatedAtMillis: 2000 }) })
@@ -322,7 +388,7 @@ describe('conversation pin interaction', () => {
       else rejectPin(new Error('置顶失败'))
     })
     expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     expect(arkmeChatDirectory.getSnapshot().sources).toEqual([
       expect.objectContaining({ sourceKey: source.sourceKey, isPinned: outcome === 'success' }),
     ])
@@ -342,7 +408,7 @@ describe('conversation pin interaction', () => {
     })
     expect(arkmeChatDirectory.getSnapshot().sources[0]?.isPinned).toBe(true)
     await openMenu()
-    expect(menu().children).toEqual(['取消置顶'])
+    expect(menu().props['aria-label']).toBe('取消置顶')
   })
 
   it('does not resurrect a removed conversation when pin finishes', async () => {
@@ -356,9 +422,9 @@ describe('conversation pin interaction', () => {
     await startPin()
     await act(async () => { arkmeChatDirectory.publish([{ ...source, isPinned: false, chatPolicyUpdatedAtMillis: 3000 }]) })
     await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
-    expect(row().props.disabled).toBe(false)
+    expect(row().props['aria-disabled']).toBe(false)
     await openMenu()
-    expect(menu().children).toEqual(['置顶对话'])
+    expect(menu().props['aria-label']).toBe('置顶对话')
     expect(pinCalls()).toHaveLength(1)
   })
 
@@ -386,6 +452,83 @@ describe('conversation pin interaction', () => {
     const statuses = renderer!.root.findAllByProps({ role: 'status' }).flatMap(node => node.children)
     expect(statuses).not.toContain('旧账号的错误')
     expect(statuses).not.toContain('已置顶对话')
+  })
+})
+
+describe('conversation removal integration', () => {
+  it.each(['private_chat', 'group_chat'] as const)('retains %s in place even if realtime visibility arrives before acknowledgement', async kind => {
+    vi.useFakeTimers()
+    await act(async () => { arkmeChatDirectory.publish([{ ...source, kind }]) })
+    const removal = deferRemoval()
+    await startRemove()
+    const before = renderer!.root.findAllByProps({ role: 'treeitem' }).indexOf(row())
+    await act(async () => { arkmeChatDirectory.confirmVisibility('source', source.sourceRef, true) })
+    expect(arkmeChatDirectory.getConversationSnapshot().sources).toHaveLength(0)
+    expect(row().props['data-arkme-removal-phase']).toBe('pending')
+    expect(renderer!.root.findAllByProps({ role: 'treeitem' }).indexOf(row())).toBe(before)
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    expect(row()).toBeDefined()
+    await act(async () => { removal.resolve() })
+    expect(row().props['data-arkme-removal-phase']).toBe('accepted')
+    expect(row().findByProps({ role: 'status' }).children).toEqual(['已移除对话，可在联系人中找回'])
+    await act(async () => { vi.advanceTimersByTime(920) })
+    expect(row()).toBeUndefined()
+  })
+
+  it('uses identical inline feedback and timing for a Bot conversation', async () => {
+    vi.useFakeTimers()
+    const bot: ArkmeBotSummary = { botRef: 'remove-bot-ref', directoryKey: 'remove-bot-key', name: '移除 Bot',
+      provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true, createdAtMillis: 100 }
+    await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: false,
+      projection: { revision: 100, phase: 'complete', cachedAtMillis: 1, bots: [bot], visibility: [] } }) })
+    const removal = deferRemoval()
+    const botRow = () => renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.props['aria-label'] === bot.name)
+    await startRemove(bot.name)
+    await act(async () => { removal.resolve() })
+    expect(arkmeChatDirectory.getConversationSnapshot().bots).toHaveLength(0)
+    expect(botRow()!.findByProps({ role: 'status' }).children).toEqual(['已移除对话，可在联系人中找回'])
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(1)
+    await act(async () => { vi.advanceTimersByTime(700) })
+    expect(botRow()!.props.style.height).toBe(0)
+    await act(async () => { vi.advanceTimersByTime(220) })
+    expect(botRow()).toBeUndefined()
+    expect(row().props['aria-disabled']).toBe(false)
+  })
+
+  it.each(['pending', 'accepted', 'collapsing'] as const)('preserves a new message arriving during %s removal', async phase => {
+    vi.useFakeTimers()
+    const removal = deferRemoval()
+    await startRemove()
+    if (phase !== 'pending') await act(async () => { removal.resolve() })
+    if (phase === 'collapsing') await act(async () => { vi.advanceTimersByTime(700) })
+    await act(async () => {
+      arkmeChatDirectory.upsert({ ...source, latestSequence: 2, activeAtMillis: 200, latestPreview: '移除时的新消息' })
+      arkmeChatDirectory.confirmVisibility('source', source.sourceRef, false)
+    })
+    if (phase === 'pending') await act(async () => { removal.resolve() })
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(row().props['aria-disabled']).toBe(false)
+    expect(row().props['data-arkme-removal-phase']).toBeUndefined()
+    expect(row().props.style.height).toBe(58)
+    expect(arkmeChatDirectory.getConversationSnapshot().sources[0]?.latestPreview).toBe('移除时的新消息')
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
+  })
+
+  it.each(['inactive', 'account', 'environment', 'logout'] as const)('clears the retained row on %s changes', async change => {
+    vi.useFakeTimers()
+    const removal = deferRemoval()
+    await startRemove()
+    await act(async () => { removal.resolve() })
+    expect(row().props['data-arkme-removal-phase']).toBe('accepted')
+    await act(async () => {
+      if (change === 'inactive') renderer!.update(<ArkmeNavigation active={false} />)
+      else arkmeAuthStore.setAuth(change === 'logout'
+        ? { status: 'logged-out', environment: 'test' }
+        : { status: 'authenticated', environment: change === 'environment' ? 'prod' : 'test', userId: change === 'account' ? 7002 : 7001 })
+    })
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
+    await act(async () => { vi.advanceTimersByTime(1000) })
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
   })
 })
 

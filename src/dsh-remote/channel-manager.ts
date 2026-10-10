@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { asDshRemoteError, DshRemoteError } from './errors.js'
+import { dshRemoteRequestIdentity } from './protocol-v1.js'
 import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
-import { dshRemoteOutboundPayloads } from './transport-fragment.js'
+import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from './transport-fragment.js'
 import type {
   DshRemoteRealtimePayload,
   DshRemoteRealtimeTransport,
@@ -25,6 +26,7 @@ export interface DshRemoteHostChannelManagerOptions {
   }) => Promise<DshRemoteResponse>
   onProjectionError: (error: unknown) => void
   onFatal: (error: unknown) => void
+  onDiagnostic?: (event: string, fields: Record<string, unknown>) => void
 }
 
 function logicalPayloadTooLarge(error: unknown): boolean {
@@ -44,6 +46,7 @@ export class DshRemoteHostChannelManager {
   private persistedTransportSequence = 0
   private outboundTail: Promise<void> = Promise.resolve()
   private readonly pendingEvents: Array<{ payload: DshRemoteRealtimePayload; metadata: DshRemoteTrustedEventMetadata }> = []
+  private readonly requestFragments = new DshRemoteFragmentReader()
   private closed = false
   private readonly detachParent: () => void
 
@@ -80,6 +83,13 @@ export class DshRemoteHostChannelManager {
       this.unsubscribe = await subscribe(this.lastTransportSequence)
     } catch (error) {
       if (!(error instanceof DshRemoteError) || error.code !== 'REPLAY_GAP') throw error
+      this.diagnostic('wire_replay_gap', { runtime_ref: this.options.runtimeRef, after_seq: this.lastTransportSequence })
+      await this.options.secretBroker.putRuntimeCursor({
+        accountId: this.options.accountId, runtimeRef: this.options.runtimeRef,
+        channelRef: this.options.runtimeRef, lastTransportSequence: 0, reset: true,
+      })
+      this.lastTransportSequence = this.persistedTransportSequence = 0
+      this.controller.signal.throwIfAborted()
       this.unsubscribe = await subscribe()
     }
   }
@@ -148,6 +158,30 @@ export class DshRemoteHostChannelManager {
       this.pendingEvents.push({ payload, metadata })
       return
     }
+    if (payload.protocol === 'dsh.remote-fragment') {
+      if (metadata.senderRole !== 'controller' || metadata.runtimeRef !== this.options.runtimeRef || metadata.targetHostLeaseGeneration !== this.target.hostLeaseGeneration) {
+        this.diagnostic('wire_fragment_rejected', {
+          runtime_ref: this.options.runtimeRef, reason: 'fragment_target_mismatch',
+          transport_seq: metadata.transportSequence, target_lease_generation: metadata.targetHostLeaseGeneration,
+          lease_generation: this.target.hostLeaseGeneration, transfer_ref: payload.transfer_ref,
+        })
+        return
+      }
+      const assembled = this.requestFragments.accept(payload)
+      if (!assembled) return
+      payload = assembled
+    }
+    const identity = dshRemoteRequestIdentity(payload)
+    // Successful stream polls are high-volume; retain failure diagnostics only.
+    const body = 'body' in payload ? payload.body : undefined
+    const traceRequest = !(identity?.operation === 'session.native' && body !== null && typeof body === 'object' && 'mode' in body && body.mode === 'pull')
+    const startedAt = performance.now()
+    const diagnostic = {
+      user_id: this.options.accountId, runtime_ref: this.options.runtimeRef,
+      request_ref: identity?.requestRef, operation: identity?.operation,
+      lease_generation: this.target.hostLeaseGeneration, transport_seq: metadata.transportSequence,
+    }
+    if (traceRequest) this.diagnostic('host_request_received', diagnostic)
     let result: DshRemoteResponse
     try {
       // The Host owns correlated request and lease rejections. A stale
@@ -157,11 +191,35 @@ export class DshRemoteHostChannelManager {
         metadata,
       })
     } catch (error) {
+      this.diagnostic('host_request_failed', { ...diagnostic, error_code: asDshRemoteError(error).code, duration_ms: Math.round(performance.now() - startedAt) })
       if (error instanceof DshRemoteError) return
       throw error
     }
-    const responseCommandId = `response_${createHash('sha256').update(result.request_ref).digest('base64url')}`
-    await this.publishPayload(result, responseCommandId, 'response')
+    if (traceRequest || result.status === 'rejected') this.diagnostic('host_request_processed', {
+      ...diagnostic, status: result.status, error_code: result.error?.code,
+      duration_ms: Math.round(performance.now() - startedAt),
+    })
+    // Each request delivery needs a reply, including a ledger duplicate. Reuse
+    // this ID only while retrying the same publish, not across later replies.
+    const responseCommandId = `response_${randomUUID()}`
+    try {
+      let published = false
+      await this.publishPayload(result, responseCommandId, 'response', timing => {
+        published = timing.completed
+        if (traceRequest || !timing.completed) this.diagnostic('host_response_publish_finished', {
+          ...diagnostic, completed: timing.completed,
+          queue_ms: Math.round(timing.queueMs), publish_ack_ms: Math.round(timing.publishMs),
+        })
+      })
+      if (!published) this.diagnostic('host_response_publish_failed', { ...diagnostic, error_code: 'HOST_CHANNEL_NOT_READY', retryable: true })
+    } catch (error) {
+      this.diagnostic('host_response_publish_failed', { ...diagnostic, error_code: asDshRemoteError(error).code, retryable: asDshRemoteError(error).retryable })
+      throw error
+    }
+  }
+
+  private diagnostic(event: string, fields: Record<string, unknown>): void {
+    try { this.options.onDiagnostic?.(event, fields) } catch { /* Diagnostics must not affect command delivery. */ }
   }
 
   private async publishPayload(

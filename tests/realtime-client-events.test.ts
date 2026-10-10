@@ -1,3 +1,7 @@
+import { officialNotifications } from '../src/client/official-notification-store.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
+import * as topicDirectories from '../src/client/self-topic-directory-cache.js'
+import { arkmeCalendarInvalidations } from '../src/client/calendar-invalidation-store.js'
 import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { createElement, useSyncExternalStore } from 'react'
 import * as clientApi from '../src/client/api.js'
@@ -5,6 +9,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as providerInstance from '../src/client/provider-instance-runtime.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { selfTopicDirectory, resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
@@ -41,6 +46,72 @@ afterEach(() => {
   arkmeMemberEvents.activateAccount(undefined)
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it.each([
+  { visibilityState: 'hidden', focused: true },
+  { visibilityState: 'visible', focused: false },
+] as const)('retains private/group message bodies while $visibilityState and focused=$focused', async state => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal('document', Object.assign(new EventTarget(), {
+    visibilityState: state.visibilityState, hasFocus: () => state.focused,
+  }))
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const reads = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    await act(async () => { arkmeChatDirectory.publish([]) })
+    const updates = (['private_chat', 'group_chat'] as const).map(kind => ({
+      sourceKey: kind,
+      source: { ...delta.updates[0]!.source, sourceRef: `${kind}-ref`, sourceKey: kind, kind, latestSequence: 9 },
+      timelineItems: [{ itemUid: `${kind}-9`, sequence: 9, senderName: '同事', isMe: false,
+        sendAtMillis: 9, textContent: '后台收到的正文', status: 1 }],
+    }))
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 1, updates }) } as MessageEvent<string>) })
+    for (const update of updates) {
+      expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
+      expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
+    }
+    expect(reads.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+    await act(async () => { arkmeChatTimelineDelta.activateAccount('test:43') })
+    for (const update of updates) expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual([])
+  } finally { await act(async () => { renderer.unmount() }) }
+})
+
+it('revalidates archive membership without clearing directory rows or refreshing content', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen: (() => void) | null = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const directory = vi.spyOn(topicDirectories, 'invalidateSelfTopicDirectories').mockImplementation(() => {})
+  const interwoven = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  const calendar = vi.spyOn(arkmeCalendarInvalidations, 'publishAll')
+  function Harness() { useArkmeRealtimeClientEvents({status: 'authenticated', userId: 42, environment: 'test'}, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  await act(async () => { renderer = create(createElement(Harness)) })
+  const contentRevision = arkmeUi.getRecordRevision()
+  const directoryRevision = arkmeUi.getTopicDirectoryRevision()
+  await act(async () => { socket.onmessage?.({data: JSON.stringify({type: 'projection-invalidated', projection: 'topic-directory', revision: 1})} as MessageEvent<string>) })
+  expect(directory).toHaveBeenCalledExactlyOnceWith()
+  expect(arkmeUi.getTopicDirectoryRevision()).toBe(directoryRevision + 1)
+  expect(arkmeUi.getRecordRevision()).toBe(contentRevision)
+  expect(interwoven).not.toHaveBeenCalled()
+  expect(calendar).not.toHaveBeenCalled()
+  await act(async () => { renderer.unmount() })
 })
 
 describe('Chat-owned Bot realtime invalidation', () => {
@@ -96,6 +167,54 @@ describe('Chat-owned Bot realtime invalidation', () => {
 })
 
 describe('realtime reconcile routing', () => {
+  it('keeps topic rows mounted through a burst of record hints and atomically applies one refresh', async () => {
+    vi.useFakeTimers()
+    let channel!: FakeWebSocket
+    class FakeWebSocket {
+      onopen = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor() { channel = this }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 42, environment: 'test' }
+    const rows = [
+      { sourceRef: 'self', kind: 'send_to_self', displayName: '全部' },
+      { sourceRef: 'default', kind: 'default_category', displayName: '未分类' },
+      { sourceRef: 'old', topicHierarchyKey: 'old', kind: 'topic', displayName: '已有主题' },
+    ]
+    const reads = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: rows, hasMore: false })
+    function Harness() { useArkmeRealtimeClientEvents(auth, 1, false); return null }
+    let renderer!: ReactTestRenderer
+    let off = () => {}
+    try {
+      await act(async () => { renderer = create(createElement(Harness)) })
+      const cache = selfTopicDirectory(42, 'test')
+      await cache.ensure()
+      const sizes: number[] = []
+      off = cache.subscribe(() => { sizes.push(cache.getSnapshot().sources.length) })
+      const refreshed = Promise.withResolvers<unknown>()
+      reads.mockReturnValue(refreshed.promise)
+      await act(async () => {
+        for (const revision of [10, 11, 12]) channel.onmessage?.({ data: JSON.stringify({
+          type: 'projection-invalidated', projection: 'record', revision,
+        }) } as MessageEvent<string>)
+        await vi.advanceTimersByTimeAsync(250)
+      })
+      expect(cache.getSnapshot().sources).toEqual(rows)
+      expect(reads.mock.calls.filter(([op]) => op === 'sources.list')).toHaveLength(2)
+      // An authoritative removal (including a now-private topic) must still take effect.
+      refreshed.resolve({ items: rows.slice(0, 2), hasMore: false })
+      await cache.ensure()
+      expect(cache.getSnapshot().sources).toEqual(rows.slice(0, 2))
+      expect(sizes).not.toContain(0)
+    } finally {
+      off()
+      if (renderer) await act(async () => { renderer.unmount() })
+      resetSelfTopicDirectories()
+      vi.useRealTimers()
+    }
+  })
   it('joins startup instance preparation on first connection without clearing a newly loaded directory', async () => {
     let channel!: { onopen: (() => void) | null }
     class FakeWebSocket {
@@ -207,7 +326,7 @@ describe('realtime reconcile routing', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('refreshes only the directory for a policy invalidation and deduplicates Browser revisions', async () => {
+  it('refreshes directory and interaction permissions for policy changes, deduplicating revisions', async () => {
     let source!: FakeWebSocket
     class FakeWebSocket {
       onopen: (() => void) | null = null
@@ -238,7 +357,7 @@ describe('realtime reconcile routing', () => {
     expect(refresh).toHaveBeenCalledExactlyOnceWith({ force: true, silent: true })
     expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(refresh.mock.invocationCallOrder[0]!)
     expect(receipts).not.toHaveBeenCalled()
-    expect(interwoven).not.toHaveBeenCalled()
+    expect(interwoven).toHaveBeenCalledOnce()
     await act(async () => { renderer.unmount() })
   })
 
@@ -480,4 +599,58 @@ it('revalidates the local directory cache on same-Host reconnect without forcing
     expect(invalidate).toHaveBeenCalledOnce()
     expect(refresh).toHaveBeenLastCalledWith({ force: false })
   } finally { await act(async () => { renderer.unmount() }) }
+})
+
+it('uses Host directory deltas for managed pin and visibility events without another Browser read', async () => {
+  let channel!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  vi.stubGlobal('WebSocket', class {
+    onopen = null; onmessage = null
+    constructor() { channel = this }
+    close() {}
+  })
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const read = vi.spyOn(clientApi, 'callArkme')
+  const refresh = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
+  const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 42, environment: 'test' }
+  function Harness() {
+    useArkmeRealtimeClientEvents(auth, 1, false)
+    const state = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
+    return createElement('div', null, state.sources[0]?.isPinned ? '已置顶' : '未置顶')
+  }
+  let renderer!: ReactTestRenderer
+  const emit = async (event: unknown) => { await act(async () => { channel.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>) }) }
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    read.mockClear(); refresh.mockClear()
+    await emit({ type: 'chat-policy-invalidated', revision: 1, refresh: 'none' })
+    await emit({ type: 'conversation-list-preference-invalidated', revision: 2, refresh: 'none' })
+    await emit({ type: 'directory-update', revision: 3, page: { directory: 'root', items: [
+      { sourceRef: 'ref', sourceKey: 'key', kind: 'private_chat', displayName: 'Chat', activeAtMillis: 1, unreadCount: 0, isPinned: true },
+    ], hasMore: false, projection: { revision: 3, phase: 'complete', cachedAtMillis: 1, bots: [],
+      visibility: [{ entryKind: 'source', entryRef: 'ref', hidden: true }] } } })
+    expect(renderer.toJSON()).toMatchObject({ children: ['已置顶'] })
+    expect(arkmeChatDirectory.getSnapshot().projection?.visibility).toEqual([{ entryKind: 'source', entryRef: 'ref', hidden: true }])
+    expect(read).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+  } finally { if (renderer !== undefined) await act(async () => renderer.unmount()) }
+})
+
+it('official hints refresh only the official owner and reconnect reconciles it even without chat refresh', async () => {
+  let socket!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  class FakeWebSocket { onopen = null; onmessage = null; constructor() { socket = this }; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  const invalidate = vi.spyOn(officialNotifications, 'invalidate').mockImplementation(() => {})
+  const records = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({items: [], hasMore: false})
+  function Harness() { useArkmeRealtimeClientEvents({status:'authenticated',userId:42,environment:'test'},1,false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    records.mockClear()
+    await act(async () => { socket.onmessage?.({data:JSON.stringify({type:'projection-invalidated',projection:'official_notification',revision:1})} as MessageEvent<string>) })
+    expect(invalidate).toHaveBeenCalledWith('test:42'); expect(records).not.toHaveBeenCalled()
+    invalidate.mockClear()
+    await act(async () => { socket.onmessage?.({data:JSON.stringify({type:'reconcile',revision:2,connected:true,refresh:'none'})} as MessageEvent<string>) })
+    expect(invalidate).toHaveBeenCalledWith('test:42')
+  } finally { await act(async () => renderer.unmount()) }
 })

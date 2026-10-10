@@ -435,7 +435,7 @@ export function registerArkmeExtensionTools(
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute() {
-      return `<data_from_arkme_extensions>\n${JSON.stringify(manager.listInstalled(), undefined, 2)}\n</data_from_arkme_extensions>`
+      return `<data_from_arkme_extensions>\n${JSON.stringify(await manager.listInstalled(), undefined, 2)}\n</data_from_arkme_extensions>`
     },
   }))
 

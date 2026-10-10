@@ -44,3 +44,25 @@ Host 的单一消费者在上批完成后，从当前缓冲取下一批。空闲
 默认 `live_delivery_window` 每 10 秒最多一条，复用 Host poll 和现有日志出口。含 user_id/runtime_ref、batch_count/event_count/incomplete_batches/replayed_batches、payload_bytes、pending_entries_max/pending_bytes_max，以及 queue_ms、ownership_ms、capture_ms、channel_queue_ms、publish_ack_ms 的 sum/max。capture_ms 包含 outbox 队列等待及落盘调用；publish_ack_ms 包含分片、重试和等待确认，不是单次网络 RTT。replay 的 queue_ms 是原积压起点计算的保守年龄。incomplete_batches 表示未完整确认的批次；event_count 是尝试处理数量，不是已确认数量。指标使用单调时钟；不包含事件正文或凭据，不挤占连接故障的 32 条上下文，不新增 Sentry 连接事故。
 
 受控性能回归：`pnpm exec vitest run tests/dsh-live-batching-benchmark.test.ts --disableConsoleIntercept`。它对比相同生成流和模拟归档/ACK，不能替代实际 Profile、设备和网络验收。
+
+## DSH Gateway 兼容
+
+旧版通过 `apiProxy` 创建远控 Host；新版通过 `typertGateway`、`sessionController`、`workspaceController` 和 `connection` 创建同一个 Host。两者仍由账号作用域持有，不改变 Realtime 协议、租约、心跳和重连策略。功能关闭或依赖缺失时，Host API 返回具体原因；普通业务请求不执行远控诊断探测。
+
+新版在 `gateway-api.ts` 适配公共接口：
+
+- `session.list` 使用 Gateway 的 `_request` 命名参数；发送把已有稳定 RPC ID 映射为 `requestId`，不另造去重标识。
+- 工作区读取消费 `workspace.follow` 的首个 baseline 后立即取消、关闭迭代器；历史读取从 `session.follow` 获取确定水位，再以 `throughSeq` 调用 `session.page`。读取不恢复 Agent。
+- 实时日志使用一条公开 `session/event` 订阅；`session.control` 提供基线和 goal 投影；Gateway `$events` 提供问题和审批，结果通过公开的进程内 Connection Fetch carrier 回传。不会对每个历史会话建立 follow 流。
+- 交互必须匹配本代事件 ID 和 Session；过期事件不可回答。保留原有审批安全限制：上下文不完整时只允许拒绝，不能远程批准。
+- 本地事件缓冲最多 1024 帧、8 MiB，待处理交互最多 256 个。超限使本代失败，交由已有订阅恢复逻辑重新建立基线，不新增重连 owner。取消时移除日志监听、取消两条流并清除本代交互。
+
+该适配转发新版的已提交 canonical 事件。新版进程内 `assistant-stream` 的无序号临时片段不伪装为 canonical 日志；逐 token 展示不在本次协议适配的验收范围。
+
+能力面保持原合同：Host 是唯一远控业务 owner；现有 SDK、UI 和 `arkme_current_dsh_session` 工具继续消费同一 Host，无新增业务入口。客户端和 DSH 源码无需修改，桌面生效仍需正式插件制品发布与客户端消费。
+
+回归：`NODE_OPTIONS=--no-experimental-webstorage pnpm test`、`pnpm typecheck`、`pnpm build`。`dsh-remote-gateway-api.test.ts` 覆盖参数映射、分页水位、事件和交互、取消、积压上限；`dsh-remote-host-api-sdk.test.ts` 覆盖缺失依赖诊断。旧版适配器和 WebSocket 保活测试继续运行。
+
+2026-09-16 在独立数据目录、独立凭据前缀、空闲端口的未修改 DSH `0.1.5-rc.2` 中安装本地 `.tgz`：Host 成功创建，未登录时返回登录提示；真实 Gateway 验证了工作区、创建/列举 Session、历史首屏和分页、发送参数进入业务校验，以及问题回答和审批拒绝的往返。审批探针走公共 scoped waterfall，不执行工具。该 CLI 探针没有使用生产账号发送提示词，未验证真实模型响应、生产 Realtime 注册/心跳、移动端消费或 Windows/Linux。
+
+随后使用客户端官方 master 基线 `f5e0c00` 启动独立 App Data 的 macOS 开发实例，加载本次插件与 DSH `0.1.5-rc.2`。实例通过正常登录态读取完成生产 Realtime 注册，`remote.getStatus` 返回 `available/enabled/connected=true`。该证据证明连接和注册，实际远程操作由用户在此常驻实例回归；开发路径运行不等同于正式 Release Set 发布。

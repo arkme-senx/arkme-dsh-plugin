@@ -46,7 +46,7 @@ const english = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn[key]) as ArkmeLoginT
 function LoginAfterLogout({ t }: { t: ArkmeLoginTranslate }) {
   const flow = useArkmeAuthFlow({}, t)
   return <ArkmeStartupAuthGateView
-    screen={startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error)}
+    screen={startupAuthGateScreen(flow.auth, flow.error)}
     error={flow.error} busy={flow.busy} onRetry={flow.retry} flow={flow} t={t}
   />
 }
@@ -104,6 +104,21 @@ describe('Arkme WeChat login ownership', () => {
 
     expect(restored.startsWith('data:image/gif;base64,')).toBe(true)
     expect(arkmePendingWechatQrDataUrl({ status: 'logged-out', environment: 'prod' })).toBe('')
+  })
+
+  it('trusts an authenticated old account without a browser phone check or binding flash', async () => {
+    const auth: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'prod', userId: 10003 }
+    vi.mocked(callArkme).mockImplementation(async method => {
+      testState.calls.push(method)
+      if (method === 'auth.status') return auth as never
+      if (method === 'auth.config') return { captchaId: '', testLoginEnabled: false, jiwoScanLoginEnabled: false } as never
+      throw new Error(`unexpected auth-flow request ${method}`)
+    })
+    arkmeAuthStore.setAuth(auth)
+    await act(async () => { renderer = create(<LoginAfterLogout t={defaultArkmeLoginTranslate} />) })
+    expect(renderer!.root.findAllByType(ArkmeLogin)).toHaveLength(0)
+    expect(testState.calls).not.toContain('user.profile.refresh')
+    expect(arkmeAuthStore.getSnapshot().auth?.status).toBe('authenticated')
   })
 
   it('keeps the Web dialog open when a newly signed-in account requires phone binding', async () => {

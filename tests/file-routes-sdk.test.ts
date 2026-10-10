@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
-import { FileTransfers } from '../src/services/file-transfers.js'
+import { FileTransfers, type FileTransferPorts } from '../src/services/file-transfers.js'
 import { createArkmeHostApi } from '../src/host-api.js'
 import { createArkmeUploadHandler, createArkmeLocalFileHandler } from '../src/rich-media-routes.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
@@ -22,12 +22,12 @@ describe('file Host and external SDK transport contract', () => {
         sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' as const,
       } }
     })
-    const openPath = vi.fn(async () => {})
+    const openPath = vi.fn<NonNullable<FileTransferPorts['openPath']>>(async () => {})
     const owner = new FileTransfers(directory, { currentUser: async () => userId, retainedFileRefs: async () => [], validateSource: async () => {}, upload, send, fetchMedia: async () => { throw new Error('not expected') }, openPath }, 1000)
     const facade = {
       fileSessionUser: async () => userId, fileStage: owner.stage.bind(owner), fileReadLocal: owner.readLocal.bind(owner),
       fileCapabilities: owner.capabilities.bind(owner), fileList: owner.files.bind(owner), fileSend: owner.enqueue.bind(owner),
-      fileOpenLocal: owner.openLocal.bind(owner),
+      fileOpenLocal: owner.openLocal.bind(owner), fileOpenLocalFolder: owner.openLocalFolder.bind(owner),
       fileSendTasks: owner.tasks.bind(owner), fileSendRetry: owner.retry.bind(owner), fileSendDiscard: owner.discard.bind(owner),
       fileSendReconcile: owner.reconcile.bind(owner), fileRemove: owner.remove.bind(owner), fileStageBytes: owner.stageBytes.bind(owner),
       uploadLocalFile: directUpload,
@@ -88,6 +88,23 @@ describe('file Host and external SDK transport contract', () => {
       expect(htmlResponse.headers.get('content-security-policy')).toContain('sandbox')
       await expect(sdk.openLocalFile(file.fileRef)).resolves.toMatchObject({ opened: true, file: { fileRef: file.fileRef } })
       expect(openPath).toHaveBeenCalledOnce()
+      await expect(sdk.openLocalFileFolder(file.fileRef)).resolves.toEqual({ folderOpened: true })
+      expect(openPath.mock.calls[1]![0]).toBe(join(directory, '42', '.open', file.fileRef))
+      let entered!: () => void
+      let aborted!: () => void
+      const hostEntered = new Promise<void>(resolve => { entered = resolve })
+      const hostAborted = new Promise<void>(resolve => { aborted = resolve })
+      openPath.mockImplementationOnce((_path, signal) => new Promise((_resolve, reject) => {
+        entered()
+        signal.addEventListener('abort', () => { aborted(); reject(signal.reason) }, { once: true })
+      }))
+      const controller = new AbortController()
+      const cancelled = expect(sdk.openLocalFileFolder(file.fileRef, controller.signal)).rejects.toBeDefined()
+      await hostEntered
+      controller.abort()
+      await cancelled
+      await hostAborted
+
       const input = {
         sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002',
         fileRefs: [file.fileRef], expectedUserId: 42, content: { textContent: 'hello' },
@@ -104,6 +121,8 @@ describe('file Host and external SDK transport contract', () => {
       const restored = new FileTransfers(directory, {} as never, 1000)
       expect(restored.capabilities().maxAttachments).toBe(9)
       userId = 43
+      await expect(sdk.openLocalFileFolder(file.fileRef)).rejects.toMatchObject({ body: { code: 'file-ref-invalid' } })
+      expect(openPath).toHaveBeenCalledTimes(3)
       expect(await sdk.localFiles()).toEqual([])
       await expect(sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'wrong-account.pdf', expectedUserId: 42 }))
         .rejects.toMatchObject({ body: { code: 'file-account-changed' } })

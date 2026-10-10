@@ -101,6 +101,16 @@ describe('public DSH ApiProxy remote adapter', () => {
     })
   })
 
+  it('syncs and reads ungrouped owned sessions without inventing a workspace', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({ items: [], archivedSessionIds: [] }, request.rpcId)
+    const adapter = new DshApiProxyAdapter(api)
+    expect((await adapter.sessions()).items).toEqual([])
+    expect((await adapter.sessions({ includeUngrouped: true })).items).toMatchObject([{ sessionId: 'session-1', workspaceId: '' }])
+    await expect(adapter.history({ sessionId: 'session-1' })).resolves.toHaveProperty('entries')
+    await expect(adapter.history({ sessionId: 'not-owned-by-this-runtime' })).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' })
+  })
+
   it('preallocates a stable SessionId and never accepts cwd from the controller', async () => {
     const { api } = await fakeApi()
     const adapter = new DshApiProxyAdapter(api)
@@ -110,6 +120,29 @@ describe('public DSH ApiProxy remote adapter', () => {
     expect(first.sessionId).toMatch(/^[a-f0-9-]{36}$/)
     await expect(adapter.createSession({ workspaceId: 'workspace-1', dshRpcId: 'rpc-other-binding' }))
       .resolves.not.toEqual(first)
+  })
+
+  it('keeps predecessor titles without publishing their unknown watermark alongside new sessions', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({ items: [{
+      workspaceId: 'workspace-1', path: process.cwd(), title: 'Project',
+      sessionIds: ['legacy', 'new', 'zero'],
+    }] }, request.rpcId)
+    api.sessions!.list = async request => ok({ items: [
+      { sessionId: 'legacy', updatedAt: 1, running: false, blank: false,
+        projections: { asOfSeq: -1, values: { title: 'Cached predecessor title' } } },
+      { sessionId: 'new', updatedAt: 3, running: false, blank: false,
+        projections: { asOfSeq: 17, values: { title: 'New conversation' } } },
+      { sessionId: 'zero', updatedAt: 2, running: false, blank: true,
+        projections: { asOfSeq: 0, values: {} } },
+    ] }, request.rpcId)
+    const { items } = await new DshApiProxyAdapter(api).sessions()
+    expect(items).toEqual([
+      expect.objectContaining({ sessionId: 'new', projectionAsOfSeq: 17 }),
+      expect.objectContaining({ sessionId: 'zero', projectionAsOfSeq: 0 }),
+      expect.objectContaining({ sessionId: 'legacy', title: 'Cached predecessor title', blank: false }),
+    ])
+    expect(items[2]).not.toHaveProperty('projectionAsOfSeq')
   })
 
   it('projects DSH archive and subagent lineage for sidebar parity', async () => {

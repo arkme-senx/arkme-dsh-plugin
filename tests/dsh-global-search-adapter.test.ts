@@ -6,10 +6,12 @@ const persistentShell = readFileSync(new URL('../src/client/ArkmePersistentShell
 
 describe('DSH global search adapter', () => {
   it('uses the injected public DSH sessions service without adding an Arkme Host route', () => {
-    expect(clientEntry).toContain("export const inject = ['slots', 'layout', 'locale', 'sessions']")
+    const injected = clientEntry.match(/export const inject = \[([^\]]+)\]/)?.[1].match(/'([^']+)'/g)?.map(value => value.slice(1, -1))
+    expect(injected).toEqual(expect.arrayContaining(['slots', 'layout', 'locale', 'sessions']))
     expect(clientEntry).toContain("{ sessions?: ISessions }).sessions")
     expect(clientEntry).toContain('dshSessions.search(query, signal)')
-    expect(clientEntry).toContain('dshSessions.open(sessionId as SessionId)')
+    expect(clientEntry).toContain('openDshSession: openEmbeddedDshSession')
+    expect(clientEntry).not.toContain('dshSessions.open(')
     expect(clientEntry).not.toContain('DSH_HOME')
     expect(clientEntry).not.toContain('sessions.jsonl')
   })

@@ -1,3 +1,4 @@
+import { dshAgentInputRecordUid } from '../../src/dsh-agent-input-sync.js'
 import { stringifyOwnerJson } from '../../src/record-owner-id.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
@@ -19,6 +20,74 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it.each([[5, 4], [4, 3], [3, 3], [1, 1]])('distinguishes Record origin %s from effective search source %s in tag results', async (origin, expected) => {
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
+      items: [{ record_core: { record_uid: 'record', owner_user_id: 42, origin_kind: origin, origin_container_ref: 'container', text_content: '#项目' } }],
+    }) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchTagRecords({ normalizedTag: '项目', limit: 20 })
+    expect(result.items[0]?.sourceKind).toBe(expected)
+    if (origin === 5) expect(result.items[0]?.routeTargetKind).toBe('record_detail')
+  })
+  it('uses current Record Team origin even before the search source projection catches up', async () => {
+    const runtime = { requireSession: async () => ({userId:42}), authenticatedPost:async () => ({items:[{
+      record_uid:'r',source_kind:1,route_target_kind:'home_feed',
+      record_core:{owner_user_id:42,origin_kind:5,origin_container_ref:'team-conversation',text_content:'正文'}
+    }],source_aggregates:[]}) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchRemote({query:'正文'})
+    expect(result.items[0]).toMatchObject({sourceKind:4,sourceUid:'team-conversation',routeTargetKind:'record_detail'})
+  })
+  it('includes personal Team Records without constructing a Chat or Home navigation target', async () => {
+    const authenticatedPost = vi.fn(async () => ({ items: [{
+      record_uid: 'team-record', source_kind: 4, source_uid: 'team-conversation',
+      route_target_kind: 'record_detail', route_target_uid: 'team-record',
+      record_core: { origin_kind: 5, owner_user_id: 42, text_content: '团队内容' },
+    }], source_aggregates: [] }))
+    const searchTargetSource = vi.fn()
+    const chatSourcesBySessionUids = vi.fn()
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost } as unknown as ServiceRuntime
+    const service = new SearchService(runtime, {} as never, {} as never,
+      { searchTargetSource, chatSourcesBySessionUids } as unknown as SourceService,
+      { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '团队', limit: 20 })
+    expect(authenticatedPost.mock.calls[0]).toContainEqual(expect.objectContaining({ source_kinds: [1, 2, 3, 4] }))
+    expect(result.items[0]).toMatchObject({ sourceKind: 4, sourceTitle: '团队对话', routeTargetKind: 'record_detail' })
+    expect(result.items[0]?.targetSource).toBeUndefined()
+    expect(searchTargetSource).not.toHaveBeenCalled()
+    expect(chatSourcesBySessionUids).not.toHaveBeenCalled()
+  })
+
+  it('projects viewer remarks into every source aggregate, including sources with no message on the current page', async () => {
+    const target = (displayName: string, privateNickname: string) => ({ sourceRef: displayName, kind: 'private_chat', displayName, privateNickname, unreadCount: 0, activeAtMillis: 0 })
+    const chats = new Map([['chat-1', target('周鹏', '狗才')], ['chat-2', target('何宏顺', '1D3E')]])
+    const chatSourcesBySessionUids = vi.fn(async () => chats)
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
+      items: [{ record_uid: 'hit', source_kind: 3, source_uid: 'chat-1', chat_core: { title: '狗才' }, record_core: { text_content: '搜索内容' } }],
+      source_aggregates: [...chats].map(([uid, source]) => ({ source_kind: 3, source_uid: uid, chat_core: { title: source.privateNickname }, matched_record_count: 2, matched_record_count_exact: true })),
+    }) } as unknown as ServiceRuntime
+    const service = new SearchService(runtime, {} as never, {} as never, { chatSourcesBySessionUids } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '搜索', limit: 50 })
+    expect(result.items[0]).toMatchObject({ sourceTitle: '周鹏', targetSource: chats.get('chat-1') })
+    expect(result.sourceAggregates.map(item => [item.title, item.nickname, item.matchedRecordCount])).toEqual([['周鹏', '狗才', 2], ['何宏顺', '1D3E', 2]])
+    expect(result.sourceAggregates[1]!.targetSource).toEqual(chats.get('chat-2'))
+    expect(chatSourcesBySessionUids).toHaveBeenCalledExactlyOnceWith(['chat-1', 'chat-2'], undefined)
+  })
+  it('projects HTTP and all HTTPS links before clipping long search text, without changing scene or privacy contracts', async () => {
+    const text = `http://example.com/first ${'说明'.repeat(1500)} https://example.org/late https://example.org/late`
+    const calls: unknown[] = []
+    const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }, {} as StateStore,
+      vi.fn(async (input, init) => {
+        if (String(input).endsWith('/visibility-snapshot')) return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }))
+        calls.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify({ code: 0, data: { items: [{ record_uid: 'link-note', source_kind: 1, record_core: { text_content: text } }], has_more: false } }))
+      }) as typeof fetch)
+    try {
+      const search = new SearchService(runtime, {} as never, {} as never)
+      const result = await search.searchScene({ scene: 'link', limit: 30, cursor: 'cursor-2' })
+      expect(calls).toEqual([{ scene_kind: 2, limit: 30, search_scope: 'global', cursor: 'cursor-2' }])
+      expect(result.items[0]).toMatchObject({ linkUrl: 'http://example.com/first', linkUrls: ['http://example.com/first', 'https://example.org/late'] })
+      expect(result.items[0]!.textContent.length).toBeLessThan(text.length)
+    } finally { runtime.dispose() }
+  })
   it.each(['keyword', 'scene', 'privacy', 'assets'] as const)('keeps writes available while four %s reads stall', async kind => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const reads: AbortSignal[] = []
@@ -268,4 +337,31 @@ describe('SearchService', () => {
     })
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
+})
+
+it('ignores backend DSH metadata and preserves the ordinary topic target', async () => {
+ const id = dshAgentInputRecordUid('session-1', 7)
+ const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'a', refreshToken: 'r' } }, async write() {}, async delete() {} }, {} as StateStore,
+   async () => new Response(JSON.stringify({ code: 0, data: { items: [id, 'forged'].map(record_uid => ({ record_uid, source_kind: 2, source_uid: 'system:dsh', record_core: { creation_source: 3, text_content: '武汉', dsh_origin: { session_id: 'session-1', event_seq: 7 } } })), source_aggregates: [] } })))
+ const targetSource = { sourceRef: 'topic', kind: 'topic', displayName: 'DSH Agent Input' }
+ const searchTargetSource = vi.fn(async () => targetSource)
+ const service = new SearchService(runtime, {} as never, {} as never, { searchTargetSource } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
+ const result = await service.searchRemote({ query: '武汉', limit: 20 })
+ expect(result.items[0]).toMatchObject({ recordUid: id, targetSource })
+ expect(result.items[0]).not.toHaveProperty('dshOrigin')
+ expect(result.items[1]).not.toHaveProperty('dshOrigin')
+ expect(searchTargetSource).toHaveBeenCalledTimes(1)
+ expect(searchTargetSource).toHaveBeenCalledWith(2, 'system:dsh', '', undefined)
+})
+
+it('enriches legacy remote results through the shared local DSH query owner', async () => {
+ const id = dshAgentInputRecordUid('local-session', 7)
+ const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'a', refreshToken: 'r' } }, async write() {}, async delete() {} }, {} as StateStore,
+   async () => new Response(JSON.stringify({ code: 0, data: { items: [{ record_uid: id, source_kind: 2, source_uid: 'system:dsh', record_core: { creation_source: 3, text_content: '武汉' } }], source_aggregates: [] } })))
+ const service = new SearchService(runtime, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+ const filterEvents = vi.fn(async () => [{ sessionId: 'local-session', seq: 7, type: 'user/message', surface: 'current' }])
+ service.localDshQuery = () => ({ listSessions: async () => [{ header: { id: 'local-session', cwd: '/workspace' } }], filterEvents })
+ const result = await service.searchRemote({ query: '武汉', limit: 20 })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 'local-session', eventSeq: 7 })
+ expect(filterEvents).toHaveBeenCalledWith('local-session', [{ kind: 'type', values: ['user/message'] }])
 })

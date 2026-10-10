@@ -1,4 +1,6 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useState } from 'react'
+import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import type { ArkmeWorldFeedItem, ArkmeWorldFeedPage } from '../../../types.js'
 import { loadWorldImageDataUrl } from '../../ArkmeWorldSurface.js'
 import { ArkmeRichText } from '../../ArkmeRichText.js'
@@ -108,6 +110,7 @@ export function contactWorldReducer(
 }
 
 function ContactWorldImage({ imageRef, alt }: { imageRef: string; alt: string }) {
+  useArkmeLocale()
   const [source, setSource] = useState<string>()
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -119,7 +122,7 @@ function ContactWorldImage({ imageRef, alt }: { imageRef: string; alt: string })
       .catch(() => { if (active) setFailed(true) })
     return () => { active = false }
   }, [imageRef])
-  if (failed) return <span className="arkme-contact-world-image-error" role="img" aria-label={`${alt}加载失败`}>图片加载失败</span>
+  if (failed) return <span className="arkme-contact-world-image-error" role="img" aria-label={tr("{v0}加载失败", { v0: alt })}>{tr("图片加载失败")}</span>
   if (source === undefined) return <span className="arkme-contact-world-image-loading" aria-hidden />
   return <img className="arkme-contact-world-image" src={source} alt={alt} loading="lazy" />
 }
@@ -138,33 +141,38 @@ export function ContactWorldList({
   state,
   onRetry,
   onLoadMore,
+  onOpenWorld,
 }: {
   state: ContactWorldState
   onRetry(): void
   onLoadMore(): void
+  onOpenWorld?(): void
 }) {
   const initialLoading = state.status === 'loading' && state.loadingMode === 'replace'
   const latest = state.items.filter(isContactQuickNote).reduce<ArkmeWorldFeedItem | undefined>((current, item) => (
     current === undefined || worldTimestamp(item) > worldTimestamp(current) ? item : current
   ), undefined)
   const imageRef = latest?.imageRefs[0]
-  return <section className="arkme-contact-world" aria-label="联系人世界">
-    <h2 className="arkme-contact-world-title">世界</h2>
+  return <section className="arkme-contact-world" aria-label={tr("联系人世界")}>
+    {onOpenWorld !== undefined && latest !== undefined && !initialLoading && <button type="button" className="arkme-contact-world-open" data-arkme-hover="none" aria-label={tr("查看个人世界")} onClick={onOpenWorld}>
+      <CaretRight size={18} aria-hidden />
+    </button>}
+    <h2 className="arkme-contact-world-title">{tr("世界")}</h2>
     <div className="arkme-contact-world-content">
-      {initialLoading && <div role="status" className="arkme-contact-world-status">正在加载 TA 的世界…</div>}
-      {state.status === 'empty' && <div className="arkme-contact-world-empty">暂无公开快记</div>}
-      {state.status === 'ready' && latest === undefined && <div className="arkme-contact-world-page-empty">暂无公开快记</div>}
+      {initialLoading && <div role="status" className="arkme-contact-world-status">{tr("正在加载 TA 的世界…")}</div>}
+      {state.status === 'empty' && <div className="arkme-contact-world-empty">{tr("暂无公开快记")}</div>}
+      {state.status === 'ready' && latest === undefined && <div className="arkme-contact-world-page-empty">{tr("暂无公开快记")}</div>}
       {state.status === 'error' && <div role="alert" className="arkme-contact-world-error">
         <span>{state.message ?? '世界加载失败'}</span>
-        <button type="button" onClick={latest === undefined ? onRetry : onLoadMore}>重试</button>
+        <button type="button" onClick={latest === undefined ? onRetry : onLoadMore}>{tr("重试")}</button>
       </div>}
       {!initialLoading && latest !== undefined && <article className="arkme-contact-world-preview" data-world-record-ref={latest.recordRef}>
-        {imageRef !== undefined && <div className="arkme-contact-world-thumbnail"><ContactWorldImage key={imageRef} imageRef={imageRef} alt={`${latest.authorName}发布的图片 1`} /></div>}
+        {imageRef !== undefined && <div className="arkme-contact-world-thumbnail"><ContactWorldImage key={imageRef} imageRef={imageRef} alt={tr("{v0}发布的图片 1", { v0: latest.authorName })} /></div>}
         <div className="arkme-contact-world-summary">
           {latest.headline.trim() !== '' && <h3 className="arkme-contact-world-headline"><ArkmeRichText text={latest.headline} presentation="preview" /></h3>}
           {latest.textContent.trim() !== '' && <p className="arkme-contact-world-text"><ArkmeRichText text={latest.textContent} presentation="preview" /></p>}
           {latest.headline.trim() === '' && latest.textContent.trim() === '' && <p className="arkme-contact-world-text">{
-            latest.imageCount > 0 ? '[图片]' : latest.videoCount > 0 ? '[视频]' : latest.voiceCount > 0 ? '[语音]' : '世界动态'
+            latest.imageCount > 0 ? tr("[图片]") : latest.videoCount > 0 ? tr("[视频]") : latest.voiceCount > 0 ? tr("[语音]") : '世界动态'
           }</p>}
           <span className="arkme-contact-world-time">{formatContactDate(worldTimestamp(latest), '日期未知')}</span>
         </div>

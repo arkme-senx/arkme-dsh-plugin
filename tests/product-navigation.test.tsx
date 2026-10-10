@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { describe, expect, it } from 'vitest'
@@ -9,29 +9,87 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
-const productNavigationSource = readFileSync(
+const productNavigationSource = readUiSource(
   new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url),
   'utf8',
 )
-const persistentShellSource = readFileSync(
+const persistentShellSource = readUiSource(
   new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url),
   'utf8',
 )
-const realtimeClientEventsSource = readFileSync(
+const realtimeClientEventsSource = readUiSource(
   new URL('../src/client/realtime-client-events.ts', import.meta.url),
   'utf8',
 )
-const footerDropdownSource = readFileSync(
+const footerDropdownSource = readUiSource(
   new URL('../src/client/ArkmeFooterDropdown.tsx', import.meta.url),
   'utf8',
 )
-const redesignCss = readFileSync(
+const redesignCss = readUiSource(
   new URL('../src/client/redesign/arkme-redesign.css', import.meta.url),
   'utf8',
 )
 
 describe('Arkme product navigation', () => {
+  it('uses a 60px rail and a 36px footer avatar without resizing navigation controls', () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
+    arkmeUi.showConversations()
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<ArkmeProductNavigation compact={false} hosted taskExpanded />) })
+    try {
+      const nav = renderer.root.findByType('nav')
+      expect(nav.props.style.width).toBe(60)
+      expect(nav.props.style.minWidth).toBe(60)
+      const profile = renderer.root.findByProps({ 'aria-label': '个人资料' })
+      const avatar = profile.findByProps({ 'data-arkme-avatar': true })
+      expect(profile.children[0]).toEqual(expect.objectContaining({ props: expect.objectContaining({ className: 'arkme-member-label' }) }))
+      expect(avatar.props.style.width).toBe(36)
+      expect(avatar.props.style.height).toBe(36)
+      const active = renderer.root.findByProps({ 'aria-current': 'page' })
+      expect(active.props.style.minHeight).toBe(52)
+      expect(active.props.style.padding).toBe('6px 2px')
+    } finally {
+      act(() => renderer.unmount())
+    }
+  })
+
+  it('publishes drag mode from the active tab and clears it for hidden or locked navigation', () => {
+    let renderer!: ReactTestRenderer
+    act(() => {
+      arkmeUi.showConversations()
+      renderer = create(<ArkmeProductNavigation compact={false} />)
+    })
+    const mode = () => renderer.root.findByType('nav').props['data-arkme-window-drag-mode']
+    try {
+      expect(mode()).toBe('conversation')
+      for (const activate of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(),
+        () => arkmeUi.showRecordings(), () => arkmeUi.showWorld(),
+        () => arkmeUi.showCalendar(),
+        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showRecognizedSpeakers(), () => arkmeUi.showContactAdd()]) {
+        act(activate)
+        expect(mode()).toBe('fallback')
+        act(() => arkmeUi.showConversations())
+        expect(mode()).toBe('conversation')
+      }
+      act(() => arkmeUi.showHarness())
+      expect(mode()).toBe('conversation')
+      act(() => arkmeUi.showArko())
+      expect(mode()).toBe('conversation')
+      act(() => arkmeUi.showExtensions())
+      expect(mode()).toBe('marketplace')
+      act(() => arkmeUi.showConversations())
+      expect(mode()).toBe('conversation')
+      act(() => renderer.update(<ArkmeProductNavigation compact={false} hidden />))
+      expect(mode()).toBe('fallback')
+      act(() => renderer.update(<ArkmeProductNavigation compact={false} locked />))
+      expect(mode()).toBe('fallback')
+    } finally {
+      act(() => renderer.unmount())
+    }
+  })
+
   it('uses the same conversation directory total for product navigation and the legacy footer seat', () => {
     expect(productNavigationSource).toContain('arkmeChatDirectory.subscribe')
     expect(footerDropdownSource).toContain('arkmeChatDirectory.subscribe')
@@ -43,9 +101,12 @@ describe('Arkme product navigation', () => {
     expect(footerDropdownSource).not.toContain('totalUnreadCount')
   })
 
-  it('opens voiceprint management while the account entry lives in DSH settings', () => {
-    expect(productNavigationSource).toContain('arkmeUi.showVoiceprint()')
-    expect(productNavigationSource).toContain('<strong>声纹管理</strong>')
+  it('moves voiceprint into recordings and keeps only data/settings menu rows', () => {
+    expect(productNavigationSource).not.toContain('arkmeUi.showVoiceprint()')
+    expect(productNavigationSource).not.toContain('<strong>声纹管理</strong>')
+    expect(productNavigationSource).toContain('<strong>数据管理</strong>')
+    expect(productNavigationSource).toContain("arkmeUi.showWorld('mine')")
+    expect(productNavigationSource).toContain("arkmeUi.openDshSettings('arkme-usage')")
     expect(productNavigationSource).not.toContain('<strong>我的账户</strong>')
     expect(productNavigationSource).toContain('arkmeUi.openDshSettings()')
   })
@@ -81,7 +142,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('width:48px;height:28px;object-fit:cover')
     expect(markup).toContain('min-height:44px')
     expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('>对话<'))
-    expect(markup).toContain('background:#9eadff')
+    expect(markup).toContain('data-arkme-selection-marker="true"')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
     expect(markup).toContain('>对话<')
     expect(markup).toContain('>通话<')
@@ -91,9 +152,9 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>市集<')
     expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('background:#f1f2f6')
+    expect(markup).toContain(`background:${arkmeTheme.active}`)
     expect(markup).not.toContain('outline:0')
-    expect(markup).toContain('height:33px')
+    expect(redesignCss).toContain('[data-arkme-selection-marker],')
     expect(markup).not.toContain('data-slot="conversation"')
     expect(markup).not.toContain('data-slot="sidebar.footer.action"')
   })
@@ -135,7 +196,7 @@ describe('Arkme product navigation', () => {
   it('uses a horizontal layout contract for compact surfaces', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)
     expect(markup).toContain('flex-direction:row')
-    expect(markup).toContain('border-bottom:1px solid #e7e7e9')
+    expect(markup).toContain(`border-bottom:1px solid ${arkmeTheme.borderSoft}`)
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
@@ -165,7 +226,7 @@ describe('Arkme product navigation', () => {
     expect(unreadMarkup.match(/data-arkme-unread-indicator/g)).toHaveLength(1)
     expect(unreadMarkup).toContain('data-arkme-unread-count="110"')
     expect(unreadMarkup).toMatch(/data-arkme-unread-count="110"[^>]*>99\+<\/span>/)
-    expect(unreadMarkup).toContain('background:#ff5a52')
+    expect(unreadMarkup).toContain(`background:${arkmeTheme.danger}`)
 
     arkmeChatDirectory.publish([])
     arkmeAttentionSummary.apply({
@@ -228,6 +289,7 @@ describe('Arkme product navigation', () => {
   })
 
   it('keeps the conversation visible under the calendar overlay and removes it from standalone utility pages', () => {
+    arkmeUi.focusSendToSelf()
     arkmeUi.showSearch()
     const searchMarkup = renderToStaticMarkup(<ArkmeSurface
       initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}

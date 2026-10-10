@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useRef, type ReactNode } from 'react'
 import type { ContactDirectorySectionState } from './contact-directory-state.js'
 
@@ -7,6 +8,7 @@ export interface CollapsibleDirectorySectionProps {
   emptyLabel: string
   countLabel?: string
   active?: boolean
+  actions?: ReactNode
   children: ReactNode
   onToggle(): void
   onRetry(): void
@@ -20,10 +22,12 @@ export function CollapsibleDirectorySection({
   countLabel,
   active = true,
   children,
+  actions,
   onToggle,
   onRetry,
   onLoadMore,
 }: CollapsibleDirectorySectionProps) {
+  useArkmeLocale()
   const contentId = `arkme-directory-section-${section.section}`
   const hasItems = section.items.length > 0
   const sectionRef = useRef<HTMLElement>(null)
@@ -66,6 +70,7 @@ export function CollapsibleDirectorySection({
     onToggle()
   }
   return <section ref={sectionRef} className="arkme-contact-directory-section" data-directory-section={section.section}>
+    <div className="arkme-contact-directory-section-heading" data-expanded={section.expanded}>
     <button
       type="button"
       className="arkme-contact-directory-section-header"
@@ -79,19 +84,21 @@ export function CollapsibleDirectorySection({
       </span>
       <span className="arkme-contact-directory-count">{countLabel ?? (section.status === 'idle' || (section.status === 'loading' && !hasItems) || (section.coverage === 'partial' && section.section === 'contacts') || (section.status === 'error' && !hasItems) ? '…' : `${section.total}${section.coverage === 'partial' ? '+' : ''}`)}</span>
     </button>
+    {actions}
+    </div>
     <div id={contentId} className="arkme-contact-directory-section-body" hidden={!section.expanded}>
       {section.expanded && hasItems && children}
       {section.expanded && section.status === 'loading' && <div role="status" className="arkme-contact-directory-status">
-        {hasItems && section.loadingMode === 'replace' ? '正在更新…' : '正在加载…'}
+        {hasItems && section.loadingMode === 'replace' ? tr("正在更新…") : tr("正在加载…")}
       </div>}
       {section.expanded && section.status === 'empty' && <div className="arkme-contact-directory-empty">{emptyLabel}</div>}
       {section.expanded && section.status === 'error' && <div className="arkme-contact-directory-warning" role="alert">
-        <span>{section.warning ?? '加载失败'}</span>
-        <button type="button" onClick={onRetry}>刷新</button>
+        <span>{section.warning ?? tr("加载失败")}</span>
+        <button type="button" onClick={onRetry}>{tr("刷新")}</button>
       </div>}
       {section.expanded && section.status !== 'error' && section.status !== 'loading' && section.warning !== undefined
         && <div className="arkme-contact-directory-warning" role="status">
-          <span>{section.warning}</span><button type="button" onClick={onRetry}>刷新</button>
+          <span>{section.warning}</span><button type="button" onClick={onRetry}>{tr("刷新")}</button>
         </div>}
       {section.expanded && section.hasMore && <div ref={sentinelRef} data-directory-page-sentinel={section.section} aria-hidden style={{ height: 1 }} />}
     </div>

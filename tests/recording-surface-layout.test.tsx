@@ -25,6 +25,13 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeRecordingSurface layout', () => {
+  it('keeps the calendar actions and device list reachable in short wide windows', () => {
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
+    const aside = matchStyle(markup, /<aside style="([^"]+)"/)
+    expect(aside.get('overflow-y')).toBe('auto')
+    expect(aside.get('min-height')).toBe('0')
+  })
+
   it('keeps the desktop workbench behavior while allowing the DSH layout to adapt', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
@@ -107,7 +114,7 @@ describe('ArkmeRecordingSurface layout', () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(source).not.toContain('calendarExpanded')
-    expect(source).toContain('>回到今日</button>')
+    expect(source).toContain('{tr("回到今日")}</button>')
     expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
     expect(source).toContain('disabled={future}')
   })
@@ -117,7 +124,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(recordingSurface.recordingCalendarDuration(36 * 60_000)).toBe('0.6h')
     expect(recordingSurface.recordingCalendarDuration(90 * 60_000)).toBe('1.5h')
-    expect(source).toContain('monthDurationBrief: { background: colors.warningSoft, color: colors.warning }')
+    expect(source).toContain('monthDurationBrief: { color: colors.secondary }')
     expect(source).toContain('meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief')
     expect(source).not.toMatch(/calendar: \{[^}]*boxShadow/)
   })
@@ -196,8 +203,9 @@ describe('ArkmeRecordingSurface layout', () => {
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
-    expect(timelineSource).toContain('height: 162')
-    expect(timelineSource).toContain("gridTemplateRows: '25px minmax(0,1fr) 28px'")
+    expect(timelineSource).toContain('minHeight: 162')
+    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto auto'")
+    expect(timelineSource).toContain('<RecordingDailyMetrics')
   })
 
   it('uses the desktop empty illustration instead of tabs and the legacy placeholder track', async () => {
@@ -359,6 +367,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(source).toContain("section.state === 'processing'")
     expect(source).toContain('section.processingCount > 0')
-    expect(source).toContain("loading={dayLoading || day?.transcript.state === 'processing'}")
+    expect(source).toContain('loading={dayLoading}')
+    expect(source).toContain('coverage={coverage}')
   })
 })

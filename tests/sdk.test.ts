@@ -19,6 +19,54 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('normalizes local fetch rejection without automatically replaying a write', async () => {
+    const fetchImpl = vi.fn(async()=>{throw new TypeError('Failed to fetch')})
+    const sdk = createArkmeSdk({fetchImpl})
+    await expect(sdk.call('source.send-text',{text:'hello'})).rejects.toMatchObject({body:{code:'local-network-unavailable',retryable:true},message:'无法连接本机插件，请确认插件正在运行后重试'})
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+  it('preserves abort identity rather than calling cancellation a transport failure', async () => {
+    const controller=new AbortController(); controller.abort()
+    const error=new DOMException('cancelled','AbortError')
+    const sdk=createArkmeSdk({fetchImpl:async()=>{throw error}})
+    await expect(sdk.call('auth.status',{},controller.signal)).rejects.toBe(error)
+  })
+
+  it('exposes local-first common-group reads and one-batch sync through the same Host contract', async () => {
+    const calls: Array<{operation: string; params?: unknown}> = []
+    const signal = new AbortController().signal
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)); calls.push(request)
+      if (request.operation === 'provider.capabilities') return success({ contractVersion: 1, features: { commonGroups: true } })
+      expect(init?.signal).toBe(signal)
+      return success({ items: [], totalCached: 0, hasMore: false, syncedAtMillis: 0, revision: 0, syncHasMore: true })
+    } })
+    await sdk.listCommonGroups('private-ref', {cursor:'page-ref',signal})
+    await sdk.syncCommonGroups('private-ref',signal)
+    expect(calls.filter(c => c.operation !== 'provider.capabilities')).toEqual([
+      {operation:'group.common.list',params:{sourceRef:'private-ref',cursor:'page-ref'}},
+      {operation:'group.common.sync',params:{sourceRef:'private-ref'}},
+    ])
+    await expect(sdk.listCommonGroups(' ')).rejects.toThrow('reference')
+    const unavailable = createArkmeSdk({fetchImpl:async()=>success({contractVersion:1,features:{}})})
+    await expect(unavailable.syncCommonGroups('private-ref')).rejects.toThrow('不支持共同群聊')
+  })
+
+  it('reads calendar location using only the issued reference', async () => {
+    const calls: unknown[] = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      calls.push(JSON.parse(String(init?.body)))
+      return success({ recordUid: 'a', access: 'available' })
+    } })
+    expect(await sdk.calendarRecordLocation('opaque', new AbortController().signal)).toEqual({ recordUid: 'a', access: 'available' })
+    expect(calls).toEqual([{ operation: 'calendar.record-location', params: { locationRef: 'opaque' } }])
+  })
+  it('exposes the paginated conversation-name read with cancellation', async () => {
+    const fetcher = vi.fn(async () => success({ items: [], hasMore: false }))
+    const sdk = createArkmeSdk({ fetchImpl: fetcher })
+    await expect(sdk.searchConversationNames('狗才', { cursor: 'next', signal: new AbortController().signal })).resolves.toEqual({ items: [], hasMore: false })
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ operation: 'search.conversations', params: { query: '狗才', cursor: 'next' } })
+  })
   it('exposes the five-section directory, passes refresh/cursor and preserves Host recovery metadata', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
@@ -699,10 +747,13 @@ describe('Arkme SDK', () => {
     await expect(sdk.calendarBuckets({
       startDate: '2026-08-01',
       endDate: '2026-08-31',
+      sourceRef: 'signed-self',
       timezone: 'Asia/Shanghai',
     })).resolves.toMatchObject({ scope: 'self', days: [] })
     await expect(sdk.calendarRecords({
       bucketDate: '2026-08-21',
+      sourceRef: 'signed-self',
+      oldestFirst: true,
       timezone: 'Asia/Shanghai',
       limit: 10,
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
@@ -721,11 +772,13 @@ describe('Arkme SDK', () => {
       },
       { operation: 'auth.phone.verify', params: { phone: '13800008000', code: '123456' } },
       { operation: 'image.read', params: { imageRef: '1_1700000000_1_0.png' } },
-      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai' } },
+      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', sourceRef: 'signed-self' } },
       {
         operation: 'calendar.records',
         params: {
           bucketDate: '2026-08-21',
+          sourceRef: 'signed-self',
+          oldestFirst: true,
           timezone: 'Asia/Shanghai',
           limit: 10,
           cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
@@ -898,6 +951,7 @@ describe('Arkme SDK', () => {
         if (request.operation === 'group.members.add') return success({ sourceRef: 'group-ref', mode: 'direct_add', items: [], addedCount: 0, invitedCount: 0, failedCount: 0 })
         if (request.operation === 'group.bots') return success({ groupSourceRef: 'group-ref', displayName: '群聊', canAddBots: true, items: [] })
         if (request.operation === 'group.bot.add') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: true })
+        if (request.operation === 'group.bot.remove') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: false })
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -906,12 +960,14 @@ describe('Arkme SDK', () => {
     await expect(sdk.addGroupMembers('group-ref', [' candidate-ref '])).resolves.toMatchObject({ sourceRef: 'group-ref' })
     await expect(sdk.listGroupBots('group-ref')).resolves.toMatchObject({ canAddBots: true })
     await expect(sdk.addGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: true })
+    await expect(sdk.removeGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: false })
     expect(calls).toEqual([
       { operation: 'group.member-candidates', params: { sourceRef: 'group-ref', query: '林', limit: 10 } },
       { operation: 'group.invite-preview', params: { sourceRef: 'group-ref' } },
       { operation: 'group.members.add', params: { sourceRef: 'group-ref', candidateRefs: ['candidate-ref'] } },
       { operation: 'group.bots', params: { sourceRef: 'group-ref' } },
       { operation: 'group.bot.add', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
+      { operation: 'group.bot.remove', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
     ])
   })
 
@@ -1169,4 +1225,13 @@ describe('Arkme SDK', () => {
     })
     await expect(sdk.state()).rejects.toBeInstanceOf(ArkmeClientError)
   })
+})
+
+it('exposes server search with DSH identity and cancellation to external consumers', async () => {
+ const signal = new AbortController().signal
+ const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) => JSON.parse(String(_init?.body)).operation === 'provider.capabilities' ? success({ contractVersion: 1, features: { remoteRecordSearch: true } }) : success({ items: [{ recordUid: 'r', dshOrigin: { sessionId: 's', eventSeq: 7 } }], hasMore: false }))
+ const sdk = createArkmeSdk({ fetchImpl })
+ const result = await sdk.searchRemote('武汉', { limit: 10, signal })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 's', eventSeq: 7 })
+ expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ operation: 'search.records', params: { query: '武汉', limit: 10 } })
 })

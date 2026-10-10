@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -100,10 +101,10 @@ export function ArkmeFooterAction({
   const accessibleLabel = [
     'Arkme',
     ...(statusLabel === '' ? [] : [statusLabel]),
-    ...(statusLabel !== '' || normalizedUnread === 0 ? [] : [`${unreadLabel} 条未读`]),
+    ...(statusLabel !== '' || normalizedUnread === 0 ? [] : [tr("{v0} 条未读", { v0: unreadLabel })]),
   ].join(' · ')
   return <div style={wide ? actionRowStyle : { width: 36 }}>
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       disabled={authPending}
       style={{ ...buttonStyle, ...(wide ? {} : railButtonStyle) }}
@@ -111,8 +112,6 @@ export function ArkmeFooterAction({
       aria-controls="arkme-product-workspace"
       aria-expanded={expanded}
       title={wide ? undefined : accessibleLabel}
-      onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       onClick={() => { toggle(currentSession, authenticated) }}
     >
       <span style={{ position: 'relative', flex: 'none' }}>

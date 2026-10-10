@@ -8,6 +8,17 @@ import type { ArkmeRecordReeditSubmission } from '../src/record-reedit-contract.
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  it('persists cancellation completion across host relaunch without storing credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-cancellation-'))
+    const store = new ArkmeStateStore(root)
+    const completion = { userId: 7, sessionHash: 'a'.repeat(64), result: { mode: 'immediate' as const, status: 'done' as const, cancel_at: 0, has_phone: false } }
+    await store.writeCancellationCompletion(completion)
+    const restarted = new ArkmeStateStore(root)
+    await expect(restarted.readCancellationCompletion()).resolves.toEqual(completion)
+    await restarted.writeCancellationCompletion(undefined)
+    await expect(new ArkmeStateStore(root).readCancellationCompletion()).resolves.toBeUndefined()
+  })
+
   it.each([undefined, 'b'.repeat(64)])('preserves a checkpoint with a missing or mismatched baseline fingerprint: %s', async fingerprint => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-reedit-checkpoint-baseline-'))
     const store = new ArkmeStateStore(root)
@@ -28,7 +39,7 @@ describe('ArkmeStateStore', () => {
     expect(JSON.parse(await readFile(path, 'utf8')).recordReeditSubmissionsByUser['42']['identity\u0000r1'].state).toBe('committing')
   })
 
-  it.each(['metadata', 'content', 'recreated'] as const)('cleans only the submitted candidate after a %s draft update', async change => {
+  it.each(['metadata', 'content', 'mentions', 'recreated'] as const)('cleans only the submitted candidate after a %s draft update', async change => {
     const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-reedit-candidate-identity-')))
     const job = await reeditJob(store)
     await store.putRecordReeditSubmission(42, job)
@@ -36,6 +47,7 @@ describe('ArkmeStateStore', () => {
     const next = await store.putRecordReeditDraft(42, {
       ...job.draft, updatedAtMillis: 2, lastSourceRef: 'refreshed-source',
       ...(change === 'content' ? { textContent: '新的候选' } : {}),
+      ...(change === 'mentions' ? { mentions: [] } : {}),
     }, change === 'recreated' ? 0 : job.draft.draftRevision)
     expect(next.draftRevision === job.draft.draftRevision).toBe(change === 'metadata')
     await store.putRecordReeditSubmission(42, { ...job, state: 'committed', result: {
@@ -410,7 +422,7 @@ describe('ArkmeStateStore', () => {
       jobId: 'job-1', userId: 10001, revision: 1, phase: 'prepared',
       fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
       durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-      belongUserId: 10001, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+      belongUserId: 10001, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
       createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
       ...overrides,
     }
@@ -537,6 +549,18 @@ describe('ArkmeStateStore', () => {
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('restores a historical recording job without classification as kind zero for server-side all-day compatibility', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-kind-legacy-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+    const path = join(root, 'state.json')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    delete raw.recordingImportJobsByUser['10001']['job-1'].recordingKind
+    await writeFile(path, JSON.stringify(raw))
+
+    await expect(new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({ recordingKind: 0 })
   })
 
   it('removes only the exact account-scoped recording import job', async () => {
@@ -716,4 +740,17 @@ describe('ArkmeStateStore', () => {
     expect(jobs.some(item => item.jobId === 'active')).toBe(true)
     expect(jobs.some(item => item.jobId === 'terminal-0')).toBe(false)
   })
+})
+
+it('retains long article image refs, document and stable submit IDs after restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'arkme-article-draft-'))
+  const store = new ArkmeStateStore(root)
+  const draft = {sourceRef:'source',baseVersion:3,title:'article',textContent:'![x](arkme-local:arkme-file-v1.a)',textFormat:'markdown' as const,images:[{fileRef:'arkme-file-v1.a'}],document:{type:'doc',content:[]},recordUid:'record-id',relationUid:'relation-id',durationMillis:10,updatedAtMillis:20}
+  await store.putLongArticleDraft(42, draft)
+  const restarted = new ArkmeStateStore(root)
+  expect(await restarted.getLongArticleDraft(42,'source')).toEqual(draft)
+  expect(await restarted.recordReeditFileRefs(42)).toContain('arkme-file-v1.a')
+  expect(await restarted.recordReeditFileRefs(43)).toEqual([])
+  await restarted.removeLongArticleDraft(42,'source')
+  expect(await restarted.recordReeditFileRefs(42)).toEqual([])
 })

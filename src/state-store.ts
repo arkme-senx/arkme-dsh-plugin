@@ -1,3 +1,5 @@
+import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
+import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -16,10 +18,18 @@ import {
 } from './recording-import-contract.js'
 import { recordingImportFileNameKey } from './recording-import-shared.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
-import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
+import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditMentions, parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
 import type { ArkmeRecordReeditSubmission } from './record-reedit-contract.js'
 
+export interface ArkmeCancellationCompletion {
+  userId: number
+  sessionHash: string
+  result: import('./types.js').ArkmeCancellationSnapshot
+}
+
 interface PersistedState {
+  cancellationCompletion?: ArkmeCancellationCompletion
+
   version: 2
   uniqueCode: string
   pendingByUser: Record<string, ArkmePendingWrite[]>
@@ -72,6 +82,8 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (requiredStrings.some(key => typeof source[key] !== 'string')) return undefined
   if (requiredNumbers.some(key => typeof source[key] !== 'number' || !Number.isFinite(source[key]))) return undefined
   if (typeof source.phase !== 'string' || !RECORDING_IMPORT_PHASES.has(source.phase as RecordingImportPhase)) return undefined
+  const recordingKind = source.recordingKind === undefined ? 0 : source.recordingKind
+  if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
     userId: source.userId as number,
@@ -84,6 +96,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     sha256: source.sha256 as string,
     startAtMillis: source.startAtMillis as number,
     belongUserId: source.belongUserId as number,
+    recordingKind,
     sourceHandle: source.sourceHandle as string,
     uploadedBytes: source.uploadedBytes as number,
     createdAtMillis: source.createdAtMillis as number,
@@ -115,6 +128,12 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   return {
     sourceRef: source.sourceRef,
     ...(itemUid === undefined ? {} : { itemUid }),
+    ...(typeof source.baseVersion === 'number' && Number.isSafeInteger(source.baseVersion) && source.baseVersion > 0 ? { baseVersion: source.baseVersion } : {}),
+    ...(source.textFormat === 'markdown' || source.textFormat === 'plain' ? { textFormat: source.textFormat } : {}),
+    ...(source.document && typeof source.document === 'object' && !Array.isArray(source.document) ? { document: source.document as Record<string, unknown> } : {}),
+    ...(Array.isArray(source.images) ? { images: source.images.filter((x): x is import('./types.js').ArkmeLongArticleImage => x && typeof x === 'object' && (typeof x.fileRef === 'string' || typeof x.fileAssetUid === 'string')) } : {}),
+    ...(typeof source.recordUid === 'string' ? { recordUid: source.recordUid } : {}),
+    ...(typeof source.relationUid === 'string' ? { relationUid: source.relationUid } : {}),
     title: source.title.slice(0, 100),
     textContent: source.textContent.slice(0, 40000),
     durationMillis: typeof source.durationMillis === 'number' && Number.isFinite(source.durationMillis)
@@ -144,8 +163,10 @@ function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | u
     || !Number.isSafeInteger(source.draftRevision) || (source.draftRevision as number) <= 0
     || !Number.isSafeInteger(source.baseVersion) || (source.baseVersion as number) <= 0
     || !/^[a-f0-9]{64}$/.test(fingerprint)) return undefined
+  let mentions: ArkmeRecordReeditDraft['mentions']
   let attachments: ArkmeRecordReeditDraft['attachments']
   try {
+    if (source.mentions !== undefined) mentions = parseArkmeRecordReeditMentions(source.mentions)
     if (source.attachments !== undefined) attachments = parseArkmeRecordReeditAttachments(source.attachments)
   } catch { return undefined }
   return {
@@ -154,8 +175,15 @@ function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | u
     sourceIdentityKey,
     lastSourceRef,
     itemUid,
+    ...(typeof source.baseVersion === 'number' && Number.isSafeInteger(source.baseVersion) && source.baseVersion > 0 ? { baseVersion: source.baseVersion } : {}),
+    ...(source.textFormat === 'markdown' || source.textFormat === 'plain' ? { textFormat: source.textFormat } : {}),
+    ...(source.document && typeof source.document === 'object' && !Array.isArray(source.document) ? { document: source.document as Record<string, unknown> } : {}),
+    ...(Array.isArray(source.images) ? { images: source.images.filter((x): x is import('./types.js').ArkmeLongArticleImage => x && typeof x === 'object' && (typeof x.fileRef === 'string' || typeof x.fileAssetUid === 'string')) } : {}),
+    ...(typeof source.recordUid === 'string' ? { recordUid: source.recordUid } : {}),
+    ...(typeof source.relationUid === 'string' ? { relationUid: source.relationUid } : {}),
     title: source.title.slice(0, 100),
     textContent: source.textContent.slice(0, 40000),
+    ...(mentions === undefined ? {} : { mentions }),
     ...(attachments === undefined ? {} : { attachments }),
     baseVersion: source.baseVersion as number,
     baseContentFingerprint: fingerprint,
@@ -177,6 +205,7 @@ function sameRecordReeditCandidate(left: Omit<ArkmeRecordReeditDraft, 'draftRevi
   return left.baseVersion === right.baseVersion
     && left.baseContentFingerprint === right.baseContentFingerprint && left.title === right.title
     && left.textContent === right.textContent
+    && JSON.stringify(left.mentions) === JSON.stringify(right.mentions)
     && JSON.stringify(left.attachments) === JSON.stringify(right.attachments)
 }
 
@@ -253,6 +282,17 @@ function legacyRecordReeditRevision(drafts: unknown, submissions: unknown): numb
   return revision
 }
 
+function validCancellationCompletion(value: unknown): value is ArkmeCancellationCompletion {
+  if (value === null || typeof value !== 'object') return false
+  const candidate = value as ArkmeCancellationCompletion
+  const result = candidate.result
+  return Number.isSafeInteger(candidate.userId) && candidate.userId > 0
+    && typeof candidate.sessionHash === 'string' && /^[a-f0-9]{64}$/.test(candidate.sessionHash)
+    && result != null && ['immediate', 'waiting'].includes(result.mode)
+    && ['done', 'waiting'].includes(result.status) && Number.isSafeInteger(result.cancel_at)
+    && typeof result.has_phone === 'boolean'
+}
+
 function parseState(raw: string): PersistedState {
   const parsed = JSON.parse(raw) as unknown
   if (parsed === null || typeof parsed !== 'object') return emptyState()
@@ -294,6 +334,7 @@ function parseState(raw: string): PersistedState {
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
       : randomUUID(),
+    ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -379,12 +420,30 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  private readonly boardCache: ArrangementBoardCacheStore
   private readonly path: string
   private state: PersistedState | undefined
   private queue: Promise<void> = Promise.resolve()
 
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
+    this.boardCache = new ArrangementBoardCacheStore(directory)
+  }
+
+  async arrangementBoardCache(environment: string, userId: number, pages?: ArkmeArrangementBoardCachePages): Promise<ArkmeArrangementBoardCachePages> {
+    return this.boardCache.access(environment, userId, pages)
+  }
+
+  async readCancellationCompletion(): Promise<ArkmeCancellationCompletion | undefined> {
+    return await this.read(state => state.cancellationCompletion === undefined ? undefined : structuredClone(state.cancellationCompletion))
+  }
+
+  async writeCancellationCompletion(completion: ArkmeCancellationCompletion | undefined): Promise<void> {
+    if (completion !== undefined && !validCancellationCompletion(completion)) throw new Error('注销完成记录无效')
+    await this.update(state => {
+      if (completion === undefined) delete state.cancellationCompletion
+      else state.cancellationCompletion = structuredClone(completion)
+    })
   }
 
   async uniqueCode(): Promise<string> {
@@ -468,7 +527,7 @@ export class ArkmeStateStore {
   async recordReeditFileRefs(userId: number): Promise<string[]> {
     return await this.read(state => [...Object.values(recordReeditDraftEntries(state, userId)),
       ...Object.values(recordReeditSubmissionEntries(state, userId)).map(job => job.draft)]
-      .flatMap(draft => draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []))
+      .flatMap(draft => draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []).concat(Object.values(state.longArticleDraftsByUser[String(userId)] ?? {}).flatMap(draft => draft.images?.flatMap(image => image.fileRef ? [image.fileRef] : []) ?? [])))
   }
 
   async listRecordReeditSubmissions(userId: number): Promise<ArkmeRecordReeditSubmission[]> {
@@ -642,11 +701,12 @@ export class ArkmeStateStore {
     })
   }
 
-  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
     await this.update(state => {
       const userKey = String(userId)
       const drafts = state.longArticleDraftsByUser[userKey]
       if (drafts === undefined) return
+      if (expectedRecordUid !== undefined && drafts[longArticleDraftKey(sourceRef, itemUid)]?.recordUid !== expectedRecordUid) return
       delete drafts[longArticleDraftKey(sourceRef, itemUid)]
       if (Object.keys(drafts).length === 0) delete state.longArticleDraftsByUser[userKey]
     })

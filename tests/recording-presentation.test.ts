@@ -90,7 +90,7 @@ describe('recording presentation', () => {
 
     expect(items).toEqual([
       {
-        itemId: 'child-1:0', sessionId: 'session-1', childId: 'child-1',
+        rawTranscriptText: ' 我来同步 ', itemId: 'child-1:0', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 0, transcriptSource: 'system',
         childAsrItemStartAt: 1_000, childAsrItemEndAt: 2_000, formalSpeakerId: 'speaker-me',
         sourceSpeakerNumber: 1, assignmentSpeakerNumber: 1,
@@ -100,7 +100,7 @@ describe('recording presentation', () => {
         isSelf: true, isBackground: false, text: '我来同步',
       },
       {
-        itemId: 'child-1:1', sessionId: 'session-1', childId: 'child-1',
+        rawTranscriptText: '背景讨论', itemId: 'child-1:1', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 1, transcriptSource: 'system',
         childAsrItemStartAt: 3_000, childAsrItemEndAt: 4_000, formalSpeakerId: '',
         sourceSpeakerNumber: 2, assignmentSpeakerNumber: 2,
@@ -110,7 +110,7 @@ describe('recording presentation', () => {
         isSelf: false, isBackground: true, text: '背景讨论',
       },
       {
-        itemId: 'child-1:2', sessionId: 'session-1', childId: 'child-1',
+        rawTranscriptText: '数字回退', itemId: 'child-1:2', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 2, transcriptSource: 'system',
         childAsrItemStartAt: 5_000, childAsrItemEndAt: 6_000, formalSpeakerId: '',
         sourceSpeakerNumber: 3, assignmentSpeakerNumber: 3,
@@ -303,6 +303,10 @@ describe('recording presentation', () => {
       eventId: 'event-0', startAt: '09:00', endAt: '10:00', timeRange: '09:00–10:00',
       title: '周会', description: '同步项目进展', scene: '会议', emotion: '专注', todo: '整理结论',
       tags: ['工作'], participants: ['我', '小林'], rawText: '',
+      dialoguePoints: [
+        { speakerName: '我', summary: '', quote: '', roleDescription: '', isSelf: false },
+        { speakerName: '小林', summary: '', quote: '', roleDescription: '', isSelf: false },
+      ],
     }])
 
     expect(parseRecordingTimeline(`

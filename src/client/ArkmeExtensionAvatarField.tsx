@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeExtensionAvatarCropDialog } from './ArkmeExtensionAvatarCropDialog.js'
@@ -10,6 +11,7 @@ export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, 
   disabled: boolean
   onSelect(file: File): void
 }) {
+  useArkmeLocale()
   const input = useRef<HTMLInputElement>(null)
   const [previewUrl, setPreviewUrl] = useState('')
   const [active, setActive] = useState(false)
@@ -27,7 +29,7 @@ export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, 
   return <div style={styles.row}>
     <button
       type="button"
-      aria-label="更换扩展头像"
+      aria-label={tr("更换扩展头像")}
       disabled={disabled}
       style={styles.action}
       onClick={() => { input.current?.click() }}
@@ -44,7 +46,7 @@ export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, 
       <span style={{ ...styles.camera, opacity: active ? 1 : 0 }} aria-hidden>⌁</span>
     </button>
     <span style={styles.copy}>
-      <span style={styles.title}>扩展头像</span>
+      <span style={styles.title}>{tr("扩展头像")}</span>
       <span style={styles.description}>{selectedFile === undefined
         ? '支持常见图片，选择后可手动裁剪并自动压缩'
         : '已完成裁剪，点此可重新选择'}</span>
