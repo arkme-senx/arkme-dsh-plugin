@@ -11,6 +11,7 @@ import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
+import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
 import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
@@ -97,7 +98,9 @@ export function TeamConversationRow({ conversation: c, selected = false, showTea
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onClick={onClick}>
     <span style={directoryStyles.sourceAvatarWrap}>
-      <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
+      {c.side === 'team'
+        ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
+        : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
