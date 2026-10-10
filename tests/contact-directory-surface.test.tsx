@@ -338,7 +338,7 @@ describe('ContactDirectorySurface content', () => {
     expect(markup).toContain('aria-current="true"')
   })
 
-  it('renders team rows with a large foreground person and a smaller rear person', () => {
+  it('renders the shared team avatar presentation in directory rows', () => {
     const team = items.teams[0]
     if (team === undefined) throw new Error('fixture missing')
     const markup = renderToStaticMarkup(<DirectoryItemRow
@@ -352,10 +352,8 @@ describe('ContactDirectorySurface content', () => {
     expect(markup).toContain('class="arkme-contact-directory-avatar is-team"')
     expect(markup).toContain('role="img"')
     expect(markup).toContain('aria-label="Arkme 产品组的团队头像"')
-    expect(markup).toContain('viewBox="0 0 24 24"')
-    expect(markup.match(/<circle/g)).toHaveLength(2)
-    expect(markup.match(/<path/g)).toHaveLength(2)
-    expect(markup).toContain('opacity="0.68"')
+    expect(markup).toContain('arkme-team-name-avatar')
+    expect(markup).toContain('>AR</span>')
   })
 
   it('force-refreshes the collapsed unmarked-speaker section without discarding mounted directory state', async () => {

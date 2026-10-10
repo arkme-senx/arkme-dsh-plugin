@@ -1,10 +1,12 @@
+import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
+import {TeamProfileEditor} from './TeamProfileEditor.js'
+import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
-import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
 import type { TeamMembers } from '../../../team-app-contract.js'
 import { TeamChannelSettings } from '../../TeamMessagingPanel.js'
-import { openTeamMessages, invalidateTeamMessages } from '../../team-messaging-events.js'
+import { openTeamMessages, invalidateTeamMessages, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
 import { useArkmeLocale } from '../../locale.js'
 import { teamText as tr } from '../../team-messaging-i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -49,6 +51,8 @@ export function TeamDetailPane({ accountKey, teamRef, initialView = 'members' }:
 function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey: string; teamRef: string; initialView: 'members' | 'activity' }) {
   useArkmeLocale()
   const [state, setState] = useState<TeamDetailState>({ status: 'loading' })
+  const [editing,setEditing]=useState<ArkmeTeamProfile>()
+  const [profileBusy,setProfileBusy]=useState(false)
   const [syncTeam, setSyncTeam] = useState<ArkmeTeam>()
   const [codexBusy, setCodexBusy] = useState(false)
   const navigationRef = useRef<AbortController>()
@@ -105,6 +109,14 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     }
   }, [load])
 
+  useEffect(()=>subscribeTeamMessageChanges(account=>{if(account===accountKey)void load(undefined,true)}),[accountKey,load])
+  const openProfile=async()=>{
+    if(profileBusy||!state.page?.team.canEditProfile)return
+    const controller=new AbortController();navigationRef.current?.abort();navigationRef.current=controller;setProfileBusy(true)
+    try{const profile=await callArkme<ArkmeTeamProfile>('team.app.profile.get',{teamRef:state.page.team.teamRef},controller.signal);if(!controller.signal.aborted&&profile.canEditProfile)setEditing(profile)}
+    catch(e){if(!controller.signal.aborted)setState(current=>({...current,message:loadErrorMessage(e)}))}
+    finally{if(!controller.signal.aborted)setProfileBusy(false)}
+  }
   const openCodex = async (member?: ArkmeTeamMember) => {
     if (!state.page) return
     navigationRef.current?.abort()
@@ -166,9 +178,9 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
     <header className="arkme-team-detail-header">
       <div className="arkme-team-detail-header-main">
-        <span className="arkme-team-detail-glyph" aria-hidden><UsersThree size={32} weight="duotone" /></span>
+        <span className="arkme-team-detail-glyph" aria-hidden><ArkmeTeamAvatar avatar={page.team.avatar} name={page.team.name} size={80}/></span>
         <div className="arkme-team-detail-summary">
-          <h1>{page.team.name}</h1>
+          <h1>{page.team.name}</h1>{page.team.canEditProfile===true&&<button type="button" className="arkme-team-profile-entry" aria-label="编辑团队" disabled={profileBusy} onClick={()=>{void openProfile()}}>编辑</button>}
           <div className="arkme-team-detail-meta">
             <span className="arkme-team-detail-public-id">@{page.team.jotmoId}</span>
             <span className="arkme-team-role-badge" data-team-role={page.team.currentUserRole}>
@@ -239,6 +251,10 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
         </div>
       </div>
     </section>
+    {editing&&<TeamProfileEditor profile={editing} onClose={()=>setEditing(undefined)} onUpdated={profile=>{
+      setEditing(undefined);setState(current=>current.page?{...current,page:{...current.page,team:{...current.page.team,name:profile.name,profileRevision:profile.profileRevision,canEditProfile:profile.canEditProfile,avatar:profile.avatar}}}:current)
+      arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
+    }}/>}
     {syncTeam && <TeamCodexSyncDialog team={syncTeam} onClose={() => setSyncTeam(undefined)} onViewConversations={() => {
       setSyncTeam(undefined)
       arkmeUi.showCodex({ accountKey, team: syncTeam, member: '', fromTeam: true, returnView: 'activity' })

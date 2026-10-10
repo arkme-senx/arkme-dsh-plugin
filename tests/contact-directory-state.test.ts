@@ -247,3 +247,16 @@ describe('contact directory state', () => {
     ])
   })
 })
+
+it('keeps the account-scoped team navigation through profile refresh and removes lost access',()=>{
+ const old:ArkmeDirectoryItem={kind:'team',teamRef:'old-access-ref',publicId:'stable_team_id',displayName:'旧名',role:'owner'}
+ const refreshed:ArkmeDirectoryItem={...old,teamRef:'rotating-access-ref',displayName:'新名',avatar:{mode:'custom',key:'asset'}}
+ let state=createContactDirectoryState('account-a')
+ state=reduce(state,{type:'load-start',section:'teams',accountKey:'account-a',generation:1,mode:'replace'},{type:'load-success',section:'teams',accountKey:'account-a',generation:1,mode:'replace',page:page('teams',[old])},{type:'select',selection:{kind:'team',teamRef:old.teamRef}})
+ state=reduce(state,{type:'load-start',section:'teams',accountKey:'account-a',generation:2,mode:'replace'},{type:'load-success',section:'teams',accountKey:'account-a',generation:2,mode:'replace',page:page('teams',[refreshed])})
+ expect(state.selection).toEqual({kind:'team',teamRef:'old-access-ref'});expect(state.sections.teams.items[0]).toMatchObject({teamRef:'old-access-ref',displayName:'新名',avatar:{key:'asset'}})
+ state=reduce(state,{type:'load-start',section:'teams',accountKey:'account-a',generation:3,mode:'replace'},{type:'load-success',section:'teams',accountKey:'account-a',generation:3,mode:'replace',page:page('teams',[])})
+ expect(state.selection).toEqual({kind:'none'})
+ state=reduce(state,{type:'reset-account',accountKey:'account-b'},{type:'load-start',section:'teams',accountKey:'account-b',generation:1,mode:'replace'},{type:'load-success',section:'teams',accountKey:'account-b',generation:1,mode:'replace',page:page('teams',[refreshed])})
+ expect(state.sections.teams.items[0]).toMatchObject({teamRef:'rotating-access-ref'})
+})

@@ -1,4 +1,6 @@
-import { createHmac } from 'node:crypto'
+import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
+import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
+import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { recordOwnerId, stringifyOwnerJson } from '../record-owner-id.js'
 import type { TeamMemberAvatarPort } from './team-service.js'
@@ -16,6 +18,7 @@ const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invali
 const reasons: Record<string, string> = {
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
+  not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
@@ -68,7 +71,21 @@ export class TeamAppService {
     const v = obj(raw)
     if (!recordOwnerId(v.team_id)) throw invalid()
     return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+      profileRevision:num(v.profile_revision),canEditProfile:v.can_edit_profile===true,avatar:await this.avatar(v,actor),
       currentUserRole: role(v.role), createdAtMillis: num(v.ca), updatedAtMillis: num(v.ua) }
+  }
+  private async avatar(raw:Record<string,unknown>,actor:number):Promise<ArkmeTeamAvatar> {
+    const v=obj(raw.avatar),custom=v.mode==='custom', key=await this.key(`avatar:${str(v.key)}`,actor);
+    return {mode:custom?'custom':'default',key:custom?`team_avatar_asset://${key}`:key,
+      ...(custom?{imageRef:await this.ref('profile-image',{team_id:raw.team_id,key:v.key},actor)}:{})};
+  }
+  private async profile(raw:unknown,actor:number):Promise<ArkmeTeamProfile> {
+    const v=obj(raw);if(!recordOwnerId(v.team_id))throw invalid();
+    return {profileRef:await this.ref('team',{team_id:recordOwnerId(v.team_id)},actor),name:str(v.name),jotmoId:str(v.jotmo_id),
+      profileRevision:num(v.profile_revision),canEditProfile:v.can_edit_profile===true,avatar:await this.avatar(v,actor)};
+  }
+  private async profileResult(raw:Record<string,unknown>,actor:number):Promise<ArkmeTeamProfileResult> {
+    return {requestUid:str(raw.request_uid),acceptedRevision:num(raw.accepted_revision),...(raw.team?{profile:await this.profile(raw.team,actor)}:{})};
   }
   private async channel(raw: unknown, actor: number): Promise<TeamChannel> {
     const v = obj(raw)
@@ -168,6 +185,42 @@ export class TeamAppService {
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
     }
     switch (operation) {
+      case 'team.app.profile.get':return await this.profile((await post('profile/get',{team_id:await teamID()},true)).team,actor)
+      case 'team.app.profile.status':return await this.profileResult(await post('profile/update/status',{team_id:await teamID(),request_uid:str(p.requestUid)},true),actor)
+      case 'team.app.profile.update': {
+        const id=await teamID(),patch=obj(p.avatar);
+        if(!Number.isSafeInteger(p.expectedRevision)||Number(p.expectedRevision)<0||!str(p.requestUid)||str(p.requestUid).length>128)throw invalid()
+        if(p.name!==undefined&&(typeof p.name!=='string'||[...p.name.trim()].length<1||[...p.name.trim()].length>64))throw invalid()
+        const body:Record<string,unknown>={team_id:id,expected_revision:p.expectedRevision,request_uid:p.requestUid,...(p.name===undefined?{}:{name:str(p.name).trim()})}
+        if(p.avatar!==undefined){
+          if(patch.action==='default')body.avatar={action:'default'}
+          else if(patch.action==='custom') {const upload=await this.open('profile-upload',patch.uploadRef,actor);if(String(upload.team_id)!==String(id))throw invalid();body.avatar={action:'custom',upload_uid:upload.upload_uid}}
+          else throw invalid()
+        }
+        let result:Record<string,unknown>
+        try{result=await post('profile/update',body)}catch(error){
+          const status=await post('profile/update/status',{team_id:id,request_uid:p.requestUid},true).catch(()=>undefined)
+          if(!status||num(status.accepted_revision)<=0)throw error
+          result=status
+        }
+        return await this.profileResult(result,actor)
+      }
+      case 'team.app.profile.avatar.upload': {
+        const id=await teamID(),uploadUid=str(p.uploadUid)
+        if(!/^[A-Za-z0-9._:-]{1,128}$/.test(uploadUid))throw invalid()
+        // Authority is checked before decoding bytes, and again when accepting the candidate.
+        const current=await post('profile/get',{team_id:id},true);if(obj(current.team).can_edit_profile!==true)throw new ArkmePluginError('team-not_owner',reasons.not_owner!,false,403)
+        const bytes=await squareProfileImage(str(p.contentBase64));signal?.throwIfAborted()
+        const prepared=await post('profile/avatar/prepare-upload',{team_id:id,upload_uid:uploadUid,planned_size:bytes.length,file_hash:createHash('sha256').update(bytes).digest('hex'),mime_type:'image/jpeg'})
+        if(!str(prepared.file_asset_uid)) {
+          const headers=Object.fromEntries(Object.entries(obj(prepared.upload_headers)).filter((entry):entry is [string,string]=>typeof entry[1]==='string'))
+          const response=await this.runtime.fetchImpl(authorizedStorageURL(str(prepared.upload_url)),{method:'PUT',body:Uint8Array.from(bytes),headers,redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(120_000),...(signal?[signal]:[])])})
+          await response.body?.cancel();if(!response.ok)throw new ArkmePluginError('team-avatar-upload-failed','头像上传失败，请重试',true,502)
+        }
+        await post('profile/avatar/complete-upload',{team_id:id,upload_uid:uploadUid})
+        return {uploadRef:await this.ref('profile-upload',{team_id:id,upload_uid:uploadUid},actor)}
+      }
+      case 'team.app.profile.avatar.abort': {const upload=await this.open('profile-upload',p.uploadRef,actor);return await post('profile/avatar/abort-upload',{team_id:upload.team_id,upload_uid:upload.upload_uid})}
       case 'team.app.attention': {
         const data = await post('conversations/attention', {}, true)
         return { external: data.external === true, team: data.team === true, applications: data.applications === true }
@@ -179,7 +232,7 @@ export class TeamAppService {
         const offset = p.cursor ? num((await this.open('directory-cursor', p.cursor, actor)).offset) : 0
         const limit = Math.min(100, Math.max(1, num(p.limit) || 50))
         const hasMore = offset + limit < teams.length
-        const items = p.countOnly === true ? [] : teams.slice(offset, offset + limit).map(v => ({ kind: 'team' as const, teamRef: v.teamRef, displayName: v.name, publicId: v.jotmoId, role: v.currentUserRole }))
+        const items = p.countOnly === true ? [] : teams.slice(offset, offset + limit).map(v => ({ kind: 'team' as const, teamRef: v.teamRef, displayName: v.name, publicId: v.jotmoId, role: v.currentUserRole, ...(v.avatar?{avatar:v.avatar}:{}) }))
         return { section: 'teams', items, total: teams.length, hasMore: p.countOnly === true ? false : hasMore,
           ...(hasMore ? { nextCursor: await this.ref('directory-cursor', { offset: offset + limit }, actor) } : {}) } satisfies ArkmeDirectoryPage
       }
@@ -352,6 +405,21 @@ export class TeamAppService {
     return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream' }
   }
   private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
+    if(str(p.imageRef).startsWith('team-app-profile-image.')){
+      const ref=await this.open('profile-image',p.imageRef,session.userId)
+      const result=obj(await this.runtime.authenticatedTeamPost('/api/v1/team/profile/get',{team_id:ref.team_id},session,signal,true)),avatar=obj(obj(result.team).avatar)
+      if(avatar.mode!=='custom'||str(avatar.key)!==str(ref.key))throw invalid()
+      const cacheKey=`team_avatar_asset://${await this.key(`avatar:${str(ref.key)}`,session.userId)}`
+      const cached=await this.runtime.stateStore.readAvatarCache?.(session.userId,cacheKey).catch(()=>undefined)
+      if(cached)return {base64:Buffer.from(cached.data).toString('base64'),mimeType:cached.mediaType}
+      const response=await this.runtime.fetchImpl(authorizedStorageURL(str(avatar.url)),{redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(15_000),...(signal?[signal]:[])])})
+      const mimeType=response.headers.get('content-type')?.split(';')[0]??''
+      if(!response.ok||!['image/png','image/jpeg'].includes(mimeType)){await response.body?.cancel();throw invalid()}
+      const bytes=await this.readBytes(response,2*1024*1024)
+      const current=await this.runtime.accountScopedSession();if(!current||current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw invalid()
+      await this.runtime.stateStore.writeAvatarCache?.(session.userId,cacheKey,{data:Uint8Array.from(bytes),bytes:bytes.length,mediaType:mimeType as 'image/png'|'image/jpeg'}).catch(()=>undefined)
+      return {base64:bytes.toString('base64'),mimeType}
+    }
     const ref = await this.open('image', p.imageRef, session.userId), url = new URL(str(ref.url))
     const hosts = this.runtime.config.environment === 'prod' ? ['jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', 'userfiles.jotmo.cc'] : ['jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', 'jotmo-userfiles.senguo.me']
     if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) throw invalid()

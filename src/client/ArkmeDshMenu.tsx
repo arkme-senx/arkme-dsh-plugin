@@ -157,6 +157,8 @@ export function ArkmeActionMenu(props: {
   align?: 'start' | 'end'
   side?: 'top' | 'bottom' | 'right'
   autoFocus?: boolean
+  /** Keep menus in the native dialog top layer when used inside a modal. */
+  portal?: boolean
   /** Hover menus dismiss immediately outside the trigger, menu and crossing gap. */
   hoverAnchor?: HTMLElement | undefined
   /** Optional grace for pointer overshoot; other dismissal paths remain immediate. */
@@ -184,7 +186,7 @@ export function ArkmeActionMenu(props: {
     }
   }, [props.autoFocus])
   useEffect(() => {
-    if (!open || !props.autoFocus || focused.current) return
+    if (!open || !props.autoFocus || focused.current || typeof requestAnimationFrame === 'undefined') return
     const frame = requestAnimationFrame(focusFirstItem)
     return () => cancelAnimationFrame(frame)
   }, [open, props.autoFocus, focusFirstItem])
@@ -348,7 +350,7 @@ export function ArkmeActionMenu(props: {
       buttons[index]?.focus()
     }}>
     <ArkmeDshMenu open={open} label={props.label} anchor={props.anchor ?? null}
-      items={items} portal getAnchorRect={getAnchorRect}
+      items={items} portal={props.portal ?? true} getAnchorRect={getAnchorRect}
       {...(props.selectedIds === undefined ? {} : { selectedIds: props.selectedIds })}
       {...(props.align === undefined ? {} : { align: props.align })}
       {...(props.side === undefined ? {} : { side: props.side })}

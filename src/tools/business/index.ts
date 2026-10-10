@@ -1,3 +1,4 @@
+import {teamProfileTools} from './contacts/team-profile.js'
 import { officialNotificationToolModules } from './account/official-notifications.js'
 import { selfRoleToolModules } from './records/self-roles.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
@@ -59,6 +60,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...selfRoleToolModules,
   ...officialNotificationToolModules,
   directoryReadToolModule,
+  ...teamProfileTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

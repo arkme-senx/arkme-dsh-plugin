@@ -1,3 +1,5 @@
+import {readProfileImage} from './services/profile-image.js'
+import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from './team-profile-contract.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -382,6 +384,27 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
+    const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
+    const team=teams.find(t=>t.jotmoId===jotmoId.trim());if(!team)throw new ArkmePluginError('team-not_accessible','团队不存在或无法访问',false,403)
+    return await this.teamApp.execute('team.app.profile.get',{teamRef:team.teamRef},signal) as ArkmeTeamProfile
+  }
+  async updateTeamProfile(profileRef:string,command:ArkmeTeamProfileUpdate,signal?:AbortSignal):Promise<ArkmeTeamProfileResult> {
+    return await this.teamApp.execute('team.app.profile.update',{teamRef:profileRef,...command},signal) as ArkmeTeamProfileResult
+  }
+  async uploadTeamAvatar(profileRef:string,contentBase64:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}> {
+    return await this.teamApp.execute('team.app.profile.avatar.upload',{teamRef:profileRef,contentBase64,uploadUid},signal) as {uploadRef:string}
+  }
+  async uploadTeamAvatarFile(profileRef:string,fileRef:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}> {
+    const actor=await this.runtime.requireSession()
+    const local=await this.filesOwner().readLocal(fileRef)
+    if(local.file.size>10*1024*1024)throw new ArkmePluginError('team-avatar-too-large','请选择小于 10MB 的图片',false,400)
+    const bytes=await readProfileImage(local.path,signal);signal?.throwIfAborted()
+    const current=await this.runtime.accountScopedSession()
+    if(current?.userId!==actor.userId||current?.refreshToken!==actor.refreshToken)throw new ArkmePluginError('team-account-changed','登录账号已变化',false,409)
+    return await this.uploadTeamAvatar(profileRef,bytes.toString('base64'),uploadUid,signal)
+  }
+  async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void> {await this.teamApp.execute('team.app.profile.avatar.abort',{uploadRef},signal)}
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
@@ -930,6 +953,7 @@ export class ArkmeService {
         topicHomeVisibility: true,
         officialNotificationsV1: true,
         entityArchive: true,
+        teamProfiles: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
