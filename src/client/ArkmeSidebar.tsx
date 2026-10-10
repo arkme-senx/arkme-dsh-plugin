@@ -7,6 +7,7 @@ import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { arkmeConversationMessageLayout, dayKey, dayLabel, timeLabel } from './conversation-message-presentation.js'
+import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
@@ -6207,7 +6208,7 @@ export function ArkmeSurface({
     momentRelatedRequestRef.current = controller
     setMomentRelatedState({ kind: 'loading' })
     try {
-      const list = await callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-moment', {
+      const list = await loadRelatedQuickNotes('source.related-quick-notes.from-moment', {
         sourceRef: source.sourceRef,
         momentRef: moment.momentRef,
       }, controller.signal)
