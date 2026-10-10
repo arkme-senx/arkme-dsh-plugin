@@ -267,9 +267,18 @@ AI 额度|AI allowance
 赠送积分|Granted points
 充值积分|Purchased points
 赠送积分到期时间|Grant expires
+月度|Monthly
+一次性|One-time
+永久 {v0}|Permanent {v0}
+{v0} {v1}（{v2} 到期）|{v0} {v1} (expires {v2})
+每月赠送 AI 额度|AI allowance granted every month
+一次性额度永久有效；月度额度月底到期。|One-time allowances never expire; monthly allowances expire at month end.
 任务进行中暂占|Reserved by running tasks:
 积分，结束后返还未用部分|points; unused points return when the task finishes
 赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
+赠送 {v0}|Granted {v0}
+充值 {v0}|Purchased {v0}
+查看赠送额度说明|View gift allowance details
 DSH 对话|DSH chat
 AI 调用|AI usage
 （赠送）| (Gift)

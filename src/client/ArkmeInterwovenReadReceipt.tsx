@@ -1,9 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeInterwovenMention } from '../types.js'
 import { InterwovenReadReceiptStore } from './interwoven-read-receipt-store.js'
 import { arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeReadReceiptIcon } from './ArkmeReadReceiptIcon.js'
-import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 
@@ -31,14 +30,11 @@ export function ArkmeInterwovenReadProvider({ sourceRef, scope, enabled, childre
   return <Context.Provider value={store}>{children}</Context.Provider>
 }
 
-export function ArkmeInterwovenReadReceipt({ moment }: { moment: ArkmeInterwovenMention }) {
+export function useArkmeInterwovenReadReceipt(moment: ArkmeInterwovenMention) {
   useArkmeLocale()
   const store = useContext(Context)
   const ref = useRef<HTMLSpanElement>(null)
   const receipt = useSyncExternalStore(store?.subscribe ?? noopSubscribe, () => store?.get(moment.momentRef), () => undefined)
-  const [anchor, setAnchor] = useState<HTMLButtonElement>()
-  const close = useCallback(() => { setAnchor(undefined) }, [])
-  const id = useId()
   useEffect(() => {
     if (!store || !ref.current) return
     const registration = store.register(moment.momentId, moment.momentRef)
@@ -49,7 +45,6 @@ export function ArkmeInterwovenReadReceipt({ moment }: { moment: ArkmeInterwoven
     else registration.setVisible(true)
     return () => { observer?.disconnect(); registration.dispose() }
   }, [store, moment.momentId, moment.momentRef])
-  if (!store) return null
   const expectedReader = moment.senderIsMe ? 'peer' : 'self'
   const status = receipt?.reader === expectedReader ? receipt.status : 'unknown'
   const label = status === 'unknown' ? tr('群内原消息的已读状态暂不可用')
@@ -58,13 +53,19 @@ export function ArkmeInterwovenReadReceipt({ moment }: { moment: ArkmeInterwoven
   const timestamp = status === 'read' && receipt?.readAtMillis && receipt.readAtMillis > 0
     ? new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(receipt.readAtMillis) : ''
   const text = timestamp ? `${label} · ${timestamp}` : label
+  return { ref, enabled: store !== undefined, status, text }
+}
+
+/** The enclosing card owns one tooltip for both the summary and receipt. */
+export function ArkmeInterwovenReadReceipt({ receipt, describedBy }: {
+  receipt: ReturnType<typeof useArkmeInterwovenReadReceipt>; describedBy?: string | undefined
+}) {
+  const { ref, enabled, status, text } = receipt
+  if (!enabled) return null
   return <span ref={ref} data-arkme-interwoven-receipt={status} aria-label={text}
-    aria-describedby={anchor ? id : undefined} tabIndex={0}
-    onMouseEnter={() => { const button = ref.current?.closest('button'); if (button) setAnchor(button) }}
-    onMouseLeave={close} onFocus={() => { const button = ref.current?.closest('button'); if (button) setAnchor(button) }} onBlur={close}
+    aria-describedby={describedBy} tabIndex={0}
     style={{ display: 'inline-grid', placeItems: 'center', width: 14, height: 18, flex: 'none' }}>
     {status === 'read' ? <ArkmeReadReceiptIcon checked style={{ opacity: .4 }} /> : status === 'unread'
       ? <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: arkmeTheme.info, opacity: .65 }} /> : null}
-    {anchor && <ArkmeCalendarDateTooltip anchor={anchor} id={id} text={text} onClose={close} />}
   </span>
 }

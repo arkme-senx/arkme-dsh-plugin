@@ -1,3 +1,5 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { officialNotifications, useOfficialNotifications } from './official-notification-store.js'
 import { ArkmeOfficialNotificationDetail } from './ArkmeOfficialNotificationDetail.js'
 import type { OfficialNotificationSnapshot } from './official-notification-store.js'
@@ -76,7 +78,7 @@ function accountScope(): string | undefined {
 
 function compactText(value: string, limit = 180): string {
   const normalized = value.replace(/\s+/g, ' ').trim()
-  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit).trimEnd()}…`
+  return normalized.length <= limit ? normalized : `${arkmeEmojiTokenSafePrefix(normalized, limit, 'codeUnits').trimEnd()}…`
 }
 
 function dateLabel(value: number): string {
@@ -184,11 +186,11 @@ class ArkmeNotificationStore {
       const [arrangementsResult, worldSummaryResult, worldFeedResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
         callArkme<ArkmeArrangementReminderPage>('arrangements.reminders.list', {
           unreadOnly: false, limit: 50, offset: 0,
-        }, controller.signal),
-        callArkme<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, controller.signal),
-        callArkme<ArkmeWorldFeedPage>('world.mine', { limit: 10, offset: 0 }, controller.signal),
-        callArkme<ArkmeAiLetterUnread>('ai-letter.unread', undefined, controller.signal),
-        callArkme<ArkmeAiLetterPage>('ai-letter.list', { periodType: 0, cursorStartAt: 0, limit: 20 }, controller.signal),
+        }, controller.signal, { priority: 'background' }),
+        callArkme<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, controller.signal, { priority: 'background' }),
+        callArkme<ArkmeWorldFeedPage>('world.mine', { limit: 10, offset: 0 }, controller.signal, { priority: 'background' }),
+        callArkme<ArkmeAiLetterUnread>('ai-letter.unread', undefined, controller.signal, { priority: 'background' }),
+        callArkme<ArkmeAiLetterPage>('ai-letter.list', { periodType: 0, cursorStartAt: 0, limit: 20 }, controller.signal, { priority: 'background' }),
       ])
       if (controller.signal.aborted || this.controller !== controller) return
 
@@ -213,7 +215,7 @@ class ArkmeNotificationStore {
       if (worldFeedResult.status === 'fulfilled') {
         const feedItems = Array.isArray(worldFeedResult.value?.items) ? worldFeedResult.value.items.slice(0, 10) : []
         const interactionResults = await Promise.allSettled(feedItems.map(feedItem => callArkme<ArkmeWorldInteractionPage>(
-          'world.interactions.list', { recordRef: feedItem.recordRef, limit: 50, offset: 0 }, controller.signal,
+          'world.interactions.list', { recordRef: feedItem.recordRef, limit: 50, offset: 0 }, controller.signal, { priority: 'background' },
         )))
         if (controller.signal.aborted || this.controller !== controller) return
         const seen = new Set<string>()
@@ -519,12 +521,12 @@ export function ArkmeNotificationCenter() {
         >
           <span style={styles.icon}><NotificationBell size={18} /></span>
           <span style={styles.content}>
-            <span style={styles.top}><strong style={styles.itemTitle}>{item.title}</strong><time style={styles.time}>{dateLabel(item.atMillis)}</time></span>
-            <span style={styles.preview}>{notificationKindLabel(item.kind)} · {item.preview}</span>
+            <span style={styles.top}><strong style={styles.itemTitle}><ArkmeRichText text={item.title} presentation="preview" /></strong><time style={styles.time}>{dateLabel(item.atMillis)}</time></span>
+            <span style={styles.preview}>{notificationKindLabel(item.kind)} · <ArkmeRichText text={item.preview} presentation="preview" /></span>
           </span>
           {item.unread && <span aria-label={tr('未读')} style={{ width: 7, height: 7, flex: 'none', marginTop: 7, borderRadius: 999, background: '#ff5f57' }} />}
         </button>)}
-      {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button disabled={official.loading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
+      {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button disabled={official.foregroundLoading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
     </div>
     </>}
   </section>

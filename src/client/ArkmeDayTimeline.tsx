@@ -1,3 +1,4 @@
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { ReactionLabel } from './ReactionLabel.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useReactionHistory } from './use-reaction-history.js'
@@ -210,7 +211,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
                     <span className="arkme-day-identity-icon" aria-hidden><DayActivityAvatar item={{ kind: entry.event.sourceKind === 'group_chat' || entry.event.sourceKind === 'private_chat' ? entry.event.sourceKind : 'note', access: 'available', ...(entry.event.avatar ? { avatar: entry.event.avatar } : {}) }} /></span>
                     <strong>{entry.event.sourceName || entry.event.source}</strong><span className="arkme-day-kind">表态</span></div>
                   <div className="arkme-day-excerpts"><p><span className="arkme-day-excerpt-author">我：</span><ReactionAction added={entry.event.added} label={entry.event.label} /></p>
-                    <p><span className="arkme-day-excerpt-author">{entry.event.authorName || '原消息'}：</span>{entry.event.text || (entry.event.restricted ? '原消息已不可访问' : '暂无文字内容')}</p>
+                    <p><span className="arkme-day-excerpt-author">{entry.event.authorName || '原消息'}：</span><ArkmeRichText text={entry.event.text || (entry.event.restricted ? '原消息已不可访问' : '暂无文字内容')} presentation="preview" /></p>
                     </div>
                   <div className="arkme-day-entry-meta">
                     <span>{dayActivityTime(entry.at, query.timezone)}</span>
@@ -258,7 +259,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
         </header>
         <article className="arkme-day-message">
           <div>{reactionDetail.event.authorName || tr('原消息')}{reactionDetail.event.originalMessage && <> · <DayActivityTimestamp at={reactionDetail.event.originalMessage.sendAtMillis} timezone={query.timezone} /></>}</div>
-          <p>{reactionDetail.event.text || (reactionDetail.event.restricted ? '原消息已不可访问' : '暂无文字内容')}</p>
+          <p><ArkmeRichText text={reactionDetail.event.text || (reactionDetail.event.restricted ? '原消息已不可访问' : '暂无文字内容')} presentation="preview" /></p>
         </article>
         <div className="arkme-day-entry-meta">{tr('表态记录')}</div>
         {reactionHistory.map(({ event, index }) => <article key={index} className="arkme-day-message" aria-current={index === reactionDetail.index ? 'true' : undefined}>
@@ -280,7 +281,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
             {!detail.page.call && detail.page.items.length === 0 && <p className="arkme-day-status">{detail.page.hasMore ? '可继续加载原始记录。' : '暂无可查看的原始记录。'}</p>}
             {detail.page.items.map(item => <article key={item.id} className="arkme-day-message">
               <div>{dayActivityDisplayName(item.author)} · <DayActivityTimestamp at={item.occurredAtMillis} timezone={query.timezone} /></div>
-              {renderRecord ? renderRecord(item) : <p>{item.text}</p>}
+              {renderRecord ? renderRecord(item) : <p><ArkmeRichText text={item.text} presentation="preview" /></p>}
             </article>)}
             {(selected.canLoadLocation && reader?.loadLocation || hasLocationHint(selected)) && <section className="arkme-day-location" aria-label={tr("记录地点")}>
               {locationRequestedId !== selected.id ? <button type="button" className="arkme-day-source"
@@ -325,10 +326,10 @@ function DayActivityPreview({ item }: { item: DayActivityEntry }) {
   if (isDayConversation(item)) {
     const excerpts = item.excerpts ?? selectDayActivityExcerpts([item])
     return <div className="arkme-day-excerpts">{excerpts.length ? excerpts.map(excerpt => <p key={excerpt.id}>
-      <span className="arkme-day-excerpt-author">{dayExcerptAuthor(item, excerpt)}{dayExcerptAuthor(item, excerpt) ? '：' : ''}</span>{excerpt.text}
+      <span className="arkme-day-excerpt-author">{dayExcerptAuthor(item, excerpt)}{dayExcerptAuthor(item, excerpt) ? '：' : ''}</span><ArkmeRichText text={excerpt.text} presentation="preview" />
     </p>) : <p>{tr('暂无内容预览，展开查看详情')}</p>}</div>
   }
-  return item.preview ? <p>{item.kind === 'call' && tr('已有摘要：')}{item.preview}</p> : null
+  return item.preview ? <p>{item.kind === 'call' && tr('已有摘要：')}<ArkmeRichText text={item.preview} presentation="preview" /></p> : null
 }
 
 function LocationObservation({ location, summary, timezone }: { location: ArkmeRecordLocationObservation | undefined; summary?: DayActivityEntry['locationSummary']; timezone: string }) {

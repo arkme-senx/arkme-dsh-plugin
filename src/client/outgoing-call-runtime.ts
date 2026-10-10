@@ -42,6 +42,7 @@ export interface OutgoingCallRuntimeOptions {
   controller?: OutgoingCallUiController
   randomId?: () => string
   origin?: () => string
+  currentAvatar?: (imageRef: string) => string | undefined
   loadAvatar?: (imageRef: string) => Promise<string>
   permissions?: typeof requestDesktopCallMediaPermissions
   setInterval?: typeof globalThis.setInterval
@@ -97,6 +98,7 @@ export class OutgoingCallRuntime {
   private readonly controller: OutgoingCallUiController
   private readonly randomId: () => string
   private readonly origin: () => string
+  private readonly currentAvatar: ((imageRef: string) => string | undefined) | undefined
   private readonly loadAvatar: ((imageRef: string) => Promise<string>) | undefined
   private readonly permissions: typeof requestDesktopCallMediaPermissions
   private readonly startInterval: typeof globalThis.setInterval
@@ -224,6 +226,7 @@ export class OutgoingCallRuntime {
     this.controller = options.controller ?? outgoingCallUi
     this.randomId = options.randomId ?? (() => crypto.randomUUID())
     this.origin = options.origin ?? (() => window.location.origin)
+    this.currentAvatar = options.currentAvatar
     this.loadAvatar = options.loadAvatar
     this.permissions = options.permissions ?? requestDesktopCallMediaPermissions
     this.startInterval = options.setInterval ?? globalThis.setInterval.bind(globalThis)
@@ -509,7 +512,8 @@ export class OutgoingCallRuntime {
         return
       }
       if (prepared.peerAvatarRef !== undefined && this.loadAvatar !== undefined) {
-        try { prepared.call.calleeAvatar = await this.loadAvatar(prepared.peerAvatarRef) } catch { /* avatar is optional */ }
+        // Warm the existing image store without making the call or its lease wait for a download.
+        try { void this.loadAvatar(prepared.peerAvatarRef).catch(() => undefined) } catch { /* avatar is optional */ }
       }
       this.prepared = prepared
       this.leaseCallRequestId = callRequestId
@@ -548,7 +552,11 @@ export class OutgoingCallRuntime {
   }
 
   private flushCall(): void {
-    if (!this.bootstrapSent || this.callSent || this.prepared === undefined || this.frame === null) return
+    if (this.snapshot.phase !== 'bootstrapping' || !this.bootstrapSent || this.callSent || this.prepared === undefined || this.frame === null) return
+    if (this.prepared.peerAvatarRef !== undefined && this.currentAvatar !== undefined) {
+      // Include a cache hit (also one filled while the engine initialized), but never wait or resend a call for an avatar.
+      try { this.prepared.call.calleeAvatar = this.currentAvatar(this.prepared.peerAvatarRef) ?? this.prepared.call.calleeAvatar } catch { /* avatar is optional */ }
+    }
     const sent = sendDesktopCallCommand(this.frame, 'call', this.prepared.call)
     this.diag('flush_call', {
       sent,

@@ -1073,7 +1073,7 @@ function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
   </section>
 }
 
-function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor }: {
+export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
@@ -1082,7 +1082,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
   onOpenInteractions(item: ArkmeWorldFeedItem): void
   onInteractionCreated(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
-  onInviteVoiceprint(item: ArkmeWorldFeedItem): void
+  onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onOpenAuthor?(item: ArkmeWorldFeedItem): void
 }) {
   useArkmeLocale()
@@ -1131,7 +1131,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
                 : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+            : onInviteVoiceprint === undefined ? null : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
             </button>}
         </span>

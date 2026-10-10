@@ -1,3 +1,4 @@
+export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
 import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
 export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
 import type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
@@ -135,6 +136,7 @@ import type {
   ArkmeUploadedAsset,
   ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
+  ArkmeWorldFeedItem,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
@@ -470,7 +472,15 @@ export class ArkmeSdk {
     // Browser fetch is a Web IDL method whose receiver must remain the global object.
     // Storing it unbound and later calling this.fetchImpl(...) makes the SDK instance
     // the receiver and Chrome rejects the call with "Illegal invocation".
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    this.fetchImpl = async (input, init) => {
+      try { return await fetchImpl(input, init) }
+      catch (error) {
+        if (init?.signal?.aborted || !(error instanceof TypeError)) throw error
+        throw new ArkmeClientError({ code: 'local-network-unavailable',
+          message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
+      }
+    }
   }
 
   /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */
@@ -1151,6 +1161,13 @@ export class ArkmeSdk {
     return `data:${image.mediaType};base64,${image.dataBase64}`
   }
 
+  /** Open an opaque public-note reference from World or a unified timeline. */
+  async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
+    const capabilities = await this.capabilities(signal)
+    if (!capabilities.features.worldRecordRead) throw new Error('当前 Host 不支持公开快记详情')
+    return await this.call<ArkmeWorldFeedItem>('world.record.read', { recordRef }, signal)
+  }
+
   /** Read the public World feed through the authenticated Provider boundary. */
   async worldFeed(
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
@@ -1753,6 +1770,11 @@ export class ArkmeSdk {
       throw new TypeError('Arkme group source and Bot references must not be empty')
     }
     return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
+  }
+
+  async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
+    if ((await this.capabilities(signal)).features.unifiedChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统一聊天时间线', retryable: false })
+    return await this.readSource(sourceRef, { cursor: { unified: query }, ...(query.limit === undefined ? {} : { limit: query.limit }), ...(signal === undefined ? {} : { signal }) })
   }
 
   async readSource(

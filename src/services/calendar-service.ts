@@ -130,7 +130,9 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
   const chat = objectValue(raw.chat_core)
   const core = objectValue(raw.record_core)
   if (stringValue(topic.topic_uid).trim() !== '') return 'topic'
-  if (stringValue(chat.chat_session_uid).trim() !== '' || [3, 4].includes(numberValue(core.origin_kind))) return 'chat'
+  if (stringValue(chat.chat_session_uid).trim() !== '') return 'chat'
+  if (numberValue(core.origin_kind) === 5) return 'team'
+  if ([3, 4].includes(numberValue(core.origin_kind))) return 'chat'
   if (booleanValue(raw.is_uncategorized) === true) return 'self'
   return 'unknown'
 }
@@ -817,6 +819,7 @@ export class CalendarService {
       preview,
       ...(stringValue(topic.title).trim() === '' ? {} : { topicTitle: stringValue(topic.title).trim() }),
       sourceKind: sourceKind(item),
+      ...(sourceKind(item) === 'team' && stringValue(core.origin_container_ref) ? { teamConversationUid: stringValue(core.origin_container_ref) } : {}),
       creationSource: isDshAgentInputRawRecord(raw) ? 3 : Math.trunc(numberValue(core.creation_source)),
       templateKind: Math.trunc(numberValue(core.template_kind)),
       displayKind: Math.trunc(numberValue(core.display_kind)),

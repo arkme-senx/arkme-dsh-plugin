@@ -28,6 +28,7 @@ import { ArkmePersonalDayCalendar } from './ArkmePersonalDayCalendar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 import { ARKME_NAVIGATION_WIDTH, ARKME_PROFILE_AVATAR_SIZE } from './arkme-layout.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { directRecordingStore } from './recordings/direct-recording-store.js'
@@ -251,7 +252,7 @@ export function ArkmeProductNavigation({
       {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>
         <ArkmeJiwoBrandMark />
         <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
-          v{pluginManifest.version}
+          {formatProductVersion(pluginManifest.version, currentClientVersionCode())}
         </span>
       </div>}
       <div style={{ ...styles.primary,

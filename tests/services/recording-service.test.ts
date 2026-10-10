@@ -563,15 +563,127 @@ describe('RecordingService', () => {
         const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
         const data=path.endsWith('/one-day-trans')?{
           session_ls:[{id:'session-secret',belong_usr:42,start_at:dayStart,end_at:dayStart+60000,spk_ls:[{num:1,spk_id:'speaker-secret'}]}],
-          child_ls:[{id:'child-secret',session_id:'session-secret',start_at:0,duration:60000,has_asr:true,archive_size:123456,source_size:999999,asr:[{s:0,e:1000,n:1,t:'你好 🙂'}]}],
+          child_ls:[{id:'child-secret',session_id:'session-secret',start_at:0,duration:60000,has_asr:true,archive_size:123456,source_size:999999,asr_input_metrics:{state:'ready',basis:'observed',duration_ms:5000,spans:[[0,5000]]},asr:[{s:0,e:1000,n:1,t:'你好 🙂'}]}],
         }:{spk_ls:[]}
         return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day=await fixture.service.recordingDay(dayStart)
-      expect(day.transcript.dailyMetrics).toEqual({archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3})
+      expect(day.transcript.dailyMetrics).toEqual({archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
       expect(JSON.stringify(day.transcript.dailyMetrics)).not.toContain('secret')
       expect(fixture.fetchImpl).toHaveBeenCalledTimes(4)
     }finally{await fixture.close()}
+  })
+
+  it.each([
+    ['2026-03-08T00:00:00-05:00', '2026-03-09T00:00:00-04:00', 23, -5],
+    ['2026-11-01T00:00:00-04:00', '2026-11-02T00:00:00-05:00', 25, -4],
+  ] as const)('requests the complete local day across DST: %s', async (start, end, hours, offsetHours) => {
+    vi.stubEnv('TZ', 'America/New_York')
+    const fixture = await speakerCacheFixture(), dayStart = Date.parse(start), dayEnd = Date.parse(end)
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        let data: Record<string, unknown> = { spk_ls: [] }
+        if (path.endsWith('/one-day-trans')) {
+          const request = JSON.parse(String(init?.body))
+          expect(request).toEqual({ start_at: dayStart, end_at: dayEnd, tz_offset: offsetHours * 3600000 })
+          expect(request.end_at - request.start_at).toBe(hours * 3600000)
+          data = {
+            session_ls: [{ id: 's', belong_usr: 42, start_at: dayEnd - 60000, end_at: dayEnd }],
+            child_ls: [{ id: 'c', session_id: 's', start_at: dayEnd - 60000, duration: 60000,
+              has_asr: true, asr: [], asr_input_metrics: {
+                state: 'ready', basis: 'observed', duration_ms: 60000, spans: [[0, 60000]],
+              } }],
+          }
+        }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      expect((await fixture.service.recordingTranscript(dayStart)).dailyMetrics)
+        .toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 60000 })
+    } finally {
+      await fixture.close()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('keeps system input metrics identical when switching to Doubao text', async () => {
+    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        let data: Record<string, unknown> = { spk_ls: [] }
+        if (path.endsWith('/one-day-trans')) {
+          expect(JSON.parse(String(init?.body))).toEqual({
+            start_at: dayStart, end_at: dayEnd.getTime(), tz_offset: -new Date(dayStart).getTimezoneOffset() * 60_000 || 0,
+          })
+          const child = {
+            id: 'child-secret', session_id: 'session-secret', start_at: dayStart, duration: 60000,
+            has_asr: true, archive_size: 1234, asr: [],
+            doubao_asr: [{ s: 0, e: 1000, n: 1, t: '豆包文字' }],
+            asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 8000, spans: [[1000, 5000], [3000, 7000]] },
+          }
+          data = {
+            session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
+            child_ls: [child, child],
+          }
+        }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const comparison = await fixture.service.recordingComparison(dayStart)
+      expect(comparison.system.items).toEqual([])
+      expect(comparison.doubao.items.map(item => item.text)).toEqual(['豆包文字'])
+      expect(comparison.system.dailyMetrics).toMatchObject({
+        asrInputState: 'ready', asrInputDurationMillis: 8000, asrInputConfirmedCount: 1, textCount: 0,
+      })
+      expect(comparison.doubao.dailyMetrics).toEqual({ ...comparison.system.dailyMetrics, textCount: 4 })
+      expect(JSON.stringify(comparison.system.dailyMetrics)).not.toContain('secret')
+      expect(fixture.fetchImpl).toHaveBeenCalledTimes(2)
+    } finally { await fixture.close() }
+  })
+
+  it.each([undefined, { state: 'unavailable', duration_ms: null, spans: null },
+    { state: 'ready', basis: 'observed', duration_ms: 5000, spans: [[0, 60001]] },
+  ])('does not hide existing text or archive size when input telemetry is unavailable: %j', async asr_input_metrics => {
+    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const data = path.endsWith('/one-day-trans') ? {
+          session_ls: [{ id: 's', belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
+          child_ls: [{ id: 'c', session_id: 's', start_at: 0, duration: 60000, has_asr: true,
+            archive_size: 1234, asr: [{ s: 0, e: 1000, n: 1, t: '仍可读取' }], asr_input_metrics }],
+        } : { spk_ls: [] }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      expect(day.transcript.state).toBe('ready')
+      expect(day.transcript.items.map(item => item.text)).toEqual(['仍可读取'])
+      expect(day.transcript.dailyMetrics).toMatchObject({
+        archiveState: 'ready', archiveBytes: 1234, textCount: 4,
+        asrInputState: 'unavailable', asrInputConfirmedCount: 0,
+      })
+    } finally { await fixture.close() }
+  })
+
+  it.each(['empty', 'failed'] as const)('distinguishes a confirmed empty day from a failed read: %s', async outcome => {
+    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        if (path.endsWith('/one-day-trans') && outcome === 'failed') throw new Error('audio unavailable')
+        const data = path.endsWith('/one-day-trans') ? { session_ls: [], child_ls: [] } : { spk_ls: [] }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      if (outcome === 'empty') {
+        expect(day.transcript.dailyMetrics).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 0 })
+      } else {
+        expect(day.transcript.state).toBe('error')
+        expect(day.transcript.dailyMetrics).toBeUndefined()
+      }
+    } finally { await fixture.close() }
   })
 
   it('attributes timeline coverage and speech independently of who uploaded or spoke, retaining transcript access', async () => {

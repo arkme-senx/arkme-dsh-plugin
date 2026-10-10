@@ -539,7 +539,9 @@ export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
   textFormat?: 'plain' | 'markdown'
   preview: string
   topicTitle?: string
-  sourceKind: 'self' | 'topic' | 'chat' | 'unknown'
+  sourceKind: 'self' | 'topic' | 'chat' | 'team' | 'unknown'
+  /** Team origin identity; optional label/navigation is resolved by Team under current authority. */
+  teamConversationUid?: string
   creationSource: number
   templateKind: number
   displayKind: number
@@ -1402,6 +1404,7 @@ export interface ArkmeProviderCapabilities {
     remoteRecordSearch?: true
     contactDirectoryReads?: true
     speakerPresence?: true
+    unifiedChatTimeline?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -1460,6 +1463,7 @@ export interface ArkmeProviderCapabilities {
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
+    worldRecordRead?: true
     /** Optional additive capability for reading and writing World comments and replies. */
     worldInteractions?: true
     /** Optional additive capability for publishing text and file-asset World records. */
@@ -1789,6 +1793,7 @@ export interface ArkmeTopicDissolveTask extends ArkmeTopicDissolveProgress {
 }
 
 export interface ArkmeTimelineCursor {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineQuery
   sendAtMillis?: number
   itemUid?: string
   beforeSequence?: number
@@ -1888,6 +1893,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  timelineEventId?: string
   /** Local display role for a self-authored record; isMe remains the real author. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Original media refs were not fully projected, even when rich-media rendering is disabled. */
@@ -2006,6 +2012,9 @@ export interface ArkmeRelatedQuickNoteItem {
 }
 
 export interface ArkmeRelatedQuickNoteList {
+  recallMode: 'embedding' | 'search_fallback' | 'unavailable'
+  retryable: boolean
+  retryAfterMillis: number
   items: ArkmeRelatedQuickNoteItem[]
   total: number
 }
@@ -2536,6 +2545,7 @@ export interface ArkmeMessageCopyLinkResolveResult {
 }
 
 export interface ArkmeTimelinePage {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
   aiPolishNotices?: ArkmeGroupAiPolishNotice[]
@@ -2546,6 +2556,7 @@ export interface ArkmeTimelinePage {
 
 /** A continuous chat timeline window centered on an exact record. */
 export interface ArkmeTimelineAroundPage {
+  unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
   anchorItemUid: string
@@ -3200,6 +3211,13 @@ export interface ArkmeRecordingSection<T> {
 }
 
 export interface ArkmeRecordingDailyMetrics {
+  /** System ASR input in owned recordings, clipped to the day; includes recorded retries. */
+  asrInputDurationMillis: number
+  asrInputState: 'ready' | 'partial' | 'processing' | 'unavailable'
+  asrInputEstimatedCount: number
+  asrInputConfirmedCount: number
+  asrInputPendingCount: number
+  asrInputUnknownCount: number
   /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
@@ -3691,6 +3709,9 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'team-invalidated'
+  revision: number
+} | {
   type: 'directory-update'
   revision: number
   page: ArkmeSourceList
@@ -3935,6 +3956,7 @@ export type ArkmePluginOperation =
   | 'user.arkme-id.set'
   | 'image.read'
   | 'images.list'
+  | 'world.record.read'
   | 'world.feed'
   | 'world.mine'
   | 'world.user'
@@ -4205,6 +4227,12 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.cancel'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
+  | 'app.migration.status'
+  | 'app.migration.check'
+  | 'app.migration.download'
+  | 'app.migration.cancel'
+  | 'app.migration.install' | 'app.migration.reveal'
+  | 'app.migration.dismiss'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
   | 'plugin.update.status'

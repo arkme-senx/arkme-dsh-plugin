@@ -1,8 +1,11 @@
+import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
 import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
 import { SpeakerDirectoryService } from './services/speaker-directory-service.js'
 import { withReactionTrace, measureReaction } from './reaction-host-diagnostics.js'
+import { TeamSendQueue } from './services/team-send-queue.js'
+import type { TeamSendInput } from './team-send-contract.js'
 import { SelfRoleService } from './services/self-role-service.js'
 import { teamCodexPost } from './services/team-codex-transport.js'
 import { AiPointsService } from './services/ai-points-service.js'
@@ -11,6 +14,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
 import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
+import { TeamAppService } from './services/team-app-service.js'
+import type { TeamAppOperation } from './team-app-contract.js'
 import { stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
@@ -279,6 +284,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
+  ArkmeTimelineItem,
   ArkmeTopicCreateResult,
   ArkmeTopicDissolveResult,
   ArkmeTopicDissolveProgress,
@@ -374,6 +380,20 @@ export class ArkmeService {
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
+  private readonly teamDelivery: TeamSendQueue
+  private readonly teamApp: TeamAppService
+  async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
+  async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
+      await this.teamApp.assertViewer(params.expectedAccountKey)
+    }
+    if (operation === 'team.app.send.enqueue') return await this.teamDelivery.enqueue(params as unknown as TeamSendInput)
+    if (operation === 'team.app.send.tasks') return await this.teamDelivery.list(String(params.conversationRef ?? ''))
+    if (operation === 'team.app.send.retry-task') return await this.teamDelivery.retry(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
+    if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
+    return await this.teamApp.execute(operation, params, signal)
+  }
+  async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
   private readonly interwoven: InterwovenService
   private readonly linkMetadata: ArkmeLinkMetadataService
   private readonly aiPolish: GroupAiPolishService
@@ -418,6 +438,14 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
+    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamDelivery = new TeamSendQueue({
+      currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
+      files: () => this.filesOwner(),
+      identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
+    })
+    this.teamDelivery.start()
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
       forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
     }, {
@@ -532,6 +560,7 @@ export class ArkmeService {
       this.messageActions,
       this.callHistory,
     )
+    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
     this.botConversation = new BotConversationService(
@@ -652,6 +681,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.unifiedTimeline.reset()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
     this.desktopScreenshot.cancel()
@@ -659,6 +689,7 @@ export class ArkmeService {
     this.directory.reset()
     this.realtime.resetAttentionSummary()
     for (const userId of userIds) this.privacy.clear(userId)
+    this.teamDelivery.pause()
     this.fileTransfers?.cancelActive()
     for (const userId of userIds) this.outgoingCall.clearUser(userId, '账号已退出，呼叫已取消')
     this.source.dispose()
@@ -872,6 +903,8 @@ export class ArkmeService {
       throw error
     }
   }
+  private unifiedTimeline!: UnifiedChatTimelineService
+
   providerCapabilities(): ArkmeProviderCapabilities {
     return {
       contractVersion: ARKME_PROVIDER_CONTRACT_VERSION,
@@ -903,6 +936,7 @@ export class ArkmeService {
         contactDirectoryReads: true,
         speakerPresence: true,
         sourceTimeline: true,
+        unifiedChatTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
@@ -935,6 +969,7 @@ export class ArkmeService {
         extensionIcons: true,
         extensionPreviews: true,
         worldFeed: true,
+        worldRecordRead: true,
         worldInteractions: true,
         worldPublish: true,
         worldVoiceprintPlayback: true,
@@ -1018,6 +1053,8 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.unifiedTimeline.dispose()
+    this.teamDelivery.dispose()
     this.selfRoles.dispose()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
@@ -1707,6 +1744,8 @@ export class ArkmeService {
     })
   }
 
+  async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
+
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
 
   async openPrivateChatFromMember(
@@ -1893,11 +1932,27 @@ export class ArkmeService {
 
   async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
+      return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
+        ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
+      }, options.signal), session.userId)
+    }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
   async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
     const session = await this.runtime.requireSession()
-    return await this.withSelfRoleSnapshots(await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options), session.userId)
+    const page = await this.unifiedTimeline.read(sourceRef, { mode: 'around', itemUid, recordOwnerUserId,
+      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal)
+    const window = page.unified!
+    const anchorIndex = page.items.findIndex(item => item.itemUid === itemUid)
+    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window,
+      anchorItemUid: itemUid, anchorIndex, anchorSequence: page.items[anchorIndex]?.sequence ?? 0,
+      olderHasMore: window.olderHasMore, newerHasMore: window.newerHasMore,
+      ...(window.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: window.olderCursor } } } : {}),
+      ...(window.newerCursor ? { newerCursor: { unified: { mode: 'newer' as const, cursor: window.newerCursor } } } : {}),
+    }, session.userId)
   }
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)

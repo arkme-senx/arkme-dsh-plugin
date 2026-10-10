@@ -1,3 +1,5 @@
+import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
+import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
 import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
@@ -36,7 +38,7 @@ import {
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
+import { createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -104,6 +106,7 @@ export interface Config {
   subjectBaseUrl: string
   recordBaseUrl: string
   dataBaseUrl: string
+  teamBaseUrl: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -159,6 +162,7 @@ export const Config: Schema<Config> = Schema.object({
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   dataBaseUrl: Schema.string().default(''),
+  teamBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -362,6 +366,14 @@ export function apply(ctx: Context, config: Config): void {
   const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const clientModules = (ctx as Context & { clientModules: DshClientModulesLike }).clientModules
+  const migrationManager = new AppMigrationManager({
+    enabled: process.env.ARKME_DESKTOP_MANAGED_RESTART === '1' && arkmeDesktopBridgeConfigFromEnv(process.env) !== undefined,
+    currentVersion: process.env.ARKME_APP_VERSION ?? '',
+    platform: process.platform, architecture: process.arch,
+    stateDirectory: migrationStateRoot(dshHome, config.environment),
+    serviceOrigin: config.updateServiceBaseUrl,
+    artifactOrigin: config.updateArtifactBaseUrl.trim() || 'https://d.jiwo.cc',
+  })
   const updateManager = new ArkmePluginUpdateManager({
     enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
@@ -699,6 +711,7 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
+    migrationManager,
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
@@ -734,6 +747,7 @@ export function apply(ctx: Context, config: Config): void {
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
+  const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
     expectedPort: ctx.webServer.port,
@@ -882,6 +896,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.resumeRecordingImports().catch(() => undefined)
     return () => undefined
   }, 'dsh-arkme: recording import recovery')
+  ctx.effect(() => () => migrationManager.dispose(), 'dsh-arkme: installer download lifecycle')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()
@@ -927,6 +942,7 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/self-role-avatar`,
     handler: selfRoleAvatarHandler,
   }), 'dsh-arkme: local self-role avatar route')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/team/media`, handler: teamMediaHandler }), 'dsh-arkme: authorized team media')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
@@ -986,6 +1002,9 @@ export function apply(ctx: Context, config: Config): void {
 export function resolveArkmeConfig(ctx: Context, config: Config): Config {
   const resolved = {
     ...config,
+    teamBaseUrl: config.teamBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
+      : config.teamBaseUrl,
     dataBaseUrl: config.dataBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
       : config.dataBaseUrl,
@@ -1008,6 +1027,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.recordBaseUrl,
       config.dataBaseUrl,
       config.chatBaseUrl,
+      config.teamBaseUrl,
       config.botBaseUrl,
       config.imBaseUrl,
       config.webrtcBaseUrl,
@@ -1045,6 +1065,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['recordBaseUrl', config.recordBaseUrl],
     ['dataBaseUrl', config.dataBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
+    ['teamBaseUrl', config.teamBaseUrl],
     ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
     ['webrtcBaseUrl', config.webrtcBaseUrl],

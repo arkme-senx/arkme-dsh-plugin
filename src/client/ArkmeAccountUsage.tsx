@@ -1,4 +1,4 @@
-import { pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
+import { formatAiPoints, nanoCnyToPoints, pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -9,12 +9,33 @@ import { callArkme } from './api.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmeStorageUsageBreakdown } from './ArkmeUsageBreakdown.js'
+import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
 
 type ReadState<T> = { status: 'loading' | 'error'; unavailable?: boolean } | { status: 'ready'; value: T }
 type UsageValue = ArkmeAccountRecordingUsage | ArkmeAccountStorageUsage | ArkmeAiPointsAccount | ArkmeAccountVoiceUsage
 // Floor only the overview labels; keep the exact account values for billing and details.
 function formatWholePoints(value: string): string {
   return (pointsUnits(value) / 10_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+// Merge historical grants, then show only the remaining balances in one summary.
+function grantDescriptions(grants: ArkmeAiPointsAccount['grants']): string[] {
+  const groups = new Map<string, { source: string; expiresAt: number; units: bigint }>()
+  for (const grant of grants) {
+    const key = JSON.stringify([grant.source, grant.expiresAt])
+    const group = groups.get(key) ?? { source: grant.source, expiresAt: grant.expiresAt, units: 0n }
+    group.units += pointsUnits(grant.availablePoints)
+    groups.set(key, group)
+  }
+  return [...groups.values()].filter(group => group.units > 0n).map(group => {
+    const amount = formatAiPoints(nanoCnyToPoints(group.units.toString()))
+    if (group.expiresAt === 0) return tr('永久 {v0}', { v0: amount })
+    const label = tr(group.source === 'membership' ? '月度' : group.source === 'welcome' ? '一次性' : '赠送')
+    const date = new Intl.DateTimeFormat(arkmeIntlLocale(), {
+      year: group.source === 'membership' ? undefined : 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Shanghai',
+    }).format(group.expiresAt - 1)
+    return tr('{v0} {v1}（{v2} 到期）', { v0: label, v1: amount, v2: date })
+  })
 }
 function useUsage<T extends UsageValue>(operation: 'account.usage.recording' | 'account.points.query' | 'account.usage.storage' | 'account.usage.voice', scope: string, revision: number): ReadState<T> {
   const [result, setResult] = useState<{ scope: string; revision: number; state: ReadState<T> }>()
@@ -153,13 +174,16 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
   const storageLevel = storage.status === 'ready' ? usageLevel(storage.value.usedBytes, storage.value.totalBytes) : 'normal'
   const voiceTotal = voice.status === 'ready' ? voice.value.usedSeconds + voice.value.remainingSeconds : 0
   const voiceLevel = voice.status === 'ready' ? usageLevel(voice.value.usedSeconds, voiceTotal) : 'normal'
+  const grantSummary = points.status === 'ready' ? grantDescriptions(points.value.grants).join(' · ') : ''
   return <section className="arkme-account-usage" aria-label={tr("用量与额度")}>
     <header><h3>{tr("用量与额度")}</h3></header>
     <div className="arkme-usage-metric" data-usage-kind="ai-points" aria-live="polite">
       <div className="arkme-usage-label"><strong>{tr('AI 额度')}</strong><button type="button" className="arkme-usage-action" onClick={onRecharge}>{tr('充值 ›')}</button></div>
       {points.status !== 'ready' ? <Pending status={points.status} onRetry={retry} /> : <>
-        <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatWholePoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">{tr('赠送 {v0} · 充值 {v1}', { v0: formatWholePoints(points.value.grantedPoints), v1: formatWholePoints(points.value.purchasedPoints) })}</span></p>
-        {points.value.grants.some(grant => grant.expiresAt > 0) && <small>{tr('赠送积分到期时间')} {new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' }).format(Math.min(...points.value.grants.filter(grant => grant.expiresAt > 0).map(grant => grant.expiresAt - 1)))}</small>}
+        <p className="arkme-usage-points-balance"><span>{tr('可用')} <strong>{formatWholePoints(points.value.availablePoints)}</strong> {tr('积分')}</span><span className="arkme-usage-points-sources">
+          {grantSummary ? <GrantDetails key={grantSummary} label={tr('赠送 {v0}', { v0: formatWholePoints(points.value.grantedPoints) })} summary={grantSummary} /> : tr('赠送 {v0}', { v0: formatWholePoints(points.value.grantedPoints) })}
+          {' · '}{tr('充值 {v0}', { v0: formatWholePoints(points.value.purchasedPoints) })}
+        </span></p>
       </>}
       <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
       {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
@@ -207,6 +231,34 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
       <small>{tr("录音按人声时长计量，录音静音时长不计量")}</small>
     </div>
   </section>
+}
+
+function GrantDetails({ label, summary }: { label: string; summary: string }) {
+  const [anchor, setAnchor] = useState<HTMLButtonElement>()
+  const close = useCallback(() => setAnchor(undefined), [])
+  const id = useId()
+  useEffect(() => {
+    if (!anchor) return
+    const owner = anchor.ownerDocument
+    const outside = (event: PointerEvent) => { if (!anchor.contains(event.target as Node)) close() }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close() }
+    }
+    owner.addEventListener('pointerdown', outside, true)
+    owner.addEventListener('keydown', escape, true)
+    return () => {
+      owner.removeEventListener('pointerdown', outside, true)
+      owner.removeEventListener('keydown', escape, true)
+    }
+  }, [anchor, close])
+  return <>
+    <button type="button" className="arkme-usage-grant-help" aria-label={`${label}, ${tr('查看赠送额度说明')}`}
+      aria-expanded={!!anchor} aria-describedby={anchor ? id : undefined} onBlur={close}
+      onClick={event => { const button = event.currentTarget; setAnchor(current => current ? undefined : button) }}>
+      <span>{label}</span><span aria-hidden className="arkme-usage-grant-icon" />
+    </button>
+    {anchor && <ArkmeCalendarDateTooltip anchor={anchor} id={id} text={summary} onClose={close} portalRoot={anchor.closest('dialog') ?? anchor.ownerDocument.body} />}
+  </>
 }
 
 export function ArkmeAccountUsageDialog({ accountScope, onViewMembership, onClose, returnFocusRef }: {

@@ -6,6 +6,29 @@ afterEach(() => { vi.useRealTimers() })
 const unread = (momentId: string) => ({ momentId, reader: 'peer' as const, status: 'unread' as const })
 
 describe('interwoven receipt scheduling', () => {
+  it('releases timers and receipt state across repeated conversation lifetimes', async () => {
+    vi.useFakeTimers()
+    let concurrent = 0, maximumConcurrent = 0
+    const load = vi.fn(async (refs: string[]) => {
+      maximumConcurrent = Math.max(maximumConcurrent, ++concurrent)
+      await Promise.resolve()
+      concurrent--
+      return { items: refs.map(momentId => ({ momentId, reader: 'peer' as const, status: 'read' as const })) }
+    })
+    for (let cycle = 0; cycle < 100; cycle++) {
+      const store = new InterwovenReadReceiptStore('private', load)
+      const rows = Array.from({ length: 40 }, (_, i) => store.register(String(i), String(i)))
+      rows.slice(0, 20).forEach(row => row.setVisible(true))
+      await vi.advanceTimersByTimeAsync(100)
+      expect(store.get('0')?.status).toBe('read')
+      store.dispose()
+      expect(store.get('0')).toBeUndefined()
+      expect(vi.getTimerCount()).toBe(0)
+    }
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(load).toHaveBeenCalledTimes(100)
+    expect(maximumConcurrent).toBe(1)
+  })
   it('batches visible rows only, deduplicates rows and never exceeds 20 per request', async () => {
     vi.useFakeTimers()
     const load = vi.fn(async (refs: string[]) => ({ items: refs.map(unread) }))

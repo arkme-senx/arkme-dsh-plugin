@@ -25,7 +25,6 @@ import type {
   ArkmeSourceList,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -58,7 +57,6 @@ type TypePickerPlacement =
   | { kind: 'center' }
   | { kind: 'anchored'; left: number; top: number }
 
-const CALL_SURFACE_AVATAR_PRELOAD_LIMIT = 40
 const CALL_HISTORY_SETTLED_REFRESH_DELAY_MS = 2_400
 const OFFICIAL_AUTHOR_DISPLAY_NAME = '即' + '我作者'
 const OFFICIAL_AUTHOR_RECOMMENDATION_LABEL = OFFICIAL_AUTHOR_DISPLAY_NAME + ' · 推荐'
@@ -435,27 +433,6 @@ function detailSubtitle(item: ArkmeCallHistoryItem): string {
   return `${mediaLabel(item.mediaType)} · ${formatDuration(item.durationSeconds)}`
 }
 
-async function preloadCallSurfaceAvatars(refs: readonly (string | undefined)[]): Promise<void> {
-  const unique = new Set<string>()
-  for (const ref of refs) {
-    const normalized = cleanAvatarRef(ref)
-    if (normalized !== undefined) unique.add(normalized)
-    if (unique.size >= CALL_SURFACE_AVATAR_PRELOAD_LIMIT) break
-  }
-  await Promise.allSettled([...unique].map(async ref => await arkmeAvatarImages.load(ref)))
-}
-
-async function preloadHistoryAvatars(page: ArkmeCallHistoryPage): Promise<void> {
-  await preloadCallSurfaceAvatars([
-    ...(page.recentContacts ?? []).map(contact => contact.avatarRef),
-    ...page.items.map(item => item.peerAvatarRef),
-  ])
-}
-
-async function preloadSourceAvatars(sources: readonly ArkmeSourceItem[]): Promise<void> {
-  await preloadCallSurfaceAvatars(sources.map(source => source.avatarRef))
-}
-
 function targetForSource(source: ArkmeSourceItem): CallTarget {
   const peerUserId = Number.isSafeInteger(source.peerUserId) && source.peerUserId !== undefined && source.peerUserId > 0
     ? source.peerUserId
@@ -702,8 +679,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     void refreshCallHistory(pageRef.current, cursor => callArkme<ArkmeCallHistoryPage>('calls.history.list', {
       limit: 30, ...(cursor ? { cursor } : {}), includeRecentContacts: !cursor,
     }, controller.signal), controller.signal)
-      .then(async value => {
-        await preloadHistoryAvatars(value)
+      .then(value => {
         if (controller.signal.aborted || historyGenerationRef.current !== generation) return
         historyRefreshingRef.current = false
         const list = listRef.current
@@ -742,7 +718,6 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
       if (value.hasMore && (!value.nextCursor?.trim() || value.nextCursor === page.nextCursor)) {
         throw new Error('通话记录分页游标无效，请重试')
       }
-      await preloadHistoryAvatars(value)
       if (controller.signal.aborted || historyGenerationRef.current !== generation) return
       setPage(previous => previous === undefined ? value : {
         ...previous,
@@ -826,10 +801,10 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeSourceList>('sources.list', { directory: 'root', limit: 100 }, controller.signal)
-      .then(async value => {
+      .then(value => {
+        if (!active || controller.signal.aborted) return
         const privateChats = value.items.filter(item => item.kind === 'private_chat')
-        await preloadSourceAvatars(privateChats)
-        if (active) setSources(privateChats)
+        setSources(privateChats)
       })
       .catch(() => undefined)
     return () => { active = false; controller.abort() }
@@ -840,10 +815,9 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, controller.signal)
-      .then(async value => {
-        const avatarRef = cleanAvatarRef(value.avatarRef)
-        if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+      .then(value => {
         if (!active || controller.signal.aborted) return
+        const avatarRef = cleanAvatarRef(value.avatarRef)
         setOfficialAuthorProfile({
           userId: value.userId,
           displayName: value.displayName.trim() || OFFICIAL_AUTHOR_DISPLAY_NAME,
@@ -869,9 +843,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     setContactSearchError('')
     const timer = setTimeout(() => {
       void callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: value }, controller.signal)
-        .then(async result => {
-          const avatarRef = cleanAvatarRef(result.avatarRef)
-          if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+        .then(result => {
           if (!active || controller.signal.aborted) return
           setContactSearchResult(result)
           setContactSearchState('ready')

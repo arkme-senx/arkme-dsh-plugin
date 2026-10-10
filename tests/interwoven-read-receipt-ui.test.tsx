@@ -59,6 +59,37 @@ describe('inline group origin receipt UI', () => {
     expect(badge.getAttribute('data-arkme-interwoven-receipt')).toBe('read')
     expect(badge.querySelector('svg circle')).not.toBeNull()
   })
+  it('keeps one hint mounted when the pointer crosses the summary and receipt children', async () => {
+    callArkme.mockResolvedValue({ items: [{ momentId: 'm', reader: 'peer', status: 'read' }] })
+    await render(); await reveal()
+    const badge = container.querySelector('[data-arkme-interwoven-receipt]')!
+    const summary = container.querySelector('[data-arkme-interwoven-content]')!
+    const over = async (target: Element, relatedTarget: Element | null) => {
+      await act(async () => { target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget })) })
+    }
+    await over(summary, null)
+    const hint = document.querySelector('[role="tooltip"]')!
+    expect(hint.textContent).toContain('产品群，我：')
+    await over(badge, summary)
+    expect(document.querySelector('[role="tooltip"]')).toBe(hint)
+    expect(hint.textContent).toBe('对方已阅读群内原消息')
+    const icon = badge.querySelector('svg')!
+    for (let index = 0; index < 10; index++) await over(icon, badge)
+    expect(document.querySelector('[role="tooltip"]')).toBe(hint)
+    expect(badge.querySelector('svg')).toBe(icon)
+    expect(observers).toHaveLength(1)
+    await over(summary, badge)
+    expect(document.querySelector('[role="tooltip"]')).toBe(hint)
+    expect(hint.textContent).toContain('产品群，我：')
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    expect(badge.getAttribute('data-arkme-interwoven-receipt')).toBe('read')
+    await act(async () => { badge.closest('button')!.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })) })
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await act(async () => { (badge as HTMLElement).focus() })
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('对方已阅读群内原消息')
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  })
   it('uses my read status for incoming rows, keeps unknown blank, and clears on scope change', async () => {
     callArkme.mockResolvedValue({ items: [{ momentId: 'm', reader: 'self', status: 'read' }] })
     await render('account:private', false); await reveal()

@@ -14,7 +14,7 @@ async function fixture() {
   const runtime = {
     requireSession: async () => session, accountScopedSession: async () => session,
     stateStore: { uniqueCode: async () => 'archive-fixture-signing-key' },
-    runOwnerRead: async (_route: string, _params: unknown, read: (signal: AbortSignal) => Promise<unknown>, signal?: AbortSignal) => read(signal ?? new AbortController().signal),
+    runCompositeOwnerRead: async (_route: string, _params: unknown, read: (signal: AbortSignal) => Promise<unknown>, signal?: AbortSignal) => read(signal ?? new AbortController().signal),
     withOwnerReadInvalidation: async (_route: string, write: () => Promise<unknown>) => { try { return await write() } finally { invalidate() } },
     authenticatedPost: post,
   } as unknown as ServiceRuntime

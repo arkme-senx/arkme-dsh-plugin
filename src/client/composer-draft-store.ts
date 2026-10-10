@@ -1,3 +1,4 @@
+import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
 import { arkmeEscapeMarkdownText, arkmeMarkdownPlainText, arkmeMarkdownTextRanges, type ArkmeTextFormat } from '../markdown.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
@@ -57,6 +58,45 @@ const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
 
 export const ARKME_COMPOSER_EMOJI_PLACEHOLDER = '\uFFFC'
 
+/** Decode the persisted wire text without sharing any conversation's draft owner. */
+export function arkmeComposerDraftFromText(value: string): ArkmeComposerDraftSnapshot {
+  let text = ''
+  const emojis: ArkmeComposerEmoji[] = []
+  for (const run of arkmeEmojiTextRuns(value)) {
+    if (run.kind === 'emoji') { emojis.push({ emojiId: run.emoji.id, startIndex: text.length }); text += ARKME_COMPOSER_EMOJI_PLACEHOLDER }
+    else text += run.text
+  }
+  return { text, emojis, mentions: [], attachments: [] }
+}
+
+/** Pure edit used by both the Chat draft store and independently owned composers. */
+export function insertArkmeComposerEmoji(current: ArkmeComposerDraftSnapshot, emoji: Pick<ArkmeEmoji, 'id' | 'token'>,
+  selectionStart: number, selectionEnd = selectionStart, maxSerializedLength = 20_000,
+): { snapshot: ArkmeComposerDraftSnapshot; caretIndex: number } | undefined {
+  if (arkmeEmojiById[emoji.id] === undefined) return undefined
+  const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
+  const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
+  const textWithoutSelection = current.text.slice(0, start) + current.text.slice(end)
+  const delta = 1 - (end - start)
+  const mentions = current.mentions.flatMap(item => {
+    if (item.startIndex + item.length <= start) return [item]
+    if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
+    return []
+  })
+  // The caller supplies the exact replacement range; repeated placeholders cannot identify it.
+  const emojis = replaceArkmeComposerEmojiSelection(current.emojis, start, end, 1)
+  emojis.push({ emojiId: emoji.id, startIndex: start })
+  emojis.sort((left, right) => left.startIndex - right.startIndex)
+  const next: ArkmeComposerDraftSnapshot = {
+    text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
+    attachments: current.attachments,
+    mentions,
+    emojis,
+  }
+  if (serializeArkmeComposerDraft(next).text.length > maxSerializedLength) return undefined
+  return { snapshot: next, caretIndex: start + 1 }
+}
+
 export function reconcileArkmeComposerMentions(
   previousText: string,
   nextText: string,
@@ -86,6 +126,17 @@ export function reconcileArkmeComposerMentions(
     if (nextStart < 0 || (textFormat === 'markdown' ? arkmeMarkdownPlainText(span) : span) !== token
       || (textRanges && !textRanges.some(range => nextStart >= range.start && nextStart + mention.length <= range.end))) return []
     return [{ ...mention, startIndex: nextStart }]
+  })
+}
+
+/** Preserve atom identity when the editor provides an exact replacement range. */
+export function replaceArkmeComposerEmojiSelection(
+  emojis: readonly ArkmeComposerEmoji[], start: number, end: number, insertedLength: number,
+): ArkmeComposerEmoji[] {
+  return emojis.flatMap(emoji => {
+    if (emoji.startIndex < start) return [emoji]
+    if (emoji.startIndex >= end) return [{ ...emoji, startIndex: emoji.startIndex + insertedLength - (end - start) }]
+    return []
   })
 }
 
@@ -226,10 +277,7 @@ export function insertArkmeComposerMentionToken(
     mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
   }
   mentions.sort((left, right) => left.startIndex - right.startIndex)
-  const emojis = reconcileArkmeComposerEmojis(snapshot.text, withoutSelection, snapshot.emojis)
-    .map(emoji => emoji.startIndex >= start
-      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
-      : emoji)
+  const emojis = replaceArkmeComposerEmojiSelection(snapshot.emojis, start, end, inserted.length)
   return { text, mentions, emojis, caretIndex: start + inserted.length }
 }
 
@@ -332,15 +380,15 @@ export class ArkmeComposerDraftStore {
     this.storeOrDelete(key, { ...this.get(key), text, mentions, emojis, markdown })
   }
 
-  setText(key: string | undefined, text: string): void {
+  setText(key: string | undefined, text: string, emojis?: readonly ArkmeComposerEmoji[]): void {
     if (key === undefined) return
     const current = this.get(key)
-    if (current.text === text) return
+    if (current.text === text && emojis === undefined) return
     this.storeOrDelete(key, {
       text,
       attachments: current.attachments,
       mentions: reconcileArkmeComposerMentions(current.text, text, current.mentions),
-      emojis: reconcileArkmeComposerEmojis(current.text, text, current.emojis),
+      emojis: emojis ?? reconcileArkmeComposerEmojis(current.text, text, current.emojis),
     })
   }
 
@@ -358,33 +406,10 @@ export class ArkmeComposerDraftStore {
     maxSerializedLength = 20_000,
   ): number | undefined {
     if (key === undefined || arkmeEmojiById[emoji.id] === undefined) return undefined
-    const current = this.get(key)
-    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
-    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
-    const textWithoutSelection = current.text.slice(0, start) + current.text.slice(end)
-    const delta = 1 - (end - start)
-    const mentions = current.mentions.flatMap(item => {
-      if (item.startIndex + item.length <= start) return [item]
-      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
-      return []
-    })
-    // The caller supplies the exact replacement range; repeated placeholders cannot identify it.
-    const emojis = current.emojis.flatMap(item => {
-      if (item.startIndex < start) return [item]
-      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
-      return []
-    })
-    emojis.push({ emojiId: emoji.id, startIndex: start })
-    emojis.sort((left, right) => left.startIndex - right.startIndex)
-    const next: ArkmeComposerDraftSnapshot = {
-      text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
-      attachments: current.attachments,
-      mentions,
-      emojis,
-    }
-    if (serializeArkmeComposerDraft(next).text.length > maxSerializedLength) return undefined
-    this.store(key, next)
-    return start + 1
+    const inserted = insertArkmeComposerEmoji(this.get(key), emoji, selectionStart, selectionEnd, maxSerializedLength)
+    if (inserted === undefined) return undefined
+    this.store(key, inserted.snapshot)
+    return inserted.caretIndex
   }
 
   private insertMentionToken(
@@ -430,10 +455,7 @@ export class ArkmeComposerDraftStore {
       .map(mention => mention.startIndex >= start
         ? { ...mention, startIndex: mention.startIndex + inserted.length }
         : mention)
-    const emojis = reconcileArkmeComposerEmojis(current.text, withoutSelection, current.emojis)
-      .map(emoji => emoji.startIndex >= start
-        ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
-        : emoji)
+    const emojis = replaceArkmeComposerEmojiSelection(current.emojis, start, end, inserted.length)
     this.store(key, { text, attachments: current.attachments, mentions, emojis })
     return start + inserted.length
   }

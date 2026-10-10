@@ -105,3 +105,17 @@ export class ArkmeAuthStore {
 }
 
 export const arkmeAuthStore = new ArkmeAuthStore()
+
+/** The local Host login is shared by tabs and browsers; reconcile on re-entry. */
+export function startArkmeAuthRevalidation(): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {}
+  const refresh = () => { if (document.visibilityState !== 'hidden') void arkmeAuthStore.refresh().catch(() => undefined) }
+  window.addEventListener('focus', refresh)
+  window.addEventListener('online', refresh)
+  document.addEventListener('visibilitychange', refresh)
+  return () => {
+    window.removeEventListener('focus', refresh)
+    window.removeEventListener('online', refresh)
+    document.removeEventListener('visibilitychange', refresh)
+  }
+}

@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import type { ArkmeArkoHistoryPage, ArkmeBotConversation, ArkmeBotList, ArkmeBotSummary,
   ArkmeCallHistoryItem, ArkmeCallHistoryPage, ArkmeCallDetail } from '../types.js'
 import { callArkme } from './api.js'
@@ -98,7 +99,7 @@ export function createMultisourceDayActivityReader(accountScope: string, read: t
         session.calls.set(id, item)
         session.entries.set(id, { id, kind: 'call', startAtMillis: item.startedAtMillis, endAtMillis: end,
           title: `与 ${item.peerDisplayName || '未命名用户'} ${item.mediaType === 'video' ? '视频通话' : item.mediaType === 'audio' ? '语音通话' : '通话'}`,
-          preview: (item.summaryPreview || '').slice(0, 240), access: 'available', sourceName: '', recordCount: 1, participation: 'participated',
+          preview: arkmeEmojiTokenSafePrefix((item.summaryPreview || ''), 240, 'codeUnits'), access: 'available', sourceName: '', recordCount: 1, participation: 'participated',
           statusLabel: connected ? `${resultLabel || '已接通'} · ${duration}` : resultLabel || '状态未知' })
       }
     } catch { active(session, signal); session.missing.add('call'); session.callsMore = false; session.warnings.add('通话记录加载失败，可刷新重试。') }
@@ -116,7 +117,7 @@ export function createMultisourceDayActivityReader(accountScope: string, read: t
         // Only the explicit input Record link deduplicates calendar records, never createdRecordUids.
         const id = item.role === 'user' && item.entryRecordUid ? `note:${item.entryRecordUid}` : `arko:${item.sessionId}:${item.messageId}`
         session.aiEntries.set(id, { id, kind: 'arko', startAtMillis: item.createdAtMillis, endAtMillis: item.createdAtMillis,
-          title: '与 Arko 对话', sourceIdentity: `arko:${item.sessionId}`, preview: (item.role === 'assistant' ? arkmeMarkdownPlainText(item.text) : item.text).slice(0, 240),
+          title: '与 Arko 对话', sourceIdentity: `arko:${item.sessionId}`, preview: arkmeEmojiTokenSafePrefix((item.role === 'assistant' ? arkmeMarkdownPlainText(item.text) : item.text), 240, 'codeUnits'),
           access: 'available', sourceName: 'Arko', recordCount: 1, participation: item.role === 'user' ? 'self' : 'received' })
         session.messages.set(id, { id, occurredAtMillis: item.createdAtMillis, author: { name: item.role === 'user' ? '我' : 'Arko' }, text: item.text,
           textFormat: item.role === 'assistant' ? 'markdown' : 'plain' })
@@ -149,7 +150,7 @@ export function createMultisourceDayActivityReader(accountScope: string, read: t
             const id = item.recordUid ? `note:${item.recordUid}` : `bot:${bot.directoryKey || bot.botRef}:${item.messageId}`
             session.aiEntries.set(id, { id, kind: 'bot', startAtMillis: item.createdAtMillis, endAtMillis: item.createdAtMillis,
               title: `与 ${bot.name} 对话`, sourceIdentity: bot.chatSourceKey || bot.directoryKey || bot.botRef,
-              preview: item.content.slice(0, 240), access: 'available', sourceName: bot.name, recordCount: 1,
+              preview: arkmeEmojiTokenSafePrefix(item.content, 240, 'codeUnits'), access: 'available', sourceName: bot.name, recordCount: 1,
               participation: item.role === 'user' ? 'self' : 'received', statusLabel: '已加载的近期消息' })
             session.messages.set(id, { id, occurredAtMillis: item.createdAtMillis, author: { name: item.role === 'user' ? '我' : bot.name },
               text: item.content || item.attachments.map(attachment => `[${attachment.fileName || attachment.kind}]`).join(' ') })

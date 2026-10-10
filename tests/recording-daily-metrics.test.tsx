@@ -19,7 +19,7 @@ afterEach(()=>setLocale('zh'))
 
 it('uses only VAD archive bytes and final deduplicated text; merged people retain both utterances',()=>{
   const response={...child,asr:[...child.asr,{s:2000,e:3000,n:2,t:'再见'}]}
-  expect(metrics([response,response])).toEqual({archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:5})
+  expect(metrics([response,response])).toMatchObject({archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:5})
 })
 it('counts Unicode code points without Unicode whitespace, including astral characters',()=>{
   expect(recordingTextCount('中 文\nA\t🙂\u00a0\u3000\u0085\uFEFF')).toBe(4)

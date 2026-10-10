@@ -20,6 +20,8 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
+import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
+import type { TeamConversation } from '../src/team-app-contract.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -41,6 +43,7 @@ const sources: ArkmeSourceItem[] = [
 
 let renderer: ReactTestRenderer | undefined
 let notices: ArkmeArrangementReminderEvent[]
+let stopTeamDirectory: (() => void) | undefined
 
 function Workspace({ showHarnessEntry = false }: { showHarnessEntry?: boolean } = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -93,6 +96,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => { renderer?.unmount() })
   renderer = undefined
+  stopTeamDirectory?.(); stopTeamDirectory = undefined
   arkmeChatDirectory.activateAccount(undefined)
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
   socialAccessStore.activate(undefined)
@@ -103,6 +107,49 @@ afterEach(async () => {
 })
 
 describe('notification directory stability', () => {
+  it('combines Team entries with social visibility without replacing notifications or reviving the legacy author shortcut', async () => {
+    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    let phoneMasked: string | undefined
+    const conversation: TeamConversation = {
+      key: 'official-team', ref: 'official-team-ref', side: 'external',
+      channel: { teamRef: 'team-ref', name: '即我', jotmoId: 'arkme_cn', publicRef: '', link: '', enabled: true, revision: 1, canManage: false },
+      lastSeq: 1, latestTeamReplySeq: 1, myReadSeq: 0, unread: 1, needsReply: false,
+      blocked: false, revision: 1, updatedAt: timestamp + 250,
+    }
+    let conversations = [conversation]
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { side?: string }, ...args: unknown[]) => {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return { profile: { userId: 7001, contact: { phoneMasked } } }
+      if (operation === 'team.app.conversations') return { items: params?.side === 'external' ? conversations : [], hasMore: conversations.length > 0, nextCursor: 'next' }
+      return original(operation, params, ...args)
+    })
+    await act(async () => {
+      stopTeamDirectory = startTeamDirectory('test:7001')
+      await refreshTeamDirectory('test:7001')
+      renderer = create(<Workspace />)
+    })
+    const teamRows = () => renderer!.root.findAll(node => node.type === 'button' && node.props['data-team-side'] === 'external')
+    const shortcut = () => renderer!.root.findAll(node => node.type === 'button' && node.props['data-arkme-home-tour-target'] === 'official-author')
+    const loadMore = () => renderer!.root.findAll(node => node.type === 'button' && node.children.includes('加载更多团队对话'))
+    expect(teamRows()).toHaveLength(0); expect(shortcut()).toHaveLength(0); expect(loadMore()).toHaveLength(0)
+    const notification = notificationRows()[0]!
+    phoneMasked = '138****0000'
+    await act(async () => { await socialAccessStore.refresh() })
+    expect(teamRows()).toHaveLength(1); expect(shortcut()).toHaveLength(0); expect(loadMore()).toHaveLength(1)
+    expect(notificationRows()[0]).toBe(notification)
+    phoneMasked = undefined
+    await act(async () => { await socialAccessStore.refresh() })
+    expect(teamRows()).toHaveLength(0); expect(loadMore()).toHaveLength(0)
+    expect(notificationRows()[0]).toBe(notification)
+    conversations = []
+    await act(async () => { await refreshTeamDirectory('test:7001') })
+    expect(shortcut()).toHaveLength(0)
+    phoneMasked = '138****0000'
+    await act(async () => { await socialAccessStore.refresh() })
+    expect(shortcut()).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'chat.official-author.profile' || operation === 'chat.official-author.private.open')).toBe(false)
+  })
+
   it('preserves notifications and Codex while social conversations hide and return after binding', async () => {
     let phoneMasked: string | undefined
     const original = mocks.callArkme.getMockImplementation()!
