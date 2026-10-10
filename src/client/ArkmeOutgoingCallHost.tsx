@@ -36,7 +36,10 @@ export function ArkmeOutgoingCallHost() {
   useArkmeLocale()
   const runtimeRef = useRef<OutgoingCallRuntime>()
   if (runtimeRef.current === undefined) {
-    runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: imageRef => arkmeAvatarImages.load(imageRef) })
+    runtimeRef.current = new OutgoingCallRuntime({
+      currentAvatar: imageRef => arkmeAvatarImages.current(imageRef),
+      loadAvatar: imageRef => arkmeAvatarImages.load(imageRef),
+    })
   }
   const runtime = runtimeRef.current
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)

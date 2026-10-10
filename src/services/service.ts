@@ -401,6 +401,15 @@ export class ServiceRuntime {
   }
 
   async runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return await this.ownerRead(route, parameters, operation, signal, 'transport')
+  }
+
+  /** Only for composites whose child requests already pass through transport admission. */
+  async runCompositeOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return await this.ownerRead(route, parameters, operation, signal, 'route-only')
+  }
+
+  private async ownerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal: AbortSignal | undefined, admission: 'transport' | 'route-only'): Promise<T> {
     const session = await this.requireSession()
     const assertCurrentAccount = async (operationSignal: AbortSignal): Promise<void> => {
       operationSignal.throwIfAborted()
@@ -413,6 +422,7 @@ export class ServiceRuntime {
     }
     return await this.requestCoordinator.run({
       scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'extension',
+      admission,
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
       ...(signal === undefined ? {} : { signal }),
       operation: async operationSignal => {

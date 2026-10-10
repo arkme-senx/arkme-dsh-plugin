@@ -750,7 +750,7 @@ describe('ArkmeCallSurface interactions', () => {
     }))
   })
 
-  it('preloads visible call avatars before switching the call list to ready', async () => {
+  it('shows call history before optional avatars arrive and reuses cached avatars on return', async () => {
     const image = deferred<{ mediaType: string; dataBase64: string }>()
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'calls.history.list') return {
@@ -779,27 +779,148 @@ describe('ArkmeCallSurface interactions', () => {
     })
 
     let renderer!: ReactTestRenderer
-    await act(async () => {
-      renderer = create(<ArkmeCallSurface />)
-      await tick()
-      await tick()
+    try {
+      await act(async () => {
+        renderer = create(<ArkmeCallSurface />)
+        await tick()
+        await tick()
+      })
+
+      expect(textContent(renderer.toJSON())).not.toContain('正在读取通话记录')
+      expect(textContent(renderer.toJSON())).not.toContain('阿森')
+      expect(textContent(renderer.toJSON())).toContain('小林')
+      expect(renderer.root.findAllByType('img').some(node => node.props.src === 'data:image/png;base64,AAA=')).toBe(false)
+
+      await act(async () => {
+        image.resolve({ mediaType: 'image/png', dataBase64: 'AAA=' })
+        await tick()
+        await tick()
+      })
+
+      expect(textContent(renderer.toJSON())).toContain('最近通话')
+      expect(textContent(renderer.toJSON())).toContain('小林')
+      expect(renderer.root.findAllByType('img').length).toBeGreaterThan(0)
+      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-contact-1' }, undefined, { priority: 'background' })
+      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-call-1' }, undefined, { priority: 'background' })
+      const imageReads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'image.read').length
+      act(() => renderer.unmount())
+      await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+      expect(textContent(renderer.toJSON())).toContain('小林')
+      expect(renderer.root.findAllByType('img').some(node => node.props.src === 'data:image/png;base64,AAA=')).toBe(true)
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'image.read')).toHaveLength(imageReads)
+      act(() => renderer.unmount())
+    } finally {
+      await act(async () => { renderer?.unmount(); image.resolve({ mediaType: 'image/png', dataBase64: 'AAA=' }); await tick() })
+    }
+  })
+
+  it('publishes another history page while its optional avatar is pending', async () => {
+    const image = deferred<{ mediaType: string; dataBase64: string }>()
+    const item = (id: string, peerAvatarRef?: string) => ({ callRef: id, stableId: id, peerDisplayName: id,
+      mediaType: 'audio', startedAtMillis: 1, acceptedAtMillis: 1, endedAtMillis: 2,
+      durationSeconds: 1, callResult: 'NormalEnd', resultLabel: '已结束',
+      summaryStatus: 'done', canOpenDetail: false, canRedial: false, peerAvatarRef })
+    mocks.callArkme.mockImplementation(async (operation: string, params: { cursor?: string }) => {
+      if (operation === 'calls.history.list') return params.cursor
+        ? { items: [item('头像待补齐的旧通话', 'avatar-deferred-history-page')], hasMore: false }
+        : { items: [item('最近通话对象')], hasMore: true, nextCursor: 'page2' }
+      if (operation === 'image.read') return image.promise
+      return { items: [], hasMore: false }
     })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({
+          currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 },
+        })
+        await tick()
+      })
+      expect(textContent(renderer.toJSON())).toContain('头像待补齐的旧通话')
+      expect(textContent(renderer.toJSON())).not.toContain('加载更多')
+      expect(textContent(renderer.toJSON())).toContain('没有更多了')
+      await act(async () => { image.resolve({ mediaType: 'image/png', dataBase64: 'UEFHRQ==' }); await tick() })
+      expect(buttonByText(renderer, '头像待补齐的旧通话').findAllByType('img')
+        .some(node => node.props.src === 'data:image/png;base64,UEFHRQ==')).toBe(true)
+    } finally {
+      await act(async () => { renderer?.unmount(); image.resolve({ mediaType: 'image/png', dataBase64: 'UEFHRQ==' }); await tick() })
+    }
+  })
 
-    expect(textContent(renderer.toJSON())).toContain('正在读取通话记录')
-    expect(textContent(renderer.toJSON())).not.toContain('阿森')
-    expect(textContent(renderer.toJSON())).not.toContain('小林')
-
-    await act(async () => {
-      image.resolve({ mediaType: 'image/png', dataBase64: 'AAA=' })
-      await tick()
-      await tick()
+  it('makes private and official contacts usable before their optional avatars arrive', async () => {
+    const image = deferred<{ mediaType: string; dataBase64: string }>()
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { items: [{ sourceRef: 'avatar-pending-private', kind: 'private_chat',
+        displayName: '头像未回的私聊联系人', avatarRef: 'avatar-deferred-private-contact', activeAtMillis: 1, unreadCount: 0 }], hasMore: false }
+      if (operation === 'chat.official-author.profile') return {
+        userId: 11, displayName: '头像未回的作者', avatarRef: 'avatar-deferred-official-contact',
+      }
+      if (operation === 'image.read') return image.promise
+      throw new Error(`unexpected operation ${operation}`)
     })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeCallSurface initialPickerOpen />); await tick() })
+      expect(buttonByLabel(renderer, '选择头像未回的私聊联系人通话方式')).toBeDefined()
+      expect(buttonByLabel(renderer, '和头像未回的作者视频通话')).toBeDefined()
+      expect(mocks.outgoingCallRequest).not.toHaveBeenCalled()
+      await act(async () => { image.resolve({ mediaType: 'image/png', dataBase64: 'Q09OVEFDVA==' }); await tick() })
+      expect(renderer.root.findAllByType('img').filter(node => node.props.src === 'data:image/png;base64,Q09OVEFDVA==').length).toBeGreaterThanOrEqual(2)
+    } finally {
+      await act(async () => { renderer?.unmount(); image.resolve({ mediaType: 'image/png', dataBase64: 'Q09OVEFDVA==' }); await tick() })
+    }
+  })
 
-    expect(textContent(renderer.toJSON())).toContain('最近通话')
-    expect(textContent(renderer.toJSON())).toContain('小林')
-    expect(renderer.root.findAllByType('img').length).toBeGreaterThan(0)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-contact-1' })
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-call-1' })
+  it('shows search results before avatars and ignores late images after changing search or unmounting', async () => {
+    vi.useFakeTimers()
+    const firstImage = deferred<{ mediaType: string; dataBase64: string }>()
+    const secondImage = deferred<{ mediaType: string; dataBase64: string }>()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { identifier?: string; imageRef?: string }) => {
+      if (operation === 'calls.history.list' || operation === 'sources.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'chat.official-author.profile') return { userId: 11, displayName: '作者' }
+      if (operation === 'contacts.search') {
+        const first = params?.identifier === '@avatar_first'
+        return { contactRef: `contact-${first ? 'first' : 'second'}`, identifierKind: 'arkme_id',
+          displayName: first ? '第一个搜索联系人' : '第二个搜索联系人', arkmeId: first ? 'avatar_first' : 'avatar_second',
+          avatarRef: first ? 'avatar-deferred-search-first' : 'avatar-deferred-search-second',
+          registered: true, inviteBySms: false, canAdd: false, isSelf: false }
+      }
+      if (operation === 'image.read') return params?.imageRef === 'avatar-deferred-search-first' ? firstImage.promise : secondImage.promise
+      throw new Error(`unexpected operation ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    const search = async (value: string) => {
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.onChange({ currentTarget: { value } })
+        await tick()
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(280) })
+    }
+    try {
+      await act(async () => { renderer = create(<ArkmeCallSurface initialPickerOpen />); await tick() })
+      await search('@avatar_first')
+      expect(buttonByLabel(renderer, '直接和第一个搜索联系人视频通话')).toBeDefined()
+      expect(textContent(renderer.toJSON())).not.toContain('正在搜索')
+      await search('@avatar_second')
+      expect(buttonByLabel(renderer, '直接和第二个搜索联系人视频通话')).toBeDefined()
+      await act(async () => { firstImage.resolve({ mediaType: 'image/png', dataBase64: 'T0xE' }); await tick() })
+      expect(textContent(renderer.toJSON())).not.toContain('第一个搜索联系人')
+      expect(renderer.root.findAllByType('img').some(node => node.props.src === 'data:image/png;base64,T0xE')).toBe(false)
+      act(() => renderer.unmount())
+      const reads = mocks.callArkme.mock.calls.length
+      await act(async () => { secondImage.resolve({ mediaType: 'image/png', dataBase64: 'TkVX' }); await tick() })
+      expect(renderer.toJSON()).toBeNull()
+      expect(mocks.callArkme).toHaveBeenCalledTimes(reads)
+      expect(mocks.outgoingCallRequest).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => {
+        renderer?.unmount()
+        firstImage.resolve({ mediaType: 'image/png', dataBase64: 'T0xE' })
+        secondImage.resolve({ mediaType: 'image/png', dataBase64: 'TkVX' })
+        await tick()
+      })
+    }
   })
 
   it('keeps sample calls at the bottom and renders video sample as a static switchable image', async () => {

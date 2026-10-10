@@ -36,6 +36,142 @@ function sentCommand(target: ReturnType<typeof iframe>, type: string): boolean {
 }
 
 describe('outgoing call runtime', () => {
+  it('does not send a call when engine ready arrives during the cancellation grace period', async () => {
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? structuredClone(prepareResult) : undefined)
+    const controller = new OutgoingCallUiController()
+    const runtime = new OutgoingCallRuntime({ api, controller, randomId: () => 'request-1' })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+      await settle()
+      expect(sentCommand(target, 'bootstrap')).toBe(true)
+      runtime.cancel()
+      expect(runtime.getSnapshot().phase).toBe('ending')
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(sentCommand(target, 'call')).toBe(false)
+    } finally { runtime.dispose() }
+  })
+
+  it('starts the call and lease heartbeat while an optional avatar is still loading', async () => {
+    let resolveAvatar!: (value: string) => void
+    const avatar = new Promise<string>(resolve => { resolveAvatar = resolve })
+    const result = { ...structuredClone(prepareResult), peerAvatarRef: 'profile-peer' }
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? result : undefined)
+    const controller = new OutgoingCallUiController()
+    const intervals: Array<{ callback: () => void; delay: number }> = []
+    const runtime = new OutgoingCallRuntime({
+      api, controller, randomId: () => 'request-1', loadAvatar: () => avatar,
+      setInterval: ((callback: () => void, delay: number) => {
+        intervals.push({ callback, delay })
+        return intervals.length as unknown as ReturnType<typeof setInterval>
+      }) as typeof setInterval,
+      clearInterval: vi.fn(),
+    })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+      await settle()
+      expect(runtime.getSnapshot().phase).toBe('bootstrapping')
+      intervals.find(interval => interval.delay === 15_000)!.callback()
+      expect(api).toHaveBeenCalledWith('calls.outgoing.heartbeat', { callRequestId: 'request-1' })
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(sentCommand(target, 'call')).toBe(true)
+      runtime.handleBridgeMessage({ type: 'calling' })
+      const before = target.onHostMessage.mock.calls.length
+      resolveAvatar('data:image/png;base64,AA==')
+      await settle()
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(target.onHostMessage).toHaveBeenCalledTimes(before)
+      expect(runtime.getSnapshot().phase).toBe('calling')
+    } finally { runtime.dispose(); resolveAvatar(''); await settle() }
+  })
+
+  it.each(['already-cached', 'cached-before-ready'] as const)('uses an avatar %s without waiting for refresh or sending twice', async mode => {
+    let cached = mode === 'already-cached' ? 'data:image/png;base64,AA==' : undefined
+    const result = { ...structuredClone(prepareResult), peerAvatarRef: 'profile-peer' }
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? result : undefined)
+    const controller = new OutgoingCallUiController()
+    let resolveAvatar!: (value: string) => void
+    const avatar = new Promise<string>(resolve => { resolveAvatar = resolve })
+    const currentAvatar = vi.fn(() => cached)
+    const runtime = new OutgoingCallRuntime({
+      api, controller, randomId: () => 'request-1', currentAvatar, loadAvatar: () => avatar,
+    })
+    const target = iframe()
+    runtime.mount()
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+      await settle()
+      expect(runtime.getSnapshot().phase).toBe('bootstrapping')
+      // The shared image store may publish a result while the call engine initializes.
+      cached = 'data:image/png;base64,AA=='
+      runtime.attachFrame(target.frame)
+      runtime.handleBridgeMessage({ type: 'ready' })
+      runtime.handleBridgeMessage({ type: 'ready' })
+      const calls = target.onHostMessage.mock.calls.map(([message]) => JSON.parse(String(message)))
+      expect(calls.filter(message => message.type === 'bootstrap')).toHaveLength(1)
+      expect(calls.filter(message => message.type === 'call')).toHaveLength(1)
+      expect(calls.find(message => message.type === 'call')).toMatchObject({ payload: { calleeAvatar: cached } })
+      expect(currentAvatar).toHaveBeenCalledWith('profile-peer')
+    } finally { runtime.dispose(); resolveAvatar(''); await settle() }
+  })
+
+  it.each(['reject', 'throw', 'cache-throw'] as const)('does not fail a call when optional avatar loading fails with %s', async failure => {
+    const result = { ...structuredClone(prepareResult), peerAvatarRef: 'profile-peer' }
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? result : undefined)
+    const controller = new OutgoingCallUiController()
+    const runtime = new OutgoingCallRuntime({
+      api, controller, randomId: () => 'request-1',
+      currentAvatar: () => { if (failure === 'cache-throw') throw new Error('cache unavailable'); return undefined },
+      loadAvatar: () => {
+        if (failure === 'throw') throw new Error('avatar unavailable')
+        return failure === 'reject' ? Promise.reject(new Error('avatar unavailable')) : Promise.resolve('')
+      },
+    })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+      await settle()
+      expect(runtime.getSnapshot().phase).toBe('bootstrapping')
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(sentCommand(target, 'call')).toBe(true)
+      expect(runtime.getSnapshot().error).toBe('')
+    } finally { runtime.dispose() }
+  })
+
+  it.each(['cancel', 'dispose', 'account-change'] as const)('cannot revive the call or lease after %s when an avatar finishes late', async action => {
+    let resolveAvatar!: (value: string) => void
+    const avatar = new Promise<string>(resolve => { resolveAvatar = resolve })
+    const result = { ...structuredClone(prepareResult), peerAvatarRef: 'profile-peer' }
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? result : undefined)
+    const controller = new OutgoingCallUiController()
+    const runtime = new OutgoingCallRuntime({ api, controller, randomId: () => 'request-1', loadAvatar: () => avatar })
+    runtime.mount()
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+      await settle()
+      if (action === 'cancel') runtime.cancel()
+      else if (action === 'dispose') runtime.dispose()
+      else runtime.configureReceiver(5, 'test:5')
+      await settle()
+      expect(api).toHaveBeenCalledWith('calls.outgoing.release', { callRequestId: 'request-1' })
+      const before = runtime.getSnapshot()
+      resolveAvatar('data:image/png;base64,AA==')
+      await settle()
+      expect(runtime.getSnapshot()).toEqual(before)
+      const target = iframe()
+      runtime.attachFrame(target.frame)
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(sentCommand(target, 'call')).toBe(false)
+    } finally { runtime.dispose(); resolveAvatar(''); await settle() }
+  })
+
   it('prepares a direct request, bootstraps the iframe, and never exposes UserSig in snapshots', async () => {
     const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? structuredClone(prepareResult) : undefined)
     const controller = new OutgoingCallUiController()

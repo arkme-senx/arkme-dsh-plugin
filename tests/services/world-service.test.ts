@@ -16,6 +16,58 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('WorldService', () => {
+  it('leaves the Team Open write budget available after a burst of interaction reads', async () => {
+    vi.useFakeTimers()
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const starts: string[] = []
+    const runtime = new ServiceRuntime({ ...config, teamBaseUrl: 'https://team.test' }, {
+      async read() { return session }, async write() {}, async delete() {},
+    }, { async uniqueCode() { return 'world-admission-test-secret' } } as StateStore, async input => {
+      const path = new URL(String(input)).pathname
+      starts.push(path)
+      const data = path.endsWith('/world-list') ? { list: [{
+        record_uid: 'public-root', user_id: 7, nick_name: '小明', text_content: '根内容',
+        images: [], videos: [], voices: [], extend_count: 1,
+      }], total: 1 } : { list: [], total: 0, has_more: false }
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const world = new WorldService(runtime, {} as never, {} as never, {} as never)
+    let opened: Promise<unknown> | undefined
+    try {
+      const feed = await world.listWorldFeed()
+      await vi.advanceTimersByTimeAsync(1_000)
+      const reads = Promise.all(Array.from({ length: 8 }, (_, offset) =>
+        world.listWorldInteractions(feed.items[0]!.recordRef, { offset })))
+      await vi.advanceTimersByTimeAsync(0)
+      await reads
+      opened = runtime.authenticatedTeamPost('/api/v1/team/conversations/open', { public_ref: 'official-channel' }, session)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(starts).toContain('/api/v1/team/conversations/open')
+      expect(runtime.requestStats()['interactive-read:world']?.started).toBe(8)
+      // Only the pre-existing feed read uses the legacy World default lane.
+      expect(runtime.requestStats()['write:world']?.started).toBe(1)
+      await opened
+    } finally {
+      await vi.advanceTimersByTimeAsync(1_000)
+      await opened
+      world.dispose(); runtime.dispose(); vi.useRealTimers()
+    }
+  })
+
+  it('does not replay World publication writes after an upstream failure', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('', { status: 500 }))
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = new ServiceRuntime(config, {
+      async read() { return session }, async write() {}, async delete() {},
+    }, {} as StateStore, fetcher)
+    try {
+      await expect(runtime.authenticatedWorldPost('/api/v1/public-record/publish', { record_uid: 'record' }, session)).rejects.toMatchObject({ code: 'arkme-http-error' })
+      expect(fetcher).toHaveBeenCalledOnce()
+      expect(runtime.requestStats()['write:world']?.started).toBe(1)
+      expect(runtime.requestStats()['interactive-read:world']).toBeUndefined()
+    } finally { runtime.dispose() }
+  })
+
   it('projects the public world list without authentication', async () => {
     const sessions: ArkmeSessionStore = { async read() { return undefined }, async write() {}, async delete() {} }
     const state = { async uniqueCode() { return 'device-secret' } } as StateStore

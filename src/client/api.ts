@@ -6,6 +6,7 @@ import { conversationWindowBridge, conversationWindowRequested } from './convers
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
+import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
@@ -249,6 +250,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: { priority?: 'background' },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -259,9 +261,52 @@ export async function callArkme<T>(
   if (accountKey !== undefined && params?.expectedAccountKey !== undefined && params.expectedAccountKey !== accountKey) {
     throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
   }
+  let cleanupBackground: (() => void) | undefined
   try {
-    const value = await callProvider<T>(operation as ArkmePluginOperation,
-      accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }, signal)
+    const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
+    const background = options?.priority === 'background' && supportsBackgroundRead(operation)
+    const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+    const currentScope = () => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return current?.status === 'authenticated' ? `${current.environment}:${current.userId}` : undefined
+    }
+    const changedAccount = () => new ArkmeClientError({
+      code: 'read-account-changed', message: '登录账号已变化，请重新读取', retryable: false,
+    })
+    let backgroundSignal: AbortSignal | undefined
+    if (background) {
+      // Avatar reads have no component AbortSignal. Account changes must still
+      // cancel their fetches so old work cannot occupy the new account's budget.
+      const controller = new AbortController()
+      const abort = () => controller.abort(signal?.reason)
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      const unsubscribe = arkmeAuthStore.subscribe(() => {
+        if (currentScope() !== scope) controller.abort(changedAccount())
+      })
+      cleanupBackground = () => { unsubscribe(); signal?.removeEventListener('abort', abort) }
+      backgroundSignal = controller.signal
+    }
+    const dispatch = async (requestSignal?: AbortSignal): Promise<T> => {
+      if (background && currentScope() !== scope) throw changedAccount()
+      const value = await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+      if (background) {
+        requestSignal?.throwIfAborted()
+        if (currentScope() !== scope) throw changedAccount()
+      }
+      return value
+    }
+    // Keep the permit until callProvider has consumed the entire JSON body.
+    // No key/recovery: existing owners retain deduplication and retry semantics.
+    const value = background ? await backgroundUiReads.run({
+      scope: scope ?? 'anonymous', lane: 'background-read', service: 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
+      operation: dispatch,
+    }) : await dispatch(signal)
+    if (background) {
+      // Account changes can arrive while the coordinator unwinds after dispatch.
+      backgroundSignal?.throwIfAborted()
+      if (currentScope() !== scope) throw changedAccount()
+    }
     const current = arkmeAuthStore.getSnapshot().auth
     if (accountKey !== undefined && (current?.status !== 'authenticated' || `${current.environment}:${current.userId}` !== accountKey)) {
       throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
@@ -277,5 +322,7 @@ export async function callArkme<T>(
       }))
     }
     throw error
+  } finally {
+    cleanupBackground?.()
   }
 }
