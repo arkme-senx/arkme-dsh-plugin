@@ -331,6 +331,20 @@ describe('WorldService', () => {
 
 
 describe('World notification sources and targets', () => {
+  it.each(['sources', 'target'] as const)('rejects a late notification %s read after World disposal', async operation => {
+    let disposeDuringRead = false
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const record = { record_uid: 'root', user_id: 42, text_content: '原文', is_public: true, check_status: 2 }
+    const fetchImpl = vi.fn(async input => {
+      if (disposeDuringRead) world.dispose()
+      return new Response(JSON.stringify({ code: 200, data: String(input).endsWith('/my-list') ? { list: [record], total: 1 } : record }), { status: 200 })
+    }) as typeof fetch
+    const world = new WorldService(new ServiceRuntime(config, sessions, { async uniqueCode() { return 'secret' } } as StateStore, fetchImpl), {} as never, {} as never, {} as never)
+    const sources = await world.worldNotificationSources()
+    disposeDuringRead = true
+    await expect(operation === 'sources' ? world.worldNotificationSources() : world.worldNotificationTarget(sources.items[0]!.recordRef))
+      .rejects.toMatchObject({ code: 'world-account-changed' })
+  })
   it('preserves owned comments, resolves a reply to its original World, and rejects revoked targets or another account', async () => {
     let userId = 42, visible = true
     const records: Record<string, Record<string, unknown>> = {

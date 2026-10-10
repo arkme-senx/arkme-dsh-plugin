@@ -20,6 +20,10 @@ describe('World notification recipient reconstruction', () => {
     expect(result.map(item => item.interactionRef)).toEqual(['direct', 'duplicate'])
     expect(result.every(item => item.replyToComment)).toBe(true)
     expect(read.mock.calls.some(call => call[1].offset === 50)).toBe(true)
+    expect(read.mock.calls).toEqual(expect.arrayContaining([
+      ['world.notification-sources', { offset: 0 }, expect.any(AbortSignal), { priority: 'background' }],
+      ['world.interactions.list', { recordRef: 'my-comment', limit: 50, offset: 50 }, expect.any(AbortSignal), { priority: 'background' }],
+    ]))
   })
   it('rejects a failed scan rather than claiming there are no notifications', async () => {
     const read = vi.fn(async operation => {

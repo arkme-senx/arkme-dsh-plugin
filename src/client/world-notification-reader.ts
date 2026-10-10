@@ -10,7 +10,7 @@ export async function readWorldNotifications(signal: AbortSignal, read: typeof c
   let offset = 0
   for (let sourcePage = 0; sourcePage < 100; sourcePage++) {
     signal.throwIfAborted()
-    const page = await read<ArkmeWorldNotificationSourcePage>('world.notification-sources', { offset }, signal)
+    const page = await read<ArkmeWorldNotificationSourcePage>('world.notification-sources', { offset }, signal, { priority: 'background' })
     if (!Array.isArray(page.items)) throw new Error('世界互动来源数据不完整，请重试')
     // Keep concurrency bounded: the legacy endpoint recursively returns a comment subtree.
     for (let index = 0; index < page.items.length; index += 2) {
@@ -20,7 +20,7 @@ export async function readWorldNotifications(signal: AbortSignal, read: typeof c
         let replyOffset = 0
         for (let replyPage = 0; replyPage < 100; replyPage++) {
           signal.throwIfAborted()
-          const replies = await read<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: source.recordRef, limit: 50, offset: replyOffset }, signal)
+          const replies = await read<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: source.recordRef, limit: 50, offset: replyOffset }, signal, { priority: 'background' })
           for (const reply of replies.items) {
             if (reply.isSelf) continue
             // A root owner receives all replies. A commenter receives only direct replies to their own comment.

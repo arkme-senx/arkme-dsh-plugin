@@ -917,6 +917,7 @@ export class WorldService {
 
   /** my-list includes both original posts and comments; feed filtering must not be applied here. */
   async worldNotificationSources(offset = 0, signal?: AbortSignal): Promise<ArkmeWorldNotificationSourcePage> {
+    const epoch = this.epoch
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
       '/api/v1/public-record/my-list', { limit: 20, offset }, session, signal,
@@ -932,11 +933,14 @@ export class WorldService {
     }
     const nextOffset = offset + raw.length
     const hasMore = raw.length > 0 && nextOffset < numberValue(data.total)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     return { items, hasMore, ...(hasMore ? { nextOffset } : {}) }
   }
 
   /** Resolve the current public ancestor chain; an old notification never bypasses visibility. */
   async worldNotificationTarget(interactionRef: string, signal?: AbortSignal): Promise<ArkmeWorldNotificationTarget> {
+    const epoch = this.epoch
     const session = await this.runtime.requireSession()
     let uid = this.openWorldRecordRef(interactionRef, session.userId).recordUid
     const seen = new Set<string>()
@@ -952,6 +956,8 @@ export class WorldService {
       if (!parent) {
         const avatars = await this.resolveWorldAvatarUrls([raw], session, signal)
         const root = await this.worldFeedItem(raw, session.userId, avatars, signal)
+        signal?.throwIfAborted()
+        if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
         if (root) return { root, interactionRef }
         break
       }
