@@ -33,6 +33,7 @@ export async function readConversationTimelineWindow(
   let first: ArkmeTimelinePage | undefined
   for (;;) {
     signal.throwIfAborted()
+    if (visited.size >= 500 || items.size > 2000) throw new Error('消息列表刷新超过窗口上限，请重新定位')
     const key = JSON.stringify(cursor ?? null)
     if (visited.has(key)) throw new Error('消息列表刷新游标未推进')
     visited.add(key)

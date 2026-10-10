@@ -1,4 +1,5 @@
-import { UnifiedTimelineCache } from '../unified-timeline-cache.js'
+import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
+import { reconcileUnifiedTimeline } from '../unified-timeline-reconcile.js'
 import { join } from 'node:path'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { createHmac } from 'node:crypto'
@@ -45,18 +46,68 @@ export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string) {
 
 /** One remote structure read shared by UI, SDK and Tools. Content adapters never query structure. */
 export class UnifiedChatTimelineService {
-  private cache: UnifiedTimelineCache | undefined
+  private cache: TimelineCachePort | undefined
   private epoch = 0
   private disposed = false
+  private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number }>()
+  private readonly pendingInvalidations = new Map<string, TimelineCacheCommand>()
+  private invalidating: Promise<void> | undefined
   private readonly unsubscribe: (() => void) | undefined
-  dispose(): void { this.disposed = true; this.epoch++; this.unsubscribe?.(); this.cache?.close(); this.cache = undefined }
-  reset(): void { this.epoch++ }
+  dispose(): void { this.disposed = true; this.epoch++; this.knownSources.clear(); this.pendingInvalidations.clear(); this.unsubscribe?.(); this.cache?.close(); this.cache = undefined }
+  reset(): void { this.epoch++; this.knownSources.clear() }
   constructor(private readonly runtime: ServiceRuntime, private readonly source: SourceService,
-    private readonly chat: ChatService, private readonly interwoven: InterwovenService) {
+    private readonly chat: ChatService, private readonly interwoven: InterwovenService,
+    private readonly createCache: (directory: string) => TimelineCachePort = directory => new TimelineCacheWorker(directory)) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => this.reset())
   }
 
+  private storage(): TimelineCachePort | undefined {
+    if (!this.cache && !this.disposed && this.runtime.config.fileStateDirectory) {
+      try { this.cache = this.createCache(join(this.runtime.config.fileStateDirectory, 'timeline')) } catch { /* Network remains available. */ }
+    }
+    return this.cache
+  }
+
+  async invalidate(sourceKey: string, timelineItemKey?: string, terminal = false): Promise<void> {
+    if (this.disposed) return
+    const known = this.knownSources.get(sourceKey)
+    if (known) {
+      known.revision++
+      this.runtime.invalidateKey?.(this.runtime.requestScope(known.userId), 'unified-timeline:')
+    }
+    const key = JSON.stringify([sourceKey, timelineItemKey ?? '', terminal])
+    if (!this.pendingInvalidations.has(key) && this.pendingInvalidations.size >= 512) {
+      // Never serve potentially revoked data when a bounded hint backlog overflows.
+      this.pendingInvalidations.clear(); this.storage()?.close()
+      return
+    }
+    this.pendingInvalidations.set(key, { ...(known ? { kind: 'invalidate' as const, scope: known.scope } : { kind: 'invalidate-source' as const, sourceKey }),
+      ...(timelineItemKey ? { timelineItemKey } : {}), terminal })
+    // A sessions delta can contain hundreds of sources. Coalesce duplicate hints
+    // and drain sequentially instead of overflowing the shared Worker admission queue.
+    this.invalidating ??= Promise.resolve().then(async () => {
+      try {
+        while (this.pendingInvalidations.size && !this.disposed) {
+          const [id, command] = this.pendingInvalidations.entries().next().value!
+          this.pendingInvalidations.delete(id)
+          await this.storage()?.call(command)
+        }
+      } catch { this.pendingInvalidations.clear(); this.cache?.close() }
+      finally { this.invalidating = undefined }
+    })
+    await this.invalidating
+  }
+
   async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
+    if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
+    const operation = (shared: AbortSignal) => this.readOwned(sourceRef, query,
+      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]))
+    return this.runtime.runCompositeOwnerRead
+      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query }, operation, signal)
+      : await operation(signal ?? new AbortController().signal)
+  }
+
+  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
     const session = await this.runtime.requireSession()
@@ -67,6 +118,10 @@ export class UnifiedChatTimelineService {
     const mode = query.mode ?? 'initial'
     if (!['initial', 'older', 'newer', 'around', 'refresh'].includes(mode)
       || query.cacheOnly !== undefined && typeof query.cacheOnly !== 'boolean'
+      || query.anchorId !== undefined && (!query.cacheOnly || typeof query.anchorId !== 'string' || !query.anchorId || query.anchorId.length > 1024)
+      || query.reconcile !== undefined && typeof query.reconcile !== 'boolean'
+      || query.reconcile && (mode !== 'refresh' || query.cacheOnly || query.cursor !== undefined || !query.windowTokens?.length)
+      || query.newerCursor !== undefined && (!query.reconcile || typeof query.newerCursor !== 'string' || !query.newerCursor || query.newerCursor.length > 32768)
       || query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100)
       || query.windowTokens !== undefined && (!Array.isArray(query.windowTokens) || query.windowTokens.length > 500
         || query.windowTokens.some(token => typeof token !== 'string' || !token || token.length > 32768))
@@ -79,22 +134,46 @@ export class UnifiedChatTimelineService {
     const key = await this.runtime.stateStore.uniqueCode()
     if (this.disposed || this.epoch !== epoch) throw new ArkmePluginError('chat-timeline-stale', '账号状态已变化', false, 409)
     const codec = new TimelineTokenCodec(key, JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef]))
-    const body = { chat_session_uid: source.ownerRef, mode, limit: query.limit ?? 40,
-      ...(query.cursor ? { cursor: codec.open(query.cursor, mode) } : {}),
-      ...(query.windowTokens ? { window_tokens: query.windowTokens.map(token => codec.open(token, 'window')) } : {}),
-      ...(mode === 'around' ? { record_uid: query.itemUid, record_owner_user_id: recordOwnerId(query.recordOwnerUserId) } : {}) }
     const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef])
-    const requestKey = createHmac('sha256', key).update('projection:4\0').update(JSON.stringify(body)).digest('hex')
-    if (!this.cache && this.runtime.config.fileStateDirectory) {
-      try { this.cache = new UnifiedTimelineCache(join(this.runtime.config.fileStateDirectory, 'timeline')) } catch { /* Cache availability never gates the authoritative network read. */ }
+    const sourceItem = await this.source.sourceItem(source)
+    const sourceKey = sourceItem.sourceKey ?? sourceRef
+    const state = this.knownSources.get(sourceKey) ?? { scope, userId: session.userId, revision: 0 }
+    this.knownSources.delete(sourceKey); this.knownSources.set(sourceKey, state)
+    while (this.knownSources.size > 512) this.knownSources.delete(this.knownSources.keys().next().value!)
+    const revision = state.revision
+    const requestKey = createHmac('sha256', key).update('projection:5\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
+    const invalidating = this.invalidating
+    if (invalidating) await new Promise<void>((resolve, reject) => {
+      const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+      signal.addEventListener('abort', abort, { once: true })
+      invalidating.then(() => { signal.removeEventListener('abort', abort); resolve() }, error => {
+        signal.removeEventListener('abort', abort); reject(error)
+      })
+      if (signal.aborted) abort()
+    })
+    const cache = this.storage()
+    const assertCurrent = async () => {
+      signal.throwIfAborted()
+      if (this.disposed || this.epoch !== epoch || state.revision !== revision || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
     }
     if (query.cacheOnly) {
-      const cached = this.cache?.read(scope, requestKey)
+      let cached: ArkmeTimelinePage | undefined
+      try { cached = await cache?.call<ArkmeTimelinePage | undefined>({ kind: 'read', scope, request: requestKey,
+        ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
+        latest: mode === 'initial' && !query.anchorId }) } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
       if (!cached) throw new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
-      signal?.throwIfAborted()
-      if (this.disposed || this.epoch !== epoch) throw new ArkmePluginError('chat-timeline-stale', '账号状态已变化', false, 409)
-      return { ...cached, source: await this.source.sourceItem(source) }
+      await assertCurrent()
+      return { ...cached, source: sourceItem }
     }
+    let ticket: number | undefined
+    try { ticket = await cache?.call<number>({ kind: 'reserve' }) } catch { /* Explicit unavailable persistence below. */ }
+    await assertCurrent()
+    const readPage = async (pageQuery: ArkmeUnifiedTimelineQuery): Promise<ArkmeTimelinePage> => {
+    const mode = pageQuery.mode ?? 'initial'
+    const body = { chat_session_uid: source.ownerRef, mode, limit: pageQuery.limit ?? 40,
+      ...(pageQuery.cursor ? { cursor: codec.open(pageQuery.cursor, mode) } : {}),
+      ...(pageQuery.windowTokens ? { window_tokens: pageQuery.windowTokens.map(token => codec.open(token, 'window')) } : {}),
+      ...(mode === 'around' ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {
@@ -142,7 +221,9 @@ export class UnifiedChatTimelineService {
         const relation = objectValue(payload.relation)
         const item = messageByRelation.get(await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)))
         if (!item) throw invalid()
-        projected.push({ ...order, kind: 'message', item: { ...item, timelineEventId: order.eventId, sendAtMillis: order.occurredAtMillis } })
+        const owner = recordOwnerId(relation.record_owner_user_id)
+        projected.push({ ...order, kind: 'message', item: { ...item, timelineEventId: order.eventId, sendAtMillis: order.occurredAtMillis,
+          ...(owner ? { recordOwnerUserId: owner } : {}) } })
       } else if (event.source === 'interwoven') {
         const preview = Array.isArray(payload.group_preview_items) ? objectValue(payload.group_preview_items[0]) : {}
         const moment = momentById.get(await this.interwoven.interwovenStableMomentId(stringValue(preview.moment_id)))
@@ -184,7 +265,33 @@ export class UnifiedChatTimelineService {
       unified, hasMore: unified.hasMore, ...(unified.nextCursor ? { nextCursor: { unified: { mode: mode === 'initial' || mode === 'around' ? 'older' : mode, cursor: unified.nextCursor } } } : {}) }
     signal?.throwIfAborted()
     if (this.disposed || this.epoch !== epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化', false, 409)
-    try { this.cache?.write(scope, requestKey, result) } catch { /* Keep the last committed cache; this network result is still authoritative. */ }
     return result
+    }
+    let result = query.reconcile ? await reconcileUnifiedTimeline(query, readPage, signal) : await readPage(query)
+    await assertCurrent()
+    // Standalone refresh pages do not constitute a durable completed window.
+    const durable = mode !== 'refresh' || query.reconcile === true
+    let committed = false
+    if (durable && ticket !== undefined) {
+      let accepted: boolean | undefined
+      try { accepted = await cache!.call<boolean>({ kind: 'write', scope, request: requestKey, page: result,
+        options: { ticket, latest: (mode === 'initial' || query.reconcile === true && !!query.newerCursor) && !result.unified!.newerHasMore,
+          ...(query.reconcile ? { refreshTokens: query.windowTokens! } : {}) } }) } catch { /* The previous committed window survives. */ }
+      if (accepted === false) throw new ArkmePluginError('chat-timeline-stale', '会话已有更新，请重试', true, 409)
+      committed = accepted === true
+    }
+    if (committed) {
+      // Publish exactly the committed canonical projection, including a newer version
+      // already written by another window. A failed readback is not a persisted success.
+      try {
+        const persisted = await cache!.call<ArkmeTimelinePage | undefined>({ kind: 'read', scope, request: requestKey })
+        if (persisted) result = persisted
+        else committed = false
+      }
+      catch { committed = false }
+    }
+    await assertCurrent()
+    return { ...result, cache: { origin: 'network', persistence: !durable ? 'deferred' : committed ? 'committed' : 'unavailable',
+      ...(committed ? { revision: result.cache?.revision ?? ticket! } : {}), stale: result.cache?.stale === true || !result.unified!.complete } }
   }
 }

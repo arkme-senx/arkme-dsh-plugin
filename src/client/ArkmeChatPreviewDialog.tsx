@@ -1,3 +1,4 @@
+import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
@@ -54,37 +55,8 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
   const rows = timeline.page?.unified?.events ?? timeline.page?.items.map(item => ({
     kind: 'message' as const, eventId: item.itemUid, occurredAtMillis: item.sendAtMillis, item,
   })) ?? []
-  if (typeof document === 'undefined') return null
-  return createPortal(<div data-arkme-chat-preview-backdrop style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.3)' }}
-    onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={tr("{v0}的聊天预览", { v0: source.displayName })}
-      style={{ width: 460, maxWidth: '100%', height: 520, maxHeight: 'calc(100dvh - 48px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}
-      onKeyDown={event => {
-        // Nested media portals own their keyboard lifecycle.
-        if (event.target instanceof Element && event.target.closest('[aria-modal="true"]') !== dialog.current) return
-        event.stopPropagation()
-        if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); event.preventDefault(); onClose() }
-        if (event.key === 'Tab') {
-          const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],audio[controls],video[controls],[tabindex="0"]')
-          const first = controls?.[0], last = controls?.[controls.length - 1]
-          if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus() }
-          else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus() }
-        }
-      }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}>
-        <ArkmeDirectorySourceAvatar source={source} size={28} />
-        <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16 }}>{source.displayName}</strong>
-        <span style={{ flex: 'none', padding: '3px 8px', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 11 }}>{tr("预览中")}</span>
-        <button type="button" style={{ ...button, marginLeft: 'auto' }} aria-label={tr("关闭聊天预览")} onClick={onClose}><X size={20} /></button>
-      </header>
-      {timeline.error !== '' && <div role="alert" style={status}>{timeline.error}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr("重试")}</button></div>}
-      <div ref={body} aria-label={tr("预览消息列表")} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}
-        onScroll={() => { if (body.current !== null) viewport.current = arkmeConversationViewport(body.current) }}>
-        {timeline.page?.hasMore && <div style={status}><button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.loadMore() }}>{tr("加载更早消息")}</button></div>}
-        {timeline.loading && timeline.page === undefined && <div role="status" style={status}>{tr("正在加载消息…")}</div>}
-        {!timeline.loading && timeline.error === '' && timeline.page !== undefined && rows.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
-        {timeline.page?.unified && !timeline.page.unified.complete && <div role="status" style={status}>{tr('部分时间线内容暂未加载')}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr('重试')}</button></div>}
-        {rows.map((event, index) => {
+  const rowIds = rows.map(event => ({ id: event.kind === 'message' ? `message:${event.item.itemUid}` : event.eventId }))
+  const renderedRows = rows.map((event, index) => {
           if (event.kind === 'world-public') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><ArkmeTimelinePublicNote recordRef={event.recordRef} authorName={event.authorName} isGroup={source?.kind === 'group_chat'} /></article>
           if (event.kind === 'member-join') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={status}>
             {event.item.action !== 'join' && <>
@@ -116,7 +88,44 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
               </div>
             </ArkmeMessageReadReceiptLine>
           </div>
-        </article></Fragment>})}
+        </article></Fragment>})
+  if (typeof document === 'undefined') return null
+  return createPortal(<div data-arkme-chat-preview-backdrop style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.3)' }}
+    onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={tr("{v0}的聊天预览", { v0: source.displayName })}
+      style={{ width: 460, maxWidth: '100%', height: 520, maxHeight: 'calc(100dvh - 48px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}
+      onKeyDown={event => {
+        // Nested media portals own their keyboard lifecycle.
+        if (event.target instanceof Element && event.target.closest('[aria-modal="true"]') !== dialog.current) return
+        event.stopPropagation()
+        if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); event.preventDefault(); onClose() }
+        if (event.key === 'Tab') {
+          const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],audio[controls],video[controls],[tabindex="0"]')
+          const first = controls?.[0], last = controls?.[controls.length - 1]
+          if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus() }
+          else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus() }
+        }
+      }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}>
+        <ArkmeDirectorySourceAvatar source={source} size={28} />
+        <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16 }}>{source.displayName}</strong>
+        <span style={{ flex: 'none', padding: '3px 8px', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 11 }}>{tr("预览中")}</span>
+        <button type="button" style={{ ...button, marginLeft: 'auto' }} aria-label={tr("关闭聊天预览")} onClick={onClose}><X size={20} /></button>
+      </header>
+      {timeline.error !== '' && <div role="alert" style={status}>{timeline.error}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr("重试")}</button></div>}
+      <div ref={body} aria-label={tr("预览消息列表")} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}
+        onScroll={() => { if (body.current !== null) viewport.current = arkmeConversationViewport(body.current) }}>
+        {timeline.page?.hasMore && <div style={status}><button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.loadMore() }}>{tr("加载更早消息")}</button></div>}
+        {timeline.loading && timeline.page === undefined && <div role="status" style={status}>{tr("正在加载消息…")}</div>}
+        {!timeline.loading && timeline.error === '' && timeline.page !== undefined && rows.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
+        {timeline.page?.unified && !timeline.page.unified.complete && <div role="status" style={status}>{tr('部分时间线内容暂未加载')}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr('重试')}</button></div>}
+        {timeline.page?.cache?.origin === 'local' && <div role="status" style={status}>当前显示本地消息</div>}
+        {timeline.page?.cache?.persistence === 'unavailable' && <div role="status" style={status}>消息已加载，本地缓存暂不可用</div>}
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          <WindowedTimelineRows scrollport={body} rowIds={rowIds} anchorId={viewport.current?.anchorId}>
+            {renderedRows.map((node, index) => <li key={rowIds[index]!.id} style={{ listStyle: 'none' }}>{node}</li>)}
+          </WindowedTimelineRows>
+        </ul>
       </div>
     </div>
   </div>, document.body)

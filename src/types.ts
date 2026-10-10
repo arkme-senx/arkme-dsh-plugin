@@ -1405,6 +1405,7 @@ export interface ArkmeProviderCapabilities {
     contactDirectoryReads?: true
     speakerPresence?: true
     unifiedChatTimeline?: true
+    durableChatTimeline?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -1894,6 +1895,8 @@ export interface ArkmeTimelineMentionTarget {
 
 export interface ArkmeTimelineItem {
   timelineEventId?: string
+  /** Authoritative Chat relation owner for re-establishing an expired reading window. */
+  recordOwnerUserId?: RecordOwnerId
   /** Local display role for a self-authored record; isMe remains the real author. */
   selfRole?: ArkmeSelfRoleSnapshot
   /** Original media refs were not fully projected, even when rich-media rendering is disabled. */
@@ -2545,6 +2548,8 @@ export interface ArkmeMessageCopyLinkResolveResult {
 }
 
 export interface ArkmeTimelinePage {
+  /** Cache state is independent of source completeness and never a server sync/ack cursor. */
+  cache?: { origin: 'local' | 'network'; persistence: 'committed' | 'unavailable' | 'deferred'; revision?: number; stale: boolean }
   unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]

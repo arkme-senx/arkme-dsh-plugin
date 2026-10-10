@@ -31,7 +31,7 @@ describe('timeline cache and tokens', () => {
     expect(store.read('prod/account/chat', 'initial')).toBeUndefined()
     expect(store.read('test/other/chat', 'initial')).toBeUndefined()
     store.close(); store = new UnifiedTimelineCache(path)
-    expect(store.read('test/account/chat', 'initial')).toEqual(page())
+    expect(store.read('test/account/chat', 'initial')).toMatchObject(page())
     store.write('test/account/chat', 'initial', page('updated'))
     expect(store.read('test/account/chat', 'initial')?.unified?.events[0]).toMatchObject({ text: 'updated' })
     store.close()
@@ -55,5 +55,101 @@ describe('timeline cache and tokens', () => {
     expect(() => store.write('scope', 'initial', page('x'.repeat(5 * 1024 * 1024)))).toThrow()
     expect(store.read('scope', 'initial')?.unified?.events[0]).toMatchObject({ text: 'good' })
     store.close()
+  })
+})
+
+describe('canonical events and commit fences', () => {
+  const setup = () => {
+    const path = mkdtempSync(join(tmpdir(), 'arkme canonical timeline ')); directories.push(path)
+    return { path, store: new UnifiedTimelineCache(path) }
+  }
+  it('hydrates every old page from the latest event without rewriting its metadata', () => {
+    const { store } = setup()
+    try {
+      store.write('scope', 'older', page('old'))
+      store.write('scope', 'newer', page('edited'))
+      expect(store.read('scope', 'older')?.unified?.events[0]).toMatchObject({ text: 'edited' })
+      const oldTicket = store.reserve(), newTicket = store.reserve()
+      store.write('scope', 'newer', page('newest'), { ticket: newTicket })
+      store.write('scope', 'late', page('stale'), { ticket: oldTicket })
+      expect(store.read('scope', 'late')?.unified?.events[0]).toMatchObject({ text: 'newest' })
+    } finally { store.close() }
+  })
+  it('never regresses body versions and keeps terminal fences across restart', () => {
+    let { path, store } = setup()
+    const message = (version: number, textContent: string): ArkmeTimelinePage => {
+      const value = page(); value.unified!.events = [{ ...value.unified!.events[0]!, source: 'messages', kind: 'message',
+        item: { itemUid: 'record', timelineItemKey: 'relation', recordVersion: version, textContent } as never }]; return value
+    }
+    try {
+      store.write('scope', 'initial', message(3, 'new'))
+      store.write('scope', 'old-response', message(2, 'old'))
+      expect(store.read('scope', 'old-response')?.items[0]?.textContent).toBe('new')
+      const late = store.reserve()
+      store.invalidate('scope', 'relation', true)
+      expect(store.write('scope', 'initial', message(4, 'late secret'), { ticket: late })).toBe(false)
+      store.close(); store = new UnifiedTimelineCache(path)
+      expect(store.read('scope', 'initial')?.items).toEqual([])
+      expect(store.read('scope', 'initial')?.unified?.events[0]).toMatchObject({ contentStatus: 'unavailable' })
+      expect(store.read('scope', 'initial')?.cache?.stale).toBe(true)
+    } finally { store.close() }
+  })
+  it('keeps coverage tokens window-local while hydrating shared updated bodies and gaps', () => {
+    const { store } = setup()
+    try {
+      const original = page('old'); original.unified!.events[0]!.windowToken = 'old-token'
+      original.unified!.windowTokens = ['old-token']
+      store.write('scope', 'old', original)
+      const updated = page('edited'); updated.unified!.events[0]!.windowToken = 'new-token'
+      updated.unified!.windowTokens = ['new-token']
+      store.write('scope', 'new', updated)
+      expect(store.read('scope', 'old')?.unified?.events[0]).toMatchObject({ text: 'edited', windowToken: 'old-token' })
+      const gap = page(); gap.unified!.events = []; gap.unified!.complete = false
+      gap.unified!.sources.find(source => source.source === 'interwoven')!.status = 'gap'
+      store.write('scope', 'gap', gap, { refreshTokens: ['old-token'] })
+      expect(store.read('scope', 'gap')?.unified?.events[0]).toMatchObject({ text: 'edited', windowToken: 'old-token' })
+    } finally { store.close() }
+  })
+  it('only removes absent events inside completed ready coverage and retains gap bodies durably', () => {
+    let { path, store } = setup()
+    try {
+      const first = page('covered'); first.unified!.events[0]!.windowToken = 'old-window'
+      store.write('scope', 'initial', first)
+      const refresh = page(); refresh.unified!.events = []; refresh.unified!.windowTokens = ['new-window']
+      refresh.unified!.sources.find(source => source.source === 'interwoven')!.status = 'gap'; refresh.unified!.complete = false
+      store.write('scope', 'refresh', refresh, { refreshTokens: ['old-window'], latest: true })
+      store.close(); store = new UnifiedTimelineCache(path)
+      expect(store.read('scope', '', undefined, true)?.unified?.events[0]).toMatchObject({ text: 'covered' })
+      refresh.unified!.sources.find(source => source.source === 'interwoven')!.status = 'ready'; refresh.unified!.complete = true
+      store.write('scope', 'complete', refresh, { refreshTokens: ['old-window'] })
+      expect(store.read('scope', 'initial')?.unified?.events).toEqual([])
+      expect(store.read('scope', 'refresh')?.unified?.events).toEqual([])
+    } finally { store.close() }
+  })
+  it('restores the actual anchor window, never joins unrelated pages or accounts', () => {
+    const { store } = setup()
+    try {
+      store.write('scope', 'around', page('history'))
+      const latest = page('latest'); latest.unified!.events[0]!.eventId = 'tail'
+      store.write('scope', 'initial', latest, { latest: true })
+      expect(store.read('scope', '', 'event')?.unified?.events).toHaveLength(1)
+      expect(store.read('scope', '', 'event')?.unified?.events[0]).toMatchObject({ text: 'history' })
+      expect(store.read('scope', '', undefined, true)?.unified?.events[0]).toMatchObject({ eventId: 'tail' })
+      expect(store.read('other-account', '', 'event')).toBeUndefined()
+    } finally { store.close() }
+  })
+  it('rejects a late page after a completed refresh removed its event, including after restart', () => {
+    let { path, store } = setup()
+    try {
+      const original = page(); original.unified!.events[0]!.windowToken = 'covered'
+      store.write('scope', 'initial', original)
+      const late = store.reserve()
+      const refreshed = page(); refreshed.unified!.events = []
+      store.write('scope', 'refresh', refreshed, { refreshTokens: ['covered'] })
+      store.close(); store = new UnifiedTimelineCache(path)
+      expect(store.write('scope', 'late-page', original, { ticket: late })).toBe(false)
+      expect(store.read('scope', 'initial')?.unified?.events).toEqual([])
+      expect(store.read('scope', 'late-page')).toBeUndefined()
+    } finally { store.close() }
   })
 })

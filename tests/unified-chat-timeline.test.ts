@@ -60,7 +60,7 @@ describe('unified timeline owner contract', () => {
   it('classifies only the precise owner recovery reason and never invokes legacy reads', async () => {
     const post = vi.fn().mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'chat_timeline_window_invalid' }))
     const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
-      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }) } as never, {} as never, {} as never)
+      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never, {} as never, {} as never)
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'chat-timeline-window-invalid' })
     post.mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'other' }))
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'arkme-code-2002' })
@@ -93,7 +93,7 @@ describe('unified member join names', () => {
     const signal = new AbortController().signal
     const page = await service.read('ref', {}, signal)
     expect(page.unified?.events.map(event => event.kind === 'member-join' ? event.item.invitees[0]?.displayName : event.kind)).toEqual(['小明', '小红', '群内昵称'])
-    expect(lookup).toHaveBeenCalledExactlyOnceWith([7, 8], expect.objectContaining({ userId: 1 }), signal)
+    expect(lookup).toHaveBeenCalledExactlyOnceWith([7, 8], expect.objectContaining({ userId: 1 }), expect.any(AbortSignal))
     expect(post).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(page)).not.toContain('user_id')
   })
@@ -111,7 +111,7 @@ describe('unified member join names', () => {
     expect(page.unified?.events[0]).toMatchObject({ kind: 'member-join', item: { action,
       inviter: { displayName: '小明', memberRef: expect.any(String), isSelf: false },
       invitees: [{ displayName: '小红', memberRef: expect.any(String), isSelf: false }] } })
-    expect(lookup).toHaveBeenCalledExactlyOnceWith([8, 7], expect.any(Object), undefined)
+    expect(lookup).toHaveBeenCalledExactlyOnceWith([8, 7], expect.any(Object), expect.any(AbortSignal))
   })
   it('uses an inviter group nickname available in the same page without extra reads', async () => {
     const { service, lookup } = setup([

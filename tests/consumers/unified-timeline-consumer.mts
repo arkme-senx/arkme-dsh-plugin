@@ -10,10 +10,10 @@ const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
   calls.push(operation)
   if (operation === 'source.timeline' && params.cursor.unified.mode !== 'refresh') throw new Error('query lost')
   return new Response(JSON.stringify({ ok: true, value: operation === 'provider.capabilities'
-    ? { contractVersion: 1, features: supported ? { unifiedChatTimeline: true, worldRecordRead: true } : {} }
+    ? { contractVersion: 1, features: supported ? { unifiedChatTimeline: true, durableChatTimeline: true, worldRecordRead: true } : {} }
     : operation === 'world.record.read' ? { recordRef: params.recordRef, textContent: 'public note' } : { source: { sourceRef: 'source' }, items: [], unified: window, hasMore: false } }))
 } })
-const query: ArkmeUnifiedTimelineQuery = { mode: 'refresh', windowTokens: ['opaque'] }
+const query: ArkmeUnifiedTimelineQuery = { mode: 'refresh', windowTokens: ['opaque'], reconcile: true }
 const result = await sdk.readChatTimeline('source', query, lifecycle.signal)
 if (result.unified?.protocolVersion !== 1 || result.unified.complete) throw new Error('partial window lost')
 const detail = await sdk.readWorldRecord('opaque-world-ref')

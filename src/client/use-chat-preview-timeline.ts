@@ -22,7 +22,7 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
 
   const load = useCallback(async (intent: TimelineLoadKind) => {
     if (request.current !== undefined && !request.current.signal.aborted) return
-    const previous = currentPage.current
+    let previous = currentPage.current
     if (intent === 'older' && (!previous?.hasMore || previous.nextCursor === undefined)) return
     const controller = new AbortController()
     request.current = controller
@@ -38,10 +38,17 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
     }, 15_000)
     controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
     try {
+      if (intent === 'initial' && previous === undefined && port.readLocal) {
+        try {
+          const local = await port.readLocal(sourceRef, controller.signal)
+          if (controller.signal.aborted || request.current !== controller) return
+          if (local.unified) { previous = local; currentPage.current = local; setPage(local) }
+        } catch { controller.signal.throwIfAborted() }
+      }
       const cursor = intent === 'older' ? previous?.nextCursor : undefined
-      const refreshWindow = intent === 'refresh' && previous !== undefined && (previous.unified !== undefined || previous.items.length > 0)
+      const refreshWindow = intent !== 'older' && previous !== undefined && (previous.unified !== undefined || previous.items.length > 0)
       const read = () => refreshWindow
-        ? readConversationTimelineWindow(previous,
+        ? readConversationTimelineWindow(previous!,
           next => port.readPage(sourceRef, next, controller.signal), controller.signal)
         : port.readPage(sourceRef, cursor, controller.signal)
       let rebuilt = false
@@ -62,7 +69,7 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
       const next: ArkmeTimelinePage = {
         ...result,
         // Refresh replaces content in the loaded window; the older-page boundary is unchanged.
-        ...(refreshWindow && !rebuilt ? { hasMore: previous.hasMore, nextCursor: previous.nextCursor } : {}),
+        ...(refreshWindow && !rebuilt ? { hasMore: previous!.hasMore, nextCursor: previous!.nextCursor } : {}),
         items: [...items.values()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0) || a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid)),
       }
       if (result.unified) {

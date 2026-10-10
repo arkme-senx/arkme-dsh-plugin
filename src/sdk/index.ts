@@ -1773,7 +1773,8 @@ export class ArkmeSdk {
   }
 
   async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
-    if ((await this.capabilities(signal)).features.unifiedChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统一聊天时间线', retryable: false })
+    const features = (await this.capabilities(signal)).features
+    if (features.unifiedChatTimeline !== true || (query.reconcile || query.anchorId) && features.durableChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持所请求的聊天时间线能力', retryable: false })
     return await this.readSource(sourceRef, { cursor: { unified: query }, ...(query.limit === undefined ? {} : { limit: query.limit }), ...(signal === undefined ? {} : { signal }) })
   }
 
