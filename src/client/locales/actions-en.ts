@@ -1,5 +1,9 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '共享文字可供对方的 Agent 和日历使用，不包含原始音频。': 'Shared text can be used by the recipient’s Agent and calendar. Original audio is not included.',
+  '正在核对共享文字…': 'Checking shared text access…',
+  '取消读取': 'Cancel reading',
+  '段文字摘录（最多 24 段 / 6000 字符），包含已核对权限的共享录音文字，可能消耗额度。不发送位置字段、原始音视频，不创建 Arko 对话。': 'text excerpts (up to 24 / 6000 characters), including authorized shared recording text. This may consume credits. Location fields and original audio/video are excluded; no Arko conversation is created.',
   '共享给对方': 'Share in this chat',
   '已共享到私聊': 'Shared in this chat',
   '已撤回共享': 'Sharing withdrawn',

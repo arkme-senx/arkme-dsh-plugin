@@ -1,5 +1,5 @@
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
-import type { ArkmeBotSummary, ArkmeCalendarRecordItem, ArkmeCalendarRecordLocation, ArkmeCallHistoryItem, ArkmeCallDetail, ArkmeSourceItem } from '../types.js'
+import type { ArkmeBotSummary, ArkmeCalendarRecordItem, ArkmeCalendarRecordLocation, ArkmeCallHistoryItem, ArkmeCallDetail, ArkmeSourceItem, ArkmeSharedRecordingPreview } from '../types.js'
 import { callArkme } from './api.js'
 import { dayActivityMatchesFilter, dayActivityQueryKey, type DayActivityDetailPage, type DayActivityEntry, type DayActivityPage, type DayActivityQuery, type DayActivityReader, type DayActivityKind } from './calendar-activity-model.js'
 import { groupDayActivities } from './multisource-day-activity-reader.js'
@@ -170,6 +170,20 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
             const note = item.record_projection as ArkmeCalendarRecordItem
             if (!note.recordUid || note.accessState !== 'available' || note.protected) continue
             const id = `note:${note.recordUid}`, sourceInfo = note.source
+            const shared = note.content?.sharedRecording
+            if (shared) {
+              const sourceLabel = note.content?.isMe ? '我的共享录音' : `${sourceInfo?.displayName || '对方'}共享的录音`
+              const startAtMillis = shared.displayAtMillis || occurred
+              const endAtMillis = Math.max(startAtMillis, shared.endAtMillis)
+              session.entries.set(id, { id, kind: 'recording', startAtMillis, endAtMillis, title: shared.title,
+                preview: arkmeEmojiTokenSafePrefix(shared.summary, 240, 'codeUnits'), sourceName: sourceLabel,
+                sharedRecording: { ...(shared.detailRef ? { detailRef: shared.detailRef } : {}), sourceDigest: shared.sourceDigest, sourceLabel },
+                statusLabel: `${sourceLabel} · 共享文字`, recordCount: 1, access: 'available',
+                participation: note.content?.isMe ? 'self' : 'received' })
+              if (sourceInfo) session.targets.set(id, { kind: 'source', source: sourceInfo })
+              // Shared text does not contribute Audio coverage or merge simultaneous sources.
+              continue
+            }
             const kind = note.creationSource === 3 || note.content?.agentSource?.kind === 'dsh_agent_input' ? 'dsh'
               : sourceInfo?.kind === 'group_chat' ? 'group_chat' : sourceInfo?.kind === 'private_chat' ? 'private_chat' : 'note'
             session.entries.set(id, { id, kind, startAtMillis: occurred, endAtMillis: occurred, access: 'available', participation: 'self', recordCount: 1,
@@ -255,7 +269,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
     const grouped = groupDayActivities([...session.entries.values()].filter(item => dayActivityMatchesFilter(session.query.kind, item.kind)
       && !session.chatRecordLinks.has(session.recordLinks.get(item.id) ?? '')), session.query.mode)
     session.groups = grouped.groups
-    const missing = (Object.entries(session.sources) as Array<[SourceName, SourcePage]>).filter(([, state]) => state.failed || state.partial || !state.loaded || state.hasMore).flatMap(([source]): DayActivityKind[] => source === 'record' ? ['note'] : source === 'chat' ? ['private_chat', 'group_chat'] : source === 'audio' ? ['recording'] : [source])
+    const missing = (Object.entries(session.sources) as Array<[SourceName, SourcePage]>).filter(([, state]) => state.failed || state.partial || !state.loaded || state.hasMore).flatMap(([source]): DayActivityKind[] => source === 'record' ? ['note', 'recording'] : source === 'chat' ? ['private_chat', 'group_chat'] : source === 'audio' ? ['recording'] : [source])
     const hasMore = Object.values(session.sources).some(state => state.hasMore)
     session.page += 1
     return { query: session.query, snapshotId: session.id, order: 'descending', replaceItems: true, items: grouped.items, completeness: missing.length || hasMore ? 'partial' : 'complete', missingKinds: [...new Set(missing)], hasMore, ...(hasMore ? { nextCursor: `${session.id}:${session.page}` } : {}), dayStartMillis: session.start, dayEndMillis: session.end, warnings: [...new Set(session.warnings)], ...(session.coverage ? { coverage: session.coverage } : {}), ...(session.speechIntervals.length ? { speechIntervals: session.speechIntervals } : {}), notice: '数据按来源独立读取；概览只统计当前已加载内容，不代表全天完整总量。' }
@@ -271,7 +285,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
         const [start, end] = localDayBounds(query)
         const wants = (kind: DayActivityKind) => dayActivityMatchesFilter(query.kind, kind)
         const state = (enabled: boolean): SourcePage => ({ hasMore: enabled, loaded: !enabled })
-        session = { id: `documented-read-${++revision}`, key: dayActivityQueryKey(query), query, start, end, page: 0, entries: new Map(), details: new Map(), targets: new Map(), groups: new Map(), calls: new Map(), recordings: new Map(), recordLinks: new Map(), chatRecordLinks: new Map(), locationRefs: new Map(), sources: { record: state(['note', 'dsh', 'private_chat', 'group_chat'].some(kind => wants(kind as DayActivityKind))), chat: state(wants('private_chat') || wants('group_chat')), call: state(wants('call')), audio: state(wants('recording')), arko: state(wants('arko')), bot: state(wants('bot')) }, speechIntervals: [], warnings: [] }
+        session = { id: `documented-read-${++revision}`, key: dayActivityQueryKey(query), query, start, end, page: 0, entries: new Map(), details: new Map(), targets: new Map(), groups: new Map(), calls: new Map(), recordings: new Map(), recordLinks: new Map(), chatRecordLinks: new Map(), locationRefs: new Map(), sources: { record: state(['note', 'dsh', 'private_chat', 'group_chat', 'recording'].some(kind => wants(kind as DayActivityKind))), chat: state(wants('private_chat') || wants('group_chat')), call: state(wants('call')), audio: state(wants('recording')), arko: state(wants('arko')), bot: state(wants('bot')) }, speechIntervals: [], warnings: [] }
         current = session
       }
       const sources: SourceName[] = ['record', 'chat', 'call', 'audio', 'arko', 'bot']
@@ -286,6 +300,16 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
       if (!entry) throw new Error('活动不存在，请刷新')
       options.signal.throwIfAborted()
       const session = current, common = { query, activityId, snapshotId: session.id, access: entry.access }
+      if (entry.sharedRecording) {
+        const ref = entry.sharedRecording.detailRef
+        if (!ref) throw new Error('这条共享录音暂缺详情入口，请刷新或到原对话查看')
+        const detail = await read<ArkmeSharedRecordingPreview>('source.shared-recording-detail', { detailRef: ref }, options.signal)
+        options.signal.throwIfAborted()
+        if (current !== session || detail.sourceDigest !== entry.sharedRecording.sourceDigest) throw new Error('共享来源已变化，请刷新')
+        return { ...common, items: [{ id: activityId, occurredAtMillis: entry.startAtMillis, author: { name: entry.sharedRecording.sourceLabel },
+          text: detail.transcript || detail.summary }], hasMore: false,
+          ...(session.targets.has(activityId) ? { sourceRef: `${session.id}|${activityId}` } : {}) }
+      }
       const call = session.calls.get(activityId)
       if (call?.canOpenDetail) {
         const detail = await read<ArkmeCallDetail>('calls.history.detail', { callRef: call.callRef }, options.signal)

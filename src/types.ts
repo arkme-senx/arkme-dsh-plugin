@@ -2668,7 +2668,7 @@ export interface ArkmeRelatedRecordingParticipant {
 export interface ArkmeRelatedRecordingItem {
   /** Account-bound opaque identity. Browser and Agent consumers must not parse it. */
   recordingRef: string
-  /** UI-only opaque reference for shared/related recording details that need lazy transcript loading. */
+  /** Account-bound reference for UI and Agent reads of an authorized shared transcript. */
   sharedRecordingDetailRef?: string
   /** Owner-only, account/chat-bound capability. Do not parse in the browser. */
   shareActionRef?: string

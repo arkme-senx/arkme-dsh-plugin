@@ -273,6 +273,7 @@ describe('registerArkmeTools', () => {
       'arkme_message_report',
       'arkme_message_withdraw',
       'arkme_related_recordings_read',
+      'arkme_shared_recording_read',
       'arkme_user_ban_status',
       'arkme_user_ban',
       'arkme_user_unban',

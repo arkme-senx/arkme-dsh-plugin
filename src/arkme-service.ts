@@ -485,7 +485,8 @@ export class ArkmeService {
       source, text, text, humans, bots, session, undefined, textFormat,
     ), async session => await this.profile.recordSenderSnapshot(session))
     this.record.selfRoles = this.selfRoles
-    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
+    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
+      (raw, session) => this.chat.calendarSharedRecordingPreview(raw, session))
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
@@ -1976,8 +1977,16 @@ export class ArkmeService {
 
   async relatedRecordingEligibility(sourceRef: string, signal?: AbortSignal): Promise<ArkmeRelatedRecordingEligibility> { return await this.relatedRecording.relatedRecordingEligibility(sourceRef, signal) }
   async relatedRecordings(sourceRef: string, options: ArkmeRelatedRecordingPageOptions = {}): Promise<ArkmeRelatedRecordingPage> { return await this.relatedRecording.relatedRecordings(sourceRef, options) }
-  async shareRelatedRecording(sourceRef: string, actionRef: string) { return await this.relatedRecording.mutateShare(sourceRef, actionRef, 'share') }
-  async withdrawRelatedRecording(sourceRef: string, actionRef: string) { return await this.relatedRecording.mutateShare(sourceRef, actionRef, 'withdraw') }
+  async shareRelatedRecording(sourceRef: string, actionRef: string) {
+    const result = await this.relatedRecording.mutateShare(sourceRef, actionRef, 'share')
+    await this.realtime.invalidateRecordProjection()
+    return result
+  }
+  async withdrawRelatedRecording(sourceRef: string, actionRef: string) {
+    const result = await this.relatedRecording.mutateShare(sourceRef, actionRef, 'withdraw')
+    await this.realtime.invalidateRecordProjection()
+    return result
+  }
 
   recordRelatedRecordingsToolEvent(event: {
     result: 'success' | 'error'

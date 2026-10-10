@@ -665,6 +665,44 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('projects calendar shared text with a viewer-bound reference and rechecks recipient access on detail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let revoked = false
+    const calls: unknown[] = []
+    const payload = { render_kind: 'shared_recording_memory', source_digest: 'shared-day',
+      display_at: 1_787_310_000_000, end_at: 1_787_310_060_000, title: '共享会议', summary: '讨论计划', shared_by_user_id: 7, transcript: '共享全文' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/calendar/records/query')) return json({ code: 200, data: {
+        items: [{ record_uid: 'shared-uid', send_at: payload.display_at,
+          record_core: { owner_user_id: 7, content_access_state: 1, title: payload.title, text_content: payload.summary,
+            origin_container_ref: 'shared-chat', content_payload: { payload_kind: 1, schema_version: 1, text_state: 1, shared_recording: { ...payload, render_kind: undefined, schema_version: 1 } } } }], has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chats/records/detail')) {
+        calls.push(JSON.parse(String(init?.body)))
+        if (revoked) return json({ code: 403, message: '共享已撤回' })
+        return json({ code: 200, data: { item: { content_payload: payload } } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+    const shared = page.items[0]!.content!.sharedRecording!
+    expect(shared).toMatchObject({ sourceDigest: 'shared-day', sharedByUserId: 7 })
+    expect(shared.transcript).toBeUndefined()
+    expect(page.items[0]!.content!.isMe).toBe(false)
+    expect(shared.detailRef).toMatch(/^arkme-shared-recording-detail-v1\./)
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).resolves.toMatchObject({ transcript: '共享全文' })
+    expect(calls).toEqual([{ chat_session_uid: 'shared-chat', record_uid: 'shared-uid', record_owner_user_id: 7 }])
+    revoked = true
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other' }
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
+  })
+
   it('keeps emoji intact at all calendar projection limits without changing the raw source', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

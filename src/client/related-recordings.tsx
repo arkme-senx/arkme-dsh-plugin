@@ -573,6 +573,7 @@ export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
             {detailError !== '' && <button type="button" style={styles.secondaryButton} onClick={retryDetail}>{tr("重新加载原文")}</button>}
             {detailError !== '' && <span style={styles.actionLabel}>{detailError}</span>}
           </div>
+          {!detailItem.isSharedByOther && props.onShare && <p style={styles.detailMeta}>{tr('共享文字可供对方的 Agent 和日历使用，不包含原始音频。')}</p>}
           {showTranscript && hasTranscript && <div style={styles.transcript}>{transcript}</div>}
         </div>
       </section>
