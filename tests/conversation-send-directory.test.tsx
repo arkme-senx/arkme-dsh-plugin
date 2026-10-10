@@ -1978,8 +1978,10 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(undefined)
     arkmeInterwovenInvalidation.activateAccount(undefined)
     arkmeMessagePreparing.activateAccount(undefined)
+    resetSelfTopicDirectories()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
@@ -2106,6 +2108,9 @@ describe('conversation send directory projection', () => {
   })
 
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
+    // This checks explicit invalidation batches. The directory's 250ms scheduled
+    // refresh has separate tests and must not depend on the render machine load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
     const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
     const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
