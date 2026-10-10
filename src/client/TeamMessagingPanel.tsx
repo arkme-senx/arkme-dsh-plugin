@@ -170,6 +170,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
       onAccessLost={() => { discardTeamDirectory(accountKey, selected) }} />
   </div>
   const directoryAllowed = intent.kind === 'inbox' || intent.kind === 'team' || openInbox
+  const initialDirectoryLoad = directory.loading && !directory.hasLoaded
   const items = (directoryAllowed ? directory.items : []).filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
     <header style={messageLayout.header}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong>{channel && <small style={messageLayout.headerSubtitle}>{tr('团队对话')}</small>}</div></header>
@@ -179,7 +180,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
         <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow conversation={c} showTeamName={!channel}
           onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }} /></div>)}</div>
-        {items.length === 0 && !directory.error && <p className="team-empty" role={directory.loading ? 'status' : undefined}>{tr(directory.loading ? '正在打开对话…' : '还没有团队对话')}</p>}
+        {items.length === 0 && !directory.error && <p className="team-empty" role={initialDirectoryLoad ? 'status' : undefined}>{tr(initialDirectoryLoad ? '正在加载团队对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
       </div>}
   </section>

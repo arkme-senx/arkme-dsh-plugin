@@ -36,6 +36,7 @@ it.each(['success', 'failure'])('leaving Team for a normal conversation cancels 
   await act(async () => { root.render(<Workspace />); await tick() })
   await act(async () => { openTeamMessages({kind:'link', publicRef:'a'.repeat(32)}); await tick() })
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(host.textContent).toContain('正在打开对话…')
   await act(async () => { arkmeUi.focusSendToSelf(); await tick() })
   await act(async () => {
     if(outcome === 'failure') reject(new Error('old opening failed'))
@@ -60,6 +61,38 @@ it('official setup failure has a local retry and no unrelated membership UI', as
   expect(host.textContent).not.toMatch(/无权访问|创建团队|加入团队|收件箱/)
   await act(async () => { (host.querySelector('button') as HTMLButtonElement).click(); await tick() })
   expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.official')).toHaveLength(2)
+})
+
+it('keeps an opened empty member inbox stable while focus refresh waits for the other side', async () => {
+  const channel = { teamRef: 'official', name: '即我', jotmoId: 'arkme_cn', publicRef: 'a'.repeat(32), link: '', enabled: true, revision: 1, canManage: false }
+  let finishInitial!: (value: unknown) => void
+  const initial = new Promise(resolve => { finishInitial = resolve })
+  let finishRefresh!: (value: unknown) => void
+  const refresh = new Promise(resolve => { finishRefresh = resolve })
+  let phase: 'initial' | 'refresh' | 'ready' = 'initial'
+  mocks.call.mockImplementation(async (op: string, params: { side?: string }) => {
+    if (op === 'team.app.official') return channel
+    if (op === 'team.app.open') return { channel, openInbox: true }
+    if (op === 'team.app.attention') return { team: false, external: false, applications: false }
+    if (op === 'team.app.conversations') {
+      if (params.side === 'external' && phase === 'initial') return initial
+      if (params.side === 'external' && phase === 'refresh') return refresh
+      return { items: [], hasMore: false }
+    }
+    throw new Error(op)
+  })
+  await act(async () => { root.render(<Workspace />); openTeamMessages({ kind: 'official' }); await tick() })
+  expect(host.textContent).toContain('正在加载团队对话…')
+  expect(host.textContent).not.toContain('正在打开对话…')
+  await act(async () => { phase = 'ready'; finishInitial({ items: [], hasMore: false }); await tick() })
+  expect(host.textContent).toContain('还没有团队对话')
+  await act(async () => { phase = 'refresh'; window.dispatchEvent(new Event('focus')); await tick() })
+  expect(host.textContent).toContain('还没有团队对话')
+  expect(host.textContent).not.toMatch(/正在打开对话|正在加载团队对话/)
+  expect(host.querySelector('[role="status"]')).toBeNull()
+  expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.open')).toHaveLength(1)
+  await act(async () => { phase = 'ready'; finishRefresh({ items: [], hasMore: false }); await tick() })
+  expect(host.textContent).toContain('还没有团队对话')
 })
 
 it('returns to the same team after replying, switches visitors and keeps each draft', async () => {

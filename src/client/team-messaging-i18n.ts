@@ -49,6 +49,7 @@ const english: Record<string,string> = {
   "团队成员共同查看和回复，每位外部用户的对话彼此独立。": "Team members share conversations. Each visitor has a separate conversation.",
   "建立通道后，现有成员均可查看全部团队对话。请核对团队成员名单；此后新成员须经所有者审批。确认建立？": "All current members will be able to read team conversations. Check the member list. Future members need owner approval. Create the channel?",
   "正在打开对话…": "Opening conversation…",
+  "正在加载团队对话…": "Loading team conversations…",
   "还没有团队对话": "No team conversations yet",
   "选择附件": "Choose attachment",
   "加入团队": "Join team",

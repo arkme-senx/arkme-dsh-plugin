@@ -36,6 +36,37 @@ it('account switch discards late responses from the old account', async () => {
   await vi.waitFor(() => expect(readTeamDirectory('new').loading).toBe(false))
   expect(readTeamDirectory('new').items).toEqual([]); expect(readTeamDirectory('old').items).toEqual([])
 })
+it('distinguishes first load from background refresh and resets readiness for the next account', async () => {
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  const stop = startTeamDirectory('a'); stops.push(stop)
+  await vi.waitFor(() => expect(readTeamDirectory('a').loading).toBe(false))
+  expect(readTeamDirectory('a').hasLoaded).toBe(true)
+  let finish!: (value: unknown) => void
+  mock.mockReturnValue(new Promise(resolve => { finish = resolve }))
+  const refreshing = refreshTeamDirectory('a')
+  expect(readTeamDirectory('a')).toMatchObject({ loading: true, hasLoaded: true, items: [] })
+  stop()
+  stops.push(startTeamDirectory('b'))
+  expect(readTeamDirectory('b')).toMatchObject({ loading: true, hasLoaded: false, items: [] })
+  expect(readTeamDirectory('a').hasLoaded).toBe(false)
+  finish({ items: [], hasMore: false })
+  await refreshing
+  await vi.waitFor(() => expect(readTeamDirectory('b').loading).toBe(false))
+  expect(readTeamDirectory('b').hasLoaded).toBe(true)
+})
+it('shows a first-load failure and preserves it while retrying instead of pretending to reopen', async () => {
+  mock.mockRejectedValue(new Error('列表暂时不可用'))
+  stops.push(startTeamDirectory('a'))
+  await vi.waitFor(() => expect(readTeamDirectory('a').loading).toBe(false))
+  expect(readTeamDirectory('a')).toMatchObject({ hasLoaded: true, error: '列表暂时不可用' })
+  let finish!: (value: unknown) => void
+  mock.mockReturnValue(new Promise(resolve => { finish = resolve }))
+  const retrying = refreshTeamDirectory('a')
+  expect(readTeamDirectory('a')).toMatchObject({ loading: true, hasLoaded: true, error: '列表暂时不可用' })
+  finish({ items: [], hasMore: false }); await retrying
+  expect(readTeamDirectory('a')).toMatchObject({ loading: false, hasLoaded: true, items: [] })
+  expect(readTeamDirectory('a').error).toBeUndefined()
+})
 it('revocation wins over in-flight old previews, while a fresh list can restore new authorization', async () => {
   mock.mockImplementation(async (_, { side }) => ({ items: side === 'team' ? [item(side)] : [], hasMore: false }))
   stops.push(startTeamDirectory('a'))
