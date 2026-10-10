@@ -1,5 +1,14 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '共享给对方': 'Share in this chat',
+  '已共享到私聊': 'Shared in this chat',
+  '已撤回共享': 'Sharing withdrawn',
+  '撤回共享': 'Withdraw sharing',
+  '共享中…': 'Sharing…',
+  '撤回中…': 'Withdrawing…',
+  '共享状态暂不可用，请重新加载': 'Sharing status unavailable. Please reload.',
+  '录音内容尚未就绪': 'Recording content is not ready yet',
+  '撤回后，这条共同记忆将不再出现在双方的私聊中。自己的原始录音会保留。': 'This shared memory will be removed from both sides of the chat. Your original recording will be kept.',
   "当天位置": "Daily locations",
   "当天位置地图": "Daily location map",
   "当天位置记录": "Recorded locations",

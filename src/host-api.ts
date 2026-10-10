@@ -2247,6 +2247,12 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       requestSignal,
     )
+    case 'related-recordings.share': return await service.shareRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
+    )
+    case 'related-recordings.withdraw': return await service.withdrawRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
+    )
     case 'related-recordings.page': return await service.relatedRecordings(
       stringParam(params, 'sourceRef'),
       {

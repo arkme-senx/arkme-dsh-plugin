@@ -1976,6 +1976,8 @@ export class ArkmeService {
 
   async relatedRecordingEligibility(sourceRef: string, signal?: AbortSignal): Promise<ArkmeRelatedRecordingEligibility> { return await this.relatedRecording.relatedRecordingEligibility(sourceRef, signal) }
   async relatedRecordings(sourceRef: string, options: ArkmeRelatedRecordingPageOptions = {}): Promise<ArkmeRelatedRecordingPage> { return await this.relatedRecording.relatedRecordings(sourceRef, options) }
+  async shareRelatedRecording(sourceRef: string, actionRef: string) { return await this.relatedRecording.mutateShare(sourceRef, actionRef, 'share') }
+  async withdrawRelatedRecording(sourceRef: string, actionRef: string) { return await this.relatedRecording.mutateShare(sourceRef, actionRef, 'withdraw') }
 
   recordRelatedRecordingsToolEvent(event: {
     result: 'success' | 'error'
