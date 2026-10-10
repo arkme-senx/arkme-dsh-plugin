@@ -510,7 +510,7 @@ export class MediaService {
     }
     if (descriptor.recordingClip !== undefined) {
       const response = await this.runtime.authenticatedAudioStream(recordingPlaybackPath(descriptor.recordingClip), {
-        expectedUserId: session.userId, maxBytes: 64 * 1024 * 1024, method, ...(range === undefined ? {} : { range }),
+        expectedUserId: session.userId, method, ...(range === undefined ? {} : { range }),
         ...(signal === undefined ? {} : { signal }),
       })
       return { response, descriptor }

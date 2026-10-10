@@ -185,6 +185,7 @@ describe('controlled unmarked-speaker media', () => {
       `/api/v1/audio/clips/123456789012345678901234/primary/0/${'a'.repeat(64)}`,
       expect.objectContaining({ expectedUserId: baseSession.userId, range: 'bytes=0-3' }),
     )
+    expect(runtime.authenticatedAudioStream.mock.calls[0]?.[1]).not.toHaveProperty('maxBytes')
     expect(runtime.fetchImpl).not.toHaveBeenCalled()
   })
 

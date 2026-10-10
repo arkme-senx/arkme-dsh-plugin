@@ -1175,24 +1175,30 @@ export class ServiceRuntime {
 
   /** Binary service reads keep account scope and credentials in the Host. */
   async authenticatedAudioStream(path: string, options: {
-    expectedUserId: number; maxBytes: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
+    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
   }): Promise<Response> {
     const session = await this.requireSession()
-    const signal = AbortSignal.any([AbortSignal.timeout(35_000), ...(options.signal ? [options.signal] : [])])
-    return await this.requestCoordinator.runStream({
-      scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'audio', signal,
-      operation: signal => this.openAudioStream(path, { ...options, signal }, session),
-    })
+    const opening = new AbortController()
+    const timer = setTimeout(() => opening.abort(new DOMException('Media opening timed out', 'TimeoutError')), 35_000)
+    const signal = AbortSignal.any([opening.signal, ...(options.signal ? [options.signal] : [])])
+    try {
+      // Admission, token recovery and first headers are bounded independently
+      // of media duration. The opened body owns its progress/idle lifetime.
+      return await this.requestCoordinator.runStream({
+        scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'audio', signal,
+        operation: signal => this.openAudioStream(path, { ...options, signal }, session),
+      })
+    } finally { clearTimeout(timer) }
   }
 
   private async openAudioStream(path: string, options: {
-    expectedUserId: number; maxBytes: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
     const base = new URL(this.config.audioBaseUrl)
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
-      || !Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0) {
+      || (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0))) {
       throw new ArkmePluginError('media-path-invalid', '媒体请求路径无效', false, 400)
     }
     const rangeMatch = options.range === undefined ? undefined : /^bytes=(\d*)-(\d*)$/.exec(options.range)
@@ -1237,7 +1243,7 @@ export class ServiceRuntime {
         const delay = response.status === 503 ? retryAfterMillis(response.headers.get('retry-after')) : undefined
         if (delay === undefined) break
         await response.body?.cancel()
-        // Shares this stream's existing 35s lifetime and account cancellation.
+        // Shares the opening-stage budget and account cancellation.
         // No byte has been published yet; never replay a partly consumed stream.
         await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
       }
@@ -1248,7 +1254,8 @@ export class ServiceRuntime {
       const lengthText = response.headers.get('content-length') ?? ''
       const length = Number(lengthText)
       const mime = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
-      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0 || length > options.maxBytes
+      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
+        || (options.maxBytes !== undefined && length > options.maxBytes)
         || !['audio/ogg', 'audio/flac', 'audio/mp4'].includes(mime)
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
@@ -1257,7 +1264,8 @@ export class ServiceRuntime {
         const [start, end, total] = returned.slice(1).map(Number) as [number, number, number]
         const wantedStart = rangeMatch[1] === '' ? Math.max(0, total - Number(rangeMatch[2])) : Number(rangeMatch[1])
         const wantedEnd = rangeMatch[1] === '' || rangeMatch[2] === '' ? total - 1 : Math.min(total - 1, Number(rangeMatch[2]))
-        if (![start, end, total].every(Number.isSafeInteger) || total <= 0 || total > options.maxBytes
+        if (![start, end, total].every(Number.isSafeInteger) || total <= 0
+          || (options.maxBytes !== undefined && total > options.maxBytes)
           || start !== wantedStart || end !== wantedEnd || end < start || end >= total || length !== end - start + 1) throw invalid()
       }
       const headers = new Headers({ 'content-type': mime, 'content-length': String(length), 'cache-control': 'private, no-store', 'accept-ranges': 'bytes' })
@@ -1275,9 +1283,16 @@ export class ServiceRuntime {
       let received = 0
       let ended = false
       let streamController: ReadableStreamDefaultController<Uint8Array>
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      const startReadTimer = (): void => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => lifetime.abort(new DOMException('Media read stalled', 'TimeoutError')), 35_000)
+        idleTimer.unref?.()
+      }
       const settle = async (reason?: unknown, cancel = false): Promise<void> => {
         if (ended) return
         ended = true
+        clearTimeout(idleTimer)
         signal.removeEventListener('abort', aborted)
         try {
           if (cancel) await reader.cancel(reason).catch(() => undefined)
@@ -1298,7 +1313,11 @@ export class ServiceRuntime {
         async pull(controller) {
           try {
             await assertAccount()
-            const next = await reader.read()
+            // Only an outstanding upstream read can stall. A paused browser
+            // applies backpressure and must not spend the network idle budget.
+            startReadTimer()
+            let next: ReadableStreamReadResult<Uint8Array>
+            try { next = await reader.read() } finally { clearTimeout(idleTimer) }
             await assertAccount()
             if (ended) return
             if (next.done) {
