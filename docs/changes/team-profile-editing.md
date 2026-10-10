@@ -32,3 +32,14 @@ default 从团队名取前两个 Unicode 可见字符，忽略空白、英文 AS
 点击头像打开既有 DSH 原生菜单，提供上传图片及带缩写预览的使用名称头像；菜单说明为随团队名称自动更新。菜单在原生 dialog 内渲染，避免 body portal 脱离 top layer；Escape 关闭菜单并恢复触发器焦点。弹窗允许菜单完整绘制，实际页面验证说明未裁切。选择先更新草稿，保存才生效。
 
 本轮菜单/团队相关 49 文件 580 测试通过，最后修改后的名称/编辑器/菜单 23 测试通过；正式 tgz + 官方 DSH + Chrome 验证资料、菜单、上传、权限，以及真实 Tools 和仓外公开 SDK Consumer。没有新增 Host 方法或 API，已有 Tools/SDK 的共享 DTO 同步移除成员槽位。本轮没有修改版本、根 README 或 DSH 源码。
+
+
+## 合并前修复与真实服务验收
+
+资料头像通过 `ChannelView.avatar` 投影，原 `avatar_url` 只表示独立通道覆盖；配置保存不会把短期资料签名 URL 固化。公开通道的资料图片引用通过公开 resolve 复核当前成品，成员详情通过 profile/get 复核；普通个人身份图片与团队成品图片保持各自读取合同。明确权限、版本、参数或命令冲突拒绝不会被同 request_uid 的旧成功回执遮住。
+
+本轮官方安装包 SHA256：`d0bc0239709f885a87a9a57051ac470fded96138097995271863645bbeb1ef3e`。已在正式隔离 DSH/Chrome 执行真实 Team/Record HTTP 与 Mongo 的改名、裁剪上传、保留 custom、切回名称、权限变化和 Tools/SDK 链路。Record 使用真实文件与签名 HTTP 的 Blob 测试边界，云对象存储 provider、真实 MQ/SSE 传输及其他原生系统没有冒称已验收。
+
+复现真实服务模式时，先按 meta 合并前审查文档启动两仓 `TestTeamProfileIntegrationServer` / `TestExternalImageIntegrationServer`，设置共同 `JOTMO_TEAM_PROFILE_SERVER_DIR`；DSH e2e 指定 `ARKME_TEAM_PROFILE_REAL_SERVER_DIR` 为该目录。不指定时保留原隔离 HTTPS 后端 fixture 模式。上述只用于 opt-in 测试，不进入产品配置。
+
+最新目标、完整场景映射、回归结果和未全绿门禁在 jotmo-meta `docs/analysis/2026-10-10-team-profile-premerge-audit.md` 收口。
