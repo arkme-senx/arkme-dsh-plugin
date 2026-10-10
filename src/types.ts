@@ -874,6 +874,7 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  isSelf?: boolean
   interactionRef: string
   parentRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -895,6 +896,18 @@ export interface ArkmeWorldInteractionPage {
   total: number
   hasMore: boolean
   nextOffset?: number
+}
+
+/** Existing World owner records, including comments made in another person's World. */
+export interface ArkmeWorldNotificationSourcePage {
+  items: Array<{ recordRef: string; isComment: boolean }>
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export interface ArkmeWorldNotificationTarget {
+  root: ArkmeWorldFeedItem
+  interactionRef: string
 }
 
 /** Server-owned aggregate read state for the current account's World interactions. */
@@ -3975,6 +3988,8 @@ export type ArkmePluginOperation =
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
   | 'world.interactions.list'
+  | 'world.notification-sources'
+  | 'world.notification-target'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'

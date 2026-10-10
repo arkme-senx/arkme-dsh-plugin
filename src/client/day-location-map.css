@@ -1,0 +1,32 @@
+.arkme-day-map-backdrop { position:fixed; inset:0; z-index:10400; display:grid; place-items:center; padding:24px; box-sizing:border-box; background:rgba(15,20,25,.32); }
+.arkme-day-map-dialog { width:min(1000px,100%); max-height:calc(100dvh - 48px); display:flex; flex-direction:column; overflow:hidden; border-radius:16px; background:var(--dsw-alias-bg-base,#fff); color:var(--dsw-alias-text-primary,#202326); box-shadow:0 20px 70px #0003; font-size:13px; }
+.arkme-day-map-dialog header { display:flex; align-items:center; justify-content:space-between; padding:18px 22px; gap:16px; }
+.arkme-day-map-dialog h2 { font-size:18px; margin:0; }
+.arkme-day-map-dialog header p { margin:4px 0 0; opacity:.6; font-size:12px; }
+.arkme-day-map-dialog button { font:inherit; color:inherit; background:transparent; border:1px solid #8883; border-radius:8px; padding:7px 11px; cursor:pointer; }
+.arkme-day-map-dialog button:focus-visible, .arkme-day-map-canvas:focus-visible { outline:2px solid #467bc7; outline-offset:-2px; }
+.arkme-day-map-dialog button:disabled { opacity:.45; cursor:default; }
+.arkme-day-map-layout { display:grid; grid-template-columns:minmax(0,1fr) 240px; min-height:0; flex:1; }
+.arkme-day-map-canvas { position:relative; overflow:hidden; min-height:430px; background:#e4e9e4; touch-action:none; cursor:grab; }
+.arkme-day-map-canvas>img { position:absolute; width:256px; height:256px; max-width:none; user-select:none; pointer-events:none; }
+.arkme-day-map-canvas .arkme-day-map-pin { position:absolute; transform:translate(-50%,-50%); min-width:30px; height:30px; padding:0 7px; border:2px solid white; border-radius:50%; background:#365f80; color:white; box-shadow:0 2px 6px #0005; font-size:12px; z-index:1; }
+.arkme-day-map-canvas .arkme-day-map-pin[aria-pressed=true] { background:#bd4a30; z-index:2; }
+.arkme-day-map-pin sup { position:absolute; right:-9px; top:-8px; font-size:9px; min-width:15px; border-radius:9px; background:white; color:#253c51; }
+.arkme-day-map-controls { position:absolute; top:12px; left:12px; display:flex; gap:4px; z-index:3; }
+.arkme-day-map-controls button { background:white; color:#222; box-shadow:0 1px 5px #0002; }
+.arkme-day-map-attribution { position:absolute; right:0; bottom:0; background:#ffffffdf; color:#275479; padding:3px 6px; font-size:10px; z-index:3; }
+.arkme-day-map-list { overflow:auto; min-height:0; max-height:460px; padding:8px; }
+.arkme-day-map-list button { display:flex; flex-direction:column; gap:5px; width:100%; text-align:left; border:0; padding:12px; margin-bottom:3px; overflow-wrap:anywhere; }
+.arkme-day-map-list button[aria-pressed=true] { background:#8882; }
+.arkme-day-map-list time, .arkme-day-map-list small { opacity:.65; font-size:11px; }
+.arkme-day-map-list strong { font-weight:500; line-height:1.5; }
+.arkme-day-map-dialog footer { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; gap:12px; border-top:1px solid #8882; }
+.arkme-day-map-dialog footer small { display:block; font-size:11px; opacity:.6; margin-top:4px; }
+.arkme-day-map-dialog footer p { margin:6px 0 0; }
+.arkme-day-map-dialog footer button { white-space:nowrap; }
+.arkme-day-map-empty { padding:80px 20px; text-align:center; opacity:.7; }
+.arkme-day-map-selected { display:flex; gap:8px; flex-wrap:wrap; padding:12px 22px; font-size:12px; border-top:1px solid #8882; }
+.arkme-day-map-selected span { opacity:.65; }
+.arkme-day-map-tile-error { position:absolute; top:55px; left:12px; right:12px; background:#fff; color:#333; padding:8px; border-radius:8px; z-index:3; font-size:12px; }
+.arkme-day-map-tile-error button { margin-left:8px; }
+@media(max-width:650px) { .arkme-day-map-backdrop { padding:12px; } .arkme-day-map-dialog { max-height:calc(100dvh - 24px); } .arkme-day-map-layout { display:flex; flex-direction:column; overflow:auto; } .arkme-day-map-canvas { min-height:280px; flex:none; } .arkme-day-map-list { max-height:200px; flex:none; } .arkme-day-map-dialog header,.arkme-day-map-dialog footer { padding:14px; } }

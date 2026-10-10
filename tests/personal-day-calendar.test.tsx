@@ -53,6 +53,8 @@ describe('first-rail personal day calendar', () => {
   it('loads month/day using the production documented reader and keeps per-source index', async () => {
     await mount()
     expect(mocks.read.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['calendar.buckets', 'calendar.activity', 'recordings.calendar']))
+    expect(text()).not.toContain('原版日历')
+    expect(text()).toContain('当天位置')
     expect(text()).toContain('自己的内容')
     expect(text()).toContain('录音索引有内容')
     expect(text()).toContain('当前来源已加载')
