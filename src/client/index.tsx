@@ -10,6 +10,8 @@ import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import { AppMigrationDialog } from './AppMigrationDialog.js'
+import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -167,6 +169,15 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => {
+    if (!localMigrationDesktop()) return () => undefined
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const root = createRoot(element)
+    root.render(<AppMigrationDialog />)
+    const stop = appMigrationStore.start()
+    return () => { stop(); root.unmount(); element.remove() }
+  }, 'dsh-arkme: desktop migration download')
   ctx.effect(() => {
     const host = document.createElement('div')
     document.body.append(host)

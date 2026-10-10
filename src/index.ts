@@ -1,3 +1,5 @@
+import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
+import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
 import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
@@ -364,6 +366,14 @@ export function apply(ctx: Context, config: Config): void {
   const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const clientModules = (ctx as Context & { clientModules: DshClientModulesLike }).clientModules
+  const migrationManager = new AppMigrationManager({
+    enabled: process.env.ARKME_DESKTOP_MANAGED_RESTART === '1' && arkmeDesktopBridgeConfigFromEnv(process.env) !== undefined,
+    currentVersion: process.env.ARKME_APP_VERSION ?? '',
+    platform: process.platform, architecture: process.arch,
+    stateDirectory: migrationStateRoot(dshHome, config.environment),
+    serviceOrigin: config.updateServiceBaseUrl,
+    artifactOrigin: config.updateArtifactBaseUrl.trim() || 'https://d.jiwo.cc',
+  })
   const updateManager = new ArkmePluginUpdateManager({
     enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
@@ -701,6 +711,7 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
+    migrationManager,
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
@@ -885,6 +896,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.resumeRecordingImports().catch(() => undefined)
     return () => undefined
   }, 'dsh-arkme: recording import recovery')
+  ctx.effect(() => () => migrationManager.dispose(), 'dsh-arkme: installer download lifecycle')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()

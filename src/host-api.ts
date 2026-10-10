@@ -1,3 +1,4 @@
+import type { AppMigrationManager } from './app-migration.js'
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { TeamAppOperation } from './team-app-contract.js'
 import type { RecordAppOperation } from './record-app-contract.js'
@@ -872,6 +873,7 @@ function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
 export interface ArkmeHostApiOptions {
   expectedPort: number
   allowNonLoopback: boolean
+  migrationManager?: AppMigrationManager
   updateManager?: Pick<
     ArkmePluginUpdateManager,
     'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
@@ -917,6 +919,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('app.migration.') && (origin === undefined || !isLoopback(req.socket.remoteAddress))) {
+        throw new ArkmePluginError('local-desktop-required', '迁移下载仅允许本机桌面访问', false, 403)
+      }
       if (request.operation.startsWith('team.codex.')) {
         if (!isLoopback(req.socket.remoteAddress) || origin === undefined || !['http:','https:'].includes(new URL(origin).protocol)) {
           throw new ArkmePluginError('origin-required', '本地工作动态只能从当前本机页面访问', false, 403)
@@ -985,6 +990,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.remoteUnavailableReason,
         options.accountSessions?.(),
         options.teamCodex,
+        options.migrationManager,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -1033,9 +1039,22 @@ export async function dispatchArkmeHostOperation(
   remoteUnavailableReason?: () => string,
   accountSessions?: DshAccountSessions,
   teamCodex?: TeamCodexService,
+  migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
   if (operation.startsWith('team.app.')) return await service.executeTeamApp(operation as TeamAppOperation, params, requestSignal)
   if (operation === 'record.app.detail') return await service.personalRecordDetail(String(params.recordUid ?? ''), requestSignal)
+  if (operation.startsWith('app.migration.')) {
+    if (!migrationManager) throw new ArkmePluginError('migration-unavailable', '迁移下载暂不可用', false, 503)
+    switch (operation) {
+      case 'app.migration.status': return migrationManager.status()
+      case 'app.migration.check': return migrationManager.check(params.manual === true)
+      case 'app.migration.download': return migrationManager.download()
+      case 'app.migration.cancel': return migrationManager.cancel(stringParam(params, 'jobId'))
+      case 'app.migration.install': return migrationManager.install(stringParam(params, 'jobId'))
+      case 'app.migration.reveal': return migrationManager.reveal(stringParam(params, 'jobId'))
+      case 'app.migration.dismiss': return migrationManager.dismiss()
+    }
+  }
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
