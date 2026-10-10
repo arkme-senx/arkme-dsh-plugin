@@ -1400,10 +1400,10 @@ export class RecordingService {
   ): Promise<ArkmeRecordingPrivateTranscriptSection> {
     const dayStart = this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
-    return await this.ownerTranscriptSection(await this.readOwner.completeDay({ startAt: Math.max(0, dayStart.getTime()), endAt: dayEnd.getTime() }, 'primary', session, signal), session, signal)
+    return await this.ownerTranscriptSection(await this.readOwner.completeDay({ startAt: Math.max(0, dayStart.getTime()), endAt: dayEnd.getTime() }, 'primary', session, signal), 'system', session, signal)
   }
 
-  private async ownerTranscriptSection(page: RecordingOwnerDayPage, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptSection> {
+  private async ownerTranscriptSection(page: RecordingOwnerDayPage, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptSection> {
     const profiles = await this.recordingSpeakerProfiles([...new Set(page.items.flatMap(item => item.speaker.userId === undefined ? [] : [item.speaker.userId]))], session, signal)
     await this.ensureRecordingSession(session, signal)
     const fragments: RecordingOwnerFragment[] = []
@@ -1416,9 +1416,19 @@ export class RecordingService {
     }
     const items = fragments.map(item => this.ownerTranscriptItem(item, session.userId, profiles))
     const processingCount = page.coverage.processing_count
+    const state = items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : page.coverage.failed_count > 0 ? 'error' : 'empty'
+    let message = ''
+    if (state === 'processing') message = '音频文字正在导入&转写中'
+    else if (state === 'error') message = source === 'doubao' ? '豆包转写失败，请稍后重试' : '转写失败，请稍后重试'
+    else if (state === 'empty') {
+      // Text availability is specific to the selected recognizer. Recording
+      // duration comes from the owner metadata, independently of transcript
+      // contents and the separately loaded physical timeline coverage.
+      message = source === 'doubao' ? '暂无豆包转写内容'
+        : page.totalDurationMillis > 0 ? '已有录音，暂无转写内容' : '当天无录音'
+    }
     return {
-      state: items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : page.coverage.failed_count > 0 ? 'error' : 'empty',
-      items, message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : page.coverage.failed_count > 0 ? '转写失败，请稍后重试' : '当天无录音',
+      state, items, message,
       dailyMetrics: projectRecordingDailyMetrics(page.storage, items, page.asrInput),
       identityCoverage: 'complete', totalDurationMillis: page.totalDurationMillis, processingCount,
       ...(page.captureCoverage === undefined ? {} : { captureCoverage: page.captureCoverage }),
@@ -1477,7 +1487,7 @@ export class RecordingService {
   }
 
   private async projectWorkbenchPage(dateStamp: number, source: ArkmeRecordingTranscriptSource, page: RecordingOwnerDayPage, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptPage> {
-    const section = await this.ownerTranscriptSection(page, session, signal)
+    const section = await this.ownerTranscriptSection(page, source, session, signal)
     const [key, pageKey, speakerRefKey] = await Promise.all([this.recordingRefKey('arkme-recording-item-v1'), this.recordingRefKey('arkme-recording-page-v1'), this.recordingRefKey('arkme-recording-speaker-v1')])
     await this.ensureRecordingSession(session, signal)
     const viewRef = createHmac('sha256', pageKey).update(JSON.stringify({ viewer: session.userId, dateStamp, source, views: page.views })).digest('base64url')
@@ -1663,7 +1673,6 @@ export class RecordingService {
       totalDurationMillis: 0, processingCount: 0,
 
     }
-    if (transcript.state === 'empty' && coverageResult.status === 'fulfilled' && coverageResult.value.intervals.length > 0) transcript = { ...transcript, message: '已有录音，暂无转写内容' }
     return {
       dateStamp: date,
       coverage: coverageResult.status === 'fulfilled' ? coverageResult.value : { state: 'error', intervals: [] },

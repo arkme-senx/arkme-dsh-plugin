@@ -56,4 +56,3 @@ export async function fixture(size = 8 * 1024 * 1024 + 3) {
 export function saved(job: RecordingImportJob): Record<string, unknown> {
   return { upload_id: 'opaque', part_size: 8 * 1024 * 1024, child_id: job.childId, source_size: job.fileSize, source_sha256: job.sha256 }
 }
-

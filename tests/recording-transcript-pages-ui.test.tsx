@@ -111,15 +111,154 @@ describe('workbench page lifetime', () => {
     expect(calls.read).toHaveBeenCalledTimes(1)
   })
 
-  it('does not continue a full read after its caller cancels, while retaining useful fetched text', async () => {
+  it('aborts an owned full read on caller cancellation and discards its late page', async () => {
     const pending = Promise.withResolvers<ArkmeRecordingTranscriptPage>(), controller = new AbortController()
     calls.read.mockReturnValue(pending.promise)
     await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
     let full!: Promise<unknown>
     await act(async () => { full = pager.through(undefined, controller.signal).catch(error => error) })
+    const signal = calls.read.mock.calls[0]![2] as AbortSignal
     controller.abort()
     await act(async () => { pending.resolve(page('b', 'two')); await full })
+    expect(signal.aborted).toBe(true)
+    expect(calls.read).toHaveBeenCalledTimes(1)
+    expect(current.items.map(item => item.text)).toEqual(['a'])
+    expect(pager.error).toBe('')
+  })
+
+  it('a cancelled full read does not cancel a coalesced scrolling request', async () => {
+    const pending = Promise.withResolvers<ArkmeRecordingTranscriptPage>(), controller = new AbortController()
+    calls.read.mockReturnValue(pending.promise)
+    await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+    let scroll!: Promise<unknown>, full!: Promise<unknown>
+    await act(async () => {
+      scroll = pager.next()
+      full = pager.through(undefined, controller.signal).catch(error => error)
+    })
+    const signal = calls.read.mock.calls[0]![2] as AbortSignal
+    controller.abort()
+    await act(async () => { pending.resolve(page('b', 'two')); await scroll; await full })
+    expect(signal.aborted).toBe(false)
     expect(calls.read).toHaveBeenCalledTimes(1)
     expect(current.items.map(item => item.text)).toEqual(['a','b'])
+    expect(pager.error).toBe('')
+  })
+
+  it('cancels an owned full read during recovery without making a new request', async () => {
+    vi.useFakeTimers()
+    try {
+      calls.read.mockRejectedValue({ body: { code: 'recording-view-changed' } })
+      const controller = new AbortController()
+      await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+      let full!: Promise<unknown>
+      await act(async () => { full = pager.through(undefined, controller.signal).catch(error => error) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); controller.abort() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); await full })
+      expect(calls.read).toHaveBeenCalledTimes(2)
+      expect(current.items.map(item => item.text)).toEqual(['a'])
+      expect(pager.error).toBe('')
+      expect(pager.loading).toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each(['next', 'refresh'] as const)('bounds persistent %s conflicts while preserving validated text', async action => {
+    vi.useFakeTimers()
+    let request: Promise<unknown> | undefined, settled = false
+    try {
+      calls.read.mockRejectedValue({ body: { code: 'recording-view-changed' } })
+      await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+      await act(async () => {
+        request = (action === 'next' ? pager.next() : pager.refresh(page('a', 'new-one', 'new')))
+          .catch(error => error).finally(() => { settled = true })
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(settled).toBe(true)
+      expect(calls.read).toHaveBeenCalledTimes(3)
+      expect(pager.loading).toBe(false)
+      expect(pager.error).toContain('持续更新')
+      expect(current.items.map(item => item.text)).toEqual(['a'])
+      expect(current.viewRef).toBe('view')
+    } finally {
+      await act(async () => { renderer?.unmount(); await request })
+      expect(vi.getTimerCount()).toBe(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares a full read recovery budget across successive changing continuations', async () => {
+    let freshReads = 0
+    calls.read.mockImplementation(async (_method, input) => {
+      if (input.cursor) throw { body: { code: 'recording-view-changed' } }
+      freshReads++
+      // End the old implementation too, so a red test cannot hang the suite.
+      if (freshReads > 5) throw new Error('test recovery safety bound')
+      const text = 'abcdef'.slice(0, freshReads + 1)
+      const first = page('a', `cursor-${freshReads}`, `view-${freshReads}`)
+      return { ...first, items: Array.from(text, value => page(value).items[0]) }
+    })
+    await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+    const nextCommand = vi.fn()
+    let result: unknown
+    await act(async () => { result = await pager.through().then(nextCommand).catch(error => error) })
+    expect(result).toBeInstanceOf(Error)
+    expect(String(result)).toContain('持续更新')
+    expect(nextCommand).not.toHaveBeenCalled()
+    expect(freshReads).toBe(2)
+    expect(calls.read).toHaveBeenCalledTimes(5)
+    expect(current.items.map(item => item.text)).toEqual(['a','b','c'])
+    expect(current.nextCursor).not.toBe('')
+  })
+
+  it('cancels a recovery delay without another request or a visible error', async () => {
+    vi.useFakeTimers()
+    try {
+      calls.read.mockRejectedValue({ body: { code: 'recording-view-changed' } })
+      const controller = new AbortController()
+      await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+      let request!: Promise<unknown>
+      await act(async () => { request = pager.refresh(page('a','two','new'), controller.signal).catch(error => error) })
+      await act(async () => { controller.abort(); await request })
+      expect(calls.read).toHaveBeenCalledTimes(1)
+      expect(pager.error).toBe('')
+      expect(pager.loading).toBe(false)
+      expect(current.items.map(item => item.text)).toEqual(['a'])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('counts recoveries performed by a coalesced scroll in the full read budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const changed = { body: { code: 'recording-view-changed' } }
+      calls.read.mockRejectedValueOnce(changed).mockRejectedValueOnce(changed)
+        .mockResolvedValueOnce({ ...page('a', 'new-two', 'new'), items: [page('a').items[0], page('b').items[0]] })
+        .mockRejectedValue(changed)
+      await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+      const nextCommand = vi.fn()
+      let scroll!: Promise<unknown>, full!: Promise<unknown>
+      await act(async () => {
+        scroll = pager.next().catch(error => error)
+        full = pager.through().then(nextCommand).catch(error => error)
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); await scroll; await full })
+      expect(calls.read).toHaveBeenCalledTimes(4)
+      expect(nextCommand).not.toHaveBeenCalled()
+      expect(current.items.map(item => item.text)).toEqual(['a', 'b'])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('succeeds after two transient conflicts without mixing revisions', async () => {
+    calls.read.mockRejectedValueOnce({ body: { code: 'recording-view-changed' } })
+      .mockRejectedValueOnce({ body: { code: 'recording-view-changed' } })
+      .mockResolvedValueOnce(page('a', 'new-one', 'new'))
+      .mockResolvedValueOnce(page('b', '', 'new'))
+    await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+    await act(async () => { await pager.through() })
+    expect(calls.read).toHaveBeenCalledTimes(4)
+    expect(current.items.map(item => item.text)).toEqual(['a', 'b'])
+    expect(current.viewRef).toBe('new')
+    expect(current.nextCursor).toBe('')
+    expect(pager.error).toBe('')
   })
 })
