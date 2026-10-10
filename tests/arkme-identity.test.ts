@@ -191,6 +191,20 @@ function withoutApprovedLinkMetadataCompatibilityAliases(file: string, content: 
     .replaceAll("'jotmo-app.senguo.me'", '')
 }
 
+function withoutApprovedDesktopMigrationCopy(file: string, content: string): string {
+  // The upgrade feature explicitly names the new desktop product; unrelated pages stay Arkme.
+  if (file === join(root, 'src/app-migration.ts')) {
+    return content.replaceAll('jiwo-migration-', '').replaceAll('JIWO_MIGRATION_', '').replaceAll('即我-${target.version}', '')
+  }
+  if (file === join(root, 'src/client/AppMigrationDialog.tsx')) {
+    return content.replaceAll('jiwo-migration-', '').replaceAll('即我 ${target?.version', '')
+      .replaceAll('jiwoAppIconBase64', '').replaceAll('jiwo-app-icon.png', '')
+      .replaceAll('本次更新安装完成后，Arkme 快捷方式将移除，后续请使用「即我」快捷方式启动应用。', '')
+      .replaceAll('即我应用图标', '').replaceAll('>即我</figcaption>', '></figcaption>')
+  }
+  return content
+}
+
 describe('Arkme plugin identity', () => {
   it('allows only the mobile recording guide app references without hiding other legacy branding', () => {
     const guide = join(root, 'src/client/recordings/ArkmeRecordingMobileGuideDialog.tsx')
@@ -236,7 +250,7 @@ describe('Arkme plugin identity', () => {
               withoutOfficialCommunityProductCopy(
                 file,
                 withoutMobileRecordingGuideProductCopy(file,
-                  withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8'))),
+                  withoutArkmeIdCompatibilityAliases(file, withoutApprovedDesktopMigrationCopy(file, readFileSync(file, 'utf8')))),
               ),
             ),
           ),

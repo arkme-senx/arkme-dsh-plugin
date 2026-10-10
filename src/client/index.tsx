@@ -1,3 +1,6 @@
+import { createRoot } from 'react-dom/client'
+import { AppMigrationDialog } from './AppMigrationDialog.js'
+import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -113,6 +116,15 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
 
+  ctx.effect(() => {
+    if (!localMigrationDesktop()) return () => undefined
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const root = createRoot(element)
+    root.render(<AppMigrationDialog />)
+    const stop = appMigrationStore.start()
+    return () => { stop(); root.unmount(); element.remove() }
+  }, 'dsh-arkme: desktop migration download')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
   ctx.effect(() => {
     let disposed = false

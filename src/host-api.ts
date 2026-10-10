@@ -1,3 +1,4 @@
+import type { AppMigrationManager } from './app-migration.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readDirectoryPage } from './directory-reader.js'
@@ -863,6 +864,7 @@ function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
 export interface ArkmeHostApiOptions {
   expectedPort: number
   allowNonLoopback: boolean
+  migrationManager?: AppMigrationManager
   updateManager?: Pick<
     ArkmePluginUpdateManager,
     'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
@@ -905,6 +907,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('app.migration.') && (origin === undefined || !isLoopback(req.socket.remoteAddress))) {
+        throw new ArkmePluginError('local-desktop-required', '迁移下载仅允许本机桌面访问', false, 403)
+      }
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
@@ -931,6 +936,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.desktopQuarantine,
         options.openApiMcpController,
         options.teamService,
+        options.migrationManager,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -975,7 +981,20 @@ export async function dispatchArkmeHostOperation(
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
   teamService?: TeamServicePort,
+  migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
+  if (operation.startsWith('app.migration.')) {
+    if (!migrationManager) throw new ArkmePluginError('migration-unavailable', '迁移下载暂不可用', false, 503)
+    switch (operation) {
+      case 'app.migration.status': return migrationManager.status()
+      case 'app.migration.check': return migrationManager.check(params.manual === true)
+      case 'app.migration.download': return migrationManager.download()
+      case 'app.migration.cancel': return migrationManager.cancel(stringParam(params, 'jobId'))
+      case 'app.migration.install': return migrationManager.install(stringParam(params, 'jobId'))
+      case 'app.migration.reveal': return migrationManager.reveal(stringParam(params, 'jobId'))
+      case 'app.migration.dismiss': return migrationManager.dismiss()
+    }
+  }
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()

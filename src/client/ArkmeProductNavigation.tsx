@@ -21,6 +21,7 @@ import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 
 export interface ArkmeProductNavigationProps {
   compact: boolean
@@ -238,7 +239,7 @@ export function ArkmeProductNavigation({
           style={styles.brandImage}
         />
         <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
-          v{pluginManifest.version}
+          {formatProductVersion(pluginManifest.version, currentClientVersionCode())}
         </span>
       </div>}
       <div style={{ ...styles.primary,
