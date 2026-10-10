@@ -2,8 +2,8 @@ import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
 import type { TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
 
-type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; error?: string }
-const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false })
+type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
+const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
 const listeners = new Set<() => void>()
 let account = '', snapshot = empty, request: ((more?: boolean) => Promise<void>) | undefined
 let discard: ((conversation: TeamConversation) => void) | undefined
@@ -51,7 +51,7 @@ export function startTeamDirectory(key: string): () => void {
     running = false
     if (controller.signal.aborted || account !== key) return
     const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
-    snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, ...(failure ? { error: failure } : {}) }; emit()
+    snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
     if (again) { again = false; await refresh() }
   }
   request = refresh
