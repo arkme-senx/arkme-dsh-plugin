@@ -85,7 +85,7 @@ describe('ArkmeAvatar', () => {
       act(() => renderer.unmount())
     }
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: profile.avatarRef })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: profile.avatarRef }, undefined, { priority: 'background' })
   })
 
   it('uses the Flutter Bot icon for a Bot without an image, and its image when available', async () => {
@@ -113,7 +113,7 @@ describe('ArkmeAvatar', () => {
 
     expect(second.root.findAllByType('img')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-user-a' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-user-a' }, undefined, { priority: 'background' })
     act(() => { second.unmount() })
   })
 
@@ -131,7 +131,7 @@ describe('ArkmeAvatar', () => {
 
     expect(second.root.findAllByType('img')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-source-a' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-source-a' }, undefined, { priority: 'background' })
     act(() => { second.unmount() })
   })
 
@@ -325,7 +325,7 @@ describe('ArkmeAvatar', () => {
       await tick()
     })
     expect(privateChat.root.findAll(node => node.props['data-arkme-group-avatar-count'] !== undefined)).toHaveLength(0)
-    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'private-avatar' })
+    expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'private-avatar' }, undefined, { priority: 'background' })
     act(() => { privateChat.unmount() })
   })
 })

@@ -1841,6 +1841,7 @@ export async function dispatchArkmeHostOperation(
       {
         limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 50)))),
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)

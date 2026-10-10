@@ -12,9 +12,9 @@ afterEach(() => { stops.splice(0).forEach(stop => stop()); vi.useRealTimers() })
 function start(read: Parameters<typeof watchPrivateInteractionDirectory>[0]['read']) {
   let invalidate!: () => void
   const publish = vi.fn()
-  const stop = watchPrivateInteractionDirectory({ read, publish, subscribe: listener => { invalidate = listener; return vi.fn() } })
-  stops.push(stop)
-  return { publish, invalidate, stop }
+  const watcher = watchPrivateInteractionDirectory({ read, publish, subscribe: listener => { invalidate = listener; return vi.fn() } })
+  stops.push(() => watcher.dispose())
+  return { publish, invalidate, stop: () => watcher.dispose(), retry: () => watcher.retry() }
 }
 describe('private interaction directory refresh', () => {
   it('publishes recent contacts before the remaining pages finish', async () => {
@@ -91,5 +91,64 @@ describe('private interaction directory refresh', () => {
     const { publish } = start(read)
     await vi.advanceTimersByTimeAsync(1000)
     expect(publish).toHaveBeenLastCalledWith([], '群互动同步暂未完成，点击重试')
+  })
+
+  it('replaces background reads for explicit retry and ignores a late old completion', async () => {
+    vi.useFakeTimers()
+    const old = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const current = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const read = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise).mockResolvedValue(page('after-event'))
+    const { publish, retry, invalidate } = start(read)
+    retry(); retry()
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(read.mock.calls[0]?.[2].aborted).toBe(true)
+    expect(read.mock.calls[1]?.[3]).toBe('foreground')
+    old.resolve(page('obsolete'))
+    await vi.advanceTimersByTimeAsync(0)
+    invalidate(); invalidate()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(read).toHaveBeenCalledTimes(2) // The old finally cannot mark the new run idle.
+    expect(publish).not.toHaveBeenCalled()
+    current.resolve(page('also-obsolete'))
+    await vi.advanceTimersByTimeAsync(200)
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(read.mock.calls[2]?.[3]).toBe('foreground')
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenLastCalledWith([row('after-event')])
+    invalidate(); await vi.advanceTimersByTimeAsync(200)
+    expect(read.mock.calls[3]?.[3]).toBe('background')
+  })
+
+  it('keeps explicit retry priority through pagination, version recovery and permission revalidation', async () => {
+    vi.useFakeTimers()
+    const read = vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(page('old', true)).mockRejectedValueOnce(new Error('version_changed'))
+      .mockResolvedValueOnce(page('old', true)).mockRejectedValueOnce(new Error('version_changed'))
+      .mockResolvedValueOnce(page('fresh', true))
+    const { publish, retry } = start(read)
+    await vi.advanceTimersByTimeAsync(0)
+    retry()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(read).toHaveBeenCalledTimes(6)
+    expect(read.mock.calls[0]?.[3]).toBe('background')
+    expect(read.mock.calls.slice(1).every(call => call[3] === 'foreground')).toBe(true)
+    expect(publish).toHaveBeenLastCalledWith([row('fresh')], '较早群互动暂未加载，点击重试')
+  })
+
+  it('cancels a scheduled automatic refresh on retry and cancels the replacement on disposal', async () => {
+    vi.useFakeTimers()
+    const pending = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const read = vi.fn().mockResolvedValueOnce(page('old')).mockReturnValueOnce(pending.promise)
+    const { publish, invalidate, retry, stop } = start(read)
+    await vi.advanceTimersByTimeAsync(0)
+    invalidate(); retry()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(read).toHaveBeenCalledTimes(2)
+    stop(); retry()
+    expect(read.mock.calls[1]?.[2].aborted).toBe(true)
+    pending.resolve(page('late'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledTimes(2)
   })
 })

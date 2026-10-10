@@ -13,6 +13,7 @@ export interface OfficialNotificationSnapshot {
   summary: ArkmeOfficialNotificationSummary
   nextCursor: string
   loading: boolean
+  foregroundLoading: boolean
   error?: string | undefined
   ready: boolean
   revision: number
@@ -22,6 +23,7 @@ const EMPTY: OfficialNotificationSnapshot = {
   summary: { total: 0, unreadCount: 0 },
   nextCursor: '',
   loading: false,
+  foregroundLoading: false,
   ready: false,
   revision: 0,
 }
@@ -31,13 +33,19 @@ function currentScope() {
     ? `${auth.environment}:${auth.userId}`
     : undefined
 }
+type ReadPriority = 'foreground' | 'background'
+interface NotificationRead {
+  controller: AbortController
+  priority: ReadPriority
+  promise: Promise<void>
+}
 export class OfficialNotificationStore {
   private snapshot = EMPTY
   private listeners = new Set<() => void>()
   private controller = new AbortController()
-  private inflight: Promise<void> | undefined
+  private inflight: NotificationRead | undefined
   private generation = 0
-  private pending = false
+  private pending: ReadPriority | undefined
   private users = 0
   private pages = 1
   private timer: ReturnType<typeof setInterval> | undefined
@@ -55,8 +63,9 @@ export class OfficialNotificationStore {
   private stop() {
     this.generation++
     this.controller.abort()
+    this.inflight?.controller.abort()
     this.inflight = undefined
-    this.pending = false
+    this.pending = undefined
     clearInterval(this.timer)
     this.timer = undefined
     if (typeof window !== 'undefined') {
@@ -87,50 +96,77 @@ export class OfficialNotificationStore {
         this.recover,
         60_000 + Math.floor(Math.random() * 5_000),
       )
-      void this.refresh()
+      void this.refresh('background')
     }
     return () => {
       if (this.snapshot.scope === scope && --this.users === 0) this.stop()
     }
   }
   private recover = () => {
-    if (typeof document === 'undefined' || !document.hidden) void this.refresh()
+    if (typeof document === 'undefined' || !document.hidden) void this.refresh('background')
   }
-  invalidate(scope?: string) {
+  invalidate(scope?: string, priority: ReadPriority = 'background') {
     if (scope !== this.snapshot.scope) return
     this.generation++
-    this.pending = true
-    if (!this.inflight) void this.refresh()
+    // A hint must not demote a user refresh whose stale result is now discarded.
+    this.pending = priority === 'foreground' || this.inflight?.priority === 'foreground'
+      || this.pending === 'foreground' ? 'foreground' : 'background'
+    if (!this.inflight || priority === 'foreground') void this.refresh(this.pending)
   }
-  async refresh(): Promise<void> {
-    if (this.inflight) return this.inflight
-    this.pending = false
+  async refresh(priority: ReadPriority = 'foreground'): Promise<void> {
+    if (this.inflight) {
+      if (priority === 'background' || this.inflight.priority === 'foreground') return this.inflight.promise
+      // Only replace the read. A simultaneous mark-read command retains its lifecycle signal.
+      this.inflight.controller.abort()
+    }
     const { scope } = this.snapshot,
-      signal = this.controller.signal,
-      generation = this.generation
-    if (!scope || signal.aborted || scope !== currentScope()) return
+      generation = this.generation,
+      pages = this.pages
+    if (!scope || this.controller.signal.aborted || scope !== currentScope()) return
+    if (this.pending === 'foreground') priority = 'foreground'
+    this.pending = undefined
+    const controller = new AbortController()
+    const signal = controller.signal
+    const operation: NotificationRead = { controller, priority, promise: Promise.resolve() }
     const valid = () =>
+      this.inflight === operation &&
       !signal.aborted &&
       generation === this.generation &&
       scope === this.snapshot.scope &&
       scope === currentScope()
-    const operation = (async () => {
-      this.publish({ ...this.snapshot, loading: true, error: undefined })
+    const unsubscribe = arkmeAuthStore.subscribe(() => {
+      // Remember a logout even if the same account logs in before this read resolves.
+      if (scope !== currentScope()) controller.abort()
+    })
+    const options = priority === 'background' ? { priority: 'background' as const } : undefined
+    // Install the operation before notifying subscribers, which may synchronously refresh.
+    operation.promise = Promise.resolve().then(async () => {
+      if (!valid()) return
+      this.publish({
+        ...this.snapshot,
+        loading: true,
+        foregroundLoading: priority === 'foreground',
+        // Keep the retry action available while an automatic refresh waits for admission.
+        error: priority === 'foreground' ? undefined : this.snapshot.error,
+      })
       try {
         const summaryPromise = callArkme<ArkmeOfficialNotificationSummary>(
           'official-notifications.summary',
           undefined,
           signal,
+          options,
         )
         const pagePromise = (async () => {
           let cursor = ''
           const items: ArkmeOfficialNotification[] = []
-          for (let page = 0; page < this.pages; page++) {
+          for (let page = 0; page < pages; page++) {
             const value = await callArkme<ArkmeOfficialNotificationPage>(
               'official-notifications.list',
               { cursor },
               signal,
+              options,
             )
+            if (!valid()) break
             items.push(...value.items)
             cursor = value.nextCursor
             if (!cursor) break
@@ -144,6 +180,7 @@ export class OfficialNotificationStore {
             summary,
             ...page,
             loading: false,
+            foregroundLoading: false,
             ready: true,
             revision: this.snapshot.revision + 1,
           })
@@ -152,24 +189,28 @@ export class OfficialNotificationStore {
           this.publish({
             ...this.snapshot,
             loading: false,
+            foregroundLoading: false,
             ready: true,
             error:
               error instanceof Error ? error.message : '官方通知暂时不可用',
           })
       }
-    })()
-    this.inflight = operation
-    try {
-      await operation
-    } finally {
+    }).finally(() => {
+      unsubscribe()
+      // Release a sibling summary/list if the other request failed first.
+      controller.abort()
       if (this.inflight === operation) {
         this.inflight = undefined
-        if (this.pending) void this.refresh()
+        if (this.pending) void this.refresh(this.pending)
+        else if (this.snapshot.loading)
+          this.publish({ ...this.snapshot, loading: false, foregroundLoading: false })
       }
-    }
+    })
+    this.inflight = operation
+    await operation.promise
   }
   async more() {
-    if (this.snapshot.loading || !this.snapshot.nextCursor) return
+    if (this.inflight?.priority === 'foreground' || !this.snapshot.nextCursor) return
     this.pages++
     await this.refresh()
   }
@@ -189,7 +230,7 @@ export class OfficialNotificationStore {
       // must retain its receipt state until the authoritative reconciliation.
     } finally {
       if (!signal.aborted && scope === this.snapshot.scope)
-        this.invalidate(scope)
+        this.invalidate(scope, 'foreground')
     }
   }
 }

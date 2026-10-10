@@ -306,7 +306,8 @@ describe('avatar image ownership boundary', () => {
   it('keeps image.read behind the shared avatar runtime', () => {
     const clientDirectory = new URL('../src/client/', import.meta.url)
     const directReaders = clientSourceFiles(clientDirectory)
-      .filter(file => /['"]image\.read['"]/.test(file.source))
+      // Match invocations, not the read-only transport scheduling allowlist.
+      .filter(file => /\(\s*['"]image\.read['"]/.test(file.source))
       .map(file => file.name)
 
     expect(directReaders).toEqual(['avatar-image-runtime.ts'])

@@ -64,7 +64,7 @@ import {
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
-import { arkmeChatDirectory, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { mergePrivateInteractionSources } from './private-interaction-directory.js'
 import { usePrivateInteractionDirectory } from './use-private-interaction-directory.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
@@ -2282,7 +2282,7 @@ export function ArkmeNavigation({
           </div>
         })}</ArkmeDirectoryWindow>
         {socialAllowed && teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
-        {socialAllowed && privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
+        {socialAllowed && privateInteractionDirectory.error && <button type="button" onClick={privateInteractionDirectory.retry}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
           {tr(privateInteractionDirectory.error)}
         </button>}

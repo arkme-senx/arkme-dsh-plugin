@@ -898,6 +898,7 @@ export class WorldService {
       { record_uid: root.recordUid, limit, offset },
       session,
       options.signal,
+      { lane: 'interactive-read' },
     )
     const rawItems = listValue(data.list)
     const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)

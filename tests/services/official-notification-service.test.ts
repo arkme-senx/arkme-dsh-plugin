@@ -23,7 +23,7 @@ function fixture() {
     requestScope: (id: number) => `test:${id}`,
     invalidateKey: invalidate,
     authenticatedPost: post,
-    runOwnerRead: async (
+    runCompositeOwnerRead: async (
       _route: string,
       _params: unknown,
       read: (signal: AbortSignal) => Promise<unknown>,
