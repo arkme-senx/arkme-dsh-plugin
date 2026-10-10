@@ -82,7 +82,7 @@ beforeEach(async () => {
     if (operation === 'provider.instance') return { instanceId: 'notification-directory-test' }
     if (operation === 'sources.list') return { directory: 'root', items: sources, hasMore: false }
     if (operation === 'arrangements.reminders.list') return { items: notices }
-    if (operation === 'world.mine' || operation === 'ai-letter.list' || operation === 'bots.private-chat.directory') return { items: [] }
+    if (operation === 'world.notification-sources' || operation === 'ai-letter.list' || operation === 'bots.private-chat.directory') return { items: [] }
     if (operation === 'world.interactions.summary' || operation === 'ai-letter.unread') return { unreadCount: 0, seenThroughSequence: 0 }
     if (operation === 'chat.official-author.profile' || operation === 'arko.profile') throw new Error('not used')
     return {}
@@ -179,7 +179,7 @@ describe('notification directory stability', () => {
   it('restores the selected notification row and center after opening World from a notification', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
-      if (operation === 'world.mine') return { items: [{ recordRef: 'world-post' }] }
+      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'world-post' }] }
       if (operation === 'world.interactions.list') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }] }
       return original(operation, ...args)
     })
@@ -188,6 +188,8 @@ describe('notification directory stability', () => {
     const before = notificationRows()[0]!
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '世界：回复者 回复了你的世界' }).props.onClick() })
     expect(arkmeUi.getSnapshot().mode).toBe('world')
+    expect(arkmeUi.getSnapshot().worldInteractionRef).toBe('world-reply')
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'world.interactions.mark-viewed')).toBe(false)
     expect(renderer!.root.findAllByType(ArkmeNotificationCenter)).toHaveLength(0)
     await act(async () => { renderer!.root.findByProps({ 'data-arkme-home-tour-target': 'conversations' }).props.onClick() })
     expect(notificationRows()[0]).toBe(before)
@@ -253,7 +255,7 @@ describe('notification directory stability', () => {
     notices = []
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
-      if (operation === 'world.mine') return { items: [{ recordRef: 'world-post' }] }
+      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'world-post' }] }
       if (operation === 'world.interactions.list') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }] }
       if (operation === 'world.interactions.summary') return { unreadCount: 2, seenThroughSequence: 9 }
       if (operation === 'ai-letter.list') return { items: [{ letterId: 'ai-letter', title: 'AI 通知', summary: '来信摘要', createdAtMillis: timestamp + 600 }] }
@@ -277,7 +279,7 @@ describe('notification directory stability', () => {
     const original = mocks.callArkme.getMockImplementation()!
     let partial = false
     mocks.callArkme.mockImplementation(async (operation: string, params: { recordRef?: string }, ...args: unknown[]) => {
-      if (operation === 'world.mine') return { items: [{ recordRef: 'first' }, { recordRef: 'second' }] }
+      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'first' }, { recordRef: 'second' }] }
       if (operation === 'world.interactions.list') {
         if (partial && params.recordRef === 'second') throw new Error('partial failure')
         return { items: [{ interactionRef: `${params.recordRef}-${partial ? 'new' : 'old'}`, authorName: '回复者', createdAtMillis: timestamp + 500 }] }

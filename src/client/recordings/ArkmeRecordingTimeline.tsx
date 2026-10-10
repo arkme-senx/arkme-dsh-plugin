@@ -30,6 +30,9 @@ export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
 const DAY_MILLIS = 86_400_000
 const DEFAULT_RECORDING_ZOOM_INDEX = 6
 const WHEEL_ZOOM_THRESHOLD = 24
+const SPEAKER_ITEM_WIDTH = 96
+const SPEAKER_LEGEND_PADDING = 6
+const SPEAKER_LEGEND_CARET_WIDTH = 16
 
 function clampWindowStart(value: number, visibleMillis: number, dayStart: number, dayEnd: number): number {
   return Math.min(Math.max(dayStart, dayEnd - visibleMillis), Math.max(dayStart, value))
@@ -242,12 +245,12 @@ const styles: Record<string, CSSProperties> = {
   playControl: { width: 16, height: 16, flex: 'none', padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: desktop.text, color: desktop.base, cursor: 'pointer' },
   legend: { minWidth: 0, position: 'relative', margin: 0, color: desktop.secondary, fontSize: 12 },
   legendBackdrop: { position: 'fixed', zIndex: 11, inset: 0, padding: 0, border: 0, background: 'transparent', cursor: 'default' },
-  legendSummary: { height: 28, boxSizing: 'border-box', padding: '4px 6px', display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
+  legendSummary: { height: 28, boxSizing: 'border-box', padding: `4px ${SPEAKER_LEGEND_PADDING}px`, display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
   legendItems: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden' },
-  legendItem: { width: 96, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px', boxSizing: 'border-box', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
+  legendItem: { width: SPEAKER_ITEM_WIDTH, flex: 'none', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px', boxSizing: 'border-box', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
   legendName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontWeight: 500 },
   legendDot: { width: 12, height: 12, flex: 'none', borderRadius: '50%' },
-  moreChip: { flex: 'none', marginRight: 2, padding: '0 6px', borderRadius: 10, background: desktop.hover, color: desktop.tertiary, fontSize: 11, lineHeight: '16px', fontWeight: 500 },
+  moreChip: { flex: 'none', boxSizing: 'border-box', padding: '0 6px', textAlign: 'center', whiteSpace: 'nowrap', borderRadius: 10, background: desktop.hover, color: desktop.tertiary, fontSize: 11, lineHeight: '16px', fontWeight: 500 },
   legendPanel: { position: 'absolute', zIndex: 12, top: 31, left: 0, right: 0, maxHeight: 420, overflowY: 'auto', border: `1px solid ${desktop.border}`, borderRadius: 12, background: desktop.base, boxShadow: arkmeTheme.shadow },
   legendPanelList: { padding: '8px 0', display: 'grid' },
   legendPanelItem: { minWidth: 0, padding: '8px 12px' },
@@ -304,7 +307,9 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   const overviewDragRef = useRef(false)
   const wheelDeltaRef = useRef(0)
   const legendRef = useRef<HTMLDetailsElement>(null)
+  const legendSummaryRef = useRef<HTMLElement>(null)
   const [legendOpen, setLegendOpen] = useState(false)
+  const [speakerCapacity, setSpeakerCapacity] = useState<number>()
   const firstItemStart = items[0]?.startAtMillis
 
   useEffect(() => {
@@ -360,6 +365,33 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
   }, [items])
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
+  const speakerCount = allDaySpeakers.length
+  // Keep the badge width stable as its count changes, including across digit boundaries.
+  const moreChipWidth = Math.max(30, 14 + (String(speakerCount).length + 1) * 7)
+  const visibleSpeakerCount = Math.min(speakerCount, speakerCapacity ?? speakerCount)
+  const hiddenSpeakerCount = speakerCount - visibleSpeakerCount
+
+  useEffect(() => {
+    const summary = legendSummaryRef.current
+    if (summary === null || typeof window === 'undefined') return
+    const measure = () => {
+      const availableWidth = Math.max(0, summary.clientWidth - SPEAKER_LEGEND_PADDING * 2 - SPEAKER_LEGEND_CARET_WIDTH)
+      // Try fitting everyone before reserving the overflow badge, so it cannot keep
+      // the last speaker hidden when the row has enough room without the badge.
+      const capacity = availableWidth >= speakerCount * SPEAKER_ITEM_WIDTH
+        ? speakerCount
+        : Math.max(0, Math.floor((availableWidth - moreChipWidth) / SPEAKER_ITEM_WIDTH))
+      setSpeakerCapacity(capacity)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(summary)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [loading, showEmptyState, speakerCount, moreChipWidth])
 
   useEffect(() => {
     if (allDaySpeakers.length === 0) setLegendOpen(false)
@@ -601,17 +633,17 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     </span> : allDaySpeakers.length > 0 ? <>
       {legendOpen && <button type="button" tabIndex={-1} aria-label={tr("关闭全天说话人统计")} style={styles.legendBackdrop} onClick={() => { if (legendRef.current !== null) legendRef.current.open = false; setLegendOpen(false) }} />}
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>
-      <summary style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
+      <summary ref={legendSummaryRef} style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
         <span style={styles.legendItems}>
-          {allDaySpeakers.slice(0, 3).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
+          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={speaker.label} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
             {speaker.avatarRef === undefined
               ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
               : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={tr("{v0}头像", { v0: speaker.label })} />}
             <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }) }}>{speaker.label}</span>
           </button>)}
         </span>
-        {allDaySpeakers.length > 3 && <span style={styles.moreChip}>+{allDaySpeakers.length - 3}</span>}
-        <CaretDown size={16} aria-hidden />
+        {hiddenSpeakerCount > 0 && <span style={{ ...styles.moreChip, width: moreChipWidth }}>+{hiddenSpeakerCount}</span>}
+        <CaretDown size={SPEAKER_LEGEND_CARET_WIDTH} style={{ flex: 'none' }} aria-hidden />
       </summary>
       <span style={styles.legendPanel}>
         <span style={styles.legendPanelList}>

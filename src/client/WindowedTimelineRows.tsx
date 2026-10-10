@@ -8,7 +8,8 @@ export const WindowedTimelineRows = memo(function WindowedTimelineRows({ childre
   children: ReactNode[]; rowIds: readonly { id: string }[]; scrollport: RefObject<HTMLDivElement>; anchorId?: string | undefined
 }) {
   const chunks = useMemo(() => Array.from({ length: Math.ceil(children.length / CHUNK_SIZE) }, (_, index) => ({
-    id: `${rowIds[index * CHUNK_SIZE]?.id}:${rowIds[Math.min(rowIds.length, (index + 1) * CHUNK_SIZE) - 1]?.id}`,
+    // Appending a message must not remount the existing media/reaction rows.
+    id: rowIds[index * CHUNK_SIZE]?.id ?? `chunk-${index}`,
     rows: children.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE),
   })), [children, rowIds])
   const anchorIndex = anchorId ? rowIds.findIndex(row => row.id === anchorId) : -1
@@ -42,8 +43,9 @@ export const WindowedTimelineRows = memo(function WindowedTimelineRows({ childre
       update()
     }, { root, rootMargin: '800px 0px' })
     for (const element of elements.current.values()) observer.observe(element)
-    document.addEventListener('selectionchange', update)
-    return () => { observer.disconnect(); cancelAnimationFrame(frame); document.removeEventListener('selectionchange', update) }
+    const ownerDocument = root.ownerDocument
+    ownerDocument?.addEventListener('selectionchange', update)
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); ownerDocument?.removeEventListener('selectionchange', update) }
   }, [chunks, scrollport])
   useEffect(() => {
     // A scrollbar jump can land in an estimated block before it is mounted.

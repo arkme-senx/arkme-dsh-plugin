@@ -1863,6 +1863,8 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'world.notification-sources': return await service.worldNotificationSources(Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), requestSignal)
+    case 'world.notification-target': return await service.worldNotificationTarget(stringParam(params, 'interactionRef'), requestSignal)
     case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
     case 'world.interactions.mark-viewed': {
       const sequence = Math.max(0, Math.trunc(numberParam(params, 'seenThroughSequence', 0)))

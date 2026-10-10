@@ -1,8 +1,33 @@
 // @vitest-environment jsdom
-import { act, useRef } from 'react'
+import { act, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { WindowedTimelineRows } from '../src/client/WindowedTimelineRows.js'
+it('does not remount existing rows when a new message extends the last chunk', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+  const mount = vi.fn(), unmount = vi.fn()
+  function Row({ id }: { id: string }) {
+    useEffect(() => { mount(id); return () => unmount(id) }, [id])
+    return <li data-row={id}>{id}</li>
+  }
+  function Fixture({ count }: { count: number }) {
+    const body = useRef<HTMLDivElement>(null)
+    const rows = Array.from({ length: count }, (_, index) => ({ id: `row-${index}` }))
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}>
+      {rows.map(row => <Row key={row.id} id={row.id} />)}
+    </WindowedTimelineRows></ul></div>
+  }
+  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  try {
+    await act(async () => root.render(<Fixture count={1999} />))
+    mount.mockClear(); unmount.mockClear()
+    await act(async () => root.render(<Fixture count={2000} />))
+    expect(mount.mock.calls).toEqual([['row-1999']])
+    expect(unmount).not.toHaveBeenCalled()
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
+})
 it('resumes the visible window when a text selection ends without another scroll', async () => {
   vi.useFakeTimers()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

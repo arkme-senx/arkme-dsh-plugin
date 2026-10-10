@@ -19,5 +19,8 @@ it('rejects oversized writes before cloning them into the worker', async () => {
   try {
     await expect(worker.call({ kind: 'write', scope: 'scope', request: 'page', options: {},
       page: { source: {}, items: [], hasMore: false, large: 'x'.repeat(3 * 1024 * 1024) } as never })).rejects.toThrow('unavailable')
+    await expect(worker.call({ kind: 'write', scope: 'scope', request: 'page',
+      options: { refreshTokens: Array.from({ length: 500 }, () => 'x'.repeat(32768)) },
+      page: { source: {}, items: [], hasMore: false } as never })).rejects.toThrow('unavailable')
   } finally { worker.close() }
 })

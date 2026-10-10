@@ -15,7 +15,7 @@ const unavailable = () => new Error('Timeline storage unavailable')
 function commandBytes(command: TimelineCacheCommand): number {
   if (command.kind !== 'write') return 4096
   // Count before structuredClone admission without allocating another full JSON copy.
-  const queue: unknown[] = [command.page]
+  const queue: unknown[] = [command]
   const seen = new Set<object>()
   let bytes = 0
   for (let index = 0; index < queue.length; index++) {
