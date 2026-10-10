@@ -21,6 +21,8 @@ import type {
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
   ArkmeWorldInteractionSummary,
+  ArkmeWorldNotificationSourcePage,
+  ArkmeWorldNotificationTarget,
   ArkmeWorldPublishResult,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishTextInput,
@@ -913,6 +915,51 @@ export class WorldService {
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
   }
 
+  /** my-list includes both original posts and comments; feed filtering must not be applied here. */
+  async worldNotificationSources(offset = 0, signal?: AbortSignal): Promise<ArkmeWorldNotificationSourcePage> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/public-record/my-list', { limit: 20, offset }, session, signal,
+    )
+    const raw = listValue(data.list)
+    const items: ArkmeWorldNotificationSourcePage['items'] = []
+    for (const value of raw) {
+      const item = objectValue(value), uid = stringValue(item.record_uid).trim()
+      if (!uid || integerValue(item.user_id) !== session.userId || item.is_public === false) continue
+      const status = integerValue(item.check_status)
+      if (status && status !== 2 && status !== 3) continue
+      items.push({ recordRef: await this.worldRecordRef(session.userId, uid), isComment: !!stringValue(item.parent_record_uid).trim() })
+    }
+    const nextOffset = offset + raw.length
+    const hasMore = raw.length > 0 && nextOffset < numberValue(data.total)
+    return { items, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  /** Resolve the current public ancestor chain; an old notification never bypasses visibility. */
+  async worldNotificationTarget(interactionRef: string, signal?: AbortSignal): Promise<ArkmeWorldNotificationTarget> {
+    const session = await this.runtime.requireSession()
+    let uid = this.openWorldRecordRef(interactionRef, session.userId).recordUid
+    const seen = new Set<string>()
+    for (let depth = 0; depth < 64 && uid; depth++) {
+      if (seen.has(uid)) break
+      seen.add(uid)
+      const raw = await this.runtime.post<Record<string, unknown>>(
+        this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/detail', { record_uid: uid }, undefined, [200], signal,
+      )
+      const status = integerValue(raw.check_status)
+      if (stringValue(raw.record_uid) !== uid || raw.is_public !== true || (status && status !== 2 && status !== 3)) break
+      const parent = stringValue(raw.parent_record_uid).trim()
+      if (!parent) {
+        const avatars = await this.resolveWorldAvatarUrls([raw], session, signal)
+        const root = await this.worldFeedItem(raw, session.userId, avatars, signal)
+        if (root) return { root, interactionRef }
+        break
+      }
+      uid = parent
+    }
+    throw new ArkmePluginError('world-notification-unavailable', '这条世界动态或评论已不可查看', false, 404)
+  }
+
   async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
@@ -1467,6 +1514,7 @@ export class WorldService {
     return {
       interactionRef,
       parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
+      isSelf: ownerUserId === viewerUserId,
       ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: interactionRef } : {}),
       authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),

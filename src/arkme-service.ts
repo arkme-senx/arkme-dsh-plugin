@@ -2785,6 +2785,9 @@ export class ArkmeService {
     return await this.world.worldInteractionSummary(signal)
   }
 
+  async worldNotificationSources(offset: number, signal?: AbortSignal) { return this.world.worldNotificationSources(offset, signal) }
+  async worldNotificationTarget(interactionRef: string, signal?: AbortSignal) { return this.world.worldNotificationTarget(interactionRef, signal) }
+
   async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
     return await this.world.markWorldInteractionsViewed(seenThroughSequence, signal)
   }

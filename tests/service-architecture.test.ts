@@ -91,7 +91,7 @@ const expectedPublicMethods = [
   'myVoiceprint', 'outboundVoiceprintGrants', 'recognizedVoiceprintPeople', 'recognizedVoiceprintPerson',
   'recognizedPersonVoiceprints', 'createVoiceprintInvitation', 'revokeVoiceprintPlaybackGrant', 'restoreVoiceprintPlayback',
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
-  'listWorldInteractions', 'worldInteractionSummary', 'markWorldInteractionsViewed', 'createWorldTextInteraction', 'readWorldImage',
+  'listWorldInteractions', 'worldNotificationSources', 'worldNotificationTarget', 'worldInteractionSummary', 'markWorldInteractionsViewed', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
   'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
   'saveSelfRoleAvatar', 'listSelfRoles', 'createSelfRole', 'updateSelfRole', 'deleteSelfRole',
