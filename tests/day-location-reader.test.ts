@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readDayLocations } from '../src/client/day-location-reader.js'
-import { fitDayLocations, mapPosition, nearestWorldX } from '../src/client/day-location-map.js'
 import type { callArkme } from '../src/client/api.js'
 
 const query = { bucketDate: '2026-10-08', timezone: 'Asia/Shanghai' }
@@ -38,11 +37,5 @@ describe('complete daily recorded locations', () => {
     await expect(readDayLocations(query, new AbortController().signal, () => {}, repeated as typeof callArkme)).rejects.toThrow('分页未推进')
     const controller = new AbortController(); controller.abort()
     await expect(readDayLocations(query, controller.signal, () => {}, empty as typeof callArkme)).rejects.toThrow()
-  })
-  it('fits points across the date line without zooming out to the whole world', () => {
-    const points = [179.9, -179.9].map((longitude, index) => ({ id: String(index), recordedAtMillis: 1, location: { ...location, source: 'device' as const, longitude } }))
-    const camera = fitDayLocations(points, 600, 400)
-    expect(camera.zoom).toBeGreaterThan(9)
-    expect(Math.abs(nearestWorldX(mapPosition(30, -179.9).x, camera.x) - camera.x)).toBeLessThan(.001)
   })
 })

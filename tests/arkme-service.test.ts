@@ -1200,6 +1200,7 @@ describe('ArkmeService', () => {
 
     expect(service.clientConfig()).toEqual({
       captchaId: 'captcha-test-id-1234567890',
+      baiduMapBrowserAk: '',
       environment: 'test',
       testLoginEnabled: true,
       jiwoScanLoginEnabled: false,

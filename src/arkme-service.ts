@@ -863,6 +863,7 @@ export class ArkmeService {
   clientConfig(): ArkmeClientConfig {
     return {
       captchaId: this.config.geetestCaptchaId,
+      baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
       jiwoScanLoginEnabled: jiwoScanLoginAvailable(this.config),
