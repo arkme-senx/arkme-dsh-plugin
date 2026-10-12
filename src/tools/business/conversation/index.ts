@@ -11,6 +11,7 @@ import { readReactionsToolModule, writeReactionsToolModule } from './reactions.j
 import { readSourceToolModule } from './read-source.js'
 import { messageReadReceiptToolModules } from './read-receipts.js'
 import { relatedRecordingsToolModule } from './related-recordings.js'
+import { sharedRecordingDetailToolModule } from './shared-recording-detail.js'
 import { userBanToolModules } from './user-ban.js'
 import { reportMessageToolModule } from './report-message.js'
 import { withdrawMessageToolModule } from './withdraw-message.js'
@@ -35,6 +36,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   reportMessageToolModule,
   withdrawMessageToolModule,
   relatedRecordingsToolModule,
+  sharedRecordingDetailToolModule,
   ...userBanToolModules,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,

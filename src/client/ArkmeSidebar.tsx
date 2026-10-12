@@ -210,6 +210,7 @@ import { betaCommunityWelcomeStore, welcomeDraft, welcomeMatchesSource } from '.
 import { ArkmeBetaCommunityWelcome } from './ArkmeBetaCommunityWelcome.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
 import { useConversationMembers } from './use-conversation-members.js'
+import { useRelatedRecordingSharing } from './use-related-recording-sharing.js'
 import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
@@ -3393,6 +3394,20 @@ export function ArkmeSurface({
   const relatedGenerationRef = useRef(0)
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceKeyRef = useRef('')
+  const relatedSharing = useRelatedRecordingSharing(
+    `${authenticatedAccountKey}:${conversationKey}:${relatedGenerationRef.current}`, source?.sourceRef,
+    result => {
+      setRelatedItems(current => current.map(item => item.recordingRef === result.recordingRef ? { ...item, ...result } : item))
+      setRelatedDetail(current => current?.recordingRef === result.recordingRef ? { ...current, ...result } : current)
+      if (!result.isShared) arkmeChatTimelineDelta.applyTimelineChange({
+        sourceKey: conversationKey, timelineItemKey: result.timelineItemKey,
+        changeKind: 'deleted', changeVersion: Date.now(), relationTerminal: true, throughSequence: result.sequence,
+      })
+      void loadTimeline(undefined, true, 40, 'refresh').catch(() => {
+        // Sharing already committed; realtime or the next visit can reconcile the timeline.
+      })
+    },
+  )
   const relatedMenuButtonRef = useRef<HTMLButtonElement>(null)
   const selfMenuButtonRef = useRef<HTMLButtonElement>(null)
   const selfCalendarButtonRef = useRef<HTMLButtonElement>(null)
@@ -9508,10 +9523,15 @@ export function ArkmeSurface({
         onLoadMore={loadMoreRelated}
         onMonthChange={selectRelatedMonth}
         onSelect={setRelatedDetail}
+        shareStatuses={relatedSharing.statuses}
+        onShare={item => relatedSharing.mutate(item, 'share')}
       />}
       {activeConversation && relatedDetail !== undefined && <RelatedRecordingDetail
         item={relatedDetail}
         loadDetail={loadRelatedRecordingDetail}
+        {...(relatedSharing.statuses[relatedDetail.recordingRef] === undefined ? {} : { shareStatus: relatedSharing.statuses[relatedDetail.recordingRef]! })}
+        onShare={item => relatedSharing.mutate(item, 'share')}
+        onWithdraw={item => relatedSharing.mutate(item, 'withdraw')}
         onClose={() => { setRelatedDetail(undefined) }}
       />}
       {activeConversation && selectedMoment !== undefined && detailState !== undefined && <ArkmeInterwovenDetailAside

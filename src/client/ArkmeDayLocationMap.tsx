@@ -1,85 +1,132 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeRecordLocationObservation } from '../types.js'
 import type { DayActivityQuery } from './calendar-activity-model.js'
 import { readDayLocations, type DayLocationPoint, type DayLocationsSnapshot } from './day-location-reader.js'
-import { fitDayLocations, groupDayLocationPoints, mapPosition, nearestWorldX } from './day-location-map.js'
+import { groupDayLocationPoints } from './day-location-map.js'
+import { loadBaiduMaps, convertBaiduPoints, type BaiduMap, type BaiduMaps, type BaiduPoint } from './baidu-map.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { tr, arkmeIntlLocale, useArkmeLocale } from './locale.js'
 import { arkmeTheme } from './arkme-theme.js'
 import css from './day-location-map.css?inline'
 
 const emptySnapshot: DayLocationsSnapshot = { points: [], scanned: 0, failed: 0, complete: false }
 
-export function DayLocationMapCanvas({ points, selectedId, onSelect }: {
-  points: DayLocationPoint[]; selectedId?: string; onSelect(id: string): void
+export function DayLocationMapCanvas({ points, selectedId, onSelect, browserAk = '' }: {
+  points: DayLocationPoint[]; selectedId?: string; onSelect(id: string): void; browserAk?: string
 }) {
-  const root = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 600, height: 430 })
-  const [camera, setCamera] = useState<{ x: number; y: number; zoom: number }>()
-  const [tileErrors, setTileErrors] = useState(false)
-  const [tileRevision, setTileRevision] = useState(0)
-  const dragging = useRef<{ id: number; x: number; y: number; centerX: number; centerY: number }>()
-  const fitted = useMemo(() => fitDayLocations(points, size.width, size.height), [points, size])
-  const view = camera ?? fitted, scale = 256 * 2 ** view.zoom
-  const left = view.x * scale - size.width / 2, top = view.y * scale - size.height / 2
+  const canvas = useRef<HTMLDivElement>(null)
+  const [runtime, setRuntime] = useState<{ sdk: BaiduMaps; map: BaiduMap }>()
+  const [positions, setPositions] = useState<Map<string, BaiduPoint>>(new Map())
+  const [error, setError] = useState('')
+  const [tilesReady, setTilesReady] = useState(false)
+  const [revision, setRevision] = useState(0)
+  const [, redraw] = useState(0)
+  const cache = useRef(new Map<string, BaiduPoint>())
+  const manualView = useRef(false)
+  const lastSelection = useRef<string>()
   const groups = useMemo(() => groupDayLocationPoints(points), [points])
   useEffect(() => {
-    if (!root.current || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(entries => {
-      const rect = entries[0]?.contentRect
-      if (rect && rect.width > 0 && rect.height > 0) setSize({ width: rect.width, height: rect.height })
-    })
-    observer.observe(root.current)
-    return () => observer.disconnect()
-  }, [])
+    let disposed = false, map: BaiduMap | undefined, observer: ResizeObserver | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let frame = 0
+    setRuntime(undefined); setPositions(new Map()); setError(''); setTilesReady(false)
+    manualView.current = false; lastSelection.current = undefined
+    const update = () => {
+      if (disposed || frame) return
+      frame = requestAnimationFrame(() => { frame = 0; if (!disposed) redraw(value => value + 1) })
+    }
+    const loaded = () => { if (!disposed) { clearTimeout(timer); setTilesReady(true); setError(current => current === '百度地图加载失败，位置列表仍可查看' ? '' : current); update() } }
+    const failed = () => { if (!disposed) setError('百度地图加载失败，位置列表仍可查看') }
+    const events = ['moving', 'moveend', 'zooming', 'zoomend', 'resize']
+    void loadBaiduMaps(browserAk).then(sdk => {
+      if (disposed || !canvas.current) return
+      map = new sdk.Map(canvas.current, { minZoom: 3, maxZoom: 19, enableMapClick: false, enableRotate: false, enableTilt: false })
+      map.enableScrollWheelZoom()
+      for (const event of events) map.addEventListener(event, update)
+      map.addEventListener('tilesloaded', loaded)
+      map.addEventListener('style_loaded_error', failed)
+      map.addEventListener('style_loaded_timeout', failed)
+      timer = setTimeout(failed, 20_000)
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(() => { map?.checkResize(); update() })
+        observer.observe(canvas.current)
+      }
+      setRuntime({ sdk, map })
+    }).catch(reason => { if (!disposed) setError(reason instanceof Error ? reason.message : '百度地图加载失败，位置列表仍可查看') })
+    return () => {
+      disposed = true; clearTimeout(timer); cancelAnimationFrame(frame); observer?.disconnect()
+      if (map) {
+        for (const event of events) map.removeEventListener(event, update)
+        map.removeEventListener('tilesloaded', loaded)
+        map.removeEventListener('style_loaded_error', failed)
+        map.removeEventListener('style_loaded_timeout', failed)
+        map.destroy()
+      }
+    }
+  }, [browserAk, revision])
   useEffect(() => {
-    if (!selectedId) return
-    const point = points.find(point => point.id === selectedId)
-    if (point) setCamera(current => ({ ...mapPosition(point.location.latitude, point.location.longitude), zoom: Math.max(14, current?.zoom ?? 14) }))
-    // A new scan streams point arrays; preserve the user's viewport while it does so.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId])
-  const tiles: Array<{ x: number; y: number }> = []
-  if (points.length) for (let x = Math.floor(left / 256); x <= Math.floor((left + size.width) / 256); x++) {
-    for (let y = Math.max(0, Math.floor(top / 256)); y <= Math.min(2 ** view.zoom - 1, Math.floor((top + size.height) / 256)); y++) tiles.push({ x, y })
+    if (!runtime) return
+    const controller = new AbortController()
+    void convertBaiduPoints(runtime.sdk, groups.map(group => ({ lng: group[0]!.location.longitude, lat: group[0]!.location.latitude })), cache.current, controller.signal)
+      .then(converted => {
+        if (controller.signal.aborted) return
+        setPositions(new Map(groups.flatMap((group, index) => group.map(point => [point.id, converted[index]!] as const))))
+        if (!manualView.current && converted.length) {
+          runtime.map.centerAndZoom(converted[0]!, 16)
+          if (converted.length > 1) runtime.map.setViewport(converted, { margins: [65, 45, 45, 45], enableAnimation: false })
+        }
+      }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '地图坐标转换失败，请重试') })
+    return () => controller.abort()
+  }, [runtime, groups])
+  useEffect(() => {
+    if (!runtime || !selectedId || lastSelection.current === selectedId) return
+    const point = positions.get(selectedId)
+    if (!point) return
+    lastSelection.current = selectedId; manualView.current = true
+    runtime.map.centerAndZoom(point, Math.max(14, runtime.map.getZoom() || 14))
+    redraw(value => value + 1)
+  }, [runtime, positions, selectedId])
+  const ready = Boolean(runtime && positions.size)
+  const zoom = (delta: number) => {
+    if (!runtime || !ready) return
+    manualView.current = true
+    runtime.map.setZoom(Math.max(3, Math.min(19, runtime.map.getZoom() + delta)))
   }
-  const zoom = (delta: number) => { setCamera({ ...view, zoom: Math.max(2, Math.min(19, view.zoom + delta)) }) }
-  return <div ref={root} className="arkme-day-map-canvas" role="region" aria-label={tr('当天位置地图')} tabIndex={0}
+  const fit = () => {
+    if (!runtime || !positions.size) return
+    manualView.current = false
+    const all = groups.map(group => positions.get(group[0]!.id)).filter((point): point is BaiduPoint => Boolean(point))
+    if (all.length === 1) runtime.map.centerAndZoom(all[0]!, 16)
+    else runtime.map.setViewport(all, { margins: [65, 45, 45, 45], enableAnimation: false })
+  }
+  return <div className="arkme-day-map-canvas" role="region" aria-label={tr('当天位置地图')} tabIndex={0}
+    onPointerDown={() => { manualView.current = true }} onWheel={() => { manualView.current = true }}
     onKeyDown={event => {
-      if (event.target !== event.currentTarget) return
+      if (event.target !== event.currentTarget || !ready) return
       if (event.key === '+' || event.key === '=') { event.preventDefault(); zoom(1) }
       if (event.key === '-') { event.preventDefault(); zoom(-1) }
-      const step = 100 / scale
-      const direction = ({ ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] } as Record<string, number[]>)[event.key]
-      if (direction) { event.preventDefault(); setCamera({ ...view, x: view.x + direction[0]!, y: Math.max(0, Math.min(1, view.y + direction[1]!)) }) }
-    }} onPointerDown={event => {
-      if (event.button !== 0 || (event.target as HTMLElement).closest('button,a')) return
-      dragging.current = { id: event.pointerId, x: event.clientX, y: event.clientY, centerX: view.x, centerY: view.y }
-      event.currentTarget.setPointerCapture(event.pointerId)
-    }} onPointerMove={event => {
-      const drag = dragging.current
-      if (!drag || drag.id !== event.pointerId) return
-      setCamera({ ...view, x: drag.centerX - (event.clientX - drag.x) / scale, y: Math.max(0, Math.min(1, drag.centerY - (event.clientY - drag.y) / scale)) })
-    }} onPointerUp={() => { dragging.current = undefined }} onPointerCancel={() => { dragging.current = undefined }}>
-    {tiles.map(tile => <img key={`${view.zoom}:${tile.x}:${tile.y}:${tileRevision}`} draggable={false} alt="" referrerPolicy="strict-origin-when-cross-origin"
-      src={`https://tile.openstreetmap.org/${view.zoom}/${((tile.x % 2 ** view.zoom) + 2 ** view.zoom) % 2 ** view.zoom}/${tile.y}.png`}
-      onError={() => setTileErrors(true)} style={{ left: tile.x * 256 - left, top: tile.y * 256 - top }} />)}
-    {groups.map((group, index) => {
-      const point = group[0]!, position = mapPosition(point.location.latitude, point.location.longitude)
+      const direction = ({ ArrowLeft: [100, 0], ArrowRight: [-100, 0], ArrowUp: [0, 100], ArrowDown: [0, -100] } as Record<string, number[]>)[event.key]
+      if (direction) { event.preventDefault(); manualView.current = true; runtime?.map.panBy(direction[0]!, direction[1]!) }
+    }}>
+    <div ref={canvas} className="arkme-day-map-baidu" />
+    {runtime && groups.map((group, index) => {
+      const point = group[0]!, coordinate = positions.get(point.id)
+      if (!coordinate) return null
+      const pixel = runtime.map.pointToPixel(coordinate)
       return <button type="button" key={point.id} className="arkme-day-map-pin" aria-pressed={group.some(p => p.id === selectedId)}
         aria-label={tr('位置 {number}：{label}，{count} 条记录', { number: String(index + 1), label: point.location.label || tr('地址暂不可用'), count: String(group.length) })}
-        style={{ left: nearestWorldX(position.x, view.x) * scale - left, top: position.y * scale - top }} onClick={() => onSelect(point.id)}>
+        style={{ left: pixel.x, top: pixel.y }} onClick={() => onSelect(point.id)}>
         {index + 1}{group.length > 1 && <sup>{group.length}</sup>}
       </button>
     })}
     <div className="arkme-day-map-controls">
-      <button type="button" aria-label={tr('放大地图')} disabled={view.zoom >= 19} onClick={() => zoom(1)}>＋</button>
-      <button type="button" aria-label={tr('缩小地图')} disabled={view.zoom <= 2} onClick={() => zoom(-1)}>−</button>
-      <button type="button" onClick={() => setCamera(undefined)}>{tr('显示全部')}</button>
+      <button type="button" aria-label={tr('放大地图')} disabled={!ready || runtime!.map.getZoom() >= 19} onClick={() => zoom(1)}>＋</button>
+      <button type="button" aria-label={tr('缩小地图')} disabled={!ready || runtime!.map.getZoom() <= 3} onClick={() => zoom(-1)}>−</button>
+      <button type="button" disabled={!ready} onClick={fit}>{tr('显示全部')}</button>
     </div>
-    {tileErrors && <div className="arkme-day-map-tile-error" role="status">{tr('地图底图加载失败，位置列表仍可查看')}
-      <button type="button" onClick={() => { setTileErrors(false); setTileRevision(value => value + 1) }}>{tr('重试')}</button></div>}
-    <a className="arkme-day-map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
+    {(error || !tilesReady) && <div className="arkme-day-map-status" role="status">{tr(error || '正在加载百度地图…')}
+      {error && <button type="button" onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</div>}
   </div>
 }
 
@@ -87,6 +134,7 @@ export function ArkmeDayLocationMap({ query, initialLocation, onClose }: {
   query: DayActivityQuery; initialLocation?: ArkmeRecordLocationObservation; onClose(): void
 }) {
   useArkmeLocale()
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const root = useRef<HTMLElement>(null)
   const [data, setData] = useState(emptySnapshot)
   const [loading, setLoading] = useState(true)
@@ -135,7 +183,7 @@ export function ArkmeDayLocationMap({ query, initialLocation, onClose }: {
       <header><div><h2>{query.bucketDate} · {tr('当天位置')}</h2><p>{query.timezone}</p></div>
         <button type="button" aria-label={tr('关闭当天位置')} onClick={onClose}>×</button></header>
       {data.points.length > 0 ? <div className="arkme-day-map-layout">
-        <DayLocationMapCanvas points={data.points} {...(selectedId ? { selectedId } : {})} onSelect={select} />
+        <DayLocationMapCanvas key={`${query.accountScope}:${query.bucketDate}:${query.timezone}`} browserAk={auth.config?.baiduMapBrowserAk ?? ''} points={data.points} {...(selectedId ? { selectedId } : {})} onSelect={select} />
         <div className="arkme-day-map-list" aria-label={tr('当天位置记录')}>
           {data.points.map(point => <button type="button" key={point.id} data-location-record={point.id} aria-pressed={point.id === selectedId} onClick={() => select(point.id)}>
             <time>{time(point)}</time><strong>{point.location.label || tr('地址暂不可用')}</strong>

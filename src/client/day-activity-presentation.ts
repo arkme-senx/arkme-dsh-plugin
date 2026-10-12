@@ -47,7 +47,7 @@ export function dayActivityMetadata(entry: DayActivityEntry, timezone: string, d
     const seconds = Math.max(0, Math.round((Math.min(entry.endAtMillis, dayEnd) - Math.max(entry.startAtMillis, dayStart)) / 1000))
     const duration = seconds >= 3600 ? tr('{v0}小时{v1}分', { v0: Math.floor(seconds / 3600), v1: Math.floor(seconds / 60) % 60 })
       : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-    parts.push(tr('录音 {v0}', { v0: duration }))
+    parts.push(entry.sharedRecording ? entry.statusLabel || entry.sharedRecording.sourceLabel : tr('录音 {v0}', { v0: duration }))
   } else if (isDayConversation(entry)) {
     parts.push(tr('{v0} 条相关消息', { v0: entry.recordCount }))
   }

@@ -154,6 +154,7 @@ export class CalendarService {
     private readonly record: RecordService,
     private readonly source: SourceService,
     private readonly callHistory?: CallHistoryService,
+    private readonly sharedRecording?: (raw: unknown, session: ArkmeSessionCredentials) => Promise<import('../types.js').ArkmeSharedRecordingPreview | undefined>,
   ) {}
 
   /**
@@ -640,7 +641,7 @@ export class CalendarService {
       bucketDate,
       timezone: stringValue(data.timezone).trim() || timezone,
       refreshedAtMillis: Date.now(),
-      items: rows.map(({ raw, item }) => {
+      items: await mapBounded(rows, async ({ raw, item }) => {
         if (item.accessState !== 'available') return item
         const content = this.record.recordTimelineItemFromRaw(raw, session.userId, {
           displayItems: media.displayItemsByRecordUid.get(item.recordUid) ?? [],
@@ -655,13 +656,14 @@ export class CalendarService {
         const summary = ownCalendar ? objectValue(rawItem.location_summary) : {}
         const label = stringValue(summary.label).trim()
         const capturedAtMillis = numberValue(summary.captured_at)
+        const sharedRecording = await this.sharedRecording?.(raw, session)
         return { ...item, ...(ownCalendar ? { locationRef: this.issueLocationRef(item.recordUid, session) } : {}),
           ...(ownCalendar && (label || capturedAtMillis > 0) ? { locationSummary: {
             ...(label ? { label } : {}), ...(capturedAtMillis > 0 ? { capturedAtMillis } : {}),
           } } : {}),
           ...(location ? { locationObservation: location } : {}),
           ...(source === undefined ? {} : { source }), textFormat: content.textFormat ?? 'plain', content: {
-          ...content, title: item.title, textContent: arkmeEmojiClippedText(content.textContent, 40_000),
+          ...content, ...(sharedRecording ? { sharedRecording } : {}), title: item.title, textContent: arkmeEmojiClippedText(content.textContent, 40_000),
         } }
       }),
       hasMore: data.has_more === true,
