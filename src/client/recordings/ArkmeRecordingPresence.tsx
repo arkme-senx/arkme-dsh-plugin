@@ -83,46 +83,43 @@ function PresenceList({ accountKey, active }: { accountKey: string; active: bool
   const serverNow = sample ? sample.snapshot.serverNow + Math.max(0, now - sample.receivedAt) : 0
   const ownAccount = local.accountKey === accountKey
   const stoppedIds = new Set(ownAccount ? local.stoppedRecordingIds : [])
-  const rows = (sample?.snapshot.items ?? []).map(item => {
-    const display = recordingPresenceDisplay(item, serverNow)
-    // Keep one server-owned row; only its running clock is supplied by actual local PCM.
-    if (ownAccount && item.recordingId === local.recordingId && local.phase === 'recording' && display.state === 'recording') {
-      display.elapsedMillis = local.elapsedMillis
-    }
-    return { item, display }
-  }).filter(row => row.display.visible && !stoppedIds.has(row.item.recordingId))
+  const rows = (sample?.snapshot.items ?? []).map(item => ({ item, display: recordingPresenceDisplay(item, serverNow) }))
+    .filter(row => row.display.visible && !stoppedIds.has(row.item.recordingId)
+      // The current capture already has its own local controls below the calendar.
+      && !(ownAccount && row.item.recordingId === local.recordingId))
   const labels = { recording: '录音中', paused: '已暂停', interrupted: '已中断', error: '录音异常', stopped: '已停止', stale: '状态待确认' }
-  return <section aria-label={tr('设备录音状态')} style={{ marginTop: 16, minWidth: 0, padding: 12, boxSizing: 'border-box', border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text }}>
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
-      <h3 style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>{tr('设备录音状态')}</h3>
-      <button type="button" data-arkme-feedback="neutral" onClick={() => setHistoryOpen(true)} style={{ border: 0, borderRadius: 4, padding: '4px 6px', background: 'transparent', color: theme.text, cursor: 'pointer', font: 'inherit', fontSize: 12 }}>{tr('录音记录')}</button>
-    </div>
+  return <>
     {historyOpen && <ArkmeRecordingHistoryDialog onClose={() => setHistoryOpen(false)} />}
-    {status !== 'ready' && <div role="status" style={{ color: theme.secondary, fontSize: 12, lineHeight: '20px', marginBottom: 8 }}>
-      {tr(status === 'loading' ? '正在同步设备录音状态…' : status === 'disabled' ? '设备录音状态暂未启用' : '同步暂时失败，正在重试')}
-      {(status === 'error' || status === 'disabled') && <button type="button" onClick={() => setRetry(value => value + 1)} style={{ marginLeft: 8, border: 0, background: 'transparent', color: theme.text, cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>{tr('重试')}</button>}
-    </div>}
-    {status === 'ready' && rows.length === 0 && <p style={{ margin: 0, color: theme.secondary, fontSize: 12 }}>{tr('暂无设备上报录音状态')}</p>}
-    {rows.length > 0 && <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 280, overflowY: 'auto' }}>
-      {rows.map(({ item, display }, index) => {
-        const Icon = item.clientType === 'mobile' ? DeviceMobile : item.clientType === 'web' ? Globe : Desktop
-        const recording = display.state === 'recording'
-        return <li key={item.recordingId} style={{ padding: '10px 0', display: 'flex', alignItems: 'flex-start', gap: 8, borderTop: index === 0 ? undefined : `1px solid ${theme.border}` }}>
-          <Icon size={18} aria-hidden style={{ flexShrink: 0, marginTop: 2, color: theme.secondary }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-              <span title={item.deviceName} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.deviceName}</span>
-              <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: recording ? theme.danger : theme.secondary }}>
-                {recording && <span aria-hidden data-arkme-recording-breath="dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />}{tr(labels[display.state])}
-              </span>
+    {rows.length > 0 && <section aria-label={tr('设备录音状态')} style={{ marginTop: 16, minWidth: 0, padding: 12, boxSizing: 'border-box', border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>{tr('设备录音状态')}</h3>
+        <button type="button" data-arkme-feedback="neutral" onClick={() => setHistoryOpen(true)} style={{ border: 0, borderRadius: 4, padding: '4px 6px', background: 'transparent', color: theme.text, cursor: 'pointer', font: 'inherit', fontSize: 12 }}>{tr('录音记录')}</button>
+      </div>
+      {status === 'error' && <div role="status" style={{ color: theme.secondary, fontSize: 12, lineHeight: '20px', marginBottom: 8 }}>
+        {tr('同步暂时失败，正在重试')}
+        <button type="button" onClick={() => setRetry(value => value + 1)} style={{ marginLeft: 8, border: 0, background: 'transparent', color: theme.text, cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>{tr('重试')}</button>
+      </div>}
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 280, overflowY: 'auto' }}>
+        {rows.map(({ item, display }, index) => {
+          const Icon = item.clientType === 'mobile' ? DeviceMobile : item.clientType === 'web' ? Globe : Desktop
+          const recording = display.state === 'recording'
+          return <li key={item.recordingId} style={{ padding: '10px 0', display: 'flex', alignItems: 'flex-start', gap: 8, borderTop: index === 0 ? undefined : `1px solid ${theme.border}` }}>
+            <Icon size={18} aria-hidden style={{ flexShrink: 0, marginTop: 2, color: theme.secondary }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <span title={item.deviceName} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.deviceName}</span>
+                <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: recording ? theme.danger : theme.secondary }}>
+                  {recording && <span aria-hidden data-arkme-recording-breath="dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />}{tr(labels[display.state])}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 4, marginTop: 4, color: theme.secondary, fontSize: 12 }}>
+                <span>{tr(item.recordingMode === 'all_day' ? '全天候录音' : '长录音')}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{display.state === 'stale' && <>{tr('最后确认')} </>}{clock(display.elapsedMillis)}</span>
+              </div>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 4, marginTop: 4, color: theme.secondary, fontSize: 12 }}>
-              <span>{tr(item.recordingMode === 'all_day' ? '全天候录音' : '长录音')}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{display.state === 'stale' && <>{tr('最后确认')} </>}{clock(display.elapsedMillis)}</span>
-            </div>
-          </div>
-        </li>
-      })}
-    </ul>}
-  </section>
+          </li>
+        })}
+      </ul>
+    </section>}
+  </>
 }

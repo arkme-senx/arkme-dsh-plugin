@@ -21,6 +21,12 @@ export class SocialAccessStore {
   constructor(private readonly load: () => Promise<SocialAccessSnapshot>, private readonly snapshots?: SocialAccessSnapshots) {}
   getSnapshot = () => this.state
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
+  confirm(accountKey: string, allowed: boolean): void {
+    if (this.state.accountKey !== accountKey) this.activate(accountKey)
+    this.generation++; this.flight = undefined
+    this.snapshots?.write(accountKey, allowed)
+    this.publish({ accountKey, allowed, resolved: true })
+  }
   activate(accountKey: string | undefined, accountRevision: number | string = 0): void {
     const changedAccount = this.state.accountKey !== accountKey
     if (!changedAccount && this.accountRevision === accountRevision) return
@@ -75,8 +81,8 @@ export const socialAccessStore = new SocialAccessStore(
 )
 const readAccountRevision = () => arkmeUi.getSnapshot().authRevision
 
-/** Restore display before paint; anonymous surfaces keep their existing behavior. */
-export function useSocialAccessPresentation(enabled = true): { visible: boolean; ready: boolean } {
+/** Keep binding facts current for action prompts. Never use them to hide product surfaces. */
+export function usePhoneBindingStatus(enabled = true): { bound: boolean | null; ready: boolean } {
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
   const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
@@ -95,9 +101,7 @@ export function useSocialAccessPresentation(enabled = true): { visible: boolean;
     return () => { document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh) }
   }, [accountKey, enabled])
   return {
-    visible: auth?.status !== 'authenticated' || snapshot.accountKey !== accountKey || snapshot.allowed !== false,
+    bound: auth?.status === 'authenticated' && snapshot.accountKey === accountKey ? snapshot.allowed : null,
     ready: authState.checked && (auth?.status !== 'authenticated' || snapshot.accountKey === accountKey && snapshot.resolved),
   }
 }
-
-export function useSocialAccess(enabled = true): boolean { return useSocialAccessPresentation(enabled).visible }

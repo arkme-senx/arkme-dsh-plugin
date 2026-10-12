@@ -1,3 +1,4 @@
+import { requirePhoneForSocialAction } from './social-action-guard.js'
 import { arkmeClipboardFiles } from './clipboard-files.js'
 import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -383,6 +384,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     const timeline = latest.current, draft = draftRef.current
     if (!timeline || sendBusy.current || uploading || busy) return
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
+    sendBusy.current = true
+    try { await requirePhoneForSocialAction('发送消息', ctrl.current.signal) }
+    catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)); return }
+    finally { sendBusy.current = false }
+    if (ctrl.current.signal.aborted || latest.current?.conversation.ref !== timeline.conversation.ref || draftRef.current !== draft) return
     const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
     const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', attempt }
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
@@ -407,7 +413,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
-        if (['team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
+        if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
           const kept = { text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
