@@ -91,7 +91,7 @@ export function TeamProfileEditor({ profile, onClose, onUpdated }: {
     else
         onClose(); }}>
   <form onSubmit={event => { event.preventDefault(); void save(); }}>
-   <h3>编辑团队</h3><p className="arkme-team-profile-description">修改团队名称和头像，仅所有者可编辑。</p>
+   <h3>编辑团队</h3>
    <div className="arkme-team-profile-identity">
     <div className="arkme-team-profile-avatar-field">
      <ArkmeActionMenu label="团队头像操作" open={avatarMenu} portal={false} autoFocus onClose={() => setAvatarMenu(false)}
