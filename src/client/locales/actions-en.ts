@@ -1,5 +1,18 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '绑定手机号后继续': 'Bind a phone number to continue',
+  '暂不绑定': 'Not now',
+  '绑定手机号后即可{v0}，你仍可继续浏览': 'Bind a phone number to {v0}. You can still browse.',
+  '暂时无法确认手机号绑定状态，请稍后重试': 'Unable to check phone binding. Please try again.',
+  '可自由浏览，发布内容或参与互动需绑定手机号': 'Browse freely. Bind a phone number to publish or interact.',
+  '发布到世界': 'publish to World',
+  '发表评论或回复': 'post a comment or reply',
+  '邀请群成员': 'invite group members',
+  '加入团队或社群': 'join a team or community',
+  '发送声纹邀请': 'send a voiceprint invitation',
+  '参与互动': 'interact',
+  '共享录音': 'share recordings',
+  '内容已更新，请再次发送': 'Content changed. Please send again.',
   '更新中': 'Updating',
   '录音日历更新失败': 'Recording calendar could not be updated',
   '重试更新日历': 'Retry calendar update',
