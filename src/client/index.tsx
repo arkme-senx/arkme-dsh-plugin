@@ -109,13 +109,15 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => {
-    const host = document.createElement('div')
-    document.body.append(host)
-    const root = createRoot(host)
-    root.render(<ArkmeSocialBindingDialog />)
-    return () => { root.unmount(); host.remove() }
-  }, 'dsh-arkme: social action binding prompt')
+  if (!deepSeekHarnessEmbedRequested() && !screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeSocialBindingDialog />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: social action binding prompt')
+  }
   if (screenshotWindowRequested()) {
     ctx.effect(() => {
       const host = document.createElement('div')
