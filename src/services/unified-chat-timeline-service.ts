@@ -2,6 +2,7 @@ import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand 
 import { reconcileUnifiedTimeline } from '../unified-timeline-reconcile.js'
 import { join } from 'node:path'
 import { TimelineTokenCodec } from './timeline-token.js'
+import { chatTimelineEventId } from './timeline-event-id.js'
 import { createHmac } from 'node:crypto'
 import { recordOwnerId } from '../record-owner-id.js'
 import type { ArkmeTimelinePage } from '../types.js'
@@ -199,7 +200,7 @@ export class UnifiedChatTimelineService {
       throw error
     }
     const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef)
-    const eventId = (value: string) => `chat-event:${createHmac('sha256', key).update(JSON.stringify([session.userId, this.runtime.config.environment, source.ownerRef, value])).digest('base64url')}`
+    const eventId = (value: string) => chatTimelineEventId(key, session.userId, this.runtime.config.environment, source.ownerRef, value)
     const native = events.filter(event => event.source === 'messages' && event.content_status === 'available')
     const messages = await this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal)
     const messageByRelation = new Map(messages.map(item => [item.timelineItemKey, item]))

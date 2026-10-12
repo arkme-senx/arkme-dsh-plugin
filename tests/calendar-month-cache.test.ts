@@ -205,3 +205,15 @@ describe('shared calendar month cache', () => {
     expect(restored.get('a', query('09', 'topic-54')).value).toBeUndefined()
   })
 })
+
+
+it('keeps automatic calendar count revalidation off the realtime foreground request lane', async () => {
+  const load = vi.fn(async (q: CalendarMonthQuery, _signal: AbortSignal, _background: boolean) => page(q))
+  const cache = new CalendarMonthCache(load, () => undefined)
+  const unsubscribe = cache.subscribe('a', query(), () => {})
+  await cache.ensure('a', query())
+  cache.invalidate({ hard: false })
+  await cache.ensure('a', query())
+  expect(load.mock.calls.map(call => call[2])).toEqual([false, true])
+  unsubscribe()
+})

@@ -333,7 +333,7 @@ describe('ChatRealtimeService', () => {
       },
     })
 
-    await vi.waitFor(() => { expect(schedule).toHaveBeenCalledWith('chat-self', 12) })
+    await vi.waitFor(() => { expect(schedule).toHaveBeenCalledWith('chat-self', 12, undefined, false) })
     expect(events).toEqual([])
     service.dispose()
   })
@@ -878,4 +878,74 @@ it('starts tails alongside one display batch and delivers fast sessions while a 
   expect(delivered).toHaveLength(4); expect(maxActive).toBeLessThanOrEqual(3)
   expect(post.mock.calls.filter(([path])=>path.endsWith('display-snapshots'))).toHaveLength(1)
   service.dispose(); runtime.dispose()
+})
+
+
+it('refreshes only the directory for read-cursor changes while retaining a concurrent body invalidation', async () => {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const post = vi.fn(async (path: string) => {
+    if (path.endsWith('display-snapshots')) return { items: [{ session: { chat_session_uid: 'chat', session_kind: 1 } }] }
+    if (path.endsWith('timeline/tail')) return { items: [] }
+    throw Error('unexpected request')
+  })
+  const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+    requestScope: () => 'scope', invalidateCalendarDates() {}, sessionStore: { read: async () => session } }
+  const source = { cachedChatSourceByKey: () => undefined, chatSourceFromBundle: async () => ({
+    sourceRef: 'ref', sourceKey: 'key', kind: 'private_chat', displayName: '同事', activeAtMillis: 1, unreadCount: 0,
+  }), setChatSourceByKey() {}, invalidateSourceListCache() {} }
+  const reader = { chatTimelineItems: vi.fn(async () => []) }
+  const service = new ChatRealtimeService(runtime as never, source as never, reader)
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  try {
+    await service.refreshChatSessionProjectionBatch([['chat', { latestSequence: 9, notificationHints: [], refreshTimeline: false }]])
+    expect(post.mock.calls.map(call => call[0])).toEqual(['/api/v1/chats/display-snapshots'])
+    expect(reader.chatTimelineItems).not.toHaveBeenCalled()
+    post.mockClear()
+    service.scheduleChatSessionProjection('chat', 10)
+    service.scheduleChatSessionProjection('chat', 9, undefined, false)
+    await vi.waitFor(() => expect(post.mock.calls.some(call => call[0].endsWith('timeline/tail'))).toBe(true))
+    expect(reader.chatTimelineItems).toHaveBeenCalledOnce()
+  } finally { service.dispose() }
+})
+
+
+it('deduplicates local cursor echoes across response ordering and recovers uncertain writes', async () => {
+  const session = { userId: 10001 }
+  const runtime = { config, sessionStore: { read: async () => session } }
+  const service = new ChatRealtimeService(runtime as never, {} as never, {} as never)
+  const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => {})
+  ;(service as any).activateAttentionOwner(session.userId)
+  const hint = async (sequence: number) => {
+    service.handleChatRealtimeNotice({ cause: 'chat-hint', state: { revision: sequence, connected: true, connectionGeneration: 1 },
+      readCursorAdvanced: { eventUid: `event-${sequence}`, chatSessionUid: 'chat', readerUserId: session.userId,
+        readSequence: sequence, readAtMillis: 1, eventAtMillis: 1 } })
+    await Promise.resolve(); await Promise.resolve()
+  }
+  try {
+    const first = service.beginLocalReadCursor(session.userId, 'chat', 10)
+    await hint(10)
+    first(10)
+    await hint(10)
+    expect(schedule).not.toHaveBeenCalled()
+    await hint(11)
+    expect(schedule).toHaveBeenLastCalledWith('chat', 11, undefined, false)
+    schedule.mockClear()
+    const uncertain = service.beginLocalReadCursor(session.userId, 'chat', 12)
+    await hint(12)
+    uncertain(); uncertain()
+    expect(schedule).toHaveBeenCalledExactlyOnceWith('chat', 12, undefined, false)
+    for (let n = 0; n < 600; n++) service.beginLocalReadCursor(session.userId, `chat-${n}`, 1)(1)
+    expect((service as any).localReadCursors.size).toBeLessThanOrEqual(512)
+    const pending = Array.from({ length: 130 }, (_, n) => service.beginLocalReadCursor(session.userId, 'pending', n + 1))
+    expect((service as any).localReadCursors.get('pending').pending.size).toBe(128)
+    service.resetAttentionSummary()
+    expect((service as any).localReadCursors.size).toBe(0)
+    schedule.mockClear()
+    ;(service as any).activateAttentionOwner(session.userId + 1)
+    for (const finish of pending) finish()
+    service.beginLocalReadCursor(session.userId, 'stale-account', 130)()
+    expect((service as any).attentionOwnerUserId).toBe(session.userId + 1)
+    expect((service as any).localReadCursors.size).toBe(0)
+    expect(schedule).not.toHaveBeenCalled()
+  } finally { service.dispose() }
 })

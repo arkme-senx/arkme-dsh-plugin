@@ -34,18 +34,18 @@ describe('Arkme visible read intent', () => {
 it('keeps automatic read paused until the last overlay closes and releases only once', async () => {
   const { suspendArkmeVisibleReadIntent, subscribeArkmeReadIntentAvailability } = await import('../src/client/read-intent-visibility.js')
   const doc = { visibilityState: 'visible' as const, hasFocus: () => true }
-  let resumes = 0
-  const unsubscribe = subscribeArkmeReadIntentAvailability(() => { resumes += 1 })
+  const availability: boolean[] = []
+  const unsubscribe = subscribeArkmeReadIntentAvailability(() => { availability.push(arkmeVisibleReadIntentAllowed(doc)) })
   const first = suspendArkmeVisibleReadIntent()
   const second = suspendArkmeVisibleReadIntent()
   try {
     expect(arkmeVisibleReadIntentAllowed(doc)).toBe(false)
     first(); first()
     expect(arkmeVisibleReadIntentAllowed(doc)).toBe(false)
-    expect(resumes).toBe(0)
+    expect(availability).toEqual([false])
     second()
     expect(arkmeVisibleReadIntentAllowed(doc)).toBe(true)
-    expect(resumes).toBe(1)
+    expect(availability).toEqual([false, true])
   } finally { first(); second(); unsubscribe() }
 })
 

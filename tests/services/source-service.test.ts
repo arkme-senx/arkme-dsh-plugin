@@ -99,6 +99,27 @@ describe('SourceService', () => {
     expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
   })
 
+  it('keeps the signed conversation binding stable across activity updates but retains fresh directory evidence', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as never, {} as never)
+    let previous: ArkmeSourceItem | undefined
+    let binding: string | undefined
+    for (let sequence = 1; sequence <= 100; sequence++) {
+      const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: sequence, last_active_at: sequence },
+        private_counterpart: { user_id: 17, display_name_snapshot: '同事' }, unread_snapshot: { unread_count: 1, session_last_seq: sequence } }
+      const current = await service.chatSourceFromBundle(bundle, session, previous, [])
+      binding ??= current.conversationRef
+      expect(current.conversationRef).toBe(binding)
+      if (previous) expect(current.sourceRef).not.toBe(previous.sourceRef)
+      expect(await service.openSourceRef(current.sourceRef, 42)).toMatchObject({ conversationListLatestSequence: sequence })
+      previous = current
+    }
+    expect(await service.openSourceRef(binding!, 42)).toMatchObject({ userId: 42, kind: 'private_chat', ownerRef: 'chat', displayName: '同事' })
+    await expect(service.openSourceRef(binding!, 43)).rejects.toMatchObject({ code: 'source-ref-invalid' })
+    expect(await service.sealSourceRef(42, 'private_chat', 'chat', '新名称')).not.toBe(binding)
+  })
+
   it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime

@@ -76,6 +76,8 @@ export interface PendingChatProjection {
   latestSequence: number
   notificationHints: PendingChatNotificationHint[]
   refreshSource?: boolean | undefined
+  /** A read-cursor change updates directory facts without changing message bodies. */
+  refreshTimeline?: boolean | undefined
   accountUserId?: number | undefined
   accountOwnerGeneration?: number | undefined
 }
@@ -141,6 +143,7 @@ export class ChatRealtimeService {
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
   private readonly pendingChatProjections = new Map<string, PendingChatProjection>()
   private readonly projectionRetryCounts = new Map<string, number>()
+  private readonly localReadCursors = new Map<string, { confirmed: number; pending: Map<symbol, number> }>()
   private projectionTimer: ReturnType<typeof setTimeout> | undefined
   private projectionTimerDueAtMillis = 0
   private projectionInFlight = false
@@ -206,6 +209,7 @@ export class ChatRealtimeService {
     this.projectionTimerDueAtMillis = 0
     this.connectionBaselineRetryTimer = undefined
     this.attentionRetryTimer = undefined
+    this.localReadCursors.clear()
     this.pendingChatProjections.clear()
     this.projectionRetryCounts.clear()
     this.notificationBaselineSequences.clear()
@@ -237,6 +241,7 @@ export class ChatRealtimeService {
       this.projectionTimerDueAtMillis = 0
       this.connectionBaselineRetryTimer = undefined
       this.attentionRetryTimer = undefined
+      this.localReadCursors.clear()
       this.pendingChatProjections.clear()
       this.projectionRetryCounts.clear()
       this.notificationBaselineSequences.clear()
@@ -496,12 +501,40 @@ export class ChatRealtimeService {
     } catch (error) { console.warn('dsh-arkme: member event hint failed:', safeFailureMessage(error)) }
   }
 
+  /** Suppress only cursor echoes already covered by a local write or its validated ACK. */
+  beginLocalReadCursor(userId: number, sessionUid: string, sequence: number): (confirmedSequence?: number) => void {
+    // Tracking is optional and must never activate or replace an account owner.
+    if (this.disposed || this.attentionOwnerUserId !== userId) return () => {}
+    const generation = this.attentionOwnerGeneration
+    let entry = this.localReadCursors.get(sessionUid)
+    if (!entry) {
+      if (this.localReadCursors.size >= 512) {
+        const idle = [...this.localReadCursors].find(([, value]) => !value.pending.size)
+        if (idle) this.localReadCursors.delete(idle[0])
+        else return () => {} // Ordinary bounded directory reconciliation remains the fallback.
+      }
+      entry = { confirmed: 0, pending: new Map() }
+      this.localReadCursors.set(sessionUid, entry)
+    }
+    const owner = entry
+    if (owner.pending.size >= 128) return () => {}
+    const ticket = Symbol()
+    owner.pending.set(ticket, sequence)
+    return confirmedSequence => {
+      if (!owner.pending.delete(ticket) || this.disposed || generation !== this.attentionOwnerGeneration) return
+      if (confirmedSequence !== undefined) owner.confirmed = Math.max(owner.confirmed, confirmedSequence)
+      else this.scheduleChatSessionProjection(sessionUid, sequence, undefined, false)
+    }
+  }
+
   private async handleReadCursorAdvanced(hint: NonNullable<ArkmeChatRealtimeNotice['readCursorAdvanced']>): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
       if (hint.readerUserId === session.userId) {
-        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.readSequence)
+        const local = session.userId === this.attentionOwnerUserId ? this.localReadCursors.get(hint.chatSessionUid) : undefined
+        if (local && (local.confirmed >= hint.readSequence || [...local.pending.values()].some(sequence => sequence >= hint.readSequence))) return
+        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.readSequence, undefined, false)
         return
       }
       this.emitChatClientEvent({
@@ -710,6 +743,7 @@ export class ChatRealtimeService {
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     this.projectionTimer = undefined
     this.projectionTimerDueAtMillis = 0
+    this.localReadCursors.clear()
     this.pendingChatProjections.clear()
     this.projectionRetryCounts.clear()
     this.projectionFailureCount = 0
@@ -851,6 +885,7 @@ export class ChatRealtimeService {
     chatSessionUid: string,
     latestSequence: number,
     notificationHint?: PendingChatNotificationHint,
+    refreshTimeline = true,
   ): void {
     const uid = chatSessionUid.trim()
     if (uid === '') return
@@ -866,6 +901,7 @@ export class ChatRealtimeService {
       latestSequence: Math.max(latestSequence, current?.latestSequence ?? 0),
       notificationHints,
       refreshSource: true,
+      refreshTimeline: refreshTimeline || current !== undefined && current.refreshTimeline !== false,
       accountUserId: notificationHint?.accountUserId ?? current?.accountUserId,
       accountOwnerGeneration: notificationHint?.accountOwnerGeneration ?? current?.accountOwnerGeneration,
     })
@@ -987,6 +1023,7 @@ export class ChatRealtimeService {
         latestSequence: incoming.latestSequence,
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
+        refreshTimeline: incoming.refreshTimeline,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -998,6 +1035,7 @@ export class ChatRealtimeService {
         latestSequence: incoming.latestSequence,
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
+        refreshTimeline: incoming.refreshTimeline,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -1021,6 +1059,7 @@ export class ChatRealtimeService {
       latestSequence: Math.max(current.latestSequence, incoming.latestSequence),
       notificationHints: [...byEventUid.values()].slice(-256),
       refreshSource: current.refreshSource !== false || incoming.refreshSource !== false,
+      refreshTimeline: current.refreshTimeline !== false || incoming.refreshTimeline !== false,
       accountUserId: current.accountUserId ?? incoming.accountUserId,
       accountOwnerGeneration: current.accountOwnerGeneration ?? incoming.accountOwnerGeneration,
     })
@@ -1048,6 +1087,8 @@ export class ChatRealtimeService {
       }
     }
     const sourcePending = pending.filter(([, projection]) => projection.refreshSource !== false)
+    const displayStartedAt = Date.now()
+    let displayMillis = 0
     const displayReady = (async () => {
       const bundles = new Map<string, Record<string, unknown>>()
       if (sourcePending.length > 0) {
@@ -1068,6 +1109,7 @@ export class ChatRealtimeService {
           if (uid !== '') bundles.set(uid, bundle)
         }
       }
+      displayMillis = Date.now() - displayStartedAt
       return bundles
     })().catch(() => undefined)
     const failed: Array<[string, PendingChatProjection]> = []
@@ -1080,7 +1122,7 @@ export class ChatRealtimeService {
         items: ArkmeTimelineItem[]
         notificationIdentities: ArkmeTimelineNotificationIdentity[]
       } | undefined
-      if (projection.refreshSource !== false
+      if (projection.refreshSource !== false && projection.refreshTimeline !== false
         || projection.notificationHints.some(candidate => candidate.resolvedNotification === undefined)) {
         const cached = this.source.cachedChatSourceByKey(`${String(session.userId)}:${uid}`)
         const unresolvedHints = projection.notificationHints
@@ -1095,6 +1137,7 @@ export class ChatRealtimeService {
           (maximum, item) => Math.max(maximum, item.attempts),
           0,
         )
+        const tailStartedAt = Date.now()
         const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
           '/api/v1/chat/timeline/tail', { chat_session_uid: uid, after_seq: afterSequence, limit: 50 }, session,
           undefined,
@@ -1103,7 +1146,9 @@ export class ChatRealtimeService {
             key: `projection:tail:${uid}:${String(afterSequence)}:${String(notificationAttempt)}`,
           },
         )
+        const tailMillis = Date.now() - tailStartedAt
         const bundles = await displayReady
+        const projectStartedAt = Date.now()
         if (bundles === undefined && projection.refreshSource !== false) throw new Error('Chat display projection failed')
         const bundle = bundles?.get(uid)
         const sessionKind = numberValue(objectValue(bundle).session_kind
@@ -1122,6 +1167,8 @@ export class ChatRealtimeService {
           notificationIdentities: timelineNotificationIdentities(data),
 
         }
+        if (CHAT_NOTIFICATION_DIAGNOSTICS) notificationDiagnostic('timeline_projection_timing', { tailMillis, displayMillis, projectMillis: Date.now() - projectStartedAt,
+          itemCount: timelineProjection.items.length, stats: JSON.stringify(this.runtime.requestStats()) })
       }
       if (ownerGeneration !== this.attentionOwnerGeneration) return []
       const bundles = await displayReady

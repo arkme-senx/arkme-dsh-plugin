@@ -6,11 +6,14 @@ export class TimelineRefreshScheduler {
   private timer: ReturnType<typeof setTimeout> | undefined
   private retryKey = ''
   private retries = 0
+  private pendingDelay = Infinity
+  private dueAt = Infinity
 
   constructor(private readonly refresh: () => void, private readonly delayMillis = 250) {}
 
-  request(): void {
+  request(delayMillis = this.delayMillis): void {
     this.pending = true
+    this.pendingDelay = Math.min(this.pendingDelay, Math.max(0, delayMillis))
     this.schedule()
   }
 
@@ -25,7 +28,7 @@ export class TimelineRefreshScheduler {
   begin(consumesRefresh: boolean): () => void {
     const generation = this.generation
     this.readers++
-    if (consumesRefresh) this.pending = false
+    if (consumesRefresh) { this.pending = false; this.pendingDelay = Infinity }
     this.clearTimer()
     let finished = false
     return () => {
@@ -39,6 +42,7 @@ export class TimelineRefreshScheduler {
   reset(): void {
     this.generation++
     this.pending = false
+    this.pendingDelay = Infinity
     this.readers = 0
     this.retryKey = ''
     this.retries = 0
@@ -48,14 +52,22 @@ export class TimelineRefreshScheduler {
   private clearTimer(): void {
     if (this.timer !== undefined) clearTimeout(this.timer)
     this.timer = undefined
+    this.dueAt = Infinity
   }
 
   private schedule(): void {
-    if (!this.pending || this.readers || this.timer !== undefined) return
+    if (!this.pending || this.readers) return
+    const delay = this.pendingDelay
+    const dueAt = Date.now() + delay
+    if (this.timer !== undefined && this.dueAt <= dueAt) return
+    this.clearTimer()
+    this.dueAt = dueAt
     this.timer = setTimeout(() => {
       this.timer = undefined
+      this.dueAt = Infinity
       this.pending = false
+      this.pendingDelay = Infinity
       this.refresh()
-    }, this.delayMillis)
+    }, delay)
   }
 }

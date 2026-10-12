@@ -236,6 +236,48 @@ describe('conversation send directory projection', () => {
     expect(reads).toBe(3)
   })
 
+  it('renders continuous confirmed unified arrivals before refresh completion with stable row identities', async () => {
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    const blocked = deferred<unknown>()
+    const old = { itemUid: 'live-old', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, title: '', textContent: 'old', status: 1 }
+    let reads = 0
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'empty', retryable: false }))
+      return (++reads === 1 ? Promise.resolve(unifiedFixture(target, [old])) : blocked.promise) as any
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), querySelectorAll: () => [], scrollTo: vi.fn() }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    await act(async () => { arkmeChatDirectory.upsert({ ...target, conversationRef: target.sourceRef }) })
+    const discoveryOperations = ['source.members.page', 'files.send.tasks', 'source.record-reedit.resume']
+    const discoveries = () => mocks.callArkme.mock.calls.filter(([op]) => discoveryOperations.includes(op)).length
+    const initialDiscoveries = discoveries()
+    const received: ArkmeTimelineItem[] = []
+    await act(async () => { arkmeChatTimelineDelta.applyTimelineChange({ sourceKey: target.sourceKey!, timelineItemKey: 'old-relation',
+      changeKind: 'reedited', changeVersion: 1, relationTerminal: false, throughSequence: 8 }) })
+    for (let n = 9; n <= 28; n++) {
+      const incoming = { ...old, itemUid: `live-${n}`, sequence: n, sendAtMillis: n, textContent: `live ${n}`,
+        timelineEventId: `live-${n}`, timelineOrderTie: String(n), timelineItemKey: `relation-${n}` }
+      received.push(incoming)
+      await act(async () => {
+        arkmeChatDirectory.upsert({ ...target, sourceRef: `rotated-${n}`, conversationRef: target.sourceRef, latestSequence: n, unreadCount: n - 8 })
+        arkmeChatTimelineDelta.publish([{ source: { ...target, latestSequence: n }, items: [incoming] }])
+      })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+      expect(renderer!.root.findAllByProps({ 'data-arkme-conversation-row': `message:live-${n}` }).length).toBeGreaterThan(0)
+      expect(arkmeChatDirectory.unreadCount(target.sourceRef)).toBe(0)
+    }
+    expect(discoveries()).toBe(initialDiscoveries)
+    expect(reads).toBe(2)
+    await act(async () => { blocked.resolve(unifiedFixture(target, [old, ...received])) })
+    for (const incoming of received) expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(body.scrollTop).toBe(1400)
+  })
+
   it.each([target, group])('unified window renders auxiliary-only $kind pages and refreshes the same event identity', async selected => {
     activeSource = selected
     arkmeUi.selectSource(selected)

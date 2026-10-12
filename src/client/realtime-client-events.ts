@@ -279,6 +279,7 @@ export function useArkmeRealtimeClientEvents(
             update.sourceKey,
             update.effectiveReadSequence,
             update.unreadCount,
+            update.latestSequence,
           )
           return
         }

@@ -2,6 +2,18 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { TimelineRefreshScheduler } from '../src/client/timeline-refresh-scheduler.js'
 
 afterEach(() => vi.useRealTimers())
+it('checkpoints continuous live bodies without postponement and allows urgent invalidation to advance the deadline', () => {
+  vi.useFakeTimers()
+  const refresh = vi.fn(), queue = new TimelineRefreshScheduler(refresh)
+  for (let n = 0; n < 10; n++) { queue.request(1000); vi.advanceTimersByTime(100) }
+  expect(refresh).toHaveBeenCalledTimes(1)
+  queue.request(1000)
+  vi.advanceTimersByTime(100)
+  queue.request()
+  vi.advanceTimersByTime(250)
+  expect(refresh).toHaveBeenCalledTimes(2)
+  expect(vi.getTimerCount()).toBe(0)
+})
 it('coalesces 1000 hints behind a read and does not postpone the trailing refresh', () => {
   vi.useFakeTimers()
   const refresh = vi.fn()

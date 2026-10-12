@@ -618,3 +618,16 @@ it('bounds reconciliation under repeated visibility conflicts and recovers on ex
   expect((await test.owner.read()).projection).toMatchObject({ phase: 'complete', visibility: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }] })
   expect(vi.getTimerCount()).toBe(0)
 })
+
+
+it.each([false, true])('keeps the server ACK frontier with unread counts before baseline: %s', async beforeBaseline => {
+  const remote = gate<ArkmeSourceList>()
+  const test = setup(async () => remote.promise)
+  const first = test.owner.read()
+  await vi.waitFor(() => expect(test.source.listSources).toHaveBeenCalledOnce())
+  if (!beforeBaseline) { remote.resolve(page([row(1, { latestSequence: 8, unreadCount: 0 })])); await first; await test.owner.settled() }
+  await test.owner.accept({ type: 'read-ack', revision: 1, sourceKey: 'key-1', sourceRef: 'ref-1', effectiveReadSequence: 9, unreadCount: 2, latestSequence: 11 })
+  if (beforeBaseline) remote.resolve(page([row(1, { latestSequence: 8, unreadCount: 0 })]))
+  await first; await test.owner.settled()
+  expect((await test.owner.read()).items[0]).toMatchObject({ latestSequence: 11, readSequence: 9, unreadCount: 2 })
+})

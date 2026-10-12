@@ -131,7 +131,7 @@ export class CalendarMonthCache {
       if (!affected(entry.query.startDate, entry.query.endDate)) continue
       this.cancel(entry); entry.refreshed = 0
       this.publish(entry, { ...(event.hard ? {} : entry.snapshot.value ? { value: entry.snapshot.value } : {}), loading: false, error: '' })
-      if (entry.listeners.size && this.account) void this.ensure(this.account, entry.query)
+      if (entry.listeners.size && this.account) void this.ensure(this.account, entry.query, true)
     }
   }
   refresh(account: string, query: CalendarMonthQuery): void {

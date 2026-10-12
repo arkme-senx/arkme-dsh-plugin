@@ -48,6 +48,16 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
   return retainNewerArkmeChatPolicy(previous, merged)
 }
 
+function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }): ArkmeSourceItem {
+  if ((source.readSequence ?? 0) > ack.effectiveReadSequence) return source
+  const latestSequence = Math.max(ack.effectiveReadSequence, ack.latestSequence ?? 0)
+  return { ...source, readSequence: Math.max(source.readSequence ?? 0, ack.effectiveReadSequence),
+    ...((source.latestSequence ?? 0) <= latestSequence ? {
+      ...(ack.latestSequence === undefined ? {} : { latestSequence }), unreadCount: ack.unreadCount,
+      badgeUnreadCount: source.isMuted ? 0 : ack.unreadCount, ...(ack.unreadCount === 0 ? { hasUnreadMention: false } : {}),
+    } : {}) }
+}
+
 /** One account lifecycle owns cache restoration, a twenty-row scan, and directory deltas. */
 export class ConversationDirectoryService {
   private userId: number | undefined
@@ -56,7 +66,7 @@ export class ConversationDirectoryService {
   private revision = 0
   private cachedAtMillis = 0
   private sourceRemovals = new Map<string, number>()
-  private pendingReadAcks = new Map<string, { effectiveReadSequence: number; unreadCount: number }>()
+  private pendingReadAcks = new Map<string, { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }>()
   private visibilityMutations = new Map<string, number>()
   private sources = new Map<string, ArkmeSourceItem>()
   private mutations = new Map<string, number>()
@@ -309,8 +319,7 @@ export class ConversationDirectoryService {
       this.sourceRemovals.delete(key)
       const previous = this.sources.get(key)
       const ack = this.pendingReadAcks.get(key) ?? this.pendingReadAcks.get(item.sourceRef)
-      const incoming = ack === undefined ? item : { ...item, readSequence: Math.max(item.readSequence ?? 0, ack.effectiveReadSequence),
-        ...((item.latestSequence ?? 0) <= ack.effectiveReadSequence ? { unreadCount: ack.unreadCount } : {}) }
+      const incoming = ack === undefined ? item : projectReadAck(item, ack)
       const merged = mergeDirectorySource(previous, incoming, (this.mutations.get(key) ?? 0) > atRevision)
       if (authoritativeAvatars) {
         merged.avatarRef = item.avatarRef ?? ''
@@ -721,8 +730,7 @@ export class ConversationDirectoryService {
       }
     } else if (event.type === 'read-ack') {
       const source = [...this.sources.values()].find(item => item.sourceKey === event.sourceKey || item.sourceRef === event.sourceRef)
-      if (source !== undefined) this.apply([{ ...source, readSequence: Math.max(source.readSequence ?? 0, event.effectiveReadSequence),
-        ...((source.latestSequence ?? 0) <= event.effectiveReadSequence ? { unreadCount: event.unreadCount, badgeUnreadCount: source.isMuted ? 0 : event.unreadCount, ...(event.unreadCount === 0 ? { hasUnreadMention: false } : {}) } : {}) }])
+      if (source !== undefined) this.apply([projectReadAck(source, event)])
       else {
         const key = event.sourceKey ?? event.sourceRef
         const previous = this.pendingReadAcks.get(key)

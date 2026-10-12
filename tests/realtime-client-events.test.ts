@@ -81,6 +81,11 @@ it.each([
       expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
       expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
     }
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'read-ack', revision: 2,
+      sourceRef: 'private_chat-ref', sourceKey: 'private_chat', effectiveReadSequence: 9, unreadCount: 2, latestSequence: 11,
+    }) } as MessageEvent<string>) })
+    expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === 'private_chat'))
+      .toMatchObject({ latestSequence: 11, unreadCount: 2 })
     expect(reads.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
     await act(async () => { arkmeChatTimelineDelta.activateAccount('test:43') })
     for (const update of updates) expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual([])

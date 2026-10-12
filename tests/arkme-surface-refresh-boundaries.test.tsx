@@ -38,6 +38,7 @@ describe('Arkme surface refresh boundaries', () => {
     if (renderer !== undefined) act(() => { renderer?.unmount() })
     renderer = undefined
     arkmeUi.showLogin()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -69,6 +70,7 @@ describe('Arkme surface refresh boundaries', () => {
   })
 
   it.each(['private_chat', 'group_chat'] as const)('retries a background %s read on focus and visibility restoration', async kind => {
+    vi.useFakeTimers({ toFake: ['Date'] })
     arkmeChatDirectory.activateAccount(undefined)
     arkmeChatDirectory.activateAccount(42)
     let focused = true
@@ -122,6 +124,8 @@ describe('Arkme surface refresh boundaries', () => {
       expect(arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === source.sourceRef)?.unreadCount).toBe(1)
       focused = true
       doc.visibilityState = 'visible'
+      // These are independent foreground resumptions, beyond the ACK coalescing interval.
+      vi.setSystemTime(Date.now() + 1000)
       await act(async () => {
         if (event === 'preview') resumePreview!()
         else if (event === 'focus') win.dispatchEvent(new Event(event))

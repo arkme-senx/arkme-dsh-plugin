@@ -1652,6 +1652,8 @@ export interface ArkmeSourceItem {
   /** Record-owned topic container kind; never a chat kind or creation source. */
   topicKind?: number
   sourceRef: string
+  /** Account-signed conversation binding; unaffected by directory activity/sequence changes. */
+  conversationRef?: string
   /** Established human Direct session, never PendingPrivate or Bot direct. */
   directMessageAdmissionApplicable?: boolean
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
@@ -1908,6 +1910,8 @@ export interface ArkmeTimelineMentionTarget {
 
 export interface ArkmeTimelineItem {
   timelineEventId?: string
+  /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
+  timelineOrderTie?: string
   /** Authoritative Chat relation owner for re-establishing an expired reading window. */
   recordOwnerUserId?: RecordOwnerId
   /** Local display role for a self-authored record; isMe remains the real author. */
@@ -2734,6 +2738,8 @@ export interface ArkmeSourceReadResult {
   sourceRef: string
   effectiveReadSequence: number
   unreadCount: number
+  /** Server frontier at which unreadCount was computed; optional for older Hosts. */
+  latestSequence?: number
 }
 
 export type ArkmeGroupMemberRole = 'owner' | 'admin' | 'member' | 'unknown'
@@ -3806,6 +3812,7 @@ export type ArkmeChatClientEvent = {
   sourceKey?: string
   effectiveReadSequence: number
   unreadCount: number
+  latestSequence?: number
 } | {
   type: 'read-receipts-invalidated'
   revision: number

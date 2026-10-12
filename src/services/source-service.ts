@@ -1754,6 +1754,9 @@ export class SourceService {
             chatDirectoryMetadata,
           },
         ),
+        conversationRef: await this.sealSourceRef(session.userId, kind, uid, displayName, {
+          ...(botGroupTarget === undefined ? {} : { botGroupTarget }), chatDirectoryMetadata, omitDirectoryActivity: true,
+        }),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
         directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
@@ -2072,6 +2075,7 @@ export class SourceService {
     options: {
       botGroupTarget?: ArkmeGroupBotBindingTarget
       chatDirectoryMetadata?: ArkmeChatDirectoryMetadata
+      omitDirectoryActivity?: boolean
     } = {},
   ): Promise<string> {
     const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
@@ -2089,8 +2093,10 @@ export class SourceService {
         ...(chatDirectoryMetadata.subjectUid === undefined ? {} : {
           sidebarSubjectUid: chatDirectoryMetadata.subjectUid,
         }),
-        conversationListActivityAtMillis: chatDirectoryMetadata.activityAtMillis,
-        conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
+        ...(options.omitDirectoryActivity ? {} : {
+          conversationListActivityAtMillis: chatDirectoryMetadata.activityAtMillis,
+          conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
+        }),
       }),
     } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
@@ -2230,6 +2236,9 @@ export class SourceService {
           chatDirectoryMetadata,
         },
       ),
+      conversationRef: await this.sealSourceRef(session.userId, kind, uid, displayName, {
+        ...(botGroupTarget === undefined ? {} : { botGroupTarget }), chatDirectoryMetadata, omitDirectoryActivity: true,
+      }),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,

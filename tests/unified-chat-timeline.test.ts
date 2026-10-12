@@ -35,6 +35,23 @@ describe('unified timeline owner contract', () => {
       expect(() => parseUnifiedTimelineResponse({ ...response(), ...patch }, 'chat')).toThrow()
     }
   })
+  it('retains the realtime message identity when the authoritative page replaces its provisional row', async () => {
+    const { chatTimelineEventId } = await import('../src/services/timeline-event-id.js')
+    const id = chatTimelineEventId('key', 1, 'test', 'chat', 'message:chat:relation')
+    const item = { itemUid: 'record', timelineItemKey: 'opaque-relation', timelineEventId: id,
+      senderName: '同事', isMe: false, sendAtMillis: 10, title: '', textContent: '正文', status: 1, sequence: 9 }
+    const raw = { ...response(), timeline_items: [{ event_id: 'message:chat:relation', kind: 'message', source: 'messages',
+      occurred_at: 10, order_tie: 'relation', content_status: 'available', payload: { relation: { rel_uid: 'relation', record_owner_user_id: 2 } } }] }
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => raw } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }),
+        chatTimelineItemKey: async () => 'opaque-relation' } as never,
+      { projectChatTimelineItems: async () => [item] } as never, {} as never)
+    const result = await service.read('ref')
+    expect(result.unified?.events[0]).toMatchObject({ eventId: id, orderTie: 'relation', item: { timelineEventId: id } })
+    expect(chatTimelineEventId('key', 1, 'prod', 'chat', 'message:chat:relation')).not.toBe(id)
+    expect(chatTimelineEventId('key', 2, 'test', 'chat', 'message:chat:relation')).not.toBe(id)
+  })
   it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
     const post = vi.fn().mockResolvedValue(raw)

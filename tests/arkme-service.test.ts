@@ -3046,7 +3046,7 @@ describe('ArkmeService', () => {
     const clientEvents: unknown[] = []
     service.subscribeChatRealtime(event => { clientEvents.push(event) })
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
-      effectiveReadSequence: 8, unreadCount: 0,
+      effectiveReadSequence: 8, unreadCount: 0, latestSequence: 8,
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
       .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
@@ -3056,6 +3056,7 @@ describe('ArkmeService', () => {
       sourceKey: privateSourceKey,
       effectiveReadSequence: 8,
       unreadCount: 0,
+      latestSequence: 8,
     })
     const groupRef = sources.items[1]!.sourceRef
     await expect(service.listGroupBots(groupRef)).resolves.toMatchObject({ displayName: '项目群', items: [] })

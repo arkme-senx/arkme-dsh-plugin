@@ -12,6 +12,134 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+  it('publishes no unread flash while a foreground latest-edge reader has a pending ACK', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    const stop = store.registerReadingIntent(source.sourceKey, () => true)
+    const counts: number[] = []
+    store.subscribe(() => { counts.push(store.getSnapshot().sources[0]!.unreadCount) })
+    for (let n = 9; n <= 108; n++) {
+      store.upsert({ ...source, sourceRef: `rotated-${n}`, latestSequence: n, unreadCount: n - 8 })
+      store.updateReadAck(source.sourceRef, source.sourceKey, n - 1, 1)
+    }
+    expect(counts.every(count => count === 0)).toBe(true)
+    store.updateReadAck('rotated-108', source.sourceKey, 108, 0)
+    stop()
+    expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it.each(['leave', 'hidden', 'failed'] as const)('rolls unconfirmed continuous read intent back on %s', cause => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'group_chat' as const,
+      displayName: '群聊', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    let allowed = true
+    const stop = store.registerReadingIntent(source.sourceKey, () => allowed)
+    store.upsert({ ...source, latestSequence: 9, unreadCount: 1 })
+    store.upsert({ ...source, latestSequence: 10, unreadCount: 2 })
+    expect(store.totalUnreadCount()).toBe(0)
+    if (cause === 'leave') stop()
+    else if (cause === 'hidden') { allowed = false; store.refreshReadingIntent() }
+    else store.rejectOptimisticRead('ref', source.sourceKey, 10)
+    expect(store.totalUnreadCount()).toBe(2)
+    store.upsert({ ...source, latestSequence: 10, unreadCount: 2 })
+    expect(store.totalUnreadCount()).toBe(2)
+    stop()
+  })
+
+  it('retains displayed read intent on blur or leaving until the queued ACK settles', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    let allowed = true
+    const stop = store.registerReadingIntent(source.sourceKey, () => allowed)
+    store.upsert({ ...source, latestSequence: 9, unreadCount: 1 })
+    store.confirmDisplayedRead(source.sourceKey, 9)
+    allowed = false
+    store.refreshReadingIntent()
+    stop()
+    expect(store.totalUnreadCount()).toBe(0)
+    store.upsert({ ...source, latestSequence: 9, unreadCount: 1 })
+    expect(store.totalUnreadCount()).toBe(0)
+    store.updateReadAck('ref', source.sourceKey, 9, 0)
+    store.upsert({ ...source, latestSequence: 10, unreadCount: 1 })
+    expect(store.totalUnreadCount()).toBe(1)
+  })
+
+  it('restores unseen arrivals when leaving and accepts the displayed cursor ACK separately', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    const stop = store.registerReadingIntent(source.sourceKey, () => true)
+    store.upsert({ ...source, latestSequence: 10, unreadCount: 2 })
+    store.confirmDisplayedRead(source.sourceKey, 9)
+    stop()
+    expect(store.totalUnreadCount()).toBe(2)
+    store.updateReadAck('ref', source.sourceKey, 9, 1)
+    // An ACK without the server's latest-sequence scope cannot overwrite a newer directory.
+    expect(store.totalUnreadCount()).toBe(2)
+    store.upsert({ ...source, latestSequence: 10, unreadCount: 1 })
+    expect(store.totalUnreadCount()).toBe(1)
+    store.upsert({ ...source, latestSequence: 11, unreadCount: 2 })
+    expect(store.totalUnreadCount()).toBe(2)
+  })
+
+  it('does not flash remaining unread when an ACK frontier leads the directory', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    const stop = store.registerReadingIntent(source.sourceKey, () => true)
+    const unread: number[] = []
+    store.subscribe(() => { unread.push(store.totalUnreadCount()) })
+    store.confirmDisplayedRead(source.sourceKey, 9)
+    store.updateReadAck('ref', source.sourceKey, 9, 2, 11)
+    expect(store.getSnapshot().sources[0]?.latestSequence).toBe(11)
+    expect(unread).toEqual([0])
+    stop()
+    expect(store.totalUnreadCount()).toBe(2)
+    // A late ACK must not overwrite arrivals beyond its own authoritative scope.
+    store.upsert({ ...source, latestSequence: 12, unreadCount: 3 })
+    store.updateReadAck('ref', source.sourceKey, 9, 2, 11)
+    expect(store.totalUnreadCount()).toBe(3)
+  })
+
+  it('restores the latest remaining unread count after a partial ACK at the same frontier', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.publish([source])
+    const stop = store.registerReadingIntent(source.sourceKey, () => true)
+    store.upsert({ ...source, latestSequence: 11, unreadCount: 3 })
+    store.confirmDisplayedRead(source.sourceKey, 10)
+    store.updateReadAck('ref', source.sourceKey, 10, 1, 11)
+    store.updateReadAck('ref', source.sourceKey, 9, 2, 11)
+    expect(store.totalUnreadCount()).toBe(0)
+    stop()
+    expect(store.totalUnreadCount()).toBe(1)
+  })
+
+  it('keeps other conversations unread and does no publication work for ordinary scrolling', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 }
+    store.activateAccount('test:1')
+    store.publish([source])
+    store.registerReadingIntent(source.sourceKey, () => true)
+    const changed = vi.fn()
+    store.subscribe(changed)
+    for (let n = 0; n < 100; n++) store.refreshReadingIntent()
+    expect(changed).not.toHaveBeenCalled()
+    store.upsert({ ...source, sourceKey: 'other', sourceRef: 'other', unreadCount: 2 })
+    expect(store.totalUnreadCount()).toBe(2)
+    store.activateAccount('test:2')
+    store.publish([{ ...source, unreadCount: 1 }])
+    expect(store.totalUnreadCount()).toBe(1)
+  })
   it('waits for instance preparation before loading the first directory and coalesces concurrent reads', async () => {
     const prepared = Promise.withResolvers<void>()
     const prepareLoad = vi.fn(() => prepared.promise)
