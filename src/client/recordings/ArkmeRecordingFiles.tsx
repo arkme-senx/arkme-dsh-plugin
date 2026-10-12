@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { callArkme } from '../api.js'
@@ -18,6 +18,16 @@ interface Props {
   onImport(): void
 }
 type Action = { kind: 'delete' | 'start' | 'ownership'; file: RecordingFile }
+interface FileRead {
+  controller: AbortController
+  toMillis: number
+  offset: number
+  loading: boolean
+  resume: boolean
+  revision: number
+  items: RecordingFile[]
+  seen: Set<string>
+}
 const control: CSSProperties = { minHeight: 32, padding: '5px 10px', border: `1px solid ${theme.border}`, borderRadius: 7, background: theme.base, color: theme.text, font: 'inherit', fontSize: 12 }
 const button: CSSProperties = { ...control, cursor: 'pointer' }
 const note: CSSProperties = { color: theme.secondary, fontSize: 12, lineHeight: '20px' }
@@ -60,22 +70,48 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
   const [ownership, setOwnership] = useState<'self' | 'other'>('self')
   const [menu, setMenu] = useState<{ file: RecordingFile; anchor: HTMLButtonElement; left: number; top: number }>()
   const menuRef = useRef<HTMLDivElement>(null)
-  const request = useRef<{ controller: AbortController; toMillis: number; offset: number; loading: boolean }>()
+  const request = useRef<FileRead>()
+  const deleted = useRef(new Set<string>())
+  const deleting = useRef(false)
+  const section = useRef<HTMLElement>(null)
+  const restorePosition = useRef<{ scroll: { element: HTMLElement; top: number; left: number }[]; focus: HTMLButtonElement | undefined }>()
   const mutation = useRef<AbortController>()
   const dialog = useRef<HTMLDialogElement>(null)
+  const withoutDeleted = (items: readonly RecordingFile[]) => items.filter(file => !deleted.current.has(recordingFileKey(file)))
+
+  useLayoutEffect(() => {
+    const saved = restorePosition.current
+    if (!saved) return
+    restorePosition.current = undefined
+    if (saved.focus?.isConnected) saved.focus.focus({ preventScroll: true })
+    for (const { element, top, left } of saved.scroll) {
+      element.scrollTop = top; element.scrollLeft = left
+    }
+  })
 
   const loadHistory = async (context: NonNullable<typeof request.current>) => {
     if (context.loading || context.controller.signal.aborted) return
+    if (deleting.current) { context.resume = true; return }
     context.loading = true; setLoading(true); setHistoryError('')
     try {
       for (let pageIndex = 0; pageIndex < PAGES_PER_BATCH; pageIndex++) {
+        const readRevision = context.revision
         const page = await withArkmeReadDeadline(signal => callArkme<PublicRecordingImportHistoryPage>('recordings.import.history', {
           toMillis: context.toMillis, limit: PAGE_SIZE, offset: context.offset,
         }, signal), context.controller.signal)
         if (context.controller.signal.aborted) return
+        // A deletion can shift offset pagination while this page is in flight.
+        // Discard that page and continue from the adjusted cursor.
+        if (deleting.current || readRevision !== context.revision) { context.resume = true; return }
         if (page.hasMore && page.items.length === 0) throw new Error(tr('文件列表未能继续加载，请刷新重试'))
         context.offset += page.items.length
-        setHistory(previous => mergeRecordingFiles(previous, page.items))
+        const pageItems = withoutDeleted(page.items)
+        context.items = mergeRecordingFiles(context.items, pageItems)
+        for (const file of pageItems) context.seen.add(recordingFileKey(file))
+        const snapshotItems = context.items
+        // Keep the loaded tail during a background refresh. Replace the whole
+        // snapshot only when the server confirms the scan is complete.
+        setHistory(previous => withoutDeleted(page.hasMore ? mergeRecordingFiles(previous, pageItems) : snapshotItems))
         setHasMore(page.hasMore)
         if (!page.hasMore) break
       }
@@ -83,19 +119,22 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
       if (!context.controller.signal.aborted) setHistoryError(error instanceof Error ? error.message : tr('音频文件加载失败'))
     } finally {
       context.loading = false
-      if (!context.controller.signal.aborted) setLoading(false)
+      if (!context.controller.signal.aborted) {
+        setLoading(false)
+        if (context.resume && !deleting.current) { context.resume = false; void loadHistory(context) }
+      }
     }
   }
 
   useEffect(() => {
     if (!active) return
-    const context = { controller: new AbortController(), toMillis: Date.now(), offset: 0, loading: false }
+    const context: FileRead = { controller: new AbortController(), toMillis: Date.now(), offset: 0, loading: false, resume: false, revision: 0, items: [], seen: new Set() }
     request.current = context
-    setCurrent([]); setHistory([]); setCurrentWarning(''); setCurrentLoading(true); setHasMore(true)
+    setCurrentWarning(''); setCurrentLoading(true); setHasMore(true)
     void withArkmeReadDeadline(signal => callArkme<PublicRecordingImportCurrentSnapshot>('recordings.import.list', {}, signal), context.controller.signal)
       .then(snapshot => {
         if (context.controller.signal.aborted) return
-        setCurrent(snapshot.items)
+        setCurrent(withoutDeleted(snapshot.items))
         setCurrentWarning(snapshot.owner.state === 'unavailable' ? tr('部分未完成文件暂未同步，请稍后刷新')
           : snapshot.items.length >= 20 ? tr('未完成文件较多，当前仅显示最近任务') : '')
       }).catch(() => { if (!context.controller.signal.aborted) setCurrentWarning(tr('未完成文件加载失败，请刷新重试')) })
@@ -130,7 +169,8 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
     }
   }, [menu])
   // A refresh scans paginated history, so do not repeat it on a timer.
-  // Import completion, explicit refresh and successful edits reload this view.
+  // External updates keep existing rows visible. Local deletion only removes
+  // its confirmed row and lets the calendar refresh independently.
   const files = useMemo(() => mergeRecordingFiles(history, current)
     .filter(file => recordingFileMatchesDay(file, dateStamp, basis) && file.fileName.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
     .sort((a, b) => basis === 'recorded' ? a.startAtMillis - b.startAtMillis || recordingFileKey(a).localeCompare(recordingFileKey(b)) : b.createdAtMillis - a.createdAtMillis), [history, current, dateStamp, basis, query])
@@ -148,6 +188,13 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
       if (error) { setMutationError(tr(error)); return }
     }
     const controller = new AbortController(); mutation.current = controller
+    if (kind === 'delete') {
+      deleting.current = true
+      if (request.current) {
+        request.current.revision += 1
+        request.current.resume ||= request.current.loading
+      }
+    }
     setBusy(true); setMutationError('')
     try {
       if ('importRef' in file) {
@@ -161,16 +208,46 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
         await callArkme('recordings.import.session.update-ownership', { sessionRef: file.sessionRef, ownership }, controller.signal)
       }
       if (controller.signal.aborted) return
+      if (kind === 'delete') {
+        const key = recordingFileKey(file)
+        const rows = [...(section.current?.querySelectorAll<HTMLTableRowElement>('tbody tr') ?? [])]
+        const index = rows.findIndex(row => row.dataset.recordingFileKey === key)
+        const focus = index < 0 ? undefined : (rows[index + 1] ?? rows[index - 1])?.querySelector<HTMLButtonElement>('button') ?? undefined
+        const scroll: { element: HTMLElement; top: number; left: number }[] = []
+        for (let element = section.current?.parentElement; element; element = element.parentElement) {
+          if (element.scrollTop || element.scrollLeft) scroll.push({ element, top: element.scrollTop, left: element.scrollLeft })
+        }
+        restorePosition.current = { scroll, focus }
+        deleted.current.add(key)
+        const context = request.current
+        if (context) {
+          context.revision += 1
+          if (context.seen.delete(key)) context.offset = Math.max(0, context.offset - 1)
+          context.items = withoutDeleted(context.items)
+        }
+        setCurrent(withoutDeleted); setHistory(withoutDeleted)
+      } else {
+        setRevision(value => value + 1)
+      }
       setAction(undefined); setNotice(tr(kind === 'delete' ? '文件已删除' : '文件信息已更新'))
-      setRevision(value => value + 1); onChanged()
+      onChanged()
     } catch (error) {
       if (!controller.signal.aborted) setMutationError(error instanceof Error ? error.message : tr('文件操作失败，请重试'))
-    } finally { if (!controller.signal.aborted) setBusy(false) }
+    } finally {
+      if (!controller.signal.aborted) {
+        setBusy(false)
+        if (kind === 'delete') {
+          deleting.current = false
+          const context = request.current
+          if (context?.resume && !context.loading) { context.resume = false; void loadHistory(context) }
+        }
+      }
+    }
   }
   const { from, to } = recordingFileDayBounds(dateStamp)
   const complete = !loading && !currentLoading && !hasMore && !historyError && !currentWarning
 
-  return <section aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
+  return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
       <select aria-label={tr('音频文件日期范围')} value={basis} onChange={event => setBasis(event.target.value as RecordingFileDateBasis)} style={control}>
         <option value="recorded">{tr('当天录音')}</option><option value="uploaded">{tr('当天上传')}</option><option value="all">{tr('全部文件')}</option>
@@ -180,13 +257,13 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
       <button type="button" style={button} onClick={onImport}>{tr('上传音频')}</button>
     </div>
     <div style={{ ...note, marginBottom: 10 }}>{basis === 'all' ? tr('全部日期') : new Date(dateStamp).toLocaleDateString(arkmeIntlLocale())} · {tr(complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(files.length) })}
+      <span role="status" style={{ marginLeft: 12 }}>{notice}</span>
       {basis === 'uploaded' && <div>{tr('已上传文件按进入云端的时间筛选，不是上传完成时间；本机待上传文件按添加时间。')}</div>}
     </div>
-    {notice && <p role="status" style={note}>{notice}</p>}
     {currentWarning && <p role="status" style={note}>{currentWarning}</p>}
     <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
       <thead><tr>{['文件名称 / 录音时间', '时长 / 大小', '归属', '状态', '操作'].map(label => <th key={label} style={{ ...cell, ...note, fontWeight: 500 }}>{tr(label)}</th>)}</tr></thead>
-      <tbody>{files.map(file => <tr key={recordingFileKey(file)}>
+      <tbody>{files.map(file => <tr key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)}>
         <td style={{ ...cell, maxWidth: 300 }}><div style={{ overflowWrap: 'anywhere', marginBottom: 4 }}>{file.fileName}</div><div style={note}>{instant(file.startAtMillis)} — {instant(file.endAtMillis)}</div>
           {(file.startAtMillis < from || file.endAtMillis > to) && basis === 'recorded' && <small style={note}>{tr('跨日文件，显示完整录音范围')}</small>}
           {basis === 'uploaded' && <div style={note}>{tr('importRef' in file ? '添加时间' : '进入云端')} {instant(file.createdAtMillis)}</div>}

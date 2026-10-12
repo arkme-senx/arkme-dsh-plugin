@@ -66,6 +66,118 @@ it('only deletes after confirmation, and refreshes the parent after success', as
   expect(host.textContent).not.toContain('会议.m4a')
 })
 
+it('keeps the remaining rows, filter and scroll position while deleting consecutive files without reloading', async () => {
+  completed = [file(), file({ taskKey: 'two', sessionRef: 'ref2', fileName: '第二份.m4a' }), file({ taskKey: 'three', sessionRef: 'ref3', fileName: '第三份.m4a' })]
+  await render()
+  await act(async () => { const select = host.querySelector('select')!; select.value = 'uploaded'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  const remainingRow = host.querySelector('[data-recording-file-key="three"]')
+  host.scrollTop = 120
+  const readsBefore = mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.list' || operation === 'recordings.import.history').length
+  await openMenu(); await click('删除文件'); await click('确认删除')
+  expect(host.querySelector('[data-recording-file-key="three"]')).toBe(remainingRow)
+  expect(host.querySelector('select')?.value).toBe('uploaded')
+  expect(host.scrollTop).toBe(120)
+  expect(host.textContent).toContain('共 2 个文件')
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('管理 第二份.m4a')
+  await openMenu('第二份.m4a'); await click('删除文件'); await click('确认删除')
+  expect(host.querySelector('[data-recording-file-key="three"]')).toBe(remainingRow)
+  expect(host.textContent).toContain('共 1 个文件')
+  expect(host.textContent).not.toContain('正在查找音频文件')
+  expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.list' || operation === 'recordings.import.history')).toHaveLength(readsBefore)
+  expect(changed).toHaveBeenCalledTimes(2)
+})
+
+it('does not resurrect a deleted file when an earlier current-task response arrives', async () => {
+  let finishCurrent!: (value: unknown) => void
+  mock.call.mockImplementationOnce(() => new Promise(resolve => { finishCurrent = resolve }))
+  await render(); await openMenu(); await click('删除文件'); await click('确认删除')
+  await act(async () => finishCurrent({ items: [{ ...file(), kind: 'owner' }], owner: { state: 'available' } }))
+  expect(host.textContent).not.toContain('会议.m4a')
+  expect(host.textContent).toContain('共 0 个文件')
+})
+
+it('keeps loaded rows usable during an external refresh and filters late deleted records', async () => {
+  completed = [file(), file({ taskKey: 'two', sessionRef: 'ref2', fileName: '保留.m4a' })]
+  await render()
+  const remainingRow = host.querySelector('[data-recording-file-key="two"]')
+  let finishHistory!: (value: unknown) => void
+  const initialRead = mock.call.getMockImplementation()!
+  mock.call.mockImplementation((operation, input) => operation === 'recordings.import.history'
+    ? new Promise(resolve => { finishHistory = resolve }) : initialRead(operation, input))
+  await render({ refreshRevision: 1 })
+  expect(host.querySelector('[data-recording-file-key="two"]')).toBe(remainingRow)
+  await openMenu(); await click('删除文件'); await click('确认删除')
+  expect(host.querySelector('[data-recording-file-key="two"]')).toBe(remainingRow)
+  // This response was captured before deletion and must be discarded.
+  await act(async () => finishHistory({ items: completed, hasMore: false, offset: 0 }))
+  expect(host.textContent).not.toContain('会议.m4a')
+  expect(host.querySelector('[data-recording-file-key="two"]')).toBe(remainingRow)
+  await act(async () => finishHistory({ items: [completed[1]], hasMore: false, offset: 0 }))
+  expect(host.textContent).toContain('共 1 个文件')
+})
+
+it('adjusts the continuation offset after deletion without losing an unloaded file', async () => {
+  completed = Array.from({ length: 501 }, (_, i) => file({ taskKey: `file${i}`, sessionRef: `ref${i}`, fileName: `${i}.wav` }))
+  await render()
+  const readCount = mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history').length
+  await openMenu('0.wav'); await click('删除文件')
+  completed.shift()
+  await click('确认删除')
+  expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history')).toHaveLength(readCount)
+  await click('继续查找更早文件')
+  expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history').at(-1)?.[1].offset).toBe(499)
+  expect(host.querySelector('[data-recording-file-key="file500"]')).not.toBeNull()
+  expect(host.textContent).toContain('共 500 个文件')
+})
+
+it('retries an in-flight page from the adjusted offset after deleting a preceding row', async () => {
+  completed = Array.from({ length: 51 }, (_, i) => file({ taskKey: `file${i}`, sessionRef: `ref${i}`, fileName: `${i}.wav` }))
+  const initialRead = mock.call.getMockImplementation()!
+  let finishPage!: (value: unknown) => void
+  mock.call.mockImplementation((operation, input) => operation === 'recordings.import.history' && input.offset === 50
+    ? new Promise(resolve => { finishPage = resolve }) : initialRead(operation, input))
+  await render()
+  const oldPage = { items: completed.slice(50), hasMore: false, offset: 50 }
+  await openMenu('0.wav'); await click('删除文件')
+  completed.shift()
+  await click('确认删除')
+  await act(async () => finishPage(oldPage))
+  expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history').map(([, input]) => input.offset)).toEqual([0, 50, 49])
+  expect(host.querySelector('[data-recording-file-key="file0"]')).toBeNull()
+  expect(host.querySelector('[data-recording-file-key="file50"]')).not.toBeNull()
+  expect(host.textContent).toContain('共 50 个文件')
+})
+
+it.each(['success', 'failure'] as const)('pauses pagination while deletion is pending and resumes correctly after %s', async outcome => {
+  completed = Array.from({ length: 51 }, (_, i) => file({ taskKey: `file${i}`, sessionRef: `ref${i}`, fileName: `${i}.wav` }))
+  const initialRead = mock.call.getMockImplementation()!
+  let finishPage!: (value: unknown) => void, finishDelete!: () => void, failDelete!: (reason: Error) => void, heldPage = false
+  mock.call.mockImplementation((operation, input) => {
+    if (operation === 'recordings.import.session.delete') return new Promise<void>((resolve, reject) => { finishDelete = resolve; failDelete = reject })
+    if (operation === 'recordings.import.history' && input.offset === 50 && !heldPage) {
+      heldPage = true
+      return new Promise(resolve => { finishPage = resolve })
+    }
+    return initialRead(operation, input)
+  })
+  await render(); await openMenu('0.wav'); await click('删除文件'); await click('确认删除')
+  if (outcome === 'success') completed.shift()
+  // The server may already have deleted the file before acknowledging the write.
+  await act(async () => finishPage({ items: completed.slice(50), offset: 50, hasMore: false }))
+  expect(host.querySelector('[data-recording-file-key="file0"]')).not.toBeNull()
+  expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history')).toHaveLength(2)
+  await act(async () => { if (outcome === 'success') finishDelete(); else failDelete(new Error('删除失败')) })
+  expect(host.querySelector('[data-recording-file-key="file50"]')).not.toBeNull()
+  if (outcome === 'success') {
+    expect(host.querySelector('[data-recording-file-key="file0"]')).toBeNull()
+    expect(host.textContent).toContain('共 50 个文件')
+  } else {
+    expect(host.querySelector('[data-recording-file-key="file0"]')).not.toBeNull()
+    expect(host.textContent).toContain('共 51 个文件')
+    expect(changed).not.toHaveBeenCalled()
+  }
+})
+
 it('keeps a failed deletion reviewable without claiming success or refreshing parent data', async () => {
   await render(); await openMenu(); await click('删除文件')
   mock.call.mockRejectedValueOnce(new Error('删除失败'))
