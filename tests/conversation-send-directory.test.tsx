@@ -213,6 +213,12 @@ describe('conversation send directory projection', () => {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
     expect(reads).toBe(1)
+    if (mode === 'offline-history') act(() => {
+      // Initial entry intentionally aligns latest. Establish real reading intent
+      // afterwards, rather than relying on the node mock's pre-mount scrollTop.
+      body.scrollTop = 300
+      renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
+    })
     await act(async () => { arkmeChatTimelineDelta.publish([{source:{...target,latestSequence:9},items:[{...fresh,sequence:9}]}]) })
     expect(reads).toBe(2)
     await act(async () => { for (let n = 0; n < 100; n++) arkmeChatTimelineDelta.publish([{source:{...target,latestSequence:10+n},items:[{...fresh,sequence:10+n}]}]) })
@@ -225,7 +231,7 @@ describe('conversation send directory projection', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
     expect(reads).toBe(3)
     expect(renderer!.root.findAllByProps({'data-arkme-message-item-uid':'diag-new'})).toHaveLength(1)
-    expect(body.scrollTop).toBe(mode === 'offline-history' ? readingTop : body.scrollHeight)
+    expect(body.scrollTop).toBe(mode === 'offline-history' ? readingTop : body.scrollHeight - body.clientHeight)
     await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
     expect(reads).toBe(3)
   })
@@ -1849,7 +1855,7 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight : 200)
     await act(async () => { refresh.resolve() })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'refreshed-entry' })).toHaveLength(1)
-    expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight : 200)
+    expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight - body.clientHeight : 200)
     const reads = mocks.callArkme.mock.calls.slice(beforeReturn).filter(([op, params]) => op === 'source.timeline' && params?.sourceRef === target.sourceRef)
     expect(reads).toHaveLength(1)
     if (mode === 'cached-bottom') {

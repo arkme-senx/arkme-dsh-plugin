@@ -1,4 +1,3 @@
-import { arkmeConversationLiveTail } from './conversation-viewport.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ConversationViewportPersistence } from './conversation-viewport-persistence.js'
@@ -3998,7 +3997,7 @@ export function ArkmeSurface({
         const newerPageStartAnchorId = firstNewEvent === undefined ? undefined : firstNewEvent.kind === 'message'
           ? `message:${firstNewEvent.eventId}` : firstNewEvent.kind === 'moment' ? `moment:${firstNewEvent.item.momentId}` : firstNewEvent.eventId
         pendingViewportRestoreRef.current = { sourceKey,
-          ...((intent === 'refresh' || intent === 'background') ? { liveTail: arkmeConversationLiveTail(body) } : {}),
+          followLatest: intent === 'refresh' || intent === 'background',
           ...(newerPageStartAnchorId ? { newerPageStartAnchorId } : {}), viewport: intent === 'return-to-latest'
           ? { scrollTop: 0, stickToBottom: true } : !hadCachedTimeline && !restoredLocalTimeline && !preserve ? undefined
             : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history') }

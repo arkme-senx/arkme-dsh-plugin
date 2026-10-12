@@ -28,8 +28,8 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
     const accessoryDelta = nextAccessoryHeight - accessoryHeight
     const nextContentHeight = content?.getBoundingClientRect().height ?? 0
     if (isConversationFollowing(body)) {
-      // Keep bottom intent through deferred virtual-chunk/media layout, even
-      // after the previous animation finished. User input cancels that intent.
+      // Align deferred virtual-chunk/media layout before paint too. User input
+      // cancels latest-edge intent instead of competing with a scroll animation.
       followConversationBottom(body)
     } else if (before.clientHeight > 0 && after.clientHeight > 0 && before.clientHeight !== after.clientHeight) {
       body.scrollTop = resizedConversationScrollTop(before, after)

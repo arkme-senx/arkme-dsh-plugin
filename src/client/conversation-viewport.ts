@@ -16,8 +16,8 @@ export interface ArkmeConversationViewportRestore {
   viewport: ArkmeConversationViewportSnapshot | undefined
   /** Explicit newer-page navigation, not a saved reading position. */
   newerPageStartAnchorId?: string
-  /** Previous tail geometry for continuous live arrivals; never used for history restoration. */
-  liveTail?: { id: string; offset: number } | undefined
+  /** Capture before replacing rows; latest-edge alignment belongs to the same paint. */
+  followLatest?: boolean | undefined
 }
 
 export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false): ArkmeConversationViewportSnapshot {
@@ -39,14 +39,6 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
     }
   }
   return { scrollTop: root.scrollTop, stickToBottom: false }
-}
-
-export function arkmeConversationLiveTail(root: HTMLDivElement | null): ArkmeConversationViewportRestore['liveTail'] {
-  if (!root || !arkmeConversationViewport(root).stickToBottom) return undefined
-  const rows = root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')
-  const tail = rows[rows.length - 1]
-  const id = tail?.dataset.arkmeConversationRow
-  return id ? { id, offset: tail!.getBoundingClientRect().top - root.getBoundingClientRect().top } : undefined
 }
 
 /** Read actual message/interaction rows only when opening a calendar; never count system notices. */
@@ -133,9 +125,7 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
     const anchorOffset = arkmeConversationAnchorOffset(body, pending.viewport?.anchorId)
     const newerPageStartOffset = arkmeConversationAnchorOffset(body, pending.newerPageStartAnchorId)
     const maximumScrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
-    const liveOffset = arkmeConversationAnchorOffset(body, pending.liveTail?.id)
-    if (pending.liveTail && liveOffset !== undefined && pending.viewport?.stickToBottom) {
-      body.scrollTop += liveOffset - pending.liveTail.offset
+    if (pending.followLatest && pending.viewport?.stickToBottom && pending.newerPageStartAnchorId === undefined) {
       followConversationBottom(body)
     } else {
       cancelConversationFollow(body)

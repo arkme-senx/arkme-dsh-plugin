@@ -2,7 +2,8 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
 import { arkmeConversationViewport } from '../src/client/conversation-viewport.js'
-afterEach(() => vi.restoreAllMocks())
+import { observeConversationResize } from '../src/client/conversation-resize-anchor.js'
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 function fixture() {
   let now = 0, height = 1500
   const frames = new Map<number, FrameRequestCallback>()
@@ -17,29 +18,49 @@ function fixture() {
     const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(now))
   } }
 }
-it('uses one frame owner, retargets arrivals, and persists bottom intent throughout the animation', () => {
+it('pins every arrival before paint, without a follow-up animation or duplicate listeners', () => {
   const f = fixture()
+  const listen = vi.spyOn(f.body, 'addEventListener')
   try {
     followConversationBottom(f.body)
-    expect(f.body.scrollTop).toBe(500)
-    for (let i = 0; i < 6; i++) {
-      const before = f.body.scrollTop
+    expect(f.body.scrollTop).toBe(1000)
+    for (let i = 0; i < 100; i++) {
       f.grow(); followConversationBottom(f.body)
-      expect(f.frames.size).toBe(1)
+      expect(f.body.scrollTop).toBe(f.body.scrollHeight - 500)
+      const firstPaint = f.body.scrollTop
       f.frame()
-      expect(f.body.scrollTop).toBeGreaterThan(before)
-      expect(f.body.scrollTop).toBeLessThan(f.body.scrollHeight - 500)
+      expect(f.body.scrollTop).toBe(firstPaint)
       expect(arkmeConversationViewport(f.body).stickToBottom).toBe(true)
     }
-    for (let i = 0; i < 60; i++) f.frame()
-    expect(f.body.scrollTop).toBe(1600)
+    expect(window.requestAnimationFrame).not.toHaveBeenCalled()
+    expect(listen).toHaveBeenCalledTimes(4)
     expect(f.frames.size).toBe(0)
     expect(isConversationFollowing(f.body)).toBe(true)
-    f.grow(); followConversationBottom(f.body)
-    expect(f.frames.size).toBe(1)
-    for (let i = 0; i < 40; i++) f.frame()
-    expect(f.body.scrollTop).toBe(1700)
   } finally { cancelConversationFollow(f.body) }
+})
+it('aligns delayed layout before paint and stops when the reader scrolls into history', () => {
+  const f = fixture()
+  let resize = () => {}
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resize = callback }
+    observe() {}
+    disconnect() {}
+  })
+  const content = { getBoundingClientRect: () => ({ height: f.body.scrollHeight }) } as HTMLElement
+  const dispose = observeConversationResize(f.body, undefined, content)
+  try {
+    followConversationBottom(f.body)
+    dispose.commit(true)
+    f.grow(); resize()
+    expect(f.body.scrollTop).toBe(1100)
+    f.frame()
+    expect(f.body.scrollTop).toBe(1100)
+    f.body.dispatchEvent(new Event('wheel'))
+    f.body.scrollTop = 100; f.body.dispatchEvent(new Event('scroll'))
+    f.grow(); resize(); f.frame()
+    expect(f.body.scrollTop).toBe(100)
+    expect(window.requestAnimationFrame).not.toHaveBeenCalled()
+  } finally { dispose(); cancelConversationFollow(f.body) }
 })
 it.each(['wheel', 'touchstart', 'pointerdown', 'keydown'])('yields immediately to %s and leaves the reading position alone', type => {
   const f = fixture()
