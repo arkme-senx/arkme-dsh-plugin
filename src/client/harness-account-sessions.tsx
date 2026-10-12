@@ -8,6 +8,7 @@ import { callArkme } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
 import { openNativeAccountSession } from './harness-native-navigation.js'
 import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
+import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
 type SessionsState = ReturnType<ISessions['list']['getSnapshot']>
 type Workspace = { workspaceId: string; title: string; path: string; createdAt?: number; sessionIds: string[] }
@@ -92,7 +93,10 @@ const catalogKey = Symbol.for('arkme.account-session-catalog')
 /** Apply a complete authoritative catalog as add/update/delete; unchanged rows retain identity. */
 export function reconcileAccountSessions(previous: DshAccountSession[], incoming: DshAccountSession[]): DshAccountSession[] {
   const known = new Map(previous.map(row => [accountSessionKey(row), row]))
-  const next = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()].map(row => {
+  // A moving paginated catalog can repeat a source. Resolve its latest row
+  // first, then collapse old registrations before publishing to either view.
+  const unique = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()]
+  const next = collapseAccountSessionCopies(unique, previous).map(row => {
     const old = known.get(accountSessionKey(row))
     return old && (Object.keys(row) as Array<keyof DshAccountSession>).every(key =>
       key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : row[key] === old[key]) ? old : row
