@@ -32,6 +32,7 @@ import { arkmeTheme as theme } from './arkme-theme.js'
 import { directRecordingStore } from './recordings/direct-recording-store.js'
 import { ArkmeRecordingNavigationHint } from './recordings/ArkmeRecordingNavigationHint.js'
 import { useRecordingBreathStyle } from './recordings/recording-breath.js'
+import { useArkmeNavigationTooltip } from './ArkmeNavigationTooltip.js'
 
 export interface ArkmeProductNavigationProps {
   compact: boolean
@@ -93,7 +94,6 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', justifyContent: 'flex-start', gap: 2,
     overflow: 'visible', borderRadius: 10, background: 'transparent',
   },
-  brandVersion: { color: theme.tertiary, fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
     minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
     // Keep the existing edge marker and focus outline inside the scroll viewport.
@@ -101,13 +101,14 @@ const styles: Record<string, CSSProperties> = {
   },
   button: {
     position: 'relative',
-    minHeight: 57,
+    minHeight: 44,
+    height: 44,
+    flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    padding: '7px 4px',
+    padding: '0 4px',
     border: 0,
     borderRadius: 15,
     background: 'transparent',
@@ -117,7 +118,7 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: 'none',
   },
   compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
-  hostedButton: { minHeight: 52, padding: '6px 2px', borderRadius: 13 },
+  hostedButton: { padding: '0 2px', borderRadius: 13 },
   activeButton: { background: theme.active, color: theme.text },
   activeMarker: { left: -8 },
   compactMarker: { left: '50%', top: 'auto', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
@@ -147,6 +148,7 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
   const memberScope = authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${memberUserId}` : undefined
@@ -215,6 +217,9 @@ export function ArkmeProductNavigation({
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items.map(item => ({ ...item, label: tr(item.label) }))
+  const productVersion = formatProductVersion(pluginManifest.version, currentClientVersionCode())
+  const profileHint = `${tr("个人资料")} · ${membershipLabel(membership.state)}\n${membershipDescription(membership.state)}`
+  useEffect(() => { navigationHint.hide() }, [navigationHint.hide, memberScope, activeId, isRecording, profileOpen, locked])
 
   const activate = (id: NavigationItem['id']) => {
     if (locked) {
@@ -247,11 +252,14 @@ export function ArkmeProductNavigation({
         ...(hidden ? { display: 'none' } : {}),
       }}
     >
-      {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>
+      {!compact && <div data-arkme-owned="product-brand" data-arkme-plugin-version={pluginManifest.version}
+        style={styles.brand} tabIndex={0} aria-label={`Arkme ${productVersion}`}
+        aria-describedby={navigationHint.describedBy('brand')}
+        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`) }}
+        onMouseLeave={navigationHint.hide}
+        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`, true) }}
+        onBlur={navigationHint.hide}>
         <ArkmeJiwoBrandMark />
-        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
-          {formatProductVersion(pluginManifest.version, currentClientVersionCode())}
-        </span>
       </div>}
       <div style={{ ...styles.primary,
         ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
@@ -262,6 +270,8 @@ export function ArkmeProductNavigation({
         const active = item.id === activeId
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         const showsRecording = item.id === 'recordings' && isRecording
+        const hint = item.id === 'conversations' && !locked
+          ? `${item.label}\n${tr("双击定位下一个未读对话")}（Shift+Enter）` : item.label
         return <button data-arkme-feedback="neutral"
           key={item.id}
           ref={item.id === 'recordings' ? recordingButtonRef : undefined}
@@ -269,8 +279,8 @@ export function ArkmeProductNavigation({
           data-arkme-hover="button"
           type="button"
           aria-current={active ? 'page' : undefined}
-          aria-label={showsRecording ? tr("录音，本机正在录音，点击查看") : showsUnread ? tr("{v0}，{v1} 条未读", { v0: item.label, v1: String(conversationUnreadCount) }) : undefined}
-          aria-describedby={showsRecording && recordingHintOpen ? recordingHintId : undefined}
+          aria-label={showsRecording ? tr("录音，本机正在录音，点击查看") : showsUnread ? tr("{v0}，{v1} 条未读", { v0: item.label, v1: String(conversationUnreadCount) }) : item.label}
+          aria-describedby={showsRecording && recordingHintOpen ? recordingHintId : navigationHint.describedBy(item.id)}
           {...(showsRecording ? { 'data-arkme-navigation-recording': 'local' } : {})}
           {...(showsUnread ? { 'data-arkme-conversation-unread': conversationUnreadCount } : {})}
           style={{
@@ -280,13 +290,19 @@ export function ArkmeProductNavigation({
             ...(active ? styles.activeButton : {}),
             ...(showsRecording ? recordingBreathStyle : {}),
           }}
-          onClick={() => { void socialAccessStore.refresh(); setRecordingHintOpen(false); activate(item.id) }}
-          onMouseEnter={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
-          onMouseLeave={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
-          onFocus={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
-          onBlur={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
+          onClick={() => { void socialAccessStore.refresh(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
+          onMouseEnter={event => {
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            else navigationHint.show(event.currentTarget, item.id, hint)
+          }}
+          onMouseLeave={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
+          onFocus={event => {
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            else navigationHint.show(event.currentTarget, item.id, hint, true)
+          }}
+          onBlur={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
           onDoubleClick={item.id === 'conversations' && !locked ? () => { arkmeUi.locateNextUnreadConversation() } : undefined}
-          title={item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
+          title={compact && item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
           aria-keyshortcuts={item.id === 'conversations' && !locked ? 'Shift+Enter' : undefined}
           onKeyDown={event => {
             if (item.id === 'recordings' && event.key === 'Escape') setRecordingHintOpen(false)
@@ -314,10 +330,11 @@ export function ArkmeProductNavigation({
               style={styles.unreadIndicator}
             >{conversationUnreadLabel}</span>}
           </span>
-          <span style={styles.label}>{showsRecording ? tr("录音中") : item.label}</span>
+          {compact && <span style={styles.label}>{showsRecording ? tr("录音中") : item.label}</span>}
         </button>
       })}
       </div>
+      {navigationHint.tooltip}
       {isRecording && recordingHintOpen && <ArkmeRecordingNavigationHint anchor={recordingButtonRef} elapsedMillis={recording.elapsedMillis} startedAt={recording.startedAt} id={recordingHintId} />}
       {ui.calendarOpen === true && typeof document !== 'undefined' && createPortal(<ArkmePersonalDayCalendar
         accountScope={authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${authState.auth.userId}` : undefined}
@@ -349,8 +366,13 @@ export function ArkmeProductNavigation({
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
-        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")} title={`${membershipLabel(membership.state)} · ${membershipDescription(membership.state)}`} onClick={() => { setProfileOpen(value => !value) }}>
-          <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
+        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")}
+          aria-describedby={navigationHint.describedBy('profile')}
+          onMouseEnter={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
+          onMouseLeave={navigationHint.hide}
+          onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
+          onBlur={navigationHint.hide}
+          onClick={() => { navigationHint.hide(); setProfileOpen(value => !value) }}>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label={tr("当前用户头像")} />
         </button>
         {memberScope && memberUserId !== undefined && membershipOpenScope === memberScope && <ArkmeMembershipDialog key={memberScope} userId={memberUserId} state={membership.state} onRefresh={membership.refresh} returnFocusRef={profileTriggerRef} onClose={() => { setMembershipOpenScope(undefined) }} />}

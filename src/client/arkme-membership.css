@@ -1,4 +1,4 @@
-.arkme-redesign-rail-footer > button.arkme-redesign-profile { height: auto; min-height: 62px; gap: 3px; padding: 4px 0; }
+.arkme-redesign-rail-footer > button.arkme-redesign-profile { height: 44px; min-height: 44px; padding: 4px 0; }
 .arkme-member-label { font-size: 10px; line-height: 14px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .arkme-member-label[data-tier='1'] { color: #876ce8; }
 .arkme-member-label[data-tier='2'] { color: #99700d; }

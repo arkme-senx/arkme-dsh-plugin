@@ -50,7 +50,7 @@ function status(patch: Partial<ArkmePluginUpdateStatus> = {}): ArkmePluginUpdate
 }
 
 describe('Arkme product plugin update entry', () => {
-  it('shows the packaged plugin version without exposing a plugin update entry', () => {
+  it('keeps the packaged version accessible on the brand without persistent version text or an update entry', () => {
     updateState.snapshot = {
       checked: true,
       busy: false,
@@ -63,7 +63,8 @@ describe('Arkme product plugin update entry', () => {
     )
 
     expect(availableMarkup).toContain(`data-arkme-plugin-version="${pluginManifest.version}"`)
-    expect(availableMarkup).toContain(`>v${pluginManifest.version}</span>`)
+    expect(availableMarkup).toContain(`aria-label="Arkme v${pluginManifest.version}"`)
+    expect(availableMarkup).not.toContain(`>v${pluginManifest.version}</span>`)
     expect(availableMarkup).not.toContain('Arkme 核心插件')
     expect(availableMarkup).not.toContain('更新 Arkme 插件')
   })
