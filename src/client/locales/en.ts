@@ -1,5 +1,26 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+个人档案已授权，重试启动分析|Profile authorized. Retry starting analysis
+操作未完成，已重新读取当前设置。请检查后重试。|The operation did not complete. Current settings have been reloaded. Review them and try again.
+无法读取当前设置，请重试|Could not load current settings. Please try again.
+正在读取设置…|Loading settings…
+正在开启…|Enabling…
+同意并开启|Agree and enable
+开启后消耗你的 AI 积分。正常分析按实际用量计费，没有生成结果也会计费。余额不足时停止新的分析，可随时关闭。|This consumes your AI points. Successful analysis is charged by actual usage even if it produces no result. New analysis stops when your balance is insufficient. You can turn this off at any time.
+开启自动 AI|Enable automatic AI
+目标自动更新|Automatic goal updates
+识别安排|Task recognition
+聊天建议|Chat suggestions
+快记建议|Note suggestions
+个人档案|Personal profile
+根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
+根据开启后的聊天生成仅自己可见的建议。|Generate private suggestions from chats after you enable this feature.
+根据开启后的新快记生成建议。|Generate suggestions from new notes after you enable this feature.
+持续更新个人档案。首次开启会分析所选来源的历史材料。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources.
+关闭后不再开始新的模型调用，已发出的调用可能完成并产生费用。已生成的内容保留。除个人档案首次分析外，不补跑开启前的历史材料。|Turning a feature off prevents new model calls. Calls already sent may finish and incur charges. Existing content is kept. Only the initial personal profile analysis includes material from before opt-in.
+所有功能默认关闭，两端共享设置。开启后按实际模型用量消耗本人的 AI 积分；正常分析没有产出也计费。系统异常重试不重复收费。|All features are off by default and settings are shared across devices. When enabled, actual model usage consumes your AI points, even when no result is produced. System retries do not charge you again.
+自动 AI|Automatic AI
 统计尚未启用|Statistics not enabled
 录音转写统计尚未启用|Recording transcription statistics are not enabled yet
 来源明细|Source breakdown

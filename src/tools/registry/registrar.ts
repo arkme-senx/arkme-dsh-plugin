@@ -21,6 +21,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_archive_set',
   'arkme_official_notifications_read',
   'arkme_background_sound_disable',
+  'arkme_disable_automatic_ai',
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
@@ -103,6 +104,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
     ? '是否确认将这个主题的快记展示在首页？'
     : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'
+  if (name === 'arkme_disable_automatic_ai') return `是否关闭自动 AI 功能“${cleanArgument(args.key, 40)}”？关闭后不再开始新的模型调用，已经发出的调用可能完成并产生费用。`
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'

@@ -1,3 +1,4 @@
+import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { AppMigrationManager } from './app-migration.js'
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { TeamAppOperation } from './team-app-contract.js'
@@ -1230,6 +1231,8 @@ export async function dispatchArkmeHostOperation(
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
+    case 'account.capabilities.query': return await service.automaticCapabilities(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.capabilities.update': return await service.updateAutomaticCapability({ key: params.key, enabled: params.enabled, expectedVersion: params.expectedVersion, billingConsent: params.billingConsent } as ArkmeCapabilityUpdate, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.points.query': return await service.aiPointsAccount(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.points.consumption': return await service.aiPointsConsumption({ month: stringParam(params, 'month'), ...(typeof params.beforeId === 'string' && params.beforeId ? { beforeId: params.beforeId } : {}) }, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))

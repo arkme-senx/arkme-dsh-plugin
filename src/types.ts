@@ -1401,6 +1401,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     aiPoints?: true
+    automaticCapabilitiesV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -3920,6 +3921,8 @@ export type ArkmePluginOperation =
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
+  | 'account.capabilities.query'
+  | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
   | 'account.usage.tokens'

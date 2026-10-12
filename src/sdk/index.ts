@@ -1,3 +1,5 @@
+import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
+export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
 import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
 export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
@@ -512,6 +514,15 @@ export class ArkmeSdk {
     return capabilities
   }
 
+  async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.query', { expectedAccountScope }, signal)
+  }
+  /** Enable only after a human explicitly accepts ongoing actual-usage charges. */
+  async updateAutomaticCapability(expectedAccountScope: string, input: ArkmeCapabilityUpdate, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.update', { expectedAccountScope, ...input }, signal)
+  }
   async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
     if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
     return this.call('account.points.query', { expectedAccountScope }, signal)

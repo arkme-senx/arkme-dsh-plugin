@@ -74,7 +74,8 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
 function consumptionLabel(businessCode: string): string {
   if (businessCode === 'agent') return 'Agent'
   if (businessCode === 'arkme') return tr('DSH 对话')
-  return tr('AI 调用')
+  const labels: Record<string,string> = { personal_profile: '个人档案', record_thought: '快记建议', chat_thought: '聊天建议', arrangement_recognition: '安排识别', goal_insight: '目标自动更新' }
+  return tr(labels[businessCode] ?? 'AI 调用')
 }
 
 function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {
