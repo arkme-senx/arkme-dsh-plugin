@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
@@ -58,6 +59,29 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
+  }, 30_000)
+
+  it('ships browser factories without unresolved local chunk requires', () => {
+    runPnpm(['run', 'bundle'])
+    const libDirectory = join(projectRoot, 'lib')
+    const factories = readdirSync(libDirectory)
+      .filter(path => path === 'client.js' || /^harness-.*-client\.js$/.test(path))
+    expect(factories.length).toBeGreaterThanOrEqual(7)
+    for (const file of factories) {
+      const source = readFileSync(join(libDirectory, file), 'utf8')
+      expect(source, file).toContain('window.__ModuleLoader__.load(')
+      const localModules: string[] = []
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node)
+          && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+            || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+          && node.arguments[0] && ts.isStringLiteral(node.arguments[0])
+          && /^\.\.?\//.test(node.arguments[0].text)) localModules.push(node.arguments[0].text)
+        ts.forEachChild(node, visit)
+      }
+      visit(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS))
+      expect(localModules, file).toEqual([])
+    }
   }, 30_000)
 
   it('loads cloud history validators from the consuming Harness instead of bundling the development DSH', () => {

@@ -43,11 +43,11 @@ describe('automatic capability consent through packed official DSH',()=>{
     }
     let data={items:[],users:[],has_more:false}
     if(req.url==='/api/public/v1/auth/the-best-api-for-testing')data={access_token:token,refresh_token:'isolated-test-refresh'}
-    if(req.url==='/api/v1/auth/get-user-info')data={user_id:10001,nick_name:'自动 AI 验收',phone:'13800000000'}
+    if(req.url==='/api/v1/auth/get-user-info')data={user_id:10001,nick_name:'自动 AI 验收',phone:'13800000000',phone_binding_policy:{mode:'none'}}
     res.setHeader('content-type','application/json');res.end(JSON.stringify({code:200,data}))
    }catch(error){res.statusCode=500;res.end(JSON.stringify({message:String(error)}))}
   })
-  let scaffold,browser,failure
+  let scaffold,browser,page,failure
   try {
    proxy.listen(0,'127.0.0.1');await once(proxy,'listening')
    const origin=`https://127.0.0.1:${proxy.address().port}`
@@ -63,7 +63,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    expect((await sdk.automaticCapabilities(scope)).settings).toHaveLength(5)
    expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
-   const page=await browser.newPage({viewport:{width:1280,height:900},locale:'en-US'})
+   page=await browser.newPage({viewport:{width:1280,height:900},locale:'en-US'})
    await page.goto(scaffold.authenticatedUrl,{waitUntil:'load'})
    const frame=page.frameLocator('iframe[title="DeepSeek Harness"]')
    await connectFreshWorkspace(frame,scaffold.workspaceCwd)
@@ -88,7 +88,15 @@ describe('automatic capability consent through packed official DSH',()=>{
    await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
    await expect.poll(()=>toggle.getAttribute('aria-checked')).toBe('false')
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
-  }catch(error){failure=error;throw error}finally{
+  }catch(error){
+   failure=error
+   if(page && process.env.ARKME_E2E_SCREENSHOT){
+    await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-failure.png')}).catch(()=>{})
+    console.error('Visible fixture UI',await page.locator('body').innerText().catch(()=>''))
+    for(const child of page.frames().slice(1))console.error('Fixture frame',await child.locator('body').innerText().catch(()=>''))
+   }
+   throw error
+  }finally{
    await browser?.close()
    if(scaffold)await scaffold.ctx.get('arkmeData').logout()
    try{await scaffold?.close()}catch(error){if(!failure)throw error}

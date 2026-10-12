@@ -20,3 +20,5 @@ Tools 的开启方式是引导用户进入交互设置页，而不是让模型�
 - PC 浏览器验收覆盖控制行为；个人档案真实生成与积分结算由跨仓 Flutter/Record/Core/Intelligent/MySQL circuit 验证。未将 PC 缺少档案结果页表述为完整结果展示支持。
 
 本轮实机为 macOS；未宣称执行 Windows/Linux 实机测试。运行 E2E 需要 `ARKME_DSH_CHECKOUT`、正式 tgz 安装后的 `ARKME_PACKED_PROFILE`、真实 Record fixture 的 `ARKME_RECORD_E2E_ORIGIN` 与本地 TLS fixture（`ARKME_E2E_TLS_KEY` / `NODE_EXTRA_CA_CERTS`），然后从官方 DSH 仓运行 `pnpm exec vitest run --config <plugin>/vitest.automatic-capability-e2e.config.mts`。
+
+最新 `dev` 合入后的正式安装复验发现 `social-action-guard` 的动态 import 令浏览器 factory 引用相对 `.cjs` 分块，官方 DSH 的命名模块加载器无法解析，导致 Harness 页面无法启动。现所有浏览器 factory 设置 `codeSplitting: false`，不修改 DSH；`tests/package-contents.test.ts` 对真实构建产物解析 AST，检查全部 factory 没有未注册的相对 require/import。此检查与正式安装回路共同防止源码单测通过但交付包不可用。
