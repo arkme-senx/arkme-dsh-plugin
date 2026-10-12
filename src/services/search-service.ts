@@ -1,3 +1,5 @@
+import { LocationSearchService } from './location-search-service.js'
+import type { LocationQuery } from '../location-search.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import type { ProfileService } from './profile-service.js'
 import { parseRecordingSearchItem } from '../recording-search-result.js'
@@ -43,6 +45,12 @@ export class SearchService {
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly profile?: ProfileService,
   ) {}
+
+  async searchLocations(query: LocationQuery, signal?: AbortSignal) {
+    return await new LocationSearchService(this.runtime, this.privacy, async (items, locked, requestSignal) =>
+      (await this.withNavigationTargets(this.recordSearchResult({ items }, locked), requestSignal)).items,
+    ).query(query, signal)
+  }
 
   async searchRecords(options: {
     query: string
