@@ -77,7 +77,10 @@ it('edits owner profile, crops/uploads/resets, blocks members, and invokes the r
   const section=page.locator('[data-directory-section="teams"]'),toggle=section.locator('.arkme-contact-directory-section-header');if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click()
   await section.getByRole('button',{name:/资料验收团队/}).click()
   const detail=page.locator('.arkme-team-detail');await detail.getByRole('button',{name:'编辑团队',exact:true}).click()
-  let dialog=page.getByRole('dialog',{name:'编辑团队',exact:true});await dialog.waitFor();await dialog.getByRole('textbox',{name:'团队名称'}).fill('已修改团队')
+  let dialog=page.getByRole('dialog',{name:'编辑团队',exact:true});await dialog.waitFor()
+  await page.mouse.click(15,15);await expect.poll(()=>dialog.count()).toBe(0)
+  await detail.getByRole('button',{name:'编辑团队',exact:true}).click();await dialog.waitFor();await dialog.getByRole('textbox',{name:'团队名称'}).fill('已修改团队')
+  await page.mouse.click(15,15);expect(await dialog.isVisible()).toBe(true)
   await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect.poll(()=>name).toBe('已修改团队');await expect.poll(()=>dialog.count()).toBe(0)
   await detail.getByRole('button',{name:'编辑团队',exact:true}).click();dialog=page.getByRole('dialog',{name:'编辑团队',exact:true});await dialog.waitFor()
   await dialog.locator('input[type=file]').setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:image})
@@ -85,6 +88,19 @@ it('edits owner profile, crops/uploads/resets, blocks members, and invokes the r
   await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect.poll(()=>custom).toBe(true);await expect.poll(()=>dialog.count()).toBe(0)
   await detail.locator('[data-arkme-avatar] img').first().waitFor();expect(calls.some(c=>c.path.endsWith('/prepare-upload'))).toBe(true);if(!realTeam)expect(calls.find(c=>c.input.method==='PUT')?.input).toMatchObject({contentType:'image/jpeg'});expect(calls.find(c=>c.input.method==='PUT')?.input.authorization).toBeUndefined();if(!realTeam)expect(uploadedImage?.subarray(0,2).toString('hex')).toBe('ffd8')
   const captures=process.env.ARKME_E2E_CAPTURE_DIR;if(captures){await mkdir(captures,{recursive:true});await page.screenshot({path:join(captures,'team-custom-avatar.png')})}
+  for(const width of [1200,650,480]) {
+   await page.setViewportSize({width,height:900})
+   await expect.poll(()=>detail.evaluate(node=>node.scrollWidth-node.clientWidth)).toBeLessThanOrEqual(0)
+   const geometry=await detail.evaluate(node=>{
+    const wrapper=node.querySelector('.arkme-team-detail-glyph'),avatar=wrapper.firstElementChild,img=wrapper.querySelector('img'),heading=node.querySelector('h1'),entry=node.querySelector('.arkme-team-profile-entry')
+    const a=wrapper.getBoundingClientRect(),b=avatar.getBoundingClientRect(),c=img.getBoundingClientRect(),h=heading.getBoundingClientRect(),e=entry.getBoundingClientRect(),style=getComputedStyle(wrapper)
+    return {width:a.width,avatarWidth:b.width,imageWidth:c.width,background:style.backgroundColor,radius:style.borderRadius,gap:e.left-h.right,aligned:Math.abs(h.top+h.height/2-e.top-e.height/2),label:entry.textContent.trim(),overflow:node.scrollWidth>node.clientWidth}
+   })
+   expect(geometry).toMatchObject({width:width>820?72:56,avatarWidth:width>820?72:56,imageWidth:width>820?72:56,background:'rgba(0, 0, 0, 0)',radius:'50%',label:'',overflow:false})
+   expect(geometry.gap).toBeCloseTo(6);expect(geometry.aligned).toBeLessThan(1)
+   if(captures)await page.screenshot({path:join(captures,`team-header-${width}.png`)})
+  }
+  await page.setViewportSize({width:1200,height:900})
   await detail.getByRole('button',{name:'编辑团队',exact:true}).click();dialog=page.getByRole('dialog',{name:'编辑团队',exact:true});await dialog.getByRole('button',{name:'更换团队头像',exact:true}).click();let menu=dialog.getByRole('menu',{name:'团队头像操作'});await menu.waitFor();expect(await menu.getByRole('menuitem',{name:/使用名称头像/}).count()).toBe(1);await page.keyboard.press('Escape');await expect.poll(()=>menu.count()).toBe(0);expect(await dialog.isVisible()).toBe(true);await dialog.getByRole('textbox',{name:'团队名称'}).fill('ab团队');await dialog.getByRole('button',{name:'更换团队头像',exact:true}).click();menu=dialog.getByRole('menu',{name:'团队头像操作'});await menu.waitFor();expect(await menu.locator('.arkme-team-name-avatar').innerText()).toBe('AB')
   await page.setViewportSize({width:650,height:800});expect((await dialog.boundingBox()).width).toBeLessThan(620);expect(await dialog.evaluate(n=>n.scrollWidth<=n.clientWidth)).toBe(true)
   expect(await menu.getByText('随团队名称自动更新').evaluate(n=>{const rect=n.getBoundingClientRect();return n.closest('[role=menu]').contains(document.elementFromPoint(rect.left+rect.width/2,rect.bottom-2))})).toBe(true);

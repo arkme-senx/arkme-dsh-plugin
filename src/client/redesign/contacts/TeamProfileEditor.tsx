@@ -86,6 +86,10 @@ export function TeamProfileEditor({ profile, onClose, onUpdated }: {
             event.preventDefault(); event.stopPropagation(); setAvatarMenu(false);
             dialog.current?.querySelector<HTMLButtonElement>('.arkme-team-profile-avatar-trigger')?.focus();
         }
+    }} onClick={event => {
+        if (event.target !== event.currentTarget || busy || source || avatarMenu || file || (reset && profile.avatar.mode === 'custom') || name.trim() !== profile.name.trim()) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
     }} onCancel={event => { if (busy || source)
         event.preventDefault();
     else

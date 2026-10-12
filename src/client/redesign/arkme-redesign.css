@@ -1635,11 +1635,19 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
   align-items: center; gap: 18px; margin: 0 auto;
 }
 .arkme-team-detail-glyph {
-  width: 72px; height: 72px; display: grid; place-items: center; border-radius: 20px;
-  background: var(--dsw-alias-state-business-tertiary, #eef0ff); color: var(--dsw-alias-state-business-primary, #4f5fbf);
-  font-size: 20px; line-height: 1; font-weight: 700;
+  --arkme-team-detail-avatar-size: 72px;
+  width: var(--arkme-team-detail-avatar-size); height: var(--arkme-team-detail-avatar-size);
+  display: grid; place-items: center; border-radius: 50%; overflow: hidden;
 }
+.arkme-team-detail-glyph > span, .arkme-team-detail-glyph .arkme-team-name-avatar { width: 100% !important; height: 100% !important; }
+.arkme-team-detail-glyph .arkme-team-name-avatar { font-size: calc(var(--arkme-team-detail-avatar-size) * .32) !important; }
 .arkme-team-detail-summary { min-width: 0; display: grid; gap: 7px; }
+.arkme-team-detail-title-row { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.arkme-team-detail-title-row h1 { min-width: 0; }
+.arkme-team-profile-entry { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: var(--dsw-alias-label-secondary, #717780); cursor: pointer; }
+.arkme-team-profile-entry:hover { background: var(--dsw-alias-bg-layer-2, #f2f3f5); color: var(--dsw-alias-label-primary, #292929); }
+.arkme-team-profile-entry:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #4f5fbf); outline-offset: 2px; }
+.arkme-team-profile-entry:disabled { opacity: .5; cursor: default; }
 .arkme-team-detail-header h1 {
   margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; line-height: 28px;
   font-weight: 650; letter-spacing: -.02em;
@@ -2059,7 +2067,7 @@ body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-
   .arkme-contact-profile-avatar > span { width: 56px !important; height: 56px !important; }
   .arkme-team-detail-header { padding: 26px 20px; }
   .arkme-team-detail-header-main { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
-  .arkme-team-detail-glyph { width: 56px; height: 56px; border-radius: 16px; font-size: 18px; }
+  .arkme-team-detail-glyph { --arkme-team-detail-avatar-size: 56px; }
   .arkme-team-detail-count { grid-column: 2; min-width: 0; display: flex; justify-items: initial; align-items: baseline; gap: 4px; }
   .arkme-team-detail-count strong { font-size: 14px; line-height: 18px; }
   .arkme-team-detail-count span { font-size: 11px; }

@@ -8,7 +8,18 @@ import {TeamProfileEditor} from '../src/client/redesign/contacts/TeamProfileEdit
 const profile={profileRef:'opaque',name:'团队',jotmoId:'test_team',profileRevision:3,canEditProfile:true,avatar:{mode:'default' as const,key:'default'}}
 let view:ReactTestRenderer|undefined
 afterEach(()=>{if(view)act(()=>view!.unmount());view=undefined;mocks.call.mockReset()})
-function mount(overrides={},onUpdated=vi.fn()) {act(()=>{view=create(<TeamProfileEditor profile={{...profile,...overrides}} onClose={()=>undefined} onUpdated={onUpdated}/>,{createNodeMock:node=>node.type==='dialog'?{showModal(){}}:null})});return onUpdated}
+function mount(overrides={},onUpdated=vi.fn(),onClose=vi.fn()) {act(()=>{view=create(<TeamProfileEditor profile={{...profile,...overrides}} onClose={onClose} onUpdated={onUpdated}/>,{createNodeMock:node=>node.type==='dialog'?{showModal(){}}:null})});return onUpdated}
+it('dismisses an unchanged form on the backdrop and preserves unsaved edits',()=>{
+ const close=vi.fn();mount({},vi.fn(),close)
+ const target={getBoundingClientRect:()=>({left:100,top:100,right:500,bottom:400})}
+ const click=(x:number,y:number)=>act(()=>view!.root.findByType('dialog').props.onClick({target,currentTarget:target,clientX:x,clientY:y}))
+ click(110,110);expect(close).not.toHaveBeenCalled()
+ click(20,20);expect(close).toHaveBeenCalledOnce();close.mockClear()
+ act(()=>view!.root.findByProps({'aria-label':'团队名称'}).props.onChange({currentTarget:{value:'未保存名字'}}))
+ click(20,20);expect(close).not.toHaveBeenCalled();expect(mocks.call).not.toHaveBeenCalled()
+ act(()=>view!.root.findByProps({'aria-label':'团队名称'}).props.onChange({currentTarget:{value:'团队'}}))
+ click(20,20);expect(close).toHaveBeenCalledOnce()
+})
 it('saves a compact owner form and preserves the exact request identity on retry',async()=>{
  const updated=mount();mocks.call.mockRejectedValueOnce(new Error('temporary')).mockResolvedValueOnce({acceptedRevision:4,profile:{...profile,name:'新名',profileRevision:4}})
  act(()=>view!.root.findByProps({'aria-label':'团队名称'}).props.onChange({currentTarget:{value:'新名'}}))

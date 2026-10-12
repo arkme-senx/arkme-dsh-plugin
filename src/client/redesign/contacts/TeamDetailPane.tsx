@@ -2,6 +2,7 @@ import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
 import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
 import type { TeamMembers } from '../../../team-app-contract.js'
@@ -178,9 +179,14 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
     <header className="arkme-team-detail-header">
       <div className="arkme-team-detail-header-main">
-        <span className="arkme-team-detail-glyph" aria-hidden><ArkmeTeamAvatar avatar={page.team.avatar} name={page.team.name} size={80}/></span>
+        <span className="arkme-team-detail-glyph" aria-hidden><ArkmeTeamAvatar avatar={page.team.avatar} name={page.team.name} size={72}/></span>
         <div className="arkme-team-detail-summary">
-          <h1>{page.team.name}</h1>{page.team.canEditProfile===true&&<button type="button" className="arkme-team-profile-entry" aria-label="编辑团队" disabled={profileBusy} onClick={()=>{void openProfile()}}>编辑</button>}
+          <div className="arkme-team-detail-title-row">
+            <h1>{page.team.name}</h1>
+            {page.team.canEditProfile === true && <button type="button" className="arkme-team-profile-entry" aria-label="编辑团队" title="编辑团队" disabled={profileBusy} onClick={() => { void openProfile() }}>
+              <PencilSimple size={16} aria-hidden />
+            </button>}
+          </div>
           <div className="arkme-team-detail-meta">
             <span className="arkme-team-detail-public-id">@{page.team.jotmoId}</span>
             <span className="arkme-team-role-badge" data-team-role={page.team.currentUserRole}>

@@ -84,7 +84,6 @@
 .arkme-team-profile-actions button[type=submit]{background:var(--dsw-alias-label-primary,#343b48);color:var(--dsw-alias-bg-base,#fff);border-color:transparent;font-weight:600}
 .arkme-team-profile-editor button:disabled{opacity:.5;cursor:default}
 .arkme-team-profile-error{color:var(--dsw-alias-label-error,#bf3030);font-size:13px;line-height:1.5}
-.arkme-team-profile-entry{border:0;background:transparent;color:var(--dsw-alias-label-secondary,#717780);cursor:pointer;font:inherit;font-size:13px;padding:5px 0}
 
 .arkme-team-profile-avatar-option{display:grid;gap:3px;text-align:left;font-size:13px;line-height:1.4}
 .arkme-team-profile-avatar-option small{font-size:11px;color:var(--dsw-alias-label-secondary,#717780)}
