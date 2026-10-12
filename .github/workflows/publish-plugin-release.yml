@@ -14,7 +14,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    if: github.event.pull_request.merged == true
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      ref: ${{ github.sha }}
+
   prepare:
+    needs: tests
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
@@ -26,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: 识别已有发版结果
         id: source
@@ -86,7 +95,6 @@ jobs:
       - name: 验证待发布内容
         if: steps.source.outputs.release_sha == ''
         run: |
-          pnpm test
           pnpm run typecheck
           pnpm run verify:call-assets
           pnpm run build
