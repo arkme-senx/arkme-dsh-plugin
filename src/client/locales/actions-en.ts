@@ -1,5 +1,8 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '更新中': 'Updating',
+  '录音日历更新失败': 'Recording calendar could not be updated',
+  '重试更新日历': 'Retry calendar update',
   '共享文字可供对方的 Agent 和日历使用，不包含原始音频。': 'Shared text can be used by the recipient’s Agent and calendar. Original audio is not included.',
   '正在核对共享文字…': 'Checking shared text access…',
   '取消读取': 'Cancel reading',
