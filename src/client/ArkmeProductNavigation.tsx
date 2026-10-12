@@ -94,6 +94,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', justifyContent: 'flex-start', gap: 2,
     overflow: 'visible', borderRadius: 10, background: 'transparent',
   },
+  brandVersion: { color: theme.tertiary, fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
     minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
     // Keep the existing edge marker and focus outline inside the scroll viewport.
@@ -252,7 +253,7 @@ export function ArkmeProductNavigation({
         ...(hidden ? { display: 'none' } : {}),
       }}
     >
-      {!compact && <div data-arkme-owned="product-brand" data-arkme-plugin-version={pluginManifest.version}
+      {!compact && <div data-arkme-owned="product-brand"
         style={styles.brand} tabIndex={0} aria-label={`Arkme ${productVersion}`}
         aria-describedby={navigationHint.describedBy('brand')}
         onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`) }}
@@ -260,6 +261,7 @@ export function ArkmeProductNavigation({
         onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`, true) }}
         onBlur={navigationHint.hide}>
         <ArkmeJiwoBrandMark />
+        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>{productVersion}</span>
       </div>}
       <div style={{ ...styles.primary,
         ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
