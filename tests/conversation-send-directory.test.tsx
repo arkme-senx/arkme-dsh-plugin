@@ -1852,7 +1852,10 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(mode === 'cached-bottom' ? body.scrollHeight : 200)
     const reads = mocks.callArkme.mock.calls.slice(beforeReturn).filter(([op, params]) => op === 'source.timeline' && params?.sourceRef === target.sourceRef)
     expect(reads).toHaveLength(1)
-    expect(reads[0]?.[1]?.cursor?.unified).toEqual(expect.objectContaining({ mode: 'refresh' }))
+    if (mode === 'cached-bottom') {
+      expect(reads[0]?.[1]?.cursor).toBeUndefined()
+      expect(reads[0]?.[1]?.limit).toBe(40)
+    } else expect(reads[0]?.[1]?.cursor?.unified).toEqual(expect.objectContaining({ mode: 'refresh' }))
     expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
   })
 

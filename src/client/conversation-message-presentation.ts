@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeIntlLocale } from './locale.js'
+import { formatConversationDate } from './conversation-date-format.js'
 
 /** Shared conversation geometry; business state and permissions stay with each owner. */
 export const arkmeConversationMessageLayout = {
@@ -40,9 +40,9 @@ export function dayKey(value: number): string {
 }
 
 export function dayLabel(value: number): string {
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(new Date(value))
+  return formatConversationDate(new Date(value), 'day')
 }
 
 export function timeLabel(value: number): string {
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+  return formatConversationDate(new Date(value), 'time')
 }

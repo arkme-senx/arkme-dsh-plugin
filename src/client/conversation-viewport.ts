@@ -1,3 +1,4 @@
+import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
 import { useCallback, useLayoutEffect, type MutableRefObject, type RefObject } from 'react'
 import {
   arkmeConversationRestoredScrollTop,
@@ -15,10 +16,12 @@ export interface ArkmeConversationViewportRestore {
   viewport: ArkmeConversationViewportSnapshot | undefined
   /** Explicit newer-page navigation, not a saved reading position. */
   newerPageStartAnchorId?: string
+  /** Previous tail geometry for continuous live arrivals; never used for history restoration. */
+  liveTail?: { id: string; offset: number } | undefined
 }
 
 export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false): ArkmeConversationViewportSnapshot {
-  const stickToBottom = !messagesOnly && root.scrollHeight - root.scrollTop - root.clientHeight <= 80
+  const stickToBottom = !messagesOnly && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
   if (stickToBottom) return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
   for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
@@ -36,6 +39,14 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
     }
   }
   return { scrollTop: root.scrollTop, stickToBottom: false }
+}
+
+export function arkmeConversationLiveTail(root: HTMLDivElement | null): ArkmeConversationViewportRestore['liveTail'] {
+  if (!root || !arkmeConversationViewport(root).stickToBottom) return undefined
+  const rows = root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')
+  const tail = rows[rows.length - 1]
+  const id = tail?.dataset.arkmeConversationRow
+  return id ? { id, offset: tail!.getBoundingClientRect().top - root.getBoundingClientRect().top } : undefined
 }
 
 /** Read actual message/interaction rows only when opening a calendar; never count system notices. */
@@ -111,21 +122,33 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
   }, [ready, sourceKey, store, pendingRestore])
 
   useLayoutEffect(() => {
+    const node = bodyRef.current
+    return () => { if (node) cancelConversationFollow(node) }
+  }, [ready, sourceKey, bodyRef])
+
+  useLayoutEffect(() => {
     const pending = pendingRestore.current
     const body = bodyRef.current
     if (!ready || body === null || body.clientHeight <= 0 || pending?.sourceKey !== sourceKey) return
     const anchorOffset = arkmeConversationAnchorOffset(body, pending.viewport?.anchorId)
     const newerPageStartOffset = arkmeConversationAnchorOffset(body, pending.newerPageStartAnchorId)
     const maximumScrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
-    body.scrollTop = pending.newerPageStartAnchorId === undefined
-      ? arkmeConversationRestoredScrollTop(pending.viewport, {
-        currentScrollTop: body.scrollTop,
-        scrollHeight: body.scrollHeight,
-        ...(anchorOffset === undefined ? {} : { anchorOffset }),
-      })
-      : Math.max(0, Math.min(maximumScrollTop, newerPageStartOffset === undefined
-        ? pending.viewport?.scrollTop ?? body.scrollTop
-        : body.scrollTop + newerPageStartOffset))
+    const liveOffset = arkmeConversationAnchorOffset(body, pending.liveTail?.id)
+    if (pending.liveTail && liveOffset !== undefined && pending.viewport?.stickToBottom) {
+      body.scrollTop += liveOffset - pending.liveTail.offset
+      followConversationBottom(body)
+    } else {
+      cancelConversationFollow(body)
+      body.scrollTop = pending.newerPageStartAnchorId === undefined
+        ? arkmeConversationRestoredScrollTop(pending.viewport, {
+          currentScrollTop: body.scrollTop,
+          scrollHeight: body.scrollHeight,
+          ...(anchorOffset === undefined ? {} : { anchorOffset }),
+        })
+        : Math.max(0, Math.min(maximumScrollTop, newerPageStartOffset === undefined
+          ? pending.viewport?.scrollTop ?? body.scrollTop
+          : body.scrollTop + newerPageStartOffset))
+    }
     store.storeViewport(sourceKey, arkmeConversationViewport(body))
     if (restoreIntent !== undefined) {
       // Deferred layout follows the requested position, not temporary geometry.

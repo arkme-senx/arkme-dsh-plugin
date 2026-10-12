@@ -1,3 +1,4 @@
+import { arkmeConversationLiveTail } from './conversation-viewport.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ConversationViewportPersistence } from './conversation-viewport-persistence.js'
@@ -3917,7 +3918,7 @@ export function ArkmeSurface({
         const start = new Map((sourceIsChat ? arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).items : [])
           .map(item => [item.itemUid, item]))
         const result = await callArkme<ArkmeTimelinePage>('source.timeline', {
-          sourceRef, limit: refreshWindow === undefined ? limit : 100,
+          sourceRef, limit: refreshWindow === undefined || refreshWindow.unified && pageCursor === undefined ? limit : 100,
           ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
         }, signal)
         for (const item of result.items) readStartDeltas.set(item.itemUid, start.get(item.itemUid))
@@ -3925,7 +3926,12 @@ export function ArkmeSurface({
       }, { signal }), controller.signal)
       try {
         page = refreshWindow === undefined ? await readPage(cursor)
-          : await readConversationTimelineWindow(refreshWindow, readPage, controller.signal)
+          : await readConversationTimelineWindow(refreshWindow, readPage, controller.signal, () =>
+            // On conversation entry the shared DOM may still belong to the outgoing
+            // view. Saved history intent takes precedence until layout restores it.
+            conversationCacheRef.current.getViewport(sourceKey)?.stickToBottom !== false
+            && bodyRef.current !== null && arkmeConversationViewport(bodyRef.current).stickToBottom
+            && arkmeUi.getSnapshot().conversationTarget === undefined)
       } catch (caught) {
         if (!(caught instanceof ArkmeClientError) || caught.body.code !== 'chat-timeline-window-invalid') throw caught
         const reading = conversationCacheRef.current.getViewport(sourceKey)
@@ -3991,7 +3997,9 @@ export function ArkmeSurface({
         const firstNewEvent = direction === 'newer' ? unified.events.find(event => !previousEventIds.has(event.eventId)) : undefined
         const newerPageStartAnchorId = firstNewEvent === undefined ? undefined : firstNewEvent.kind === 'message'
           ? `message:${firstNewEvent.eventId}` : firstNewEvent.kind === 'moment' ? `moment:${firstNewEvent.item.momentId}` : firstNewEvent.eventId
-        pendingViewportRestoreRef.current = { sourceKey, ...(newerPageStartAnchorId ? { newerPageStartAnchorId } : {}), viewport: intent === 'return-to-latest'
+        pendingViewportRestoreRef.current = { sourceKey,
+          ...((intent === 'refresh' || intent === 'background') ? { liveTail: arkmeConversationLiveTail(body) } : {}),
+          ...(newerPageStartAnchorId ? { newerPageStartAnchorId } : {}), viewport: intent === 'return-to-latest'
           ? { scrollTop: 0, stickToBottom: true } : !hadCachedTimeline && !restoredLocalTimeline && !preserve ? undefined
             : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history') }
         setTimelineView({ ...snapshot, sourceKey, mode, aroundSequenceRange: undefined,

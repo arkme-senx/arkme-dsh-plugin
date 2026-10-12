@@ -80,3 +80,53 @@ it('mounts bounded rows around a restored anchor and disconnects observers on un
     expect(disconnect).toHaveBeenCalled()
   } finally { host.remove(); vi.unstubAllGlobals() }
 })
+
+it('keeps surviving message components mounted as the bounded tail slides for 300 arrivals', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+  const mounts = new Map<number, number>()
+  function Row({ id }: { id: number }) {
+    useEffect(() => { mounts.set(id, (mounts.get(id) ?? 0) + 1) }, [id])
+    return <li data-row={id}>{id}</li>
+  }
+  function Fixture({ end }: { end: number }) {
+    const body = useRef<HTMLDivElement>(null)
+    const rows = Array.from({ length: 80 }, (_, i) => ({ id: String(end - 79 + i) }))
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}>
+      {rows.map(row => <Row key={row.id} id={Number(row.id)} />)}
+    </WindowedTimelineRows></ul></div>
+  }
+  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  try {
+    for (let end = 79; end < 380; end++) await act(async () => root.render(<Fixture end={end} />))
+    expect([...mounts.values()].every(n => n === 1)).toBe(true)
+    expect(host.querySelectorAll('[data-row]')).toHaveLength(80)
+    expect(host.querySelectorAll('[data-arkme-timeline-chunk]').length).toBeLessThanOrEqual(3)
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
+})
+
+it('fills the viewport after removals leave many short chunks, while keeping the row budget', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let notify: IntersectionObserverCallback
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {}; constructor(callback: IntersectionObserverCallback) { notify = callback } })
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  function Fixture({ sparse }: { sparse: boolean }) {
+    const body = useRef<HTMLDivElement>(null)
+    const rows = Array.from({ length: 2000 }, (_, n) => ({ id: `row-${n}` })).filter((_, n) => !sparse || n % 40 < 4)
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}>
+      {rows.map(row => <li key={row.id} data-row={row.id}>{row.id}</li>)}
+    </WindowedTimelineRows></ul></div>
+  }
+  try {
+    await act(async () => root.render(<Fixture sparse={false} />))
+    await act(async () => root.render(<Fixture sparse />))
+    await act(async () => {
+      notify!([...host.querySelectorAll('[data-arkme-timeline-chunk]')].slice(0, 20).map(target => ({ target, isIntersecting: true }) as IntersectionObserverEntry), {} as IntersectionObserver)
+      await vi.advanceTimersByTimeAsync(20)
+    })
+    expect(host.querySelector('[data-row="row-763"]')).not.toBeNull()
+    expect(host.querySelectorAll('[data-row]').length).toBeLessThanOrEqual(240)
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers() }
+})

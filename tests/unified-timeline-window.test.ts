@@ -63,3 +63,31 @@ describe('Host reconciliation bounds', () => {
     await expect(reconcileUnifiedTimeline({ windowTokens: ['w'] }, failed, signal())).rejects.toThrow('offline')
   })
 })
+
+describe('bounded live tail reads', () => {
+  it('replaces accumulated history with one authoritative tail and its actual older cursor', async () => {
+    const { readConversationTimelineWindow } = await import('../src/client/conversation-timeline-refresh.js')
+    const previous = window(Array.from({ length: 2000 }, (_, n) => event(String(n))))
+    const latest = page({ ...window([event('2001')]), olderCursor: 'tail-older', windowTokens: ['tail'] })
+    const read = vi.fn().mockResolvedValue(latest)
+    const result = await readConversationTimelineWindow({ unified: previous, items: [], mode: 'latest' }, read, signal(), () => true)
+    expect(read.mock.calls).toEqual([[]])
+    expect(result).toBe(latest)
+    expect(previous.events).toHaveLength(2000)
+  })
+  it.each(['history', 'around', 'gap', 'interrupted'] as const)('preserves the reading window for %s', async reason => {
+    const { readConversationTimelineWindow } = await import('../src/client/conversation-timeline-refresh.js')
+    const previous = window([event('anchor')])
+    let follows = reason !== 'history'
+    const latest = page(window([event('new')]))
+    if (reason === 'gap') latest.unified!.complete = false
+    const read = vi.fn(async cursor => {
+      if (cursor === undefined) { if (reason === 'interrupted') follows = false; return latest }
+      return page(window([event('anchor', 'updated')]))
+    })
+    const result = await readConversationTimelineWindow({ unified: previous, items: [], mode: reason === 'around' ? 'around' : 'latest' }, read, signal(), () => follows)
+    expect(result.unified!.events.map(e => e.eventId)).toEqual(['anchor'])
+    expect(read.mock.lastCall?.[0].unified.mode).toBe('refresh')
+    expect(result.unified!.olderCursor).toBe('history-frontier')
+  })
+})

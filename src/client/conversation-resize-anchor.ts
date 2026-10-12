@@ -1,3 +1,4 @@
+import { followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
 import { useLayoutEffect, useRef, type MutableRefObject, type RefObject } from 'react'
 
 interface ViewportMetrics { scrollTop: number; scrollHeight: number; clientHeight: number }
@@ -26,7 +27,11 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
     const nextAccessoryHeight = endAccessory?.getBoundingClientRect().height ?? 0
     const accessoryDelta = nextAccessoryHeight - accessoryHeight
     const nextContentHeight = content?.getBoundingClientRect().height ?? 0
-    if (before.clientHeight > 0 && after.clientHeight > 0 && before.clientHeight !== after.clientHeight) {
+    if (isConversationFollowing(body)) {
+      // Keep bottom intent through deferred virtual-chunk/media layout, even
+      // after the previous animation finished. User input cancels that intent.
+      followConversationBottom(body)
+    } else if (before.clientHeight > 0 && after.clientHeight > 0 && before.clientHeight !== after.clientHeight) {
       body.scrollTop = resizedConversationScrollTop(before, after)
     } else if (after.clientHeight > 0 && nextContentHeight !== contentHeight) {
       // Timeline commits have already restored their own anchors. Only follow
@@ -57,7 +62,10 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
         resize()
         return
       }
-      if (followBottom) body.scrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
+      if (followBottom) {
+        if (isConversationFollowing(body)) followConversationBottom(body)
+        else body.scrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
+      }
       before = read()
       accessoryHeight = endAccessory?.getBoundingClientRect().height ?? 0
       contentHeight = content?.getBoundingClientRect().height ?? 0
