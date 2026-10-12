@@ -1,0 +1,78 @@
+name: Arkme 全量测试分片
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 所有分片共同检出的精确提交
+        required: true
+        type: string
+      enabled:
+        type: boolean
+        default: true
+      release-sha:
+        description: 可选生产发布提交，执行源码前校验 master 归属
+        type: string
+        default: ''
+      release-version:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  ARKME_SKIP_PREPARE_BUILD: 'true'
+
+jobs:
+  test:
+    name: 测试分片 ${{ matrix.shard }}/4（4 路）
+    if: inputs.enabled
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 校验并检出生产发布提交
+        if: inputs.release-sha != ''
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+          VERSION: ${{ inputs.release-version }}
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch origin master
+          git merge-base --is-ancestor "$RELEASE_SHA" FETCH_HEAD
+          release_version=$(git show "${RELEASE_SHA}:package.json" | node -e \
+            "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).version)")
+          test "$release_version" = "$VERSION"
+          git checkout --detach "$RELEASE_SHA"
+      - name: 安装依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          zstd --version
+      - name: 执行全量测试分片
+        run: >-
+          pnpm exec vitest run --shard=${{ matrix.shard }}/4 --maxWorkers=4
+          --reporter=default --reporter=json
+          --outputFile.json=test-results/shard-${{ matrix.shard }}.json
+      - name: 保存分片报告
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: test-results/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 1
