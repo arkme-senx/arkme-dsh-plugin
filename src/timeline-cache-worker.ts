@@ -10,8 +10,8 @@ parentPort!.on('message', ({ id, command }: { id: number; command: TimelineCache
       case 'reserve': value = store.reserve(); break
       case 'read': value = store.read(command.scope, command.request, command.anchorId, command.latest); break
       case 'write': value = store.write(command.scope, command.request, command.page, command.options); break
-      case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal); break
-      case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal); break
+      case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break
+      case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'close': store.close(); parentPort!.postMessage({ id }); parentPort!.close(); return
     }
     parentPort!.postMessage({ id, value })

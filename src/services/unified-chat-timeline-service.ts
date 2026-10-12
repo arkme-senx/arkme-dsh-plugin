@@ -49,7 +49,7 @@ export class UnifiedChatTimelineService {
   private cache: TimelineCachePort | undefined
   private epoch = 0
   private disposed = false
-  private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number }>()
+  private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number; refreshRevision: number }>()
   private readonly pendingInvalidations = new Map<string, TimelineCacheCommand>()
   private invalidating: Promise<void> | undefined
   private readonly unsubscribe: (() => void) | undefined
@@ -68,21 +68,31 @@ export class UnifiedChatTimelineService {
     return this.cache
   }
 
+  /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
+  async refreshHint(sourceKey: string): Promise<void> {
+    await this.queueInvalidation(sourceKey, undefined, false, true)
+  }
+
   async invalidate(sourceKey: string, timelineItemKey?: string, terminal = false): Promise<void> {
+    await this.queueInvalidation(sourceKey, timelineItemKey, terminal, false)
+  }
+
+  private async queueInvalidation(sourceKey: string, timelineItemKey: string | undefined, terminal: boolean, refreshOnly: boolean): Promise<void> {
     if (this.disposed) return
     const known = this.knownSources.get(sourceKey)
     if (known) {
-      known.revision++
+      if (!refreshOnly) known.revision++
+      known.refreshRevision++
       this.runtime.invalidateKey?.(this.runtime.requestScope(known.userId), 'unified-timeline:')
     }
-    const key = JSON.stringify([sourceKey, timelineItemKey ?? '', terminal])
+    const key = JSON.stringify([sourceKey, timelineItemKey ?? '', terminal, refreshOnly])
     if (!this.pendingInvalidations.has(key) && this.pendingInvalidations.size >= 512) {
       // Never serve potentially revoked data when a bounded hint backlog overflows.
       this.pendingInvalidations.clear(); this.storage()?.close()
       return
     }
     this.pendingInvalidations.set(key, { ...(known ? { kind: 'invalidate' as const, scope: known.scope } : { kind: 'invalidate-source' as const, sourceKey }),
-      ...(timelineItemKey ? { timelineItemKey } : {}), terminal })
+      ...(timelineItemKey ? { timelineItemKey } : {}), terminal, ...(refreshOnly ? { refreshOnly: true } : {}) })
     // A sessions delta can contain hundreds of sources. Coalesce duplicate hints
     // and drain sequentially instead of overflowing the shared Worker admission queue.
     this.invalidating ??= Promise.resolve().then(async () => {
@@ -137,10 +147,11 @@ export class UnifiedChatTimelineService {
     const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef])
     const sourceItem = await this.source.sourceItem(source)
     const sourceKey = sourceItem.sourceKey ?? sourceRef
-    const state = this.knownSources.get(sourceKey) ?? { scope, userId: session.userId, revision: 0 }
+    const state = this.knownSources.get(sourceKey) ?? { scope, userId: session.userId, revision: 0, refreshRevision: 0 }
     this.knownSources.delete(sourceKey); this.knownSources.set(sourceKey, state)
     while (this.knownSources.size > 512) this.knownSources.delete(this.knownSources.keys().next().value!)
     const revision = state.revision
+    const refreshRevision = state.refreshRevision
     const requestKey = createHmac('sha256', key).update('projection:5\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
     const invalidating = this.invalidating
     if (invalidating) await new Promise<void>((resolve, reject) => {
@@ -163,7 +174,8 @@ export class UnifiedChatTimelineService {
         latest: mode === 'initial' && !query.anchorId }) } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
       if (!cached) throw new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
       await assertCurrent()
-      return { ...cached, source: sourceItem }
+      return { ...cached, source: sourceItem, ...(cached.cache ? { cache: { ...cached.cache,
+        stale: cached.cache.stale === true || state.refreshRevision !== refreshRevision } } : {}) }
     }
     let ticket: number | undefined
     try { ticket = await cache?.call<number>({ kind: 'reserve' }) } catch { /* Explicit unavailable persistence below. */ }
@@ -292,6 +304,6 @@ export class UnifiedChatTimelineService {
     }
     await assertCurrent()
     return { ...result, cache: { origin: 'network', persistence: !durable ? 'deferred' : committed ? 'committed' : 'unavailable',
-      ...(committed ? { revision: result.cache?.revision ?? ticket! } : {}), stale: result.cache?.stale === true || !result.unified!.complete } }
+      ...(committed ? { revision: result.cache?.revision ?? ticket! } : {}), stale: state.refreshRevision !== refreshRevision || result.cache?.stale === true || !result.unified!.complete } }
   }
 }

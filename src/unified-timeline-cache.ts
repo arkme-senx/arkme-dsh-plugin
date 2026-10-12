@@ -31,6 +31,7 @@ export class UnifiedTimelineCache {
       PRAGMA wal_autocheckpoint=256;
       CREATE TABLE IF NOT EXISTS clock (id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL);
       INSERT OR IGNORE INTO clock VALUES (1,0);
+      CREATE TABLE IF NOT EXISTS refresh_hints (scope TEXT PRIMARY KEY, ticket INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS scopes (scope TEXT PRIMARY KEY, fence INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pages (scope TEXT NOT NULL, request TEXT NOT NULL, metadata TEXT NOT NULL, touched INTEGER NOT NULL, ticket INTEGER NOT NULL, latest INTEGER NOT NULL, PRIMARY KEY(scope,request));
       CREATE INDEX IF NOT EXISTS pages_recency ON pages(touched);
@@ -80,7 +81,8 @@ export class UnifiedTimelineCache {
     if (Buffer.byteLength(JSON.stringify(page)) > MAX_TIMELINE_WINDOW_BYTES) throw new Error('Cached window exceeds capacity')
     page.items = page.unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
     const fence = Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0)
-    page.cache = { origin: 'local', persistence: 'committed', revision: row.ticket, stale: fence > row.ticket }
+    const refreshTicket = Number(this.prepare('SELECT ticket FROM refresh_hints WHERE scope=?').get(scope)?.ticket ?? 0)
+    page.cache = { origin: 'local', persistence: 'committed', revision: row.ticket, stale: Math.max(fence, refreshTicket) > row.ticket }
     this.prepare('UPDATE pages SET touched=? WHERE scope=? AND request=?').run(this.reserve(), scope, row.request)
     return page
   }
@@ -178,15 +180,20 @@ export class UnifiedTimelineCache {
       return true
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
-  invalidateSource(sourceKey: string, timelineItemKey?: string, terminal = false): void {
+  invalidateSource(sourceKey: string, timelineItemKey?: string, terminal = false, refreshOnly = false): void {
     const rows = this.prepare("SELECT DISTINCT scope FROM pages WHERE json_extract(metadata,'$.source.sourceKey')=?").all(sourceKey)
-    for (const row of rows) this.invalidate(String(row.scope), timelineItemKey, terminal)
+    for (const row of rows) this.invalidate(String(row.scope), timelineItemKey, terminal, refreshOnly)
   }
-  invalidate(scope: string, timelineItemKey?: string, terminal = false): void {
+  invalidate(scope: string, timelineItemKey?: string, terminal = false, refreshOnly = false): void {
     const ticket = this.reserve()
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
+      if (refreshOnly && !terminal && !timelineItemKey) {
+        // A newer arrival makes this snapshot incomplete, not unsafe to publish.
+        // Keep freshness durable without rejecting every read during a busy conversation.
+        this.prepare('INSERT OR REPLACE INTO refresh_hints VALUES (?,?)').run(scope, ticket)
+        this.prepare('DELETE FROM refresh_hints WHERE scope IN (SELECT scope FROM refresh_hints ORDER BY ticket DESC LIMIT -1 OFFSET 1024)').run()
+      } else this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
       if (terminal && timelineItemKey) {
         // Persist the authority fence even when the new response has not arrived yet.
         const rows = this.prepare("SELECT event_id,payload FROM contents WHERE scope=? AND json_extract(payload,'$.item.timelineItemKey')=?").all(scope, timelineItemKey)

@@ -25,8 +25,8 @@ function setup(unavailable = false, readbackMissing = false) {
       case 'reserve': result = store.reserve(); break
       case 'read': result = readbackMissing ? undefined : store.read(command.scope, command.request, command.anchorId, command.latest); break
       case 'write': writes(command); result = store.write(command.scope, command.request, command.page, command.options); break
-      case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal); break
-      case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal); break
+      case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break
+      case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
     }
     return result as T
   }, close() {} }
@@ -159,4 +159,49 @@ it.each(['account', 'hint', 'cancel'] as const)('rejects a response that crosses
   deferred.resolve(response('late'))
   await expect(pending).rejects.toThrow()
   expect(writes).toHaveBeenCalledTimes(1)
+})
+
+it('keeps the invalidation fence when a content change races a pending refresh', async () => {
+  const { owner, post } = setup()
+  const initial = await owner.read('ref')
+  const gate = Promise.withResolvers<ReturnType<typeof response>>()
+  post.mockReturnValueOnce(gate.promise)
+  const pending = owner.read('ref', { mode:'refresh',windowTokens:initial.unified!.windowTokens,reconcile:true })
+  const checked = expect(pending).rejects.toMatchObject({code:'chat-timeline-stale',retryable:true})
+  await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+  await owner.invalidate('source-key')
+  gate.resolve(response('new content'))
+  await checked
+  expect((await owner.read('ref',{cacheOnly:true})).unified!.events[0]).toMatchObject({text:'old'})
+})
+
+it('commits progress through continuous arrival hints while retaining durable stale state', async () => {
+  const { owner, post, writes } = setup()
+  let current = await owner.read('ref')
+  for (let round = 0; round < 4; round++) {
+    const gate = Promise.withResolvers<ReturnType<typeof response>>()
+    post.mockReturnValueOnce(gate.promise)
+    const pending = owner.read('ref', { mode: 'refresh', windowTokens: current.unified!.windowTokens, reconcile: true })
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(round + 2))
+    await Promise.all(Array.from({length: 100}, () => owner.refreshHint('source-key')))
+    gate.resolve(response(`progress-${round}`))
+    current = await pending
+    expect(current.cache).toMatchObject({persistence:'committed',stale:true})
+    expect(current.unified!.events[0]).toMatchObject({text:`progress-${round}`})
+    expect((await owner.read('ref',{cacheOnly:true})).cache).toMatchObject({stale:true})
+  }
+  expect(writes).toHaveBeenCalledTimes(5)
+  expect((await owner.read('ref')).cache).toMatchObject({persistence:'committed',stale:false})
+})
+it('a hard change still rejects a read after arrival hints', async () => {
+  const { owner, post } = setup()
+  const gate = Promise.withResolvers<ReturnType<typeof response>>()
+  post.mockReturnValueOnce(gate.promise)
+  const pending = owner.read('ref')
+  const checked = expect(pending).rejects.toMatchObject({code:'chat-timeline-stale'})
+  await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  await owner.refreshHint('source-key')
+  await owner.invalidate('source-key')
+  gate.resolve(response('revoked'))
+  await checked
 })

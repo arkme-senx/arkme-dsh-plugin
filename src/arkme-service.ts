@@ -565,7 +565,7 @@ export class ArkmeService {
       if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
       else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
       else if (event.type === 'sessions-delta') for (const update of event.updates) {
-        if (update.sourceKey) void this.unifiedTimeline.invalidate(update.sourceKey)
+        if (update.sourceKey) void this.unifiedTimeline.refreshHint(update.sourceKey)
       }
     })
     this.userBan = new UserBanService(this.runtime, this.chat)

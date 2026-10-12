@@ -190,6 +190,46 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  it.each(['stale-bottom', 'offline-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
+    const api = await import('../src/client/api.js')
+    const { ArkmeClientError } = api
+    const base = mocks.callArkme.getMockImplementation()!
+    const refresh = deferred<unknown>()
+    const old = { itemUid: 'diag-old', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, textContent: 'old', status: 1 }
+    const fresh = { ...old, itemUid: 'diag-new', sequence: 10, sendAtMillis: 10, textContent: 'new' }
+    let reads = 0
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({code:'chat-timeline-cache-miss',message:'empty',retryable:false}))
+      reads++
+      if (reads === 2) return refresh.promise as any
+      const page = unifiedFixture(target, reads === 1 ? [old] : [old, fresh])
+      page.unified.newerCursor = 'tail'
+      return Promise.resolve(page) as any
+    })
+    const body = { scrollTop: mode === 'offline-history' ? 300 : 1400, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({top:0,bottom:600}),querySelectorAll:()=>[],scrollTo:vi.fn() }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    expect(reads).toBe(1)
+    await act(async () => { arkmeChatTimelineDelta.publish([{source:{...target,latestSequence:9},items:[{...fresh,sequence:9}]}]) })
+    expect(reads).toBe(2)
+    await act(async () => { for (let n = 0; n < 100; n++) arkmeChatTimelineDelta.publish([{source:{...target,latestSequence:10+n},items:[{...fresh,sequence:10+n}]}]) })
+    expect(reads).toBe(2)
+    const readingTop = body.scrollTop
+    await act(async () => {
+      if (mode === 'success-bottom') refresh.resolve(unifiedFixture(target, [old]))
+      else refresh.reject(new ArkmeClientError({ code: mode === 'stale-bottom' ? 'chat-timeline-stale' : 'arkme-network-error', message:'读取暂时失效',retryable:true,recovery:{owner:'host'} } as never))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
+    expect(reads).toBe(3)
+    expect(renderer!.root.findAllByProps({'data-arkme-message-item-uid':'diag-new'})).toHaveLength(1)
+    expect(body.scrollTop).toBe(mode === 'offline-history' ? readingTop : body.scrollHeight)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
+    expect(reads).toBe(3)
+  })
+
   it.each([target, group])('unified window renders auxiliary-only $kind pages and refreshes the same event identity', async selected => {
     activeSource = selected
     arkmeUi.selectSource(selected)
@@ -1816,6 +1856,43 @@ describe('conversation send directory projection', () => {
     expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
   })
 
+  it('retains persisted reading geometry until the cold local page has loaded', async () => {
+    const saved = { scrollTop: 730, stickToBottom: false, anchorId: 'message:persisted', anchorOffset: -10 }
+    window.localStorage.setItem('arkme:reading:v1:main', JSON.stringify({ account: 'test:42', entries: [[target.sourceKey, saved]] }))
+    const stored = vi.spyOn(ArkmeConversationMemoryCache.prototype, 'storeViewport')
+    const api = await import('../src/client/api.js')
+    const base = api.callArkme
+    const localRead = deferred<unknown>()
+    const remote = deferred<unknown>()
+    let loaded = false
+    let top = 0
+    const body = {
+      get scrollTop() { return top },
+      set scrollTop(value: number) { top = Math.max(0, Math.min(loaded ? 1400 : 0, value)) },
+      get scrollHeight() { return loaded ? 2000 : 600 }, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => loaded ? [{ dataset: { arkmeConversationRow: 'message:persisted' },
+        getBoundingClientRect: () => ({ top: 720 - top, bottom: 800 - top }) }] : [], scrollTo: vi.fn(),
+    }
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline') return ((params as any)?.cursor?.unified?.cacheOnly ? localRead.promise : remote.promise) as any
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
+    expect(stored.mock.calls.filter(([key]) => key === target.sourceKey)).toHaveLength(0)
+    loaded = true
+    const local = unifiedFixture(target, [{ itemUid: 'persisted', sequence: 8, senderName: '同事', isMe: false,
+      sendAtMillis: 8, textContent: '本地内容', status: 1 }])
+    await act(async () => { localRead.resolve(local) })
+    expect(body.scrollTop).toBe(730)
+    expect(stored).toHaveBeenLastCalledWith(target.sourceKey, saved)
+    await act(async () => { remote.resolve(local) })
+    expect(body.scrollTop).toBe(730)
+  })
+
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {
     const api = await import('../src/client/api.js')
     const base = api.callArkme
@@ -2106,82 +2183,90 @@ describe('conversation send directory projection', () => {
   })
 
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
-    const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
-    const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
-    const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
-    let pending = deferred<unknown>()
-    const original = mocks.callArkme.getMockImplementation()!
-    let refreshing = false
-    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
-      if (operation === 'sources.list' && params?.directory === 'send_to_self') {
-        return refreshing ? pending.promise : page
-      }
-      if (refreshing && operation === 'source.timeline') {
-        const before = (params?.cursor as { sendAtMillis?: number } | undefined)?.sendAtMillis ?? Infinity
-        const remaining = timeline.filter(item => item.sendAtMillis < before).reverse()
-        const items = remaining.slice(0, 100)
-        const hasMore = remaining.length > items.length
-        return { source: sendToSelf, items, hasMore,
-          ...(hasMore ? { nextCursor: { sendAtMillis: items.at(-1)!.sendAtMillis, itemUid: items.at(-1)!.itemUid } } : {}) }
-      }
-      return original(operation, params, signal)
-    })
-    // Hydrate an already loaded history window; subsequent reads obey the 100-row refresh page limit.
-    activeSource = sendToSelf
-    timeline = Array.from({ length: rowCount }, (_, index) => ({ itemUid: `existing-record-${index}`,
-      senderName: '我', isMe: true, sendAtMillis: index + 1, textContent: '已有消息', status: 1 }))
-    arkmeUi.focusSendToSelf()
-    let commits = 0, renderMillis = 0
-    await act(async () => { renderer = create(<Profiler id="record-refresh" onRender={(_id, _phase, duration) => {
-      commits++; renderMillis += duration
-    }}><ArkmeSurface productChrome={false} productNavigation={false} /></Profiler>) })
-    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    const body = renderer!.root.findByProps({ className: 'arkme-conversation-body' })
-    await act(async () => { composer.props.onTextChange('未发送草稿') })
-    refreshing = true
-    mocks.callArkme.mockClear()
-    commits = 0; renderMillis = 0
-    let interruptions = 0
-    // Twenty separated notifications, then twenty arriving in one render turn.
-    for (const burstSize of [...Array<number>(20).fill(1), 20]) {
-      pending = deferred<unknown>()
-      let refresh!: Promise<void>
-      await act(async () => {
-        for (let event = 0; event < burstSize; event++) {
-          invalidateSelfTopicDirectories(true)
-          arkmeUi.recordChanged()
+    // Count the explicit invalidation workload independently of wall-clock background timers.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    try {
+      const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
+      const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
+      const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
+      let pending = deferred<unknown>()
+      const original = mocks.callArkme.getMockImplementation()!
+      let refreshing = false
+      mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+        if (operation === 'sources.list' && params?.directory === 'send_to_self') {
+          return refreshing ? pending.promise : page
         }
-        refresh = selfTopicDirectory(42, 'test').ensure(true)
+        if (refreshing && operation === 'source.timeline') {
+          const before = (params?.cursor as { sendAtMillis?: number } | undefined)?.sendAtMillis ?? Infinity
+          const remaining = timeline.filter(item => item.sendAtMillis < before).reverse()
+          const items = remaining.slice(0, 100)
+          const hasMore = remaining.length > items.length
+          return { source: sendToSelf, items, hasMore,
+            ...(hasMore ? { nextCursor: { sendAtMillis: items.at(-1)!.sendAtMillis, itemUid: items.at(-1)!.itemUid } } : {}) }
+        }
+        return original(operation, params, signal)
       })
-      expect(selfTopicDirectory(42, 'test').getSnapshot().sources).toEqual([])
-      expect(renderer!.root.findByType(ArkmeSourceBreadcrumb).props.sources).toEqual([])
-      if (renderer!.root.findAllByType(ArkmeRichComposerInput)[0] !== composer) interruptions++
-      await act(async () => { pending.resolve(page); await refresh })
-    }
-    const reads = Object.fromEntries(['source.timeline', 'sources.list', 'provider.capabilities'].map(operation =>
-      [operation, mocks.callArkme.mock.calls.filter(([called]) => called === operation).length]))
-    process.stdout.write(`record-refresh-profile ${JSON.stringify({ rowCount, events: 40, batches: 21,
-      interruptions, reads, commits, renderMillis: Math.round(renderMillis) })}\n`)
-    expect(interruptions).toBe(0)
-    expect(reads['source.timeline']).toBe(21 * Math.ceil(rowCount / 100))
-    expect(reads['sources.list']).toBe(21)
-    expect(reads['provider.capabilities']).toBe(0)
-    expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(composer)
-    expect(renderer!.root.findByProps({ className: 'arkme-conversation-body' })).toBe(body)
-    expect(composer.props.value).toBe('未发送草稿')
-    expect(renderer!.root.findAll(node => node.props['data-arkme-message-content-line'] !== undefined)).toHaveLength(rowCount)
-    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
-      if (operation === 'sources.list' && params?.directory === 'send_to_self') {
-        throw Object.assign(new Error('请重新登录'), { body: { code: 'login-required' } })
+      // Hydrate an already loaded history window; subsequent reads obey the 100-row refresh page limit.
+      activeSource = sendToSelf
+      timeline = Array.from({ length: rowCount }, (_, index) => ({ itemUid: `existing-record-${index}`,
+        senderName: '我', isMe: true, sendAtMillis: index + 1, textContent: '已有消息', status: 1 }))
+      arkmeUi.focusSendToSelf()
+      let commits = 0, renderMillis = 0
+      await act(async () => { renderer = create(<Profiler id="record-refresh" onRender={(_id, _phase, duration) => {
+        commits++; renderMillis += duration
+      }}><ArkmeSurface productChrome={false} productNavigation={false} /></Profiler>) })
+      const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+      const body = renderer!.root.findByProps({ className: 'arkme-conversation-body' })
+      await act(async () => { composer.props.onTextChange('未发送草稿') })
+      refreshing = true
+      mocks.callArkme.mockClear()
+      commits = 0; renderMillis = 0
+      let interruptions = 0
+      // Twenty separated notifications, then twenty arriving in one render turn.
+      for (const burstSize of [...Array<number>(20).fill(1), 20]) {
+        pending = deferred<unknown>()
+        let refresh!: Promise<void>
+        await act(async () => {
+          for (let event = 0; event < burstSize; event++) {
+            invalidateSelfTopicDirectories(true)
+            arkmeUi.recordChanged()
+          }
+          refresh = selfTopicDirectory(42, 'test').ensure(true)
+        })
+        expect(selfTopicDirectory(42, 'test').getSnapshot().sources).toEqual([])
+        expect(renderer!.root.findByType(ArkmeSourceBreadcrumb).props.sources).toEqual([])
+        if (renderer!.root.findAllByType(ArkmeRichComposerInput)[0] !== composer) interruptions++
+        await act(async () => { pending.resolve(page); await refresh })
       }
-      return original(operation, params, signal)
-    })
-    await act(async () => {
-      invalidateSelfTopicDirectories(true)
-      await selfTopicDirectory(42, 'test').ensure(true)
-    })
-    expect(renderer!.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
-    expect(renderedText(renderer!.toJSON())).toContain('请重新登录')
+      const reads = Object.fromEntries(['source.timeline', 'sources.list', 'provider.capabilities'].map(operation =>
+        [operation, mocks.callArkme.mock.calls.filter(([called]) => called === operation).length]))
+      process.stdout.write(`record-refresh-profile ${JSON.stringify({ rowCount, events: 40, batches: 21,
+        interruptions, reads, commits, renderMillis: Math.round(renderMillis) })}\n`)
+      expect(interruptions).toBe(0)
+      expect(reads['source.timeline']).toBe(21 * Math.ceil(rowCount / 100))
+      expect(reads['sources.list']).toBe(21)
+      expect(reads['provider.capabilities']).toBe(0)
+      expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(composer)
+      expect(renderer!.root.findByProps({ className: 'arkme-conversation-body' })).toBe(body)
+      expect(composer.props.value).toBe('未发送草稿')
+      expect(renderer!.root.findAll(node => node.props['data-arkme-message-content-line'] !== undefined)).toHaveLength(rowCount)
+      mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+        if (operation === 'sources.list' && params?.directory === 'send_to_self') {
+          throw Object.assign(new Error('请重新登录'), { body: { code: 'login-required' } })
+        }
+        return original(operation, params, signal)
+      })
+      await act(async () => {
+        invalidateSelfTopicDirectories(true)
+        await selfTopicDirectory(42, 'test').ensure(true)
+      })
+      expect(renderer!.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
+      expect(renderedText(renderer!.toJSON())).toContain('请重新登录')
+    } finally {
+      await act(async () => { renderer?.unmount() }); renderer = undefined
+      resetSelfTopicDirectories()
+      vi.useRealTimers()
+    }
   }, 30_000)
 
   it('shows a partial child-creation warning with the directory closed and retains it after an older read finishes', async () => {

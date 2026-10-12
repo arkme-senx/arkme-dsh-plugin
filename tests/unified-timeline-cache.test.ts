@@ -153,3 +153,20 @@ describe('canonical events and commit fences', () => {
     } finally { store.close() }
   })
 })
+
+it('persists arrival freshness separately from revocation fences across restart', () => {
+  const path = mkdtempSync(join(tmpdir(), 'arkme arrival cache ')); directories.push(path)
+  let store = new UnifiedTimelineCache(path)
+  store.write('scope','initial',page())
+  const ticket = store.reserve()
+  store.invalidate('scope',undefined,false,true)
+  expect(store.write('scope','initial',page('progress'),{ticket})).toBe(true)
+  store.close(); store = new UnifiedTimelineCache(path)
+  expect(store.read('scope','initial')).toMatchObject({cache:{stale:true},unified:{events:[{text:'progress'}]}})
+  const late = store.reserve()
+  store.invalidate('scope')
+  expect(store.write('scope','initial',page('revoked'),{ticket:late})).toBe(false)
+  expect(store.write('scope','initial',page('current'))).toBe(true)
+  expect(store.read('scope','initial')?.cache?.stale).toBe(false)
+  store.close()
+})

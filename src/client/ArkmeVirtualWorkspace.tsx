@@ -259,10 +259,6 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', top: -1, right: -1, width: 10, height: 10, boxSizing: 'border-box',
     borderRadius: 999, background: '#ff5f57', border: `2px solid ${colors.panel}`,
   },
-  interactionUnreadDot: {
-    position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, boxSizing: 'border-box',
-    borderRadius: 999, background: '#20c66a', border: `2px solid ${colors.panel}`,
-  },
   avatar: {
     width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
@@ -687,10 +683,8 @@ export function arkmeRootChatUnreadPlacement(source: {
   badgeUnreadCount?: number
   notificationAllowed?: boolean
   isMuted?: boolean
-  privateInteraction?: { attentionCount: number }
 }): 'avatar' | 'dot' | 'none' {
   if (arkmeBadgeUnreadCount(source) > 0) return 'avatar'
-  if (source.kind === 'private_chat' && (source.privateInteraction?.attentionCount ?? 0) > 0) return 'avatar'
   const rawUnreadCount = Math.max(0, Math.trunc(source.unreadCount ?? 0))
   return rawUnreadCount > 0 && (source.notificationAllowed === false || source.isMuted === true)
     ? 'dot'
@@ -2222,9 +2216,7 @@ export function ArkmeNavigation({
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource !== undefined
             && arkmeSourceIdentityKey(ui.selectedSource) === arkmeSourceIdentityKey(source)
           const unreadPlacement = arkmeRootChatUnreadPlacement(source)
-          const directBadgeUnreadCount = arkmeBadgeUnreadCount(source)
-          const interactionUnreadCount = source.privateInteraction?.attentionCount ?? 0
-          const badgeUnreadCount = directBadgeUnreadCount > 0 ? directBadgeUnreadCount : interactionUnreadCount
+          const badgeUnreadCount = arkmeBadgeUnreadCount(source)
           const unreadText = badgeUnreadCount > 99 ? '99+' : badgeUnreadCount
           const mutationPending = directoryMutation?.kind === 'source'
             && directoryMutation.key === arkmeSourceIdentityKey(source)
@@ -2258,11 +2250,6 @@ export function ArkmeNavigation({
               <ArkmeDirectorySourceAvatar source={source} size={38} />
               {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
               {unreadPlacement === 'dot' && <span style={styles.mutedUnreadDot} />}
-              {directBadgeUnreadCount > 0 && interactionUnreadCount > 0 && <span
-                aria-label={tr("有未读群互动")}
-                title={tr("有未读群互动")}
-                style={styles.interactionUnreadDot}
-              />}
             </span>
             <span data-arkme-conversation-content style={styles.chatContent}>
               <span style={styles.chatTop}>

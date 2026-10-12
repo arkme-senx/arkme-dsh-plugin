@@ -5,8 +5,8 @@ import type { TimelineCacheCommit } from './unified-timeline-cache.js'
 export type TimelineCacheCommand = { kind: 'reserve' | 'close' }
   | { kind: 'read'; scope: string; request: string; anchorId?: string; latest?: boolean }
   | { kind: 'write'; scope: string; request: string; page: ArkmeTimelinePage; options: TimelineCacheCommit }
-  | { kind: 'invalidate'; scope: string; timelineItemKey?: string; terminal?: boolean }
-  | { kind: 'invalidate-source'; sourceKey: string; timelineItemKey?: string; terminal?: boolean }
+  | { kind: 'invalidate'; scope: string; timelineItemKey?: string; terminal?: boolean; refreshOnly?: boolean }
+  | { kind: 'invalidate-source'; sourceKey: string; timelineItemKey?: string; terminal?: boolean; refreshOnly?: boolean }
 export interface TimelineCachePort {
   call<T>(command: TimelineCacheCommand): Promise<T>
   close(): void
