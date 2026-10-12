@@ -21,6 +21,7 @@ import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conver
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
+import { sharedRecordingDetailToolModule } from './conversation/shared-recording-detail.js'
 import { userBanToolModules } from './conversation/user-ban.js'
 import { directMessageAdmissionToolModule, directMessageRefusalToolModule } from './conversation/direct-message-refusal.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -99,6 +100,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reportMessageToolModule,
   withdrawMessageToolModule,
   relatedRecordingsToolModule,
+  sharedRecordingDetailToolModule,
   ...userBanToolModules,
   directMessageAdmissionToolModule,
   directMessageRefusalToolModule,

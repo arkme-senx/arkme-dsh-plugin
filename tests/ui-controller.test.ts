@@ -12,6 +12,19 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('opens a notification reply and clears that target on a new World navigation', () => {
+    const controller = new ArkmeUiController()
+    controller.showNotifications()
+    controller.showWorldInteraction('reply-1')
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'world', worldInteractionRef: 'reply-1' })
+    controller.showConversations()
+    expect(controller.getSnapshot().mode).toBe('notifications')
+    controller.showUserWorld({ userId: 7, displayName: '评论作者' })
+    expect(controller.getSnapshot().worldInteractionRef).toBeUndefined()
+    controller.showWorldInteraction('reply-2')
+    controller.showWorld()
+    expect(controller.getSnapshot().worldInteractionRef).toBeUndefined()
+  })
   describe('restores the last conversation after visiting another product page', () => {
     const source = { sourceRef: 'retained-chat', kind: 'private_chat' as const, displayName: '保留的对话', activeAtMillis: 1, unreadCount: 0 }
     const bot = { botRef: 'retained-bot', name: '保留的 Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true }

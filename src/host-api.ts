@@ -1863,6 +1863,8 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'world.notification-sources': return await service.worldNotificationSources(Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), requestSignal)
+    case 'world.notification-target': return await service.worldNotificationTarget(stringParam(params, 'interactionRef'), requestSignal)
     case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
     case 'world.interactions.mark-viewed': {
       const sequence = Math.max(0, Math.trunc(numberParam(params, 'seenThroughSequence', 0)))
@@ -2244,6 +2246,12 @@ export async function dispatchArkmeHostOperation(
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
       requestSignal,
+    )
+    case 'related-recordings.share': return await service.shareRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
+    )
+    case 'related-recordings.withdraw': return await service.withdrawRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
     )
     case 'related-recordings.page': return await service.relatedRecordings(
       stringParam(params, 'sourceRef'),

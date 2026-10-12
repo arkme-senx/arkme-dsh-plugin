@@ -328,3 +328,54 @@ describe('WorldService', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 })
+
+
+describe('World notification sources and targets', () => {
+  it.each(['sources', 'target'] as const)('rejects a late notification %s read after World disposal', async operation => {
+    let disposeDuringRead = false
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const record = { record_uid: 'root', user_id: 42, text_content: '原文', is_public: true, check_status: 2 }
+    const fetchImpl = vi.fn(async input => {
+      if (disposeDuringRead) world.dispose()
+      return new Response(JSON.stringify({ code: 200, data: String(input).endsWith('/my-list') ? { list: [record], total: 1 } : record }), { status: 200 })
+    }) as typeof fetch
+    const world = new WorldService(new ServiceRuntime(config, sessions, { async uniqueCode() { return 'secret' } } as StateStore, fetchImpl), {} as never, {} as never, {} as never)
+    const sources = await world.worldNotificationSources()
+    disposeDuringRead = true
+    await expect(operation === 'sources' ? world.worldNotificationSources() : world.worldNotificationTarget(sources.items[0]!.recordRef))
+      .rejects.toMatchObject({ code: 'world-account-changed' })
+  })
+  it('preserves owned comments, resolves a reply to its original World, and rejects revoked targets or another account', async () => {
+    let userId = 42, visible = true
+    const records: Record<string, Record<string, unknown>> = {
+      root: { record_uid: 'root', user_id: 7, text_content: '原动态', is_public: true, check_status: 2 },
+      comment: { record_uid: 'comment', parent_record_uid: 'root', user_id: 42, text_content: '我的评论', is_public: true, check_status: 2 },
+      reply: { record_uid: 'reply', parent_record_uid: 'comment', user_id: 7, text_content: '回复我的评论', is_public: true, check_status: 2 },
+    }
+    const requests: string[] = []
+    const fetchImpl = vi.fn(async (input, init) => {
+      const url = String(input), body = JSON.parse(String(init?.body)); requests.push(url)
+      const data = url.endsWith('/my-list')
+        ? { list: [records.comment, records.root, { ...records.comment, record_uid: 'pending', check_status: 1 }], total: 3 }
+        : url.endsWith('/extend-list') ? { list: [records.reply], total: 1 }
+        : { ...records[body.record_uid], is_public: visible }
+      return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+    }) as typeof fetch
+    const sessions: ArkmeSessionStore = { async read() { return { userId, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const world = new WorldService(new ServiceRuntime(config, sessions, { async uniqueCode() { return 'secret' } } as StateStore, fetchImpl), {} as never, {} as never, {} as never)
+    const sources = await world.worldNotificationSources()
+    expect(sources.items).toHaveLength(1)
+    expect(sources.items[0]?.isComment).toBe(true)
+    const interactions = await world.listWorldInteractions(sources.items[0]!.recordRef)
+    const ref = interactions.items[0]!.interactionRef
+    expect(interactions.items[0]?.isSelf).toBe(false)
+    const target = await world.worldNotificationTarget(ref)
+    expect(target.root.textContent).toBe('原动态')
+    expect(target.interactionRef).toBe(ref)
+    expect(requests.filter(path => path.endsWith('/detail'))).toHaveLength(3)
+    visible = false
+    await expect(world.worldNotificationTarget(ref)).rejects.toThrow('不可查看')
+    userId = 99
+    await expect(world.worldNotificationTarget(ref)).rejects.toThrow()
+  })
+})

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { DayRecapResult } from '../day-recap.js'
 import { parseDayRecapPoints } from '../day-recap.js'
 import type { DayActivityEntry, DayActivityPage, DayActivityQuery } from './calendar-activity-model.js'
-import { buildDayRecapInput, type DayRecapGenerator } from './day-recap-input.js'
+import { buildDayRecapInput, prepareDayRecapInput, type DayRecapGenerator } from './day-recap-input.js'
 import type { ArkmeRecordingSection, ArkmeRecordingVersion } from '../types.js'
 
 export function ArkmeDayRecap({ query, entries, generate, onSource }: {
@@ -11,53 +11,75 @@ export function ArkmeDayRecap({ query, entries, generate, onSource }: {
 }) {
   useArkmeLocale()
   const candidate = buildDayRecapInput(query, entries)
+  const [prepared, setPrepared] = useState<{ baseKey: string; value: ReturnType<typeof buildDayRecapInput> }>()
+  const material = prepared?.baseKey === candidate.key ? prepared.value : candidate
+  const [preparing, setPreparing] = useState(false)
   const current = useRef(candidate.key); current.current = candidate.key
   const request = useRef<AbortController>()
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [cached, setCached] = useState<{ key: string; result: DayRecapResult }>()
+  const [cached, setCached] = useState<{ key: string; result: DayRecapResult; material: ReturnType<typeof buildDayRecapInput> }>()
   const [expanded, setExpanded] = useState(true)
   // No disk/browser storage: account/date unmount drops both source excerpts and the cached result.
   useEffect(() => {
-    request.current?.abort(); request.current = undefined; setBusy(false); setError(''); setConfirming(false)
+    request.current?.abort(); request.current = undefined; setBusy(false); setPreparing(false); setPrepared(undefined); setError(''); setConfirming(false)
     return () => { request.current?.abort(); request.current = undefined }
   }, [candidate.key, generate])
   const result = cached?.key === candidate.key ? cached.result : undefined
+  const review = async () => {
+    if (request.current) return
+    if (confirming) { setConfirming(false); return }
+    if (!entries.some(entry => entry.sharedRecording)) { setPrepared({ baseKey: candidate.key, value: candidate }); setConfirming(true); return }
+    const controller = new AbortController(); request.current = controller
+    setPreparing(true); setError('')
+    try {
+      const next = await prepareDayRecapInput(query, entries, controller.signal)
+      if (controller.signal.aborted || current.current !== candidate.key) return
+      setPrepared({ baseKey: candidate.key, value: next }); setConfirming(true)
+    } catch (error) {
+      if (!controller.signal.aborted && current.current === candidate.key) { setPrepared(undefined); setError(error instanceof Error ? error.message : '共享内容暂时不可读，请刷新后重试') }
+    } finally { if (request.current === controller) { request.current = undefined; setPreparing(false) } }
+  }
   const start = async () => {
     if (request.current || !candidate.input.items.length || result) return
     const controller = new AbortController(); request.current = controller
     setBusy(true); setError(''); setConfirming(false)
     try {
-      const value = await generate(candidate.input, controller.signal)
+      const fresh = await prepareDayRecapInput(query, entries, controller.signal)
+      if (controller.signal.aborted || current.current !== candidate.key) return
+      if (fresh.key !== material.key) {
+        setPrepared({ baseKey: candidate.key, value: fresh }); setConfirming(true); setError('共享内容已变化，请重新查看摘录后确认'); return
+      }
+      const value = await generate(fresh.input, controller.signal)
       if (controller.signal.aborted || current.current !== candidate.key) return
       if (!Number.isFinite(value.generatedAtMillis) || typeof value.modelName !== 'string') throw new Error('AI 小结返回格式无效，请手动重试')
-      const points = parseDayRecapPoints(JSON.stringify(value), candidate.input)
-      setCached({ key: candidate.key, result: { ...value, points } }); setExpanded(true)
+      const points = parseDayRecapPoints(JSON.stringify(value), material.input)
+      setCached({ key: candidate.key, result: { ...value, points }, material: fresh }); setExpanded(true)
     } catch (error) {
-      if (!controller.signal.aborted && current.current === candidate.key) setError(error instanceof Error ? error.message : '小结生成失败，请手动重试')
+      if (!controller.signal.aborted && current.current === candidate.key) { setPrepared(undefined); setError(error instanceof Error ? error.message : '小结生成失败，请手动重试') }
     } finally { if (request.current === controller) { request.current = undefined; setBusy(false) } }
   }
   return <section className="arkme-day-recap" aria-label={tr("AI 小结")}>
     <div className="arkme-day-recap-heading"><span>{tr("AI 小结")} <small>{tr("仅基于已加载内容")}</small></span>
-      {busy ? <button type="button" onClick={() => { request.current?.abort(); request.current = undefined; setBusy(false); setError('已取消；若请求已提交，可能已消耗部分额度。') }}>{tr("取消生成")}</button>
+      {preparing ? <><span role="status">{tr("正在核对共享文字…")}</span><button type="button" onClick={() => { request.current?.abort(); request.current = undefined; setPreparing(false) }}>{tr("取消读取")}</button></> : busy ? <button type="button" onClick={() => { request.current?.abort(); request.current = undefined; setBusy(false); setError('已取消；若请求已提交，可能已消耗部分额度。') }}>{tr("取消生成")}</button>
         : result ? <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起小结' : '展开小结'}</button>
-          : <button type="button" disabled={!candidate.input.items.length} onClick={() => setConfirming(value => !value)}>{cached ? '更新 AI 小结' : '生成 AI 小结'}</button>}
+          : <button type="button" disabled={!candidate.input.items.length} onClick={() => { void review() }}>{cached ? '更新 AI 小结' : '生成 AI 小结'}</button>}
     </div>
     {!result && cached && <p className="arkme-day-recap-note">{tr("内容或范围已变化，可手动更新小结。")}</p>}
     {confirming && <div className="arkme-day-recap-consent">
-      <p>{tr("将向账号的云端 AI 发送当前筛选下")} {candidate.input.items.length} {tr("段活动预览摘录（最多 24 段 / 6000 字符），可能消耗额度。不额外读取历史，不发送位置字段、原始音视频，不创建 Arko 对话。")}</p>
-      <details><summary>{tr("查看本次发送的摘录")}</summary><ul>{candidate.input.items.map(item => <li key={item.id}><strong>{item.time} · {item.title}</strong><p>{item.excerpt || '无文字预览'}</p></li>)}</ul></details>
+      <p>{tr("将向账号的云端 AI 发送当前筛选下")} {material.input.items.length} {tr("段文字摘录（最多 24 段 / 6000 字符），包含已核对权限的共享录音文字，可能消耗额度。不发送位置字段、原始音视频，不创建 Arko 对话。")}</p>
+      <details><summary>{tr("查看本次发送的摘录")}</summary><ul>{material.input.items.map(item => <li key={item.id}><strong>{item.time} · {item.title}</strong><small>{item.scope}</small><p>{item.excerpt || '无文字预览'}</p></li>)}</ul></details>
       <button type="button" onClick={() => { void start() }}>{tr("确认生成")}</button><button type="button" onClick={() => setConfirming(false)}>{tr("暂不生成")}</button>
     </div>}
     {busy && <p role="status" className="arkme-day-recap-note">{tr("正在整理摘录，不会执行其他任务…")}</p>}
     {error && <p role="alert" className="arkme-day-recap-note">{error}</p>}
     {result && expanded && <><ul className="arkme-day-recap-points">{result.points.map((point, index) => <li key={index}>
       <span>{point.text}</span><div>{point.sourceIds.map((id, sourceIndex) => {
-        const source = candidate.sources.get(id)!
+        const source = cached!.material.sources.get(id)!
         return <button type="button" key={id} title={source.title} aria-label={tr("查看小结来源：{v0}", { v0: source.title })}
           onClick={() => onSource(source.activityId)}>{tr("来源")}{sourceIndex + 1}</button>
-    })}</div></li>)}</ul><p className="arkme-day-recap-note">{tr("基于")} {candidate.input.items.length} {tr("段活动摘录，非完整全天回顾。AI 生成，可能有误，请核对来源。")}{result.modelName} · {new Intl.DateTimeFormat(arkmeIntlLocale(), { timeZone: query.timezone, hour: '2-digit', minute: '2-digit' }).format(result.generatedAtMillis)}</p></>}
+    })}</div></li>)}</ul><p className="arkme-day-recap-note">{tr("基于")} {cached!.material.input.items.length} {tr("段活动摘录，非完整全天回顾。AI 生成，可能有误，请核对来源。")}{result.modelName} · {new Intl.DateTimeFormat(arkmeIntlLocale(), { timeZone: query.timezone, hour: '2-digit', minute: '2-digit' }).format(result.generatedAtMillis)}</p></>}
   </section>
 }
 

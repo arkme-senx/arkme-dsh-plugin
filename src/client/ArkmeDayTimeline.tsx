@@ -43,6 +43,7 @@ export interface ArkmeDayTimelineProps {
   arrangementsActive?: boolean
   onArrangementsChange?(active: boolean): void
   arrangementsContent?: ReactNode
+  onOpenLocations?(location?: ArkmeRecordLocationObservation): void
   generateRecap?: DayRecapGenerator
 }
 
@@ -51,7 +52,7 @@ export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
+function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
   useArkmeLocale()
   const data = useDayActivities(query, reader)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -100,7 +101,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
       if (attempted.has(id) || attempted.size >= limit || controller.signal.aborted) return
       attempted.add(id); queue.push(id); pump()
     }
-    const candidates = new Set(page.items.filter(item => item.access === 'available' && item.canLoadLocation && !item.location).map(item => item.id))
+    const candidates = new Set(page.items.filter(item => item.access === 'available' && item.canLoadLocation && !item.location?.label && !item.locationSummary?.label).map(item => item.id))
     const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(entries => {
       for (const entry of entries) if (entry.isIntersecting) {
         const id = (entry.target as HTMLElement).dataset.activityId
@@ -142,6 +143,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
     <header className="arkme-day-heading">
       <div><h2>{tr("我的一天")}</h2><p>{query.bucketDate} · {query.timezone}</p></div>
       <div className="arkme-day-heading-actions">
+        {onOpenLocations && <button type="button" className="arkme-day-source" onClick={() => onOpenLocations()}><MapPin size={15} aria-hidden /> {tr("当天位置")}</button>}
         {!arrangementsActive && (!reader?.capabilities || reader.capabilities.modes.length > 1) && <div className="arkme-day-modes" aria-label={tr("显示方式")}>
           <button type="button" aria-pressed={query.mode === 'activities'} onClick={() => change({ mode: 'activities' })}>{tr("活动片段")}</button>
           <button type="button" aria-pressed={query.mode === 'records'} onClick={() => change({ mode: 'records', includeBackground: true })}>{tr("原始明细")}</button>
@@ -243,8 +245,8 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onOpen
           </button>
           {item.access === 'available' && hasLocationHint(item) && !(selected?.id === item.id && location.error) && <button type="button"
             className="arkme-day-location-tag" aria-label={tr("查看地点：{v0}", { v0: knownLocation(item)?.label || item.locationSummary?.label || '设备采集位置' })}
-            onClick={() => { onDetailChange?.(); setSelectedId(item.id); setLocationRequestedId(item.id) }}>
-            <MapPin size={14} aria-hidden /><span>{knownLocation(item)?.label || item.locationSummary?.label || '已记录设备位置'}</span>
+            onClick={() => { if (onOpenLocations) { onOpenLocations(knownLocation(item)); return }; onDetailChange?.(); setSelectedId(item.id); setLocationRequestedId(item.id) }}>
+            <MapPin size={14} aria-hidden /><span>{knownLocation(item)?.label || item.locationSummary?.label || tr("地址暂不可用")}</span>
           </button>}
           </div>
         </article></Fragment>

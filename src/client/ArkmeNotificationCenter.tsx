@@ -1,5 +1,6 @@
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
+import { readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
 import { officialNotifications, useOfficialNotifications } from './official-notification-store.js'
 import { ArkmeOfficialNotificationDetail } from './ArkmeOfficialNotificationDetail.js'
 import type { OfficialNotificationSnapshot } from './official-notification-store.js'
@@ -10,8 +11,6 @@ import type {
   ArkmeAiLetterItem,
   ArkmeAiLetterPage,
   ArkmeAiLetterUnread,
-  ArkmeWorldFeedPage,
-  ArkmeWorldInteractionPage,
   ArkmeWorldInteractionSummary,
 } from '../types.js'
 import type { ReactionNotification } from '../reaction-contract.js'
@@ -35,6 +34,7 @@ export interface ArkmeNotificationItem {
   arrangement?: ArkmeArrangementReminderEvent
   reaction?: ReactionNotification
   aiLetter?: ArkmeAiLetterItem
+  worldInteractionRef?: string
 }
 
 interface NotificationSnapshot {
@@ -116,16 +116,13 @@ function reactionItem(item: ReactionNotification): ArkmeNotificationItem {
   }
 }
 
-function worldItem(authorName: string, interactionRef: string, preview: string, atMillis: number): ArkmeNotificationItem {
+function worldItem(item: WorldNotificationInteraction): ArkmeNotificationItem {
   return {
-    id: `world:${interactionRef}`,
-    kind: 'world',
-    title: `${authorName || '有人'} 回复了你的世界`,
-    preview: compactText(preview || tr('查看世界互动')),
-    atMillis,
-    // The summary endpoint owns the unread count but does not expose a per-item
-    // sequence. Keep the row neutral and use the authoritative aggregate badge.
-    unread: false,
+    id: `world:${item.interactionRef}`, kind: 'world',
+    title: tr(item.replyToComment ? '{name} 回复了你的评论' : '{name} 回复了你的世界', { name: item.authorName || tr('有人') }),
+    preview: compactText(item.textContent || tr('查看世界互动')),
+    atMillis: item.publishedAtMillis || item.createdAtMillis,
+    unread: false, worldInteractionRef: item.interactionRef,
   }
 }
 
@@ -183,12 +180,12 @@ class ArkmeNotificationStore {
         worldError: undefined,
         aiError: undefined,
       })
-      const [arrangementsResult, worldSummaryResult, worldFeedResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
+      const [arrangementsResult, worldSummaryResult, worldNotificationsResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
         callArkme<ArkmeArrangementReminderPage>('arrangements.reminders.list', {
           unreadOnly: false, limit: 50, offset: 0,
         }, controller.signal, { priority: 'background' }),
         callArkme<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, controller.signal, { priority: 'background' }),
-        callArkme<ArkmeWorldFeedPage>('world.mine', { limit: 10, offset: 0 }, controller.signal, { priority: 'background' }),
+        readWorldNotifications(controller.signal),
         callArkme<ArkmeAiLetterUnread>('ai-letter.unread', undefined, controller.signal, { priority: 'background' }),
         callArkme<ArkmeAiLetterPage>('ai-letter.list', { periodType: 0, cursorStartAt: 0, limit: 20 }, controller.signal, { priority: 'background' }),
       ])
@@ -211,37 +208,10 @@ class ArkmeNotificationStore {
         worldError = worldSummaryResult.reason instanceof Error ? worldSummaryResult.reason.message : tr('世界互动暂时无法加载')
       }
 
-      let worldItems: ArkmeNotificationItem[] = []
-      if (worldFeedResult.status === 'fulfilled') {
-        const feedItems = Array.isArray(worldFeedResult.value?.items) ? worldFeedResult.value.items.slice(0, 10) : []
-        const interactionResults = await Promise.allSettled(feedItems.map(feedItem => callArkme<ArkmeWorldInteractionPage>(
-          'world.interactions.list', { recordRef: feedItem.recordRef, limit: 50, offset: 0 }, controller.signal, { priority: 'background' },
-        )))
-        if (controller.signal.aborted || this.controller !== controller) return
-        const seen = new Set<string>()
-        interactionResults.forEach(result => {
-          if (result.status !== 'fulfilled') return
-          const interactions = Array.isArray(result.value?.items) ? result.value.items : []
-          interactions.forEach(interaction => {
-            if (seen.has(interaction.interactionRef)) return
-            seen.add(interaction.interactionRef)
-            worldItems.push(worldItem(
-              interaction.authorName,
-              interaction.interactionRef,
-              interaction.textContent,
-              interaction.publishedAtMillis || interaction.createdAtMillis,
-            ))
-          })
-        })
-        worldItems.sort((left, right) => right.atMillis - left.atMillis)
-        if (interactionResults.some(result => result.status === 'rejected')) {
-          worldError ??= tr('部分世界互动暂时无法加载')
-          // Keep the last complete bounded page rather than accumulating partial pages.
-          if (this.snapshot.worldItems.length > 0) worldItems = this.snapshot.worldItems
-        }
-      } else {
-        worldItems = this.snapshot.worldItems
-        worldError ??= worldFeedResult.reason instanceof Error ? worldFeedResult.reason.message : tr('世界互动暂时无法加载')
+      const worldItems = worldNotificationsResult.status === 'fulfilled'
+        ? worldNotificationsResult.value.map(worldItem) : this.snapshot.worldItems
+      if (worldNotificationsResult.status === 'rejected') {
+        worldError ??= worldNotificationsResult.reason instanceof Error ? worldNotificationsResult.reason.message : tr('世界互动暂时无法加载')
       }
 
       let aiUnreadCount = this.snapshot.aiUnreadCount
@@ -341,7 +311,9 @@ function useNotificationItems(): {
   useEffect(() => {
     const release = scope === undefined ? undefined : reactionNotifications.acquire(scope)
     void arkmeNotificationStore.refresh(scope)
-    return release
+    const refreshOnFocus = () => { void arkmeNotificationStore.refresh(scope) }
+    window.addEventListener('focus', refreshOnFocus)
+    return () => { release?.(); window.removeEventListener('focus', refreshOnFocus) }
   }, [scope])
   const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forAccount(scope), [reactionRevision, scope])
   const items = useMemo(() => [
@@ -446,8 +418,7 @@ export function ArkmeNotificationCenter() {
       if (item.kind === 'arrangement' && item.arrangement !== undefined) {
         await arkmeNotificationStore.markArrangementRead(item.arrangement.eventRef)
       } else if (item.kind === 'world') {
-        await arkmeNotificationStore.markWorldViewed()
-        arkmeUi.showWorld('mine')
+        if (item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
       } else if (item.kind === 'ai' && item.aiLetter !== undefined) {
         await arkmeNotificationStore.markAiRead([item.aiLetter.letterId])
       } else if (item.kind === 'reaction' && item.reaction !== undefined && scope !== undefined) {

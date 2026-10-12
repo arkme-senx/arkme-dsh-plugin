@@ -42,6 +42,8 @@ export interface ArkmeCaptchaResult {
 
 export interface ArkmeClientConfig {
   captchaId: string
+  /** Public Baidu JavaScript API browser key, never a server secret. */
+  baiduMapBrowserAk?: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
   jiwoScanLoginEnabled: boolean
@@ -870,6 +872,7 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  isSelf?: boolean
   interactionRef: string
   parentRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -891,6 +894,18 @@ export interface ArkmeWorldInteractionPage {
   total: number
   hasMore: boolean
   nextOffset?: number
+}
+
+/** Existing World owner records, including comments made in another person's World. */
+export interface ArkmeWorldNotificationSourcePage {
+  items: Array<{ recordRef: string; isComment: boolean }>
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export interface ArkmeWorldNotificationTarget {
+  root: ArkmeWorldFeedItem
+  interactionRef: string
 }
 
 /** Server-owned aggregate read state for the current account's World interactions. */
@@ -2655,8 +2670,12 @@ export interface ArkmeRelatedRecordingParticipant {
 export interface ArkmeRelatedRecordingItem {
   /** Account-bound opaque identity. Browser and Agent consumers must not parse it. */
   recordingRef: string
-  /** UI-only opaque reference for shared/related recording details that need lazy transcript loading. */
+  /** Account-bound reference for UI and Agent reads of an authorized shared transcript. */
   sharedRecordingDetailRef?: string
+  /** Owner-only, account/chat-bound capability. Do not parse in the browser. */
+  shareActionRef?: string
+  shareStateKnown?: boolean
+  isShared?: boolean
   startAtMillis: number
   endAtMillis: number
   dateStamp?: number
@@ -2676,6 +2695,15 @@ export interface ArkmeRelatedRecordingItem {
 export interface ArkmeRelatedRecordingMonthBucket {
   monthKey: string
   itemCount: number
+}
+
+export interface ArkmeRelatedRecordingShareResult {
+  recordingRef: string
+  shareActionRef: string
+  shareStateKnown: true
+  isShared: boolean
+  timelineItemKey: string
+  sequence: number
 }
 
 export interface ArkmeRelatedRecordingPage {
@@ -3969,6 +3997,8 @@ export type ArkmePluginOperation =
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
   | 'world.interactions.list'
+  | 'world.notification-sources'
+  | 'world.notification-target'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'
@@ -4030,6 +4060,8 @@ export type ArkmePluginOperation =
   | 'source.send-text'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
+  | 'related-recordings.share'
+  | 'related-recordings.withdraw'
   | 'source.ai-polish.settings'
   | 'source.ai-polish.notices'
   | 'source.ai-polish.generate-rule'
