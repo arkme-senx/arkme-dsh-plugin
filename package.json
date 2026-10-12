@@ -74,8 +74,8 @@
       "schemaVersion": 1,
       "level": "normal",
       "title": "Arkme 插件 3.0.0 更新",
-      "summary": "1008-1820",
-      "publishedAt": "2026-10-08T10:20:33.032Z",
+      "summary": "录音日历增加转写输入时长显示（前端先行）",
+      "publishedAt": "2026-10-10T06:40:12.628Z",
       "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.0"
     }
   },
