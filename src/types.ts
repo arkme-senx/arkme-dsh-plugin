@@ -4236,6 +4236,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'

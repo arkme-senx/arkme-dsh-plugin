@@ -245,6 +245,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'search.history.create'
   | 'search.records'
   | 'search.conversations'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'

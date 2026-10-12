@@ -4,6 +4,7 @@ export interface BaiduMap {
   centerAndZoom(point: BaiduPoint, zoom: number): void
   setViewport(points: BaiduPoint[], options: { margins: number[]; enableAnimation: boolean }): void
   pointToPixel(point: BaiduPoint): { x: number; y: number }
+  getBounds(): { getSouthWest(): BaiduPoint; getNorthEast(): BaiduPoint }
   getZoom(): number
   setZoom(zoom: number): void
   panBy(x: number, y: number): void

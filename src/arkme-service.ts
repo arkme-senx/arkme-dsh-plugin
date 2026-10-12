@@ -2510,6 +2510,8 @@ export class ArkmeService {
 
   async searchTagRecords(options: { normalizedTag: string; limit: number; cursorSendAt?: number; cursorRecordUid?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> { return await this.search.searchTagRecords(options) }
 
+  async searchLocations(query: import('./location-search.js').LocationQuery, signal?: AbortSignal) { return await this.search.searchLocations(query, signal) }
+
   async searchHistory(limit = 10): Promise<ArkmeSearchHistoryResult> {
     return await this.search.searchHistory(limit)
   }
