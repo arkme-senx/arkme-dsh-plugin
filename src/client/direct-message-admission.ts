@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { directMessageAdmissionMessage, type ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
 import { callArkme } from './api.js'
+import { isSocialSource } from './social-access-store.js'
+import { requirePhoneForSocialAction } from './social-action-guard.js'
 import type { ArkmeSourceItem } from '../types.js'
 import { chatActionKey, privateChatActions } from './private-chat-actions-store.js'
 import { useResource } from './use-resource.js'
 
 export async function requireDirectMessageSendAllowed(source: ArkmeSourceItem, signal?: AbortSignal): Promise<void> {
+  if (isSocialSource(source)) await requirePhoneForSocialAction('发送消息', signal)
   if (source.directMessageAdmissionApplicable !== true) return
   let admission: ArkmeDirectMessageAdmission | undefined
   try { admission = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef: source.sourceRef }, signal) }

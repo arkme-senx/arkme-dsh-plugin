@@ -12,8 +12,8 @@ import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { AskDshIcon } from './AskDshIcon.js'
-import { isSocialSource, useSocialAccess } from './social-access-store.js'
-import { ArkmeSocialBindingHint } from './ArkmeSocialBindingHint.js'
+import { isSocialSource } from './social-access-store.js'
+import { requirePhoneForSocialAction } from './social-action-guard.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layout.js'
@@ -2221,7 +2221,6 @@ export function ArkmeSurface({
   active = true,
 }: ArkmeSurfaceProps = {}) {
   const locale = useArkmeLocale()
-  const socialAllowed = useSocialAccess(active)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
@@ -2317,7 +2316,7 @@ export function ArkmeSurface({
       ? activeSelfSourcesResolution.error
       : undefined
   const candidateSource = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
-  const source = !socialAllowed && isSocialSource(candidateSource) ? aggregateSource : candidateSource
+  const source = candidateSource
 
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
@@ -4982,7 +4981,18 @@ export function ArkmeSurface({
   const send = async () => {
     const scope = captureComposerAsyncScope()
     const roleAtSendStart = source !== undefined && isArkmeSelfWorkspaceSource(source) ? selectedSelfRole : undefined
-    try { await withConversationSend(composerDraftKey, async consumed => { if (sameComposerAsyncScope(scope)) await sendCore(consumed, roleAtSendStart) }) }
+    try { await withConversationSend(composerDraftKey, async consumed => {
+      if (isSocialSource(source)) {
+        const draft = composerDraftKey ? arkmeComposerDraftStore.get(composerDraftKey) : undefined
+        const article = composerArticleStore.get(articleDraftKey)
+        await requirePhoneForSocialAction('发送消息')
+        if (!sameComposerAsyncScope(scope)) return
+        if ((composerDraftKey && arkmeComposerDraftStore.get(composerDraftKey) !== draft) || composerArticleStore.get(articleDraftKey) !== article) {
+          throw new Error(tr('内容已更新，请再次发送'))
+        }
+      }
+      if (sameComposerAsyncScope(scope)) await sendCore(consumed, roleAtSendStart)
+    }) }
     catch (caught) { setError(errorMessage(caught)) }
   }
   const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole) => {
@@ -7199,6 +7209,9 @@ export function ArkmeSurface({
     setCopyLinkDetailSending(true)
     setCopyLinkDetailSendError('')
     try {
+      const kind = copyLinkDetail.detail.items[target.itemIndex]?.sourceKind
+      if (kind === 'private_chat' || kind === 'group_chat') await requirePhoneForSocialAction('发送消息')
+      if (!isCurrent()) return
       await callArkme<ArkmeMessageCopyLinkExtendResult>('source.message-copy-link.extend', {
         sid: copyLinkDetail.sid,
         itemIndex: target.itemIndex,
@@ -8284,7 +8297,7 @@ export function ArkmeSurface({
   const forwardDialog = forwardTargetPicker?.native && forwardDialogContent ? createPortal(forwardDialogContent, document.body) : forwardDialogContent
   const retainedCallPage = authView === 'content' && <ArkmeRetainedCallPage
     key={`calls:${auth?.status}:${auth?.environment}:${auth?.userId}`}
-    active={active && socialAllowed && ui.mode === 'calls'}
+    active={active && ui.mode === 'calls'}
   />
 
   if (!active) return <>
@@ -8612,7 +8625,7 @@ export function ArkmeSurface({
           onWechatLogin={() => { void beginWechat() }}
           onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? (socialAllowed ? null : <ArkmeSocialBindingHint />)
+        /></div> : ui.mode === 'calls' ? null
           : ui.mode === 'notifications' ? <ArkmeNotificationCenter />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface
             active={active}
@@ -8626,7 +8639,7 @@ export function ArkmeSurface({
             accountKey={`${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onBack={() => { const dateStamp = ui.recordingReturnDateStamp; if (dateStamp === undefined) arkmeUi.showRecordings(); else arkmeUi.showRecordingTarget(dateStamp, dateStamp) }}
           />
-          : ui.mode === 'world' && socialAllowed ? <ArkmeWorldSurface
+          : ui.mode === 'world' ? <ArkmeWorldSurface
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             {...(ui.worldInteractionRef === undefined ? {} : { notificationRef: ui.worldInteractionRef })}
@@ -9484,7 +9497,7 @@ export function ArkmeSurface({
             shareWebsite={shareWebsite}
           />
         </>}
-        {authView === 'content' && socialAllowed && ui.mode === 'contact-add' && <div
+        {authView === 'content' && ui.mode === 'contact-add' && <div
           style={styles.contactBackdrop}
           role="presentation"
           onMouseDown={event => { if (event.target === event.currentTarget) arkmeUi.showConversations() }}

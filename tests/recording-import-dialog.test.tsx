@@ -950,6 +950,72 @@ describe('recording import dialog behavior', () => {
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'recordings.import.cancel')).toBe(false)
   })
 
+  it.each(['completed', 'owner', 'local'] as const)('notifies the calendar immediately after deleting a %s file even if list reload fails', async kind => {
+    const onAccepted = vi.fn()
+    let deleted = false
+    const common = {
+      ownership: 'self', fileName: '需删除.wav', fileSize: 100, durationMillis: 60000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
+      progress: 1, statusDetail: '', createdAtMillis: 1, updatedAtMillis: 2,
+    }
+    const file = kind === 'local'
+      ? { ...common, kind: 'local', importRef: 'pending', revision: 3, phase: 'failed', status: 'failed' }
+      : { ...common, kind: 'owner', taskKey: 'owner-delete', sessionRef: 'owner-ref', parsedSize: 100, status: kind === 'completed' ? 'completed' : 'transcribing' }
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') {
+        if (deleted) throw new Error('文件列表刷新失败')
+        return currentSnapshot(kind === 'completed' ? [] : [file])
+      }
+      if (operation === 'recordings.import.history') {
+        if (deleted) throw new Error('历史列表刷新失败')
+        return { items: [file], total: 1, offset: 0, hasMore: false }
+      }
+      if (operation === 'recordings.import.session.delete' || operation === 'recordings.import.cancel') {
+        deleted = true
+        return undefined
+      }
+      throw new Error(`unexpected operation: ${String(operation)}`)
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+        defaultStartAtMillis={common.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
+      await tick()
+    })
+    if (kind === 'completed') await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '删除 需删除.wav' }).props.onClick(); await tick() })
+    expect(onAccepted).not.toHaveBeenCalled()
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(deleted).toBe(true)
+    expect(onAccepted).toHaveBeenCalledOnce()
+    expect(renderedText(renderer.root)).not.toContain('需删除.wav')
+  })
+
+  it('does not invalidate calendar data when an owner deletion fails', async () => {
+    const onAccepted = vi.fn()
+    const file = {
+      kind: 'owner', taskKey: 'owner-fail', sessionRef: 'owner-ref', ownership: 'self',
+      fileName: '删除失败.wav', fileSize: 100, parsedSize: 100, durationMillis: 60000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
+      progress: 1, status: 'transcribing', statusDetail: '', createdAtMillis: 1, updatedAtMillis: 2,
+    }
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot([file])
+      throw new Error('删除未成功')
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+        defaultStartAtMillis={file.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
+      await tick()
+    })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '删除 删除失败.wav' }).props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('删除失败.wav')
+    expect(renderedText(renderer.root)).toContain('删除未成功')
+  })
+
   it('asks for confirmation before changing the desktop data ownership selection', async () => {
     await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
     const ownership = renderer.root.findByProps({ 'aria-label': 'A.m4a数据归属' })

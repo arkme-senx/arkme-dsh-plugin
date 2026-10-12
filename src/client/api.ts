@@ -7,6 +7,7 @@ import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
 import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
+import { socialWriteAction } from './social-write-policy.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
@@ -266,6 +267,15 @@ export async function callArkme<T>(
   // Reject it locally instead of replacing its scope with the latest login.
   if (accountKey !== undefined && params?.expectedAccountKey !== undefined && params.expectedAccountKey !== accountKey) {
     throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+  }
+  const socialAction = socialWriteAction(operation, params)
+  if (socialAction !== undefined) {
+    const { requirePhoneForSocialAction } = await import('./social-action-guard.js')
+    await requirePhoneForSocialAction(socialAction, signal)
+    const current = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (current?.status !== 'authenticated' || current.environment !== auth.environment || current.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
   }
   let cleanupBackground: (() => void) | undefined
   try {

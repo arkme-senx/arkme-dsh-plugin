@@ -11,6 +11,7 @@ import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import { AppMigrationDialog } from './AppMigrationDialog.js'
+import { ArkmeSocialBindingDialog } from './ArkmeSocialBindingDialog.js'
 import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -108,6 +109,15 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  if (!deepSeekHarnessEmbedRequested() && !screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeSocialBindingDialog />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: social action binding prompt')
+  }
   if (screenshotWindowRequested()) {
     ctx.effect(() => {
       const host = document.createElement('div')

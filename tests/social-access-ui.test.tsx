@@ -46,9 +46,9 @@ describe('social UI without service restrictions', () => {
     expect(renderer!.root.findByType('input')).toBe(input)
     expect(api.calls.mock.calls.every(([name]) => name !== 'social.access')).toBe(true)
   })
-  it('hides known unbound navigation and restores it after account update without remounting personal UI', async () => {
+  it('keeps every navigation entry for unbound accounts and after binding without remounting personal UI', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     const input = renderer!.root.findByType('input')
     api.phone = '138****0000'
     await act(async () => { await socialAccessStore.refresh() })
@@ -57,10 +57,10 @@ describe('social UI without service restrictions', () => {
   })
   it.each([true, false])('failed refresh preserves previously confirmed bound=%s', async bound => {
     api.phone = bound ? '138****0000' : undefined
-    await mount(); expectSocial(bound)
+    await mount(); expectSocial(true)
     api.fail = true
     await act(async () => { await socialAccessStore.refresh() })
-    expectSocial(bound)
+    expectSocial(true)
   })
   it('first profile failure keeps normal navigation available', async () => {
     api.fail = true
@@ -68,14 +68,14 @@ describe('social UI without service restrictions', () => {
   })
   it('does not reuse another account restriction', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     api.fail = true
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }) })
     expectSocial(true)
   })
   it('restores navigation when the existing account settings refresh discovers binding from another device', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     const input = renderer!.root.findByType('input')
     api.bindOnRefresh = true
     await act(async () => {

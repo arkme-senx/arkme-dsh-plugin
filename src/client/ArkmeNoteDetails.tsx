@@ -50,6 +50,7 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { requirePhoneForSocialAction } from './social-action-guard.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -511,6 +512,8 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
       let roleSnapshot: ArkmeSelfRoleSnapshot | undefined
       let providerWriteStarted = false
       try {
+        if (sourceKind === 'private_chat' || sourceKind === 'group_chat') await requirePhoneForSocialAction('发送消息', controller.signal)
+        if (generationRef.current !== generation || controller.signal.aborted) throw new Error('延展已取消')
         if (roleAtSendStart !== undefined && selfRoleSelection !== undefined) {
           // Bind before the cloud write, so a bind failure never sends a message under the wrong identity.
           roleSnapshot = await callArkme<ArkmeSelfRoleSnapshot>('self-roles.bind', {

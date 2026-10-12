@@ -1030,10 +1030,19 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const mutateJob = async (intent: 'recordings.import.retry' | 'recordings.import.cancel', job: PublicRecordingImportJob) => {
     if (pending) return
+    const lifecycleSignal = lifecycleAbortRef.current?.signal
     setPending(true); setError('')
-    try { await callArkme(intent, { importRef: job.importRef, expectedRevision: job.revision }); await loadJobs() }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '导入任务操作失败') }
-    finally { setPending(false) }
+    try {
+      await callArkme(intent, { importRef: job.importRef, expectedRevision: job.revision })
+      if (lifecycleSignal?.aborted) return
+      if (intent === 'recordings.import.cancel') {
+        jobsLoadRevisionRef.current += 1
+        publishJobs(jobsRef.current.filter(item => !isLocalRecordingImport(item) || item.importRef !== job.importRef))
+        onAccepted()
+      }
+      await loadJobs()
+    } catch (reason) { if (!lifecycleSignal?.aborted) setError(reason instanceof Error ? reason.message : '导入任务操作失败') }
+    finally { if (!lifecycleSignal?.aborted) setPending(false) }
   }
 
   const loadHistory = async (
@@ -1138,6 +1147,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const mutateOwner = async (intent: OwnerMutationIntent, historyView: boolean) => {
     if (pending) return
+    const lifecycleSignal = lifecycleAbortRef.current?.signal
     setPending(true); setError('')
     try {
       if (intent.kind === 'start') {
@@ -1153,11 +1163,16 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       } else {
         await callArkme('recordings.import.session.delete', { sessionRef: intent.sessionRef })
       }
+      if (lifecycleSignal?.aborted) return
+      jobsLoadRevisionRef.current += 1
       applyOwnerMutationProjection(intent)
+      // Completed files are absent from the active list; successful edits also
+      // preserve task IDs. Neither can rely on loadJobs detecting a change.
+      onAccepted()
       await reloadOwnerViews(historyView)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '录音任务操作失败')
-    } finally { setPending(false) }
+      if (!lifecycleSignal?.aborted) setError(reason instanceof Error ? reason.message : '录音任务操作失败')
+    } finally { if (!lifecycleSignal?.aborted) setPending(false) }
   }
 
   const changeOwnerStart = (task: ImportTask, historyView: boolean, value: string) => {
