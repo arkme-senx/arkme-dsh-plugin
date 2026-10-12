@@ -106,6 +106,15 @@ it('edits owner profile, crops/uploads/resets, blocks members, and invokes the r
   expect(await menu.getByText('随团队名称自动更新').evaluate(n=>{const rect=n.getBoundingClientRect();return n.closest('[role=menu]').contains(document.elementFromPoint(rect.left+rect.width/2,rect.bottom-2))})).toBe(true);
   if(captures){await page.screenshot({path:join(captures,'team-avatar-menu.png')});const box=await dialog.boundingBox(),menuBox=await menu.boundingBox();await page.screenshot({path:join(captures,'team-avatar-menu-detail.png'),clip:{x:box.x-12,y:box.y-12,width:box.width+24,height:Math.max(box.y+box.height,menuBox.y+menuBox.height)-box.y+24}})};await menu.getByRole('menuitem',{name:/使用名称头像/}).click();await expect.poll(()=>menu.count()).toBe(0);expect(await dialog.locator('.arkme-team-name-avatar').innerText()).toBe('AB');if(captures)await page.screenshot({path:join(captures,'team-editor-narrow.png')})
   await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect.poll(()=>custom).toBe(false);await expect.poll(()=>name).toBe('ab团队');await expect.poll(()=>detail.locator('.arkme-team-name-avatar').innerText()).toBe('AB')
+  if(realTeam){
+   await detail.getByRole('button',{name:'编辑团队',exact:true}).click();dialog=page.getByRole('dialog',{name:'编辑团队',exact:true});await dialog.waitFor()
+   await dialog.getByRole('textbox',{name:'团队名称'}).fill('回执无投影')
+   const fault=async unavailable=>{const response=await realFetch(realTeam.url+'/__test/profile-read',{method:'POST',headers:{'Content-Type':'application/json','X-Internal-Secret':'local-team-profile-internal',Authorization:'Bearer '+realTeam.owner_token},body:JSON.stringify({unavailable})});expect(response.status).toBe(204)}
+   await fault(true)
+   try{await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect.poll(()=>dialog.count()).toBe(0);await expect.poll(()=>name).toBe('回执无投影')}finally{await fault(false)}
+   const confirmed=await host.getTeamProfile('profile_test');expect(confirmed.name).toBe('回执无投影')
+   await host.updateTeamProfile(confirmed.profileRef,{requestUid:crypto.randomUUID(),expectedRevision:confirmed.profileRevision,name:'ab团队'})
+  }
   // The same Host adapter rejects an old owner command after authority changes.
   const latest=await host.getTeamProfile('profile_test');owner=false
   if(realTeam){const changed=await realFetch(realTeam.url+'/__test/owner',{method:'POST',headers:{'X-Internal-Secret':'local-team-profile-internal',Authorization:'Bearer '+realTeam.owner_token}});expect(changed.status).toBe(204)}

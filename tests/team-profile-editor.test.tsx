@@ -41,6 +41,25 @@ it('uses the name avatar from its menu without uploading any image',async()=>{
  act(()=>view!.root.findByProps({'aria-label':'更换团队头像'}).props.onClick());act(()=>view!.root.findAllByProps({role:'menuitem'}).find(b=>text(b).includes('使用名称头像'))!.props.onClick());await act(async()=>view!.root.findByType('form').props.onSubmit({preventDefault(){}}))
  expect(mocks.call).toHaveBeenCalledExactlyOnceWith('team.app.profile.update',expect.objectContaining({avatar:{action:'default'}}),expect.any(AbortSignal));expect(updated).toHaveBeenCalledOnce()
 })
+it('finishes an accepted save when its optional current profile is unavailable',async()=>{
+ const updated=mount()
+ mocks.call.mockImplementation(async(method)=>method==='team.app.profile.update'?{requestUid:'accepted',acceptedRevision:4}:Promise.reject(new Error('projection unavailable')))
+ await act(async()=>view!.root.findByType('form').props.onSubmit({preventDefault(){}}))
+ expect(updated).toHaveBeenCalledExactlyOnceWith(undefined)
+ expect(mocks.call).toHaveBeenCalledTimes(1)
+ expect(view!.root.findAllByProps({role:'alert'})).toHaveLength(0)
+})
+it('does not abort an adopted image when an accepted receipt has no projection',async()=>{
+ const updated=mount(),image=new File(['bytes'],'test.png',{type:'image/png'})
+ Object.defineProperty(image,'arrayBuffer',{value:async()=>new Uint8Array([1,2,3]).buffer})
+ act(()=>view!.root.findByProps({type:'file'}).props.onChange({currentTarget:{files:[image],value:'x'}}))
+ act(()=>view!.root.find(node=>typeof node.props.onConfirm==='function').props.onConfirm(image))
+ mocks.call.mockImplementation(async(method)=>method==='team.app.profile.avatar.upload'?{uploadRef:'adopted'}:{acceptedRevision:4})
+ await act(async()=>view!.root.findByType('form').props.onSubmit({preventDefault(){}}))
+ expect(updated).toHaveBeenCalledExactlyOnceWith(undefined)
+ act(()=>view!.unmount());view=undefined
+ expect(mocks.call.mock.calls.map(call=>call[0])).toEqual(['team.app.profile.avatar.upload','team.app.profile.update'])
+})
 
 it('renews an attempted candidate when the edit changes and retains the local image',async()=>{
  mount();const image=new File(['bytes'],'test.png',{type:'image/png'});Object.defineProperty(image,'arrayBuffer',{value:async()=>new Uint8Array([1,2,3]).buffer})

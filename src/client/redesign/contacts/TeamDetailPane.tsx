@@ -258,7 +258,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       </div>
     </section>
     {editing&&<TeamProfileEditor profile={editing} onClose={()=>setEditing(undefined)} onUpdated={profile=>{
-      setEditing(undefined);setState(current=>current.page?{...current,page:{...current.page,team:{...current.page.team,name:profile.name,profileRevision:profile.profileRevision,canEditProfile:profile.canEditProfile,avatar:profile.avatar}}}:current)
+      setEditing(undefined);if(profile)setState(current=>current.page?{...current,page:{...current.page,team:{...current.page.team,name:profile.name,profileRevision:profile.profileRevision,canEditProfile:profile.canEditProfile,avatar:profile.avatar}}}:current)
       arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
     }}/>}
     {syncTeam && <TeamCodexSyncDialog team={syncTeam} onClose={() => setSyncTeam(undefined)} onViewConversations={() => {

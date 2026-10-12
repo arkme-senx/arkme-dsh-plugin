@@ -10,7 +10,7 @@ import { arkmeTheme } from '../../arkme-theme.js';
 export function TeamProfileEditor({ profile, onClose, onUpdated }: {
     profile: ArkmeTeamProfile;
     onClose(): void;
-    onUpdated(profile: ArkmeTeamProfile): void;
+    onUpdated(profile?: ArkmeTeamProfile): void;
 }) {
     const [name, setName] = useState(profile.name), [file, setFile] = useState<File>(), [source, setSource] = useState<File>(), [preview, setPreview] = useState(''), [reset, setReset] = useState(false), [avatarMenu, setAvatarMenu] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [blocked, setBlocked] = useState(false);
     const input = useRef<HTMLInputElement>(null), dialog = useRef<HTMLDialogElement>(null), pending = useRef<AbortController>(), upload = useRef<{
@@ -59,11 +59,8 @@ export function TeamProfileEditor({ profile, onClose, onUpdated }: {
                 return;
             if (result.acceptedRevision <= 0)
                 throw new Error('保存结果尚未确认，请重试');
-            const current = result.profile ?? await callArkme<ArkmeTeamProfile>('team.app.profile.get', { teamRef: profile.profileRef }, controller.signal);
-            if (controller.signal.aborted)
-                return;
             saved.current = true;
-            onUpdated(current);
+            onUpdated(result.profile);
         }
         catch (e) {
             if (!controller.signal.aborted) {
