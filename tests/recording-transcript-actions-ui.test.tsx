@@ -241,14 +241,19 @@ describe('transcript forwarding interaction', () => {
 
   it('keeps a renamed topic in the same delivery attempt when its capability ref rotates', async () => {
     const draft = attempt(); let renamed = false
+    let confirm!: () => void
     mocks.call.mockImplementation(async operation => {
       if (operation === 'recordings.forward.capabilities') return { recordTargetsSupported: true }
       if (operation === 'sources.list') return { items: [{ ...target('topic'), sourceKey: undefined, kind: 'topic', topicHierarchyKey: 'stable-topic', sourceRef: renamed ? 'new-topic-ref' : 'old-topic-ref' }], hasMore: false }
+      if (operation === 'recordings.forward') return new Promise(resolve => { confirm = () => resolve({ recordUid: 'confirmed' }) })
       return { recordUid: 'confirmed' }
     })
     await act(async () => { renderer = create(<RecordingTranscriptForward attempt={draft} onClose={() => {}} onComplete={() => {}} />) })
     await act(async () => { renderer.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
-    await act(async () => { sendButton().props.onClick(); renderer.unmount() })
+    await act(async () => { sendButton().props.onClick() })
+    expect(mocks.call.mock.calls.filter(([operation]) => operation === 'recordings.forward')).toHaveLength(1)
+    // The owner has accepted the request; a later receipt must survive view teardown.
+    await act(async () => { renderer.unmount(); confirm() })
     renamed = true
     await act(async () => { renderer = create(<RecordingTranscriptForward attempt={draft} onClose={() => {}} onComplete={() => {}} />) })
     expect(renderer.root.findByProps({ type: 'checkbox' }).props.disabled).toBe(true)
