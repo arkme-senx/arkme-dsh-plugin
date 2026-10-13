@@ -18,7 +18,12 @@ it('synchronizes text, attachments and clears by key without echo or deleting ot
  const bridge = (id: number): any => ({snapshot: async () => [...states.values()], onEvent: (fn: Function) => {listeners.set(id,fn); return () => listeners.delete(id)}, publish: async (event: any) => {states.set(event.key,event); for (const [key, fn] of listeners) if(key !== id) fn(event); return true}})
  const key = 'arkme-composer:7:source:private_chat:chat%3A1';
  const stopA = await connectConversationDrafts(bridge(1),a,7,'prod:7'), stopB = await connectConversationDrafts(bridge(2),b,7,'prod:7');
+ const parent = {itemUid:'parent',messageActionRef:'opaque-action',senderName:'作者',isMe:false,sendAtMillis:1,title:'',textContent:'父消息',status:1}
+ a.setExtensionTarget(key,parent)
  a.setText(key,'hello'); await vi.waitFor(() => expect(b.get(key).text).toBe('hello')); expect(b.get(key).text).toBe('hello');
+ expect(b.get(key).extensionTarget?.item).toEqual(parent)
+ b.setText(key,'edited in secondary'); await vi.waitFor(() => expect(a.get(key).text).toBe('edited in secondary'))
+ expect(a.get(key).extensionTarget?.item).toEqual(parent)
  b.setText('arkme-composer:7:source:group_chat:chat%3A2','group');
  a.clear(key); await vi.waitFor(() => expect(b.get(key).text).toBe('')); await vi.waitFor(() => expect(b.get('arkme-composer:7:source:group_chat:chat%3A2').text).toBe('group')); expect(b.get('arkme-composer:7:source:group_chat:chat%3A2').text).toBe('group');
  stopA(); stopB();

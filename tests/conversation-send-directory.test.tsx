@@ -6594,6 +6594,45 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息给@Harness…')
   })
 
+  it.each(['reference-refresh', 'remount', 'switch-back'] as const)('keeps the extension parent with its draft after %s', async change => {
+    timeline = [{ itemUid: 'retained-parent', messageActionRef: 'retained-parent-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '应保留的父消息', status: 1 }]
+    const mount = () => create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+        ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+    })
+    await act(async () => { renderer = mount() })
+    act(() => renderer!.root.findByProps({ 'aria-label': '打开快记详情' }).props.onContextMenu({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+    }))
+    const extend = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extend.props.onClick() })
+    act(() => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('仍在输入的延展正文'))
+    if (change === 'reference-refresh') {
+      activeSource = { ...target, sourceRef: 'renewed-source-harness' }
+      await act(async () => { arkmeUi.selectSource(activeSource) })
+    } else if (change === 'remount') {
+      await act(async () => { renderer!.unmount() })
+      await act(async () => { renderer = mount() })
+    } else {
+      activeSource = other
+      await act(async () => { arkmeUi.selectSource(other) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(0)
+      activeSource = target
+      await act(async () => { arkmeUi.selectSource(target) })
+    }
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('仍在输入的延展正文')
+    const preview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
+    expect(renderedText(preview)).toContain('应保留的父消息')
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: change === 'reference-refresh' ? 'renewed-source-harness' : target.sourceRef,
+      messageActionRef: 'retained-parent-action', textContent: '仍在输入的延展正文',
+    }))
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(false)
+  })
+
   it('omits the non-text fallback label when extending an attachment-only quick note', async () => {
     timeline = [{
       itemUid: 'extension-image-source', messageActionRef: 'opaque-extension-image-action',

@@ -2471,10 +2471,7 @@ export function ArkmeSurface({
   const attachments = composerDraft.attachments
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
-  const [composerExtensionTarget, setComposerExtensionTarget] = useState<{ sourceRef: string; item: ArkmeTimelineItem }>()
-  const activeComposerExtensionTarget = composerExtensionTarget?.sourceRef === source?.sourceRef
-    ? composerExtensionTarget
-    : undefined
+  const composerExtensionTarget = composerDraft.extensionTarget
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
     findCandidate: findRecordReeditCandidate } = useRecordReeditEditors()
@@ -2542,11 +2539,6 @@ export function ArkmeSurface({
         : current)
     })
   }, [persistRecordReeditDraft, updateRecordReeditCandidate])
-  useEffect(() => {
-    if (composerExtensionTarget !== undefined && composerExtensionTarget.sourceRef !== source?.sourceRef) {
-      setComposerExtensionTarget(undefined)
-    }
-  }, [composerExtensionTarget, source?.sourceRef])
   useEffect(() => {
     if (recordReeditHighlightTimerRef.current !== undefined) {
       window.clearTimeout(recordReeditHighlightTimerRef.current)
@@ -5021,7 +5013,6 @@ export function ArkmeSurface({
       return
     }
     const targetSource = source
-    const extensionTarget = activeComposerExtensionTarget
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     const targetAccountKey = authenticatedAccountKey
@@ -5037,6 +5028,7 @@ export function ArkmeSurface({
     if (preparationSucceeded === false) return
     if (!sameTargetAccount()) return
     const readyDraft = arkmeComposerDraftStore.get(targetDraftKey)
+    const extensionTarget = readyDraft.extensionTarget
     const serializedDraft = serializeArkmeComposerDraft(readyDraft)
     const rawTextContent = serializedDraft.text
     const textFormat = serializedDraft.textFormat
@@ -5066,20 +5058,8 @@ export function ArkmeSurface({
       } else releaseArkmeComposerDraft(pendingDraft)
       throw caught
     }
-    // The reference belongs to the submitted draft, not the next message. Do not
-    // leave it visible until the network request and attachment cleanup finish.
-    if (extensionTarget !== undefined && sameTargetComposer()) {
-      setComposerExtensionTarget(current => current === extensionTarget ? undefined : current)
-    }
-    const restorePendingDraft = () => {
-      arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
-      // Only restore the reference when restore() accepted the original draft
-      // identity; a newer draft or reference must keep its own destination.
-      if (extensionTarget !== undefined && sameTargetComposer()
-        && arkmeComposerDraftStore.get(targetDraftKey).fileSendIdentity?.recordUid === recordUid) {
-        setComposerExtensionTarget(current => current ?? extensionTarget)
-      }
-    }
+    // take/restore keep the parent, content and send identity in one snapshot.
+    const restorePendingDraft = () => arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
     setHashTagTrigger(undefined)
     setHashTagCandidateIndex(0)
     activeHashTagStartRef.current = undefined
@@ -6735,10 +6715,10 @@ export function ArkmeSurface({
       showMessageActionStatus('请先完成编辑后再进行延展')
       return
     }
-    setComposerExtensionTarget({ sourceRef: source.sourceRef, item })
+    arkmeComposerDraftStore.setExtensionTarget(composerDraftKey, item)
     setDrawer(undefined)
     requestAnimationFrame(() => { textareaRef.current?.focus() })
-  }, [activeRecordReeditComposer, closeMessageMenu, showMessageActionStatus, source])
+  }, [activeRecordReeditComposer, closeMessageMenu, composerDraftKey, showMessageActionStatus, source])
   const defaultExtensionMentionTargetRef = useRef<typeof composerExtensionTarget>()
   useEffect(() => {
     if (composerExtensionTarget === undefined) {
@@ -6746,7 +6726,7 @@ export function ArkmeSurface({
       return
     }
     if (defaultExtensionMentionTargetRef.current === composerExtensionTarget
-      || source?.kind !== 'group_chat' || source.sourceRef !== composerExtensionTarget.sourceRef
+      || source?.kind !== 'group_chat'
       || !activeConversation || activeRecordReeditComposer !== undefined) return
     const item = composerExtensionTarget.item
     const member = item.memberRef === undefined ? undefined : conversationMemberByRef.get(item.memberRef)
@@ -6933,7 +6913,7 @@ export function ArkmeSurface({
       busy: false,
       error: '',
     } : { ...retained, generation }
-    setComposerExtensionTarget(undefined)
+    arkmeComposerDraftStore.setExtensionTarget(composerDraftKey, undefined)
     setAddMenuOpen(false)
     setHashTagTrigger(undefined)
     activeHashTagStartRef.current = undefined
@@ -6976,7 +6956,7 @@ export function ArkmeSurface({
         ? { ...current, loading: false, error: errorMessage(caught) }
         : current)
     }
-  }, [authenticatedAccountKey, closeMessageMenu, persistRecordReeditBeforeContextExit, findRecordReeditCandidate, showMessageActionStatus, source, reeditSubmissions.jobs])
+  }, [authenticatedAccountKey, closeMessageMenu, composerDraftKey, persistRecordReeditBeforeContextExit, findRecordReeditCandidate, showMessageActionStatus, source, reeditSubmissions.jobs])
   const closeMessageSnapshot = useCallback(() => {
     snapshotRequestRef.current?.abort()
     snapshotRequestRef.current = undefined
@@ -7627,11 +7607,11 @@ export function ArkmeSurface({
   const effectiveComposerPlaceholder = activeRecordReeditComposer !== undefined
     ? activeRecordReeditComposer.loading ? '正在读取快记和草稿…' : '重新编辑快记…'
     : directAdmission.blocked ? directAdmission.message
-    : activeComposerExtensionTarget === undefined
+    : composerExtensionTarget === undefined
       ? composerPlaceholder
       : tr("发送到「{v0}」…", { v0: source?.displayName ?? '' })
   const activeComposerTargetItem = activeRecordReeditComposer === undefined
-    ? activeComposerExtensionTarget?.item
+    ? composerExtensionTarget?.item
     : {
       ...activeRecordReeditComposer.item,
       title: activeRecordReeditComposer.snapshot?.title ?? activeRecordReeditComposer.item.title,
@@ -8877,7 +8857,7 @@ export function ArkmeSurface({
               closeLabel={activeRecordReeditComposer === undefined ? '取消延展' : '关闭重新编辑'}
               disabled={activeRecordReeditComposer?.busy === true || preparingReeditFiles}
               onClose={() => {
-                if (activeRecordReeditComposer === undefined) { setComposerExtensionTarget(undefined); textareaRef.current?.focus() }
+                if (activeRecordReeditComposer === undefined) { arkmeComposerDraftStore.setExtensionTarget(composerDraftKey, undefined); textareaRef.current?.focus() }
                 else void closeRecordReedit()
               }}>
                 {(activeComposerTargetItem.contentBlocks?.length ?? 0) > 0 && <div style={styles.composerExtensionTargetFiles}>
