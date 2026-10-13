@@ -116,4 +116,29 @@ describe('recording surface selection and real playback controller', () => {
     expect(timeline().props.playbackLoading).toBe(false)
   })
 
+  it('removes the header and tabs on an empty date and restores them for pending audio', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let processing = false
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation !== 'recordings.day') return original(operation, params, signal)
+      return { dateStamp: params.dateStamp, totalDurationMillis: 0, coverage: { state: 'ready', intervals: [] },
+        transcript: { state: processing ? 'processing' : 'empty', message: '', items: [], processingCount: processing ? 1 : 0, totalDurationMillis: 0 },
+        summary: { state: 'empty', message: '', items: [] }, timeline: { state: 'empty', message: '', items: [] } }
+    })
+    const selectOtherDay = async () => act(async () => {
+      renderer.root.findAll(node => node.type === 'button' && node.props['aria-pressed'] === false && !node.props.disabled)[0]!.props.onClick()
+      await tick()
+    })
+    await selectOtherDay()
+    const detail = () => renderer.root.findByProps({ 'aria-label': '录音详情' })
+    expect(detail().findAllByType('button')).toHaveLength(0)
+    expect(detail().findAllByProps({ 'aria-label': '当天暂无录音' })).toHaveLength(1)
+    expect(detail().findAllByType(ArkmeRecordingTimeline)).toHaveLength(0)
+    processing = true
+    await selectOtherDay()
+    expect(detail().findAllByProps({ 'aria-label': '当天暂无录音' })).toHaveLength(0)
+    expect(detail().findAllByProps({ 'aria-label': '录音内容' })).toHaveLength(1)
+    expect(detail().findAllByType(ArkmeRecordingTimeline)).toHaveLength(1)
+  })
+
 })

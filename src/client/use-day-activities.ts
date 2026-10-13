@@ -9,10 +9,15 @@ function message(error: unknown) { return error instanceof Error ? error.message
 interface Resource<T> { key: string; value?: T; loading: boolean; error: string }
 
 /** Query-scoped, cancellable, explicitly paged reads. No history fan-out or writes. */
-export function useDayActivities(query: DayActivityQuery, reader: DayActivityReader | undefined) {
+export function useDayActivities(query: DayActivityQuery, reader: DayActivityReader | undefined, refreshVersion = 0) {
   const key = dayActivityQueryKey(query)
   const [revision, setRevision] = useState(0)
   const [resource, setResource] = useState<Resource<DayActivityPage>>({ key, loading: !!reader, error: '' })
+  const currentResource = useRef(resource)
+  currentResource.current = resource
+  const loadedReader = useRef<DayActivityReader>()
+  const loadedPages = useRef(1)
+  const reading = useRef<AbortController>()
   const more = useRef<AbortController>()
   const active = useRef<{ key: string; reader: DayActivityReader | undefined }>({ key, reader })
   active.current = { key, reader }
@@ -23,29 +28,59 @@ export function useDayActivities(query: DayActivityQuery, reader: DayActivityRea
 
   useEffect(() => {
     const controller = new AbortController()
+    reading.current = controller
+    const previous = currentResource.current
+    const retained = previous.key === key && loadedReader.current === reader ? previous.value : undefined
+    const wantedPages = retained ? loadedPages.current : 1
     more.current?.abort(); more.current = undefined; cursors.current.clear(); setPaging(false)
-    setResource({ key, loading: !!reader, error: '' })
+    setResource({ key, ...(retained ? { value: retained } : {}), loading: !!reader && !retained, error: '' })
     if (reader && !query.accountScope.trim()) {
       setResource({ key, loading: false, error: '账号范围尚未确认，暂不读取活动' })
       return () => controller.abort()
     }
     if (reader) {
-      void Promise.resolve().then(() => controller.signal.aborted ? undefined : reader.loadDay(query, { signal: controller.signal }))
+      const read = async () => {
+        if (controller.signal.aborted) return
+        let page = await reader.loadDay(query, { signal: controller.signal })
+        if (controller.signal.aborted) return
+        validatePage(page, query)
+        let count = 1
+        const seen = new Set<string>()
+        // Rebuild only the prefix the user already opened, then swap it atomically.
+        while (count < wantedPages && page.hasMore && page.nextCursor) {
+          const cursor = page.nextCursor
+          if (seen.has(cursor)) throw new Error('活动分页已失效，请重试')
+          seen.add(cursor)
+          const next = await reader.loadDay(query, { signal: controller.signal, cursor, snapshotId: page.snapshotId })
+          if (controller.signal.aborted) return
+          validatePage(next, query, page.snapshotId)
+          if (next.order !== page.order) throw new Error('活动排序已变化，请重试')
+          page = { ...next, items: mergeDayActivityItems(next.replaceItems ? [] : page.items, next.items, next.order) }
+          count += 1
+        }
+        loadedPages.current = count
+        loadedReader.current = reader
+        cursors.current = seen
+        return page
+      }
+      void read()
         .then(page => {
           if (controller.signal.aborted || !page) return
           validatePage(page, query)
           setResource({ key, value: { ...page, items: mergeDayActivityItems([], page.items, page.order) }, loading: false, error: '' })
         }).catch(error => {
           if (!controller.signal.aborted) setResource({ key, loading: false, error: message(error) })
+        }).finally(() => {
+          if (reading.current === controller) reading.current = undefined
         })
     }
-    return () => { controller.abort(); more.current?.abort(); more.current = undefined }
+    return () => { controller.abort(); if (reading.current === controller) reading.current = undefined; more.current?.abort(); more.current = undefined }
     // key encodes all query fields; no reload for a referentially new query object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, reader, revision])
+  }, [key, reader, revision, refreshVersion])
 
   const loadMore = useCallback(async () => {
-    if (!reader || !value?.hasMore || !value.nextCursor || current.loading || more.current) return
+    if (!reader || !value?.hasMore || !value.nextCursor || current.loading || more.current || reading.current) return
     const controller = new AbortController(); more.current = controller; setPaging(true)
     setResource(resource => ({ ...resource, error: '' }))
     try {
@@ -57,6 +92,7 @@ export function useDayActivities(query: DayActivityQuery, reader: DayActivityRea
       }
       cursors.current.add(value.nextCursor)
       if (page.order !== value.order) throw new Error('活动排序已变化，请刷新当天内容')
+      loadedPages.current += 1
       setResource({ key, loading: false, error: '', value: { ...page, items: mergeDayActivityItems(page.replaceItems ? [] : value.items, page.items, page.order) } })
     } catch (error) {
       if (!controller.signal.aborted && active.current.key === key && active.current.reader === reader) {

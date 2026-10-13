@@ -526,6 +526,14 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
   })
 
+  it('restores manual import batch identity after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-batch-'))
+    const batch = { batchId: 'batch-0001', itemIndex: 1, itemCount: 3, timeZone: 'Asia/Shanghai' }
+    await new ArkmeStateStore(root).putRecordingImportJob(10001, recordingJob({ batch }))
+    const restored = await new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')
+    expect(restored?.batch).toEqual(batch)
+  })
+
   it('persists recording import checkpoints and replaces them with revision CAS', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-import-'))
     const store = new ArkmeStateStore(root)

@@ -30,19 +30,64 @@ beforeEach(() => {
   arkmeUi.showConversations()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(() => { act(() => root.unmount()); host.remove(); mock.listeners.clear() })
+afterEach(() => { act(() => root.unmount()); host.remove(); mock.listeners.clear(); vi.useRealTimers() })
 const render = async (props = {}) => { await act(async () => root.render(<ArkmeProductNavigation compact={false} {...props} />)) }
 const update = (value: Partial<DirectRecordingSnapshot>) => act(() => { mock.state = { ...mock.state, ...value }; mock.listeners.forEach(fn => fn()) })
 const button = () => host.querySelector<HTMLButtonElement>('[data-arkme-home-tour-target="recordings"]')!
 const hint = () => document.querySelector<HTMLElement>('[data-arkme-recording-navigation-hint]')
 const hover = () => act(() => { button().dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
 
-it('keeps the existing rail size and shows a red dot plus recording label only while capturing', async () => {
+it('delays icon labels until hover settles and cancels pending hints on leave or scroll', async () => {
+  await render(); vi.useFakeTimers()
+  const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
+  hover(); act(() => vi.advanceTimersByTime(199)); expect(label()).toBeNull()
+  act(() => vi.advanceTimersByTime(1))
+  expect(label()?.textContent).toBe('录音')
+  expect(label()?.parentElement).toBe(document.body)
+  expect(button().getAttribute('aria-describedby')).toBe(label()?.id)
+  act(() => button().dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })))
+  expect(label()).toBeNull()
+  hover()
+  act(() => document.dispatchEvent(new Event('scroll')))
+  act(() => vi.advanceTimersByTime(250)); expect(label()).toBeNull()
+  hover()
+  await render({ hidden: true })
+  act(() => vi.advanceTimersByTime(250)); expect(label()).toBeNull()
+})
+
+it('shows icon names on keyboard focus and dismisses them on Escape, activation and unmount', async () => {
+  await render()
+  const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
+  act(() => button().focus()); expect(label()?.textContent).toBe('录音')
+  act(() => button().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(label()).toBeNull()
+  act(() => button().blur()); act(() => button().focus())
+  act(() => button().click()); expect(label()).toBeNull()
+  expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
+  act(() => button().blur()); act(() => button().focus())
+  expect(label()).not.toBeNull()
+  await act(async () => root.render(null)); expect(label()).toBeNull()
+})
+
+it('keeps the membership label visible and additional account details in the tooltip', async () => {
+  await render()
+  const brand = host.querySelector<HTMLElement>('[data-arkme-owned="product-brand"]')!
+  const profile = host.querySelector<HTMLButtonElement>('[aria-label="个人资料"]')!
+  expect(brand.textContent).not.toContain('v3.0.0')
+  expect(profile.querySelector('.arkme-member-label')).not.toBeNull()
+  act(() => brand.focus())
+  expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('Arkme v')
+  act(() => profile.focus())
+  expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('个人资料')
+})
+
+it('keeps the existing rail size and shows a red dot plus accessible recording status only while capturing', async () => {
   await render({ hosted: true })
   const size = [button().style.minHeight, button().style.padding]
-  expect(button().textContent).toBe('录音')
+  expect(button().textContent).toBe('')
+  expect(button().getAttribute('aria-label')).toBe('录音')
   update({ phase: 'recording', elapsedMillis: 123000 })
-  expect(button().textContent).toBe('录音中')
+  expect(button().getAttribute('aria-label')).toContain('本机正在录音')
   expect(button().querySelector('[data-arkme-recording-indicator]')).not.toBeNull()
   expect(button().querySelectorAll('[data-arkme-recording-breath]')).toHaveLength(2)
   expect(host.querySelectorAll('[data-arkme-recording-breath="surface"]')).toHaveLength(1)
@@ -50,7 +95,7 @@ it('keeps the existing rail size and shows a red dot plus recording label only w
   expect([button().style.minHeight, button().style.padding]).toEqual(size)
   for (const phase of ['saving', 'uploading', 'idle', 'starting'] as const) {
     update({ phase })
-    expect(button().textContent).toBe('录音')
+    expect(button().getAttribute('aria-label')).toBe('录音')
     expect(button().hasAttribute('data-arkme-navigation-recording')).toBe(false)
     expect(host.querySelector('[data-arkme-recording-breath]')).toBeNull()
   }
@@ -59,7 +104,7 @@ it('keeps the existing rail size and shows a red dot plus recording label only w
 it('retains the indicator across routes and clicking still opens recordings without stopping capture', async () => {
   update({ phase: 'recording' }); await render()
   for (const change of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(), () => arkmeUi.showHarness(), () => arkmeUi.showConversations()]) {
-    act(change); expect(button().textContent).toBe('录音中')
+    act(change); expect(button().getAttribute('aria-label')).toContain('本机正在录音')
   }
   act(() => button().click())
   expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
@@ -89,14 +134,14 @@ it('supports keyboard focus, Escape and click dismissal without announcing the t
 it('never leaks a recording indicator or tooltip into another account or environment', async () => {
   update({ phase: 'recording' }); await render(); hover(); expect(hint()).not.toBeNull()
   await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 43 }) })
-  expect(button().textContent).toBe('录音'); expect(hint()).toBeNull()
-  update({ accountKey: 'test:43' }); expect(button().textContent).toBe('录音')
+  expect(button().getAttribute('aria-label')).toBe('录音'); expect(hint()).toBeNull()
+  update({ accountKey: 'test:43' }); expect(button().getAttribute('aria-label')).toBe('录音')
 })
 
 it('hides the indicator and tooltip for locked or hidden navigation', async () => {
   update({ phase: 'recording' }); await render(); hover()
-  await render({ hidden: true }); expect(hint()).toBeNull(); expect(button().textContent).toBe('录音')
-  await render({ locked: true }); hover(); expect(hint()).toBeNull(); expect(button().textContent).toBe('录音')
+  await render({ hidden: true }); expect(hint()).toBeNull(); expect(button().getAttribute('aria-label')).toBe('录音')
+  await render({ locked: true }); hover(); expect(hint()).toBeNull(); expect(button().getAttribute('aria-label')).toBe('录音')
 })
 
 it('removes a visible hint immediately when capture stops, even while the file is uploading', async () => {

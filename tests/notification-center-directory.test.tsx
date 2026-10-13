@@ -107,7 +107,7 @@ afterEach(async () => {
 })
 
 describe('notification directory stability', () => {
-  it('combines Team entries with social visibility without replacing notifications or reviving the legacy author shortcut', async () => {
+  it('keeps Team entries available without phone binding and avoids duplicate official entries', async () => {
     vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
     let phoneMasked: string | undefined
     const conversation: TeamConversation = {
@@ -131,7 +131,7 @@ describe('notification directory stability', () => {
     const teamRows = () => renderer!.root.findAll(node => node.type === 'button' && node.props['data-team-side'] === 'external')
     const shortcut = () => renderer!.root.findAll(node => node.type === 'button' && node.props['data-arkme-home-tour-target'] === 'official-author')
     const loadMore = () => renderer!.root.findAll(node => node.type === 'button' && node.children.includes('加载更多团队对话'))
-    expect(teamRows()).toHaveLength(0); expect(shortcut()).toHaveLength(0); expect(loadMore()).toHaveLength(0)
+    expect(teamRows()).toHaveLength(1); expect(shortcut()).toHaveLength(0); expect(loadMore()).toHaveLength(1)
     const notification = notificationRows()[0]!
     phoneMasked = '138****0000'
     await act(async () => { await socialAccessStore.refresh() })
@@ -139,18 +139,18 @@ describe('notification directory stability', () => {
     expect(notificationRows()[0]).toBe(notification)
     phoneMasked = undefined
     await act(async () => { await socialAccessStore.refresh() })
-    expect(teamRows()).toHaveLength(0); expect(loadMore()).toHaveLength(0)
+    expect(teamRows()).toHaveLength(1); expect(loadMore()).toHaveLength(1)
     expect(notificationRows()[0]).toBe(notification)
     conversations = []
     await act(async () => { await refreshTeamDirectory('test:7001') })
-    expect(shortcut()).toHaveLength(0)
+    expect(shortcut()).toHaveLength(1)
     phoneMasked = '138****0000'
     await act(async () => { await socialAccessStore.refresh() })
     expect(shortcut()).toHaveLength(1)
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'chat.official-author.profile' || operation === 'chat.official-author.private.open')).toBe(false)
   })
 
-  it('preserves notifications and Codex while social conversations hide and return after binding', async () => {
+  it('preserves every conversation and the selected notification across binding changes', async () => {
     let phoneMasked: string | undefined
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
@@ -161,7 +161,7 @@ describe('notification directory stability', () => {
       return original(operation, ...args)
     })
     await act(async () => { renderer = create(<Workspace showHarnessEntry />) })
-    expect(conversationOrder()).toEqual(['通知'])
+    expect(conversationOrder()).toEqual(['置顶对话', '较新对话', '通知', '较早对话'])
     expect(renderer!.root.findAllByProps({ role: 'treeitem', 'aria-label': 'Codex' })).toHaveLength(1)
     const before = notificationRows()[0]!
     await act(async () => { before.props.onClick() })

@@ -28,7 +28,7 @@ function text(node: ReactTestInstance): string {
 }
 
 function button(renderer: ReactTestRenderer, label: string): ReactTestInstance {
-  const result = renderer.root.findAllByType('button').find(node => text(node).includes(label))
+  const result = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label || text(node).includes(label))
   if (result === undefined) throw new Error(`button not found: ${label}`)
   return result
 }

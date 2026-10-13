@@ -1,3 +1,7 @@
+import { RecordingWorkflowService } from './services/recording-workflow-service.js'
+import type { RecordingImportBatch } from './recording-workflow-contract.js'
+import {readProfileImage} from './services/profile-image.js'
+import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from './team-profile-contract.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -180,6 +184,9 @@ import type {
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeArrangementCreateInput,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -361,6 +368,7 @@ export class ArkmeService {
   private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly recordingWorkflowService: RecordingWorkflowService
   private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
   private readonly source: SourceService
@@ -382,6 +390,27 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
+    const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
+    const team=teams.find(t=>t.jotmoId===jotmoId.trim());if(!team)throw new ArkmePluginError('team-not_accessible','团队不存在或无法访问',false,403)
+    return await this.teamApp.execute('team.app.profile.get',{teamRef:team.teamRef},signal) as ArkmeTeamProfile
+  }
+  async updateTeamProfile(profileRef:string,command:ArkmeTeamProfileUpdate,signal?:AbortSignal):Promise<ArkmeTeamProfileResult> {
+    return await this.teamApp.execute('team.app.profile.update',{teamRef:profileRef,...command},signal) as ArkmeTeamProfileResult
+  }
+  async uploadTeamAvatar(profileRef:string,contentBase64:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}> {
+    return await this.teamApp.execute('team.app.profile.avatar.upload',{teamRef:profileRef,contentBase64,uploadUid},signal) as {uploadRef:string}
+  }
+  async uploadTeamAvatarFile(profileRef:string,fileRef:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}> {
+    const actor=await this.runtime.requireSession()
+    const local=await this.filesOwner().readLocal(fileRef)
+    if(local.file.size>10*1024*1024)throw new ArkmePluginError('team-avatar-too-large','请选择小于 10MB 的图片',false,400)
+    const bytes=await readProfileImage(local.path,signal);signal?.throwIfAborted()
+    const current=await this.runtime.accountScopedSession()
+    if(current?.userId!==actor.userId||current?.refreshToken!==actor.refreshToken)throw new ArkmePluginError('team-account-changed','登录账号已变化',false,409)
+    return await this.uploadTeamAvatar(profileRef,bytes.toString('base64'),uploadUid,signal)
+  }
+  async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void> {await this.teamApp.execute('team.app.profile.avatar.abort',{uploadRef},signal)}
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
@@ -471,6 +500,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.recordingWorkflowService = new RecordingWorkflowService(this.runtime)
     this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
     this.recordDeletion = new RecordDeletionService(this.runtime, this.source)
@@ -485,7 +515,8 @@ export class ArkmeService {
       source, text, text, humans, bots, session, undefined, textFormat,
     ), async session => await this.profile.recordSenderSnapshot(session))
     this.record.selfRoles = this.selfRoles
-    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
+    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
+      (raw, session) => this.chat.calendarSharedRecordingPreview(raw, session))
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
@@ -862,6 +893,7 @@ export class ArkmeService {
   clientConfig(): ArkmeClientConfig {
     return {
       captchaId: this.config.geetestCaptchaId,
+      baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
       jiwoScanLoginEnabled: jiwoScanLoginAvailable(this.config),
@@ -930,6 +962,7 @@ export class ArkmeService {
         topicHomeVisibility: true,
         officialNotificationsV1: true,
         entityArchive: true,
+        teamProfiles: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
@@ -1161,7 +1194,7 @@ export class ArkmeService {
   async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
   /** @internal Built-in loopback UI only. */ async recordingImportPreflight(fileNames: string[], signal?: AbortSignal): Promise<{ duplicateFileNames: string[] }> { return await this.recording.recordingImportPreflight(fileNames, signal) }
-  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
   async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
@@ -1349,6 +1382,8 @@ export class ArkmeService {
   async renameTopic(sourceRef: string, title: string): Promise<ArkmeTopicRenameResult> {
     return await this.source.renameTopic(sourceRef, title)
   }
+
+  recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }
   officialNotificationSummary(signal?: AbortSignal) { return this.officialNotifications.summary(signal) }
@@ -1976,6 +2011,16 @@ export class ArkmeService {
 
   async relatedRecordingEligibility(sourceRef: string, signal?: AbortSignal): Promise<ArkmeRelatedRecordingEligibility> { return await this.relatedRecording.relatedRecordingEligibility(sourceRef, signal) }
   async relatedRecordings(sourceRef: string, options: ArkmeRelatedRecordingPageOptions = {}): Promise<ArkmeRelatedRecordingPage> { return await this.relatedRecording.relatedRecordings(sourceRef, options) }
+  async shareRelatedRecording(sourceRef: string, actionRef: string) {
+    const result = await this.relatedRecording.mutateShare(sourceRef, actionRef, 'share')
+    await this.realtime.invalidateRecordProjection()
+    return result
+  }
+  async withdrawRelatedRecording(sourceRef: string, actionRef: string) {
+    const result = await this.relatedRecording.mutateShare(sourceRef, actionRef, 'withdraw')
+    await this.realtime.invalidateRecordProjection()
+    return result
+  }
 
   recordRelatedRecordingsToolEvent(event: {
     result: 'success' | 'error'
@@ -2498,6 +2543,8 @@ export class ArkmeService {
 
   async searchTagRecords(options: { normalizedTag: string; limit: number; cursorSendAt?: number; cursorRecordUid?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> { return await this.search.searchTagRecords(options) }
 
+  async searchLocations(query: import('./location-search.js').LocationQuery, signal?: AbortSignal) { return await this.search.searchLocations(query, signal) }
+
   async searchHistory(limit = 10): Promise<ArkmeSearchHistoryResult> {
     return await this.search.searchHistory(limit)
   }
@@ -2609,19 +2656,23 @@ export class ArkmeService {
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
   async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
 
-  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal) {
+  async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {
     return this.arrangement.createArrangement(input, signal)
   }
   async arrangementRecognition(refs: string[], signal?: AbortSignal) {
     return this.arrangement.arrangementRecognition(refs, signal)
   }
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; dueStartAtMillis?: number; dueEndAtMillis?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.arrangement.listArrangements(options)
   }
 
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */
+  async recordingDayArrangements(options: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.arrangement.recordingDayArrangements(options, signal)
+  }
+
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
     return await this.arrangement.reorderArrangement(input, signal)
   }

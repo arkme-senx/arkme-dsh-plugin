@@ -1,3 +1,5 @@
+import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
+export type {ArkmeTeamAvatar,ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
 export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
 import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
 export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
@@ -31,6 +33,8 @@ import type {
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -185,6 +189,8 @@ export type {
   ArkmeArrangementMutationOutcome,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderEvent,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
@@ -535,6 +541,14 @@ export class ArkmeSdk {
   async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
+
+  private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
+  /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
+  async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}
+  async updateTeamProfile(profileRef:string,command:ArkmeTeamProfileUpdate,signal?:AbortSignal):Promise<ArkmeTeamProfileResult>{await this.requireTeamProfiles(signal);return await this.call('team.profile.update',{profileRef,command},signal)}
+  /** Upload a normalized/cropped image <=2MiB. Use a stable UID when retrying. */
+  async uploadTeamAvatar(profileRef:string,contentBase64:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}>{await this.requireTeamProfiles(signal);return await this.call('team.profile.avatar.upload',{profileRef,contentBase64,uploadUid},signal)}
+  async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void>{await this.requireTeamProfiles(signal);await this.call('team.profile.avatar.abort',{uploadRef},signal)}
 
   /** List every Team visible to the current account using opaque OpenAPI references. */
   async listTeams(
@@ -1379,6 +1393,11 @@ export class ArkmeSdk {
       ...(options.offset === undefined ? {} : { offset: options.offset }),
       ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { boardVersion: options.boardVersion } : {}) } : {}),
     }, options.signal)
+  }
+
+  /** Read plans by their source recording day, never by creation or due date. */
+  async recordingDayArrangements(query: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.call<ArkmeRecordingArrangementPage>('arrangements.recording-day', { ...query }, signal)
   }
 
   /** Read public reviews and rating summary for one extension. */

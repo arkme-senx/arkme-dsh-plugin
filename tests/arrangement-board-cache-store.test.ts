@@ -147,3 +147,12 @@ describe('board cache account admission', () => {
     expect(fixture.arrangementBoardCache).toHaveBeenCalledWith('test', 42, undefined)
   })
 })
+
+it('persists validated recording provenance without weakening the cache allowlist', () => {
+  const value = page()
+  value.items[0]!.recordingSource = { kind: 'daily-summary', state: 'ready', dateStamp: Date.UTC(2026, 9, 8, 16), tzOffsetMillis: 28800000, summaryVersionId: 'summary-id' }
+  expect(parseArrangementBoardCachePages({ identified: value }).identified?.items[0]?.recordingSource).toEqual(value.items[0]!.recordingSource)
+  expect(() => parseArrangementBoardCachePages({ identified: { ...value, items: [{ ...value.items[0], recordingSource: { ...value.items[0]!.recordingSource, ownerId: 'private' } }] } })).toThrow()
+  value.items[0]!.recordingSource = { kind: 'daily-summary', state: 'unavailable' }
+  expect(parseArrangementBoardCachePages({ identified: value }).identified?.items[0]?.recordingSource?.state).toBe('unavailable')
+})

@@ -1500,6 +1500,46 @@ describe('conversation send directory projection', () => {
     process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
     expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
   })
+  it.each([target, group, sendToSelf])('preserves input duration when consuming the $kind composer', async selectedSource => {
+    activeSource = selectedSource
+    arkmeUi.selectSource(selectedSource)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('计时消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.send-text', expect.objectContaining({
+      sourceRef: selectedSource.sourceRef, textContent: '计时消息', recordDurationMillis: 3_500,
+    }))
+  })
+
+  it.each([false, true])('preserves the correct duration on send failure with newer draft=%s', async newerDraft => {
+    const pending = deferred<never>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.send-text' && attempts++ === 0) return await pending.promise
+      return await baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('失败的消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    if (newerDraft) {
+      vi.mocked(Date.now).mockReturnValue(5_000)
+      await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条消息') })
+    }
+    vi.mocked(Date.now).mockReturnValue(6_000)
+    await act(async () => { pending.reject(new Error('网络失败')) })
+    expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(42, target)).text)
+      .toBe(newerDraft ? '下一条消息' : '失败的消息')
+    vi.mocked(Date.now).mockReturnValue(8_000)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')
+      .map(([, params]) => params.recordDurationMillis)).toEqual([3_500, newerDraft ? 3_000 : 7_000])
+  })
+
   it('shows the submitted bubble before context capture finishes and preserves the next draft', async () => {
     const capture = deferred<Awaited<ReturnType<ArkmeRecordInputCaptureOwner['finishForSubmit']>>>()
     vi.spyOn(ArkmeRecordInputCaptureOwner.prototype, 'finishForSubmit').mockReturnValue(capture.promise)
@@ -1589,7 +1629,7 @@ describe('conversation send directory projection', () => {
     }) => {
       if (operation === 'sources.self-target') return sendToSelf
       if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -1816,6 +1856,21 @@ describe('conversation send directory projection', () => {
     expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
   })
 
+  it.each([false, true])('preserves the composer while phone checking completes (edited=%s)', async edited => {
+    const pending = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const key = arkmeSourceComposerDraftKey(42, target)!
+    act(() => arkmeComposerDraftStore.setText(key, '准备发送的草稿'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(arkmeComposerDraftStore.get(key).text).toBe('准备发送的草稿')
+    if (edited) act(() => arkmeComposerDraftStore.setText(key, '检查过程中修改的内容'))
+    await act(async () => { pending.resolve({ profile: { userId: 42, contact: { phoneMasked: edited ? '138****0000' : undefined } } }) })
+    expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(false)
+    expect(arkmeComposerDraftStore.get(key).text).toBe(edited ? '检查过程中修改的内容' : '准备发送的草稿')
+  })
+
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {
     const api = await import('../src/client/api.js')
     const base = api.callArkme
@@ -1978,8 +2033,10 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(undefined)
     arkmeInterwovenInvalidation.activateAccount(undefined)
     arkmeMessagePreparing.activateAccount(undefined)
+    resetSelfTopicDirectories()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
@@ -2106,6 +2163,9 @@ describe('conversation send directory projection', () => {
   })
 
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
+    // This checks explicit invalidation batches. The directory's 250ms scheduled
+    // refresh has separate tests and must not depend on the render machine load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
     const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
     const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
@@ -3577,6 +3637,7 @@ describe('conversation send directory projection', () => {
     const baseCall = mocks.callArkme.getMockImplementation()!
     let attempts = 0
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: arkmeAuthStore.getSnapshot().auth?.userId, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'source.forward-messages') return ++attempts === 1 ? pending.promise : nextPending.promise
       return baseCall(operation, params)
     })
@@ -4662,7 +4723,7 @@ describe('conversation send directory projection', () => {
       params?: { sourceRef?: string },
       signal?: AbortSignal,
     ) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -4747,7 +4808,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([fallbackGroup])
     arkmeUi.selectSource(fallbackGroup)
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -4784,7 +4845,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([fallbackGroup])
     arkmeUi.selectSource(fallbackGroup)
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -4827,7 +4888,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([other, groupTarget])
     arkmeUi.selectSource(groupTarget)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -4943,6 +5004,7 @@ describe('conversation send directory projection', () => {
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000003') })
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: 42, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'files.send') return {
         taskRef: 'task-human-mention-file',
         sourceRef: groupTarget.sourceRef,
@@ -4990,6 +5052,7 @@ describe('conversation send directory projection', () => {
       .mockReturnValueOnce('record-retry')
       .mockReturnValueOnce('relation-retry') })
     mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: 42, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'source.send-text') throw new Error('发送失败')
       throw new Error(`unexpected operation ${operation}`)
     })
@@ -5023,7 +5086,7 @@ describe('conversation send directory projection', () => {
     arkmeUi.selectSource(group)
     let timelineCalls = 0
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -5519,7 +5582,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([before])
     arkmeUi.selectSource(before)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -5571,7 +5634,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([groupA, groupB])
     arkmeUi.selectSource(groupA)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -5948,7 +6011,7 @@ describe('conversation send directory projection', () => {
       params?: Record<string, unknown>,
       signal?: AbortSignal,
     ) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -6072,7 +6135,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([groupA, groupB])
     arkmeUi.selectSource(groupA)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -6144,7 +6207,7 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.publish([accountGroup])
     arkmeUi.selectSource(accountGroup)
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: arkmeAuthStore.getSnapshot().auth?.status === 'authenticated'
             ? arkmeAuthStore.getSnapshot().auth!.userId
@@ -6225,7 +6288,7 @@ describe('conversation send directory projection', () => {
     let resolveTimeline!: (page: unknown) => void
     const pendingTimeline = new Promise(resolve => { resolveTimeline = resolve })
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -6273,7 +6336,7 @@ describe('conversation send directory projection', () => {
     arkmeUi.selectSource(group)
     let timelineCalls = 0
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -6427,6 +6490,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: 42, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'source.send-text') throw new Error('发送失败')
       throw new Error(`unexpected operation ${operation}`)
     })
@@ -9107,7 +9171,7 @@ describe('conversation send directory projection', () => {
       summary: '@狗才 问题不大', degraded: false,
     }
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
@@ -9175,7 +9239,7 @@ describe('conversation send directory projection', () => {
     }
     let relatedListCalls = 0
     mocks.callArkme.mockImplementation(async (operation: string) => {
-      if (operation === 'user.profile') return {
+      if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
           createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
