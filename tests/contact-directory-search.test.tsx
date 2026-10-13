@@ -1,4 +1,3 @@
-import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../src/types.js'
@@ -53,34 +52,34 @@ function deferred<T>() {
 }
 
 describe('contact directory search', () => {
-  it('filters all five sections, counts matches and restores totals and folds without changing selection or cache', async () => {
+  it('filters all four sections, counts matches and restores totals and folds without changing selection or cache', async () => {
     const onStateChange = vi.fn()
     const { renderer, props } = await mount({ onStateChange })
     await search(renderer, '  设计  ')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1, 1])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1])
     expect(sections(renderer).every(node => node.props.section.expanded)).toBe(true)
-    expect(sections(renderer)[4]!.props.section.items.map((item: ArkmeDirectoryItem) => item.kind === 'contact' && item.contactRef)).toEqual(['lin'])
+    expect(sections(renderer)[3]!.props.section.items.map((item: ArkmeDirectoryItem) => item.kind === 'contact' && item.contactRef)).toEqual(['lin'])
     expect(props.onSelectionChange).not.toHaveBeenCalled()
     expect(onStateChange).not.toHaveBeenCalled()
     await act(async () => { sections(renderer)[0]!.props.onToggle() })
     expect(sections(renderer)[0]!.props.section.expanded).toBe(false)
     expect(props.onExpandedChange).not.toHaveBeenCalled()
     await search(renderer, '')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1, 2])
-    expect(sections(renderer).map(node => node.props.section.expanded)).toEqual([false, false, false, false, true])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 2])
+    expect(sections(renderer).map(node => node.props.section.expanded)).toEqual([false, false, false, true])
     expect(props.onSelectionChange).not.toHaveBeenCalled()
   })
 
   it('matches contact nickname/account and team identifiers case insensitively', async () => {
     const { renderer } = await mount()
     await search(renderer, 'LIN_ACCOUNT')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0, 1])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 1])
     await search(renderer, 'LIN')
-    expect(sections(renderer)[4]!.props.section.total).toBe(1)
+    expect(sections(renderer)[3]!.props.section.total).toBe(1)
     await search(renderer, 'ARKME_TEAM')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 1, 0])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 1, 0])
     await search(renderer, 'no-matches')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0, 0])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0])
     expect(JSON.stringify(renderer.toJSON())).toContain('未找到匹配的项目')
   })
 
@@ -114,12 +113,12 @@ describe('contact directory search', () => {
     }
     const { renderer } = await mount({ initialState, loadPage })
     await search(renderer, '远程')
-    expect(renderer.root.findAllByProps({ className: 'arkme-contact-directory-count' })[3]!.children).toEqual(['…'])
-    expect(sections(renderer)[3]!.props.section.expanded).toBe(true)
+    expect(renderer.root.findAllByProps({ className: 'arkme-contact-directory-count' })[2]!.children).toEqual(['…'])
+    expect(sections(renderer)[2]!.props.section.expanded).toBe(true)
     expect(JSON.stringify(renderer.toJSON())).not.toContain('未找到匹配的项目')
     failed = false
-    await act(async () => { sections(renderer)[3]!.props.onRetry() })
-    expect(sections(renderer)[3]!.props.section.total).toBe(1)
+    await act(async () => { sections(renderer)[2]!.props.onRetry() })
+    expect(sections(renderer)[2]!.props.section.total).toBe(1)
   })
 
   it('stops a repeated pagination cursor instead of issuing requests indefinitely', async () => {
@@ -151,9 +150,9 @@ describe('contact directory search', () => {
   it('uses live contact profile updates when searching remarks', async () => {
     const { renderer, props } = await mount()
     await search(renderer, '新备注')
-    expect(sections(renderer)[4]!.props.section.total).toBe(0)
+    expect(sections(renderer)[3]!.props.section.total).toBe(0)
     await act(async () => { renderer.update(<ContactDirectorySurface {...props} contactProfiles={{ lin: { contactRef: 'lin', displayName: '新备注', nickname: 'Lin', remark: '新备注' } }} />) })
-    expect(sections(renderer)[4]!.props.section.total).toBe(1)
+    expect(sections(renderer)[3]!.props.section.total).toBe(1)
   })
 })
 
@@ -172,41 +171,21 @@ it('resumes a page load interrupted by leaving Contacts instead of restoring a p
   expect(next.renderer.root.findAllByProps({ className: 'arkme-contact-directory-count' })[0]!.children).toEqual(['1'])
 })
 
-it('shows a retryable incomplete result when the speaker directory projection is still building', async () => {
+it('ignores cached speaker rows and pending pages when searching contacts', async () => {
   const initialState = ready()
-  initialState.sections['unmarked-speakers'].status = 'idle'
-  const { renderer } = await mount({ initialState, loadPage: async section => ({ section, items: [], total: 0, hasMore: false, projectionState: 'building', retryAfterMillis: 1000 }) })
-  await search(renderer, 'no-matches')
-  expect(renderer.root.findAllByProps({ className: 'arkme-contact-directory-count' })[2]!.children).toEqual(['…'])
-  expect(sections(renderer)[2]!.props.section.expanded).toBe(true)
-  expect(JSON.stringify(renderer.toJSON())).not.toContain('未找到匹配的项目')
-  expect(sections(renderer)[2]!.props.section.status).toBe('error')
+  Object.assign(initialState.sections['unmarked-speakers'], {
+    status: 'ready', expanded: true, items: fixtures['unmarked-speakers'], total: 2,
+    hasMore: true, nextCursor: 'old-speaker-page', warning: '正在整理目录…',
+  })
+  const loadPage = vi.fn(async (section: ArkmeDirectorySectionKind) => ({ section, items: [], total: 0, hasMore: false }))
+  const { renderer } = await mount({ initialState, loadPage })
+  await search(renderer, '说话人')
+  expect(loadPage).not.toHaveBeenCalled()
+  expect(sections(renderer).map(node => node.props.section.section)).toEqual(['groups', 'bots', 'teams', 'contacts'])
+  expect(JSON.stringify(renderer.toJSON())).toContain('未找到匹配的项目')
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('正在搜索…')
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('说话人 A')
 })
-
-it.each([['repeated cursor', ['same', 'same'], 2], ['cursor cycle', ['a', 'b', 'a'], 3]] as const)(
-  'stops a speaker %s through the real opaque cursor service', async (_name, nextCursors, expectedRequests) => {
-    let requests = 0
-    const service = new UnmarkedSpeakerService({
-      config: { environment: 'prod' },
-      stateStore: { uniqueCode: async () => 'stable-host-secret' },
-      requireSession: async () => ({ userId: 7, accessToken: 'access', refreshToken: 'refresh' }),
-      authenticatedAudioPost: async () => {
-        requests += 1
-        if (requests > 5) throw new Error('test loop safeguard')
-        return { items: [], cross_day_count: 1, single_day_count: 0, has_more: true,
-          next_cursor: nextCursors[Math.min(requests - 1, nextCursors.length - 1)], projection_state: 'fresh' }
-      },
-    } as never)
-    try {
-      const initialState = ready()
-      Object.assign(initialState.sections['unmarked-speakers'], await service.list())
-      const { renderer } = await mount({ initialState, loadPage: async (_section, options) => service.list(options) })
-      await search(renderer, 'no-matches')
-      expect(requests).toBe(expectedRequests)
-      expect(sections(renderer)[2]!.props.section.status).toBe('error')
-    } finally { service.dispose() }
-  },
-)
 
 it('bounds automatic restarts when successive pages keep reporting stale cursors', async () => {
   const initialState = ready()

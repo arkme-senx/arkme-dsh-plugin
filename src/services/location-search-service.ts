@@ -25,13 +25,14 @@ export class LocationSearchService {
       || input.clusterKeys.some(key => typeof key !== 'string' || !key.trim() || key.length > 256))) this.invalid()
     if (input.cursor && (!Number.isFinite(input.cursor.sendAt) || input.cursor.sendAt <= 0 || typeof input.cursor.recordUid !== 'string' || !input.cursor.recordUid.trim())) this.invalid()
     if (input.offset !== undefined && (!Number.isInteger(input.offset) || input.offset < 0)) this.invalid()
+    if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 20)) this.invalid()
     const session = await this.runtime.requireSession()
     const locked = await this.privacy.lockedRecordUids(session, signal)
     const body = {
       ...(bounds ? { bounds: { sw_lat: bounds.swLat, sw_lon: bounds.swLon, ne_lat: bounds.neLat, ne_lon: bounds.neLon } } : {}),
-      ...(input.mode === 'list' ? { limit: 20, ...(input.cursor ? { cursor_send_at: input.cursor.sendAt, cursor_record_uid: input.cursor.recordUid } : {}) }
+      ...(input.mode === 'list' ? { limit: input.limit ?? 20, ...(input.cursor ? { cursor_send_at: input.cursor.sendAt, cursor_record_uid: input.cursor.recordUid } : {}) }
         : input.mode === 'viewport' ? { zoom: input.zoom, limit_hint: 80 }
-          : { zoom: input.zoom, cluster_keys: input.clusterKeys, limit: 20, offset: input.offset ?? 0 }),
+          : { zoom: input.zoom, cluster_keys: input.clusterKeys, limit: input.limit ?? 20, offset: input.offset ?? 0 }),
     }
     const suffix = input.mode === 'viewport' ? 'viewport-clusters/query' : input.mode === 'cluster' ? 'clusters/records/query' : 'query'
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/location/${suffix}`, body, session, signal, { lane: 'interactive-read' })

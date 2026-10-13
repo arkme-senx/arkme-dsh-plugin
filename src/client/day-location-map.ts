@@ -4,7 +4,9 @@ export function groupDayLocationPoints(points: readonly DayLocationPoint[]): Day
   const groups = new Map<string, DayLocationPoint[]>()
   for (const point of points) {
     const key = `${point.location.latitude.toFixed(5)},${point.location.longitude.toFixed(5)}`
-    groups.set(key, [...(groups.get(key) ?? []), point])
+    const group = groups.get(key)
+    if (group) group.push(point)
+    else groups.set(key, [point])
   }
   return [...groups.values()]
 }

@@ -326,21 +326,26 @@ span.arkme-forward-search {
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
+/* Arkme primary navigation replaces the workspace in one layout pass. The
+   host's sidebar animation would otherwise stretch each full-width page out
+   of the previous conversation column. Keep this policy at the shell boundary,
+   including its drag handles; component and drawer motion remains independent. */
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]),
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) > [data-side] {
+  transition: none !important;
+}
+
 /* Keep both Arkme navigation columns visible at every viewport width. DSH may
    report its sidebar as collapsed at 1024px; the plugin still owns its navigation rail
    and at least a 120px directory with search/add controls (plus the 4px divider budget). */
 /* Harness 0.1.5 renamed the collapsed third-column marker from details to rightbar. */
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="true"] [data-arkme-directory-mode="conversations"]) {
-  grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
-}
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-web-locked] [data-arkme-directory-mode="web-locked"]) {
+/* Conversations, Contacts and the Web login workspace share the same directory
+   width contract. Routes without a directory retain only the navigation rail. */
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
   grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
 }
 [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
   grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0 !important;
-}
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
-  grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
 }
 @media (min-width: 1100px) {
   [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {

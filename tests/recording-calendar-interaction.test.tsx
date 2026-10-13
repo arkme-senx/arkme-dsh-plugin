@@ -313,7 +313,8 @@ describe('recording calendar selection', () => {
         expect(node.props.style.border).toBe(0)
         if (!node.props['aria-pressed']) expect(node.props.style.background).toBe('transparent')
       }
-      expect(date(day).props.style.background).toBe(arkmeTheme.layer2)
+      expect(date(day).props.style.background).toBe(arkmeTheme.primaryAction)
+      expect(date(day).props.style.color).toBe(arkmeTheme.onPrimaryAction)
       expect(date(day).props.disabled).toBe(false)
       expect(date(5).props.disabled).toBe(true)
     }
