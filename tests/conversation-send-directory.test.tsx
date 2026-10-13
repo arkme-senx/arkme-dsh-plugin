@@ -6594,6 +6594,45 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息给@Harness…')
   })
 
+  it.each(['reference-refresh', 'remount', 'switch-back'] as const)('keeps the extension parent with its draft after %s', async change => {
+    timeline = [{ itemUid: 'retained-parent', messageActionRef: 'retained-parent-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '应保留的父消息', status: 1 }]
+    const mount = () => create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+        ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+    })
+    await act(async () => { renderer = mount() })
+    act(() => renderer!.root.findByProps({ 'aria-label': '打开快记详情' }).props.onContextMenu({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+    }))
+    const extend = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extend.props.onClick() })
+    act(() => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('仍在输入的延展正文'))
+    if (change === 'reference-refresh') {
+      activeSource = { ...target, sourceRef: 'renewed-source-harness' }
+      await act(async () => { arkmeUi.selectSource(activeSource) })
+    } else if (change === 'remount') {
+      await act(async () => { renderer!.unmount() })
+      await act(async () => { renderer = mount() })
+    } else {
+      activeSource = other
+      await act(async () => { arkmeUi.selectSource(other) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(0)
+      activeSource = target
+      await act(async () => { arkmeUi.selectSource(target) })
+    }
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('仍在输入的延展正文')
+    const preview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
+    expect(renderedText(preview)).toContain('应保留的父消息')
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: change === 'reference-refresh' ? 'renewed-source-harness' : target.sourceRef,
+      messageActionRef: 'retained-parent-action', textContent: '仍在输入的延展正文',
+    }))
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(false)
+  })
+
   it('omits the non-text fallback label when extending an attachment-only quick note', async () => {
     timeline = [{
       itemUid: 'extension-image-source', messageActionRef: 'opaque-extension-image-action',
@@ -8226,7 +8265,8 @@ describe('conversation send directory projection', () => {
     }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
   })
 
-  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable'] as const)(
+  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable',
+    'deleted-mention-remount', 'deleted-mention-remote', 'manual-mention-remote'] as const)(
     'defaults a group extension mention without overwriting user input (%s)', async scenario => {
       activeSource = scenario === 'private' ? target : group
       arkmeChatDirectory.publish([other, activeSource])
@@ -8266,6 +8306,23 @@ describe('conversation send directory projection', () => {
       }
       await extend()
       await extend()
+      if (scenario === 'deleted-mention-remount' || scenario === 'deleted-mention-remote' || scenario === 'manual-mention-remote') {
+        act(() => {
+          arkmeComposerDraftStore.setText(draftKey, '')
+          if (scenario === 'manual-mention-remote') arkmeComposerDraftStore.insertMention(draftKey, 'manual-mention', '其他成员', 0)
+        })
+        const expected = arkmeComposerDraftStore.get(draftKey)
+        if (scenario === 'deleted-mention-remount') {
+          act(() => renderer!.unmount())
+          await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+        } else {
+          await act(async () => { arkmeComposerDraftStore.applyRemote(draftKey, JSON.parse(JSON.stringify(expected))) })
+        }
+        expect(arkmeComposerDraftStore.get(draftKey).extensionTarget?.item.itemUid).toBe('mention-parent')
+        expect(arkmeComposerDraftStore.get(draftKey).text).toBe(expected.text)
+        expect(arkmeComposerDraftStore.get(draftKey).mentions).toEqual(expected.mentions)
+        return
+      }
       const draft = arkmeComposerDraftStore.get(draftKey)
       if (scenario === 'empty' || scenario === 'single-mention') {
         expect(draft.text).toBe('@群昵称 ')
@@ -8553,7 +8610,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(newer ? 0 : 1)
   })
 
-  it('reuses the extension record uid after failure and removes staged attachments only after success', async () => {
+  it.each([false, true])('reuses the extension record uid after failure and removes staged attachments only after success (rotated reference: %s)', async rotateReference => {
     timeline = [{
       itemUid: 'extension-retry-source', messageActionRef: 'opaque-extension-retry-action',
       senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '带附件的问题', status: 1,
@@ -8602,6 +8659,12 @@ describe('conversation send directory projection', () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
     })
+    if (rotateReference) {
+      await act(async () => {
+        activeSource = { ...target, sourceRef: 'refreshed-extension-retry-source' }
+        arkmeUi.selectSource(activeSource)
+      })
+    }
     await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
@@ -8609,6 +8672,7 @@ describe('conversation send directory projection', () => {
 
     const extensionCalls = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')
     expect(extensionCalls).toHaveLength(2)
+    expect(extensionCalls[1]?.[1]?.sourceRef).toBe(activeSource.sourceRef)
     expect(extensionCalls[0]?.[1]?.recordUid).toBe('11111111-1111-4111-8111-111111111111')
     expect(extensionCalls[1]?.[1]?.recordUid).toBe(extensionCalls[0]?.[1]?.recordUid)
     expect(extensionCalls[0]?.[1]?.relationUid).toBe('22222222-2222-4222-8222-222222222222')
