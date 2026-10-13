@@ -46,7 +46,7 @@ import { recordingDayIsEmpty } from './recordings/recording-day-empty.js'
 import { RecordingTranscriptTimeline } from './recordings/RecordingTranscriptTimeline.js'
 import { RecordingDayArrangements } from './recordings/RecordingDayArrangements.js'
 import { recordingEmptyIllustration } from './recordings/recording-empty-illustration.js'
-import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
+import { recordingSpeakerColor, recordingTranscriptContinuesSpeaker } from './recordings/recording-speaker-presentation.js'
 import { useRecordingPlayback } from './recordings/useRecordingPlayback.js'
 import { RecordingDesktopIcon } from './recordings/RecordingDesktopIcon.js'
 import { RecordingTranscriptSearch } from './recordings/RecordingTranscriptSearch.js'
@@ -114,10 +114,10 @@ const styles: Record<string, CSSProperties> = {
   analysisEmptyMessage: { color: colors.secondary, fontSize: 14, lineHeight: '20px' },
   analysisEmptyCopy: { display: 'flex', alignItems: 'center', justifyContent: 'center' },
   analysisGenerateButton: { padding: 0, border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px' },
-  analysis: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateRows: '40px minmax(0,1fr)', overflow: 'hidden' },
-  tabs: { padding: '0 13px 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  tabList: { display: 'flex', alignItems: 'center' },
-  tabSlot: { width: 115, display: 'flex', alignItems: 'center' },
+  analysis: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gridTemplateRows: '40px minmax(0,1fr)', overflow: 'hidden' },
+  tabs: { minWidth: 0, padding: '0 13px 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  tabList: { minWidth: 0, display: 'flex', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'thin' },
+  tabSlot: { width: 115, flexShrink: 0, display: 'flex', alignItems: 'center' },
   tab: { position: 'relative', padding: '6px 4px', display: 'flex', alignItems: 'center', gap: 4, border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '16px', letterSpacing: '.28px' },
   tabActive: { color: colors.text, fontWeight: 500 },
   tabIndicator: { position: 'absolute', left: '50%', bottom: 4, width: 10, height: 2, transform: 'translateX(-50%)', borderRadius: 22, background: colors.text },
@@ -129,9 +129,9 @@ const styles: Record<string, CSSProperties> = {
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { padding: '12px 14px', borderRadius: 10, background: colors.dangerSoft, color: colors.danger, fontSize: 13 },
   transcriptList: { width: '100%', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: '10px 12px 0', boxSizing: 'border-box', listStyle: 'none' },
-  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr)', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '28px' },
+  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '28px' },
   transcriptContent: { minWidth: 0, minHeight: 22, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
-  transcriptTime: { float: 'right', marginLeft: 4, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
+  transcriptTime: { display: 'inline-block', marginLeft: 8, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
   transcriptSpeaker: { maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
   transcriptSpeakerName: { minWidth: 0, marginLeft: 4, whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', fontWeight: 500, letterSpacing: '.02px' },
   transcriptNamedSpeaker: { maxWidth: 112, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -343,10 +343,13 @@ export function recordingTranscriptDurationLabel(startAtMillis: number, endAtMil
   return tr("{v0}小时{v1}分", { v0: Math.floor(durationSeconds / 3_600), v1: Math.floor((durationSeconds % 3_600) / 60) })
 }
 
-export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
+export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false, searchHighlighted = false, repeatedSpeaker = false, speakerEditing = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
   item: ArkmeRecordingWorkbenchItem
   selected: boolean
+  isPlaying?: boolean
   searchHighlighted?: boolean
+  repeatedSpeaker?: boolean
+  speakerEditing?: boolean
   readOnly?: boolean
   onEditSpeaker?(event: MouseEvent<HTMLButtonElement>): void
   onSelect?(): void
@@ -356,28 +359,29 @@ export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted 
 }) {
   const speakerStyle: CSSProperties = {
     ...styles.transcriptSpeaker,
-    ...(item.isSelf ? { gridColumn: 2, gridRow: 1, justifySelf: 'end', flexDirection: 'row-reverse' } : {}),
+    ...(item.isSelf ? { gridColumn: 3, gridRow: 1, justifySelf: 'end', flexDirection: 'row-reverse' } : {}),
   }
   const speakerIdentity = <>
     {item.speakerAvatarRef === undefined
       ? <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
       : <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={16} label={tr("{v0}头像", { v0: item.speakerLabel })} />}
-    <span style={{
+    {!item.isSelf && <span style={{
       ...styles.transcriptSpeakerName,
       ...(item.speakerAvatarRef === undefined ? {} : { color: recordingSpeakerColor(item.speakerColorIndex) }),
       ...(item.speakerLabel === tr("说话人 {v0}", { v0: item.speakerNumber }) ? {} : styles.transcriptNamedSpeaker),
-      ...(item.isSelf ? { marginLeft: 0, marginRight: 4 } : {}),
-    }}>{item.speakerLabel}</span>
+    }}>{item.speakerLabel}</span>}
   </>
   return <li
+    className="arkme-recording-transcript-row"
     data-recording-transcript-item={item.itemId}
     data-recording-search-highlight={searchHighlighted || undefined}
+    data-recording-playing={isPlaying || undefined}
     style={{
       ...styles.transcript,
-      ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr)', contentVisibility:'visible' as const } : {}),
-      ...(item.isSelf ? { gridTemplateColumns: readOnly ? 'minmax(0,1fr) 64px' : 'minmax(0, 1fr) minmax(0, min(128px, 45%))' } : {}),
+      ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr) 24px', contentVisibility:'visible' as const } : {}),
       ...(selected ? { background: colors.input } : {}),
       ...(searchHighlighted ? { background: `color-mix(in srgb, ${colors.base} 88%, ${colors.text} 12%)` } : {}),
+      ...(isPlaying ? { background: `color-mix(in srgb, ${colors.base} 92%, ${colors.accent} 8%)`, boxShadow: `inset 2px 0 ${colors.accent}` } : {}),
       ...(selectionControl ? { paddingLeft: 27 } : {}),
     }}
     onDoubleClick={!readOnly && onToggleSelection === undefined ? onSelect : undefined}
@@ -389,18 +393,28 @@ export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted 
     </span> : <button data-arkme-feedback="neutral"
       type="button"
       className="arkme-recording-transcript-speaker"
+      data-recording-speaker-repeated={repeatedSpeaker || undefined}
       style={speakerStyle}
       title={item.speakerLabel}
       aria-label={tr("编辑说话人 {v0}", { v0: item.speakerLabel })}
+      aria-haspopup="dialog"
+      aria-expanded={speakerEditing}
       onClick={event => { event.stopPropagation(); onEditSpeaker?.(event) }}
+      onDoubleClick={event => { event.stopPropagation() }}
     >
       {speakerIdentity}
       <span aria-hidden="true" style={{ ...styles.transcriptEditSlot, ...(item.isSelf ? { marginLeft: 0, marginRight: 2 } : {}) }}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
     </button>}
-    <div style={{ ...styles.transcriptContent, ...(item.isSelf ? { gridColumn: 1, gridRow: 1, justifySelf: 'end', maxWidth: '100%', textAlign: 'left' } : {}) }}>
+    <div className="arkme-recording-transcript-content" style={{ ...styles.transcriptContent, ...(item.isSelf ? { gridColumn: '1 / 3', gridRow: 1, justifySelf: 'end', maxWidth: '100%', paddingLeft: 24, boxSizing: 'border-box', textAlign: 'left' } : {}) }}>
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
-        {recordingTranscriptTimeLabel(item.startAtMillis)} {recordingTranscriptDurationLabel(item.startAtMillis, item.endAtMillis)}
+        <span style={{ position: 'relative', display: 'inline-block' }}>
+          <span className="arkme-recording-transcript-timestamp">{recordingTranscriptTimeLabel(item.startAtMillis)}</span>
+          <span className="arkme-recording-transcript-duration">{recordingTranscriptDurationLabel(item.startAtMillis, item.endAtMillis)}</span>
+        </span>
+        {isPlaying && <span role="status" aria-label={tr('正在播放')} title={tr('正在播放')} className="arkme-recording-transcript-playing">
+          <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
+        </span>}
       </time>
     </div>
   </li>
@@ -1041,7 +1055,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     if (preciseUnavailable) return <p role="alert">{tr('该转写条目已更新或不可用，请重新搜索')}</p>
     if (section?.state === 'processing') return <ArkmeRecordingTranscriptLoading />
     if (section === undefined || section.state !== 'ready') return <SectionState section={section} loading={false} />
-    return <>{section.processingCount > 0 && <ArkmeRecordingTranscriptLoading />}<ul style={styles.transcriptList}>{section.items.map(item => {
+    return <>{section.processingCount > 0 && <ArkmeRecordingTranscriptLoading />}<ul style={styles.transcriptList}>{section.items.map((item, index) => {
       const selected = selectedTimelineMillis !== undefined && selectedTimelineMillis >= item.startAtMillis && selectedTimelineMillis < item.endAtMillis
       const editSpeaker = (event: MouseEvent<HTMLButtonElement>) => {
         if (!workbenchEnabled) return
@@ -1055,13 +1069,16 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       return <ArkmeRecordingTranscriptRow
         key={item.itemId}
         item={item}
+        repeatedSpeaker={recordingTranscriptContinuesSpeaker(section.items[index - 1], item)}
+        speakerEditing={editingSpeaker?.item.itemRef === item.itemRef}
+        isPlaying={playback.isPlaying && playback.activeItemRef === item.itemRef}
         selected={preciseItem?.itemId === item.itemId || selected}
         searchHighlighted={preciseItem?.itemId === item.itemId}
         selectionControl={selectionMode && <input type="checkbox" aria-label={`选择录音片段 ${recordingTranscriptTimeLabel(item.startAtMillis)}`} checked={selectedForwardItems.some(selected => selected.itemId === item.itemId)} onClick={event => { event.stopPropagation() }} onChange={() => { toggleTranscriptSelection(item) }} />}
         {...(selectionMode ? { onToggleSelection: () => { toggleTranscriptSelection(item) } } : {})}
         text={<RecordingTranscriptText text={item.text} matches={matchesByItem.get(item.itemId) ?? []} activeIndex={activeMatchIndex} />}
         onEditSpeaker={editSpeaker}
-        onSelect={() => { tour.finish(false); void playback.selectAt(transcriptItems, item.startAtMillis) }}
+        onSelect={() => { tour.finish(false); void playback.playItem(item) }}
       />
     })}</ul></>
   }
@@ -1152,11 +1169,30 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     {tour.panel}
     {mobileGuideOpen && active && workbenchEnabled && <ArkmeRecordingMobileGuideDialog returnFocusRef={mobileGuideTrigger} onClose={() => { setMobileGuideOpen(false) }} />}
     <style data-arkme-recording-transcript-interactions>{`
+      .arkme-recording-transcript-duration { position: absolute; right: 0; top: 0; width: max-content; visibility: hidden; }
+      .arkme-recording-transcript-row:hover .arkme-recording-transcript-timestamp,
+      .arkme-recording-transcript-row:focus-within .arkme-recording-transcript-timestamp { visibility: hidden; }
+      .arkme-recording-transcript-row:hover .arkme-recording-transcript-duration,
+      .arkme-recording-transcript-row:focus-within .arkme-recording-transcript-duration { visibility: visible; }
+      .arkme-recording-transcript-playing { display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; gap: 2px; margin-left: 4px; width: 12px; height: 12px; color: ${colors.accent}; }
+      .arkme-recording-transcript-playing > span { width: 2px; height: 10px; border-radius: 1px; background: currentColor; animation: arkme-transcript-playing 800ms ease-in-out infinite alternate; }
+      .arkme-recording-transcript-playing > span:nth-child(2) { animation-delay: -400ms; }
+      .arkme-recording-transcript-playing > span:nth-child(3) { animation-delay: -200ms; }
+      @keyframes arkme-transcript-playing { from { transform: scaleY(.3); } to { transform: scaleY(1); } }
+      @media (prefers-reduced-motion: reduce) { .arkme-recording-transcript-playing > span { animation: none; } }
       .arkme-recording-transcript-speaker:hover { background: ${colors.hover} !important; }
       .arkme-recording-transcript-speaker:focus-visible { background: ${colors.hover} !important; outline: 2px solid ${colors.accent}; outline-offset: 1px; }
+      .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"] { opacity: 0; }
+      .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"]:hover,
+      .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"]:focus-visible,
+      .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"][aria-expanded="true"] { opacity: 1; }
       .arkme-recording-transcript-edit { opacity: 0; }
       .arkme-recording-transcript-speaker:hover .arkme-recording-transcript-edit,
-      .arkme-recording-transcript-speaker:focus-visible .arkme-recording-transcript-edit { opacity: 1; }
+      .arkme-recording-transcript-speaker:focus-visible .arkme-recording-transcript-edit,
+      .arkme-recording-transcript-speaker[aria-expanded="true"] .arkme-recording-transcript-edit { opacity: 1; }
+      @media (hover: none) {
+        .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"] { opacity: 1; }
+      }
     `}</style>
     <aside style={{ ...styles.left, ...(layoutMode === 'wide' ? {} : { width: '100%', overflowY: 'auto' }) }} aria-label={tr("录音日历")}>
       <section data-arkme-recording-tour-target="calendar" style={{ ...styles.calendar, ...(layoutMode === 'wide' ? {} : { width: '100%' }) }} aria-label={tr("选择录音日期")} aria-busy={calendarLoading}>
