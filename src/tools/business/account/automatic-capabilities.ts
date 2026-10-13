@@ -4,7 +4,7 @@ import { taggedJSON, TEXT_OUTPUT } from '../../shared/output.js'
 import { withArkmeConfirmationContext } from '../../shared/conversational-confirmation.js'
 import type { ArkmeCapabilitySettings, AutomaticCapabilityKey } from '../../../capabilities.js'
 
-const safe = (value: ArkmeCapabilitySettings) => ({ settings: value.settings.map(({ key, title, enabled }) => ({ key, title, enabled })), enableFrom: '由用户进入用量与额度中的自动 AI 设置，阅读并同意积分消耗说明后开启。' })
+const safe = (value: ArkmeCapabilitySettings) => ({ settings: value.settings.map(({ key, title, enabled }) => ({ key, title, enabled })), enableFrom: '由用户进入「用量与额度 → AI 自动分析」，阅读 AI 额度使用说明后开启。' })
 
 export const automaticCapabilityQueryToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.account.automatic-capabilities.v1', toolName: 'arkme_automatic_ai_settings', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },

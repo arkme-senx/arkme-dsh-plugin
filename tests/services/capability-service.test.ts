@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CapabilityService, parseCapability } from '../../src/services/capability-service.js'
+import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 
 const row = () => ({ key: 'record_thought', title: '快记建议', enabled: false, version: 0, enabled_at: 0 })
 function fixture() {
@@ -16,6 +17,36 @@ function fixture() {
 }
 
 describe('automatic capability owner', () => {
+  it.each([
+    ['query', 429], ['query', 503], ['update', 429], ['update', 503],
+  ] as const)('%s HTTP %s does not delay ordinary Record or Chat requests', async (method, status) => {
+    vi.useFakeTimers()
+    const session = { userId: 1, accessToken: 'fixture', refreshToken: 'fixture' }
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify({ code: String(input).startsWith('https://chat.test/') ? 200 : 0, data: {} })))
+    const runtime = new ServiceRuntime({ environment: 'test', recordBaseUrl: 'https://record.test', chatBaseUrl: 'https://chat.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig,
+      { read: async () => session, write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
+    const service = new CapabilityService(runtime)
+    const controller = new AbortController()
+    const pending: Array<Promise<unknown>> = []
+    try {
+      fetchImpl.mockResolvedValueOnce(new Response('{}', { status, headers: { 'Retry-After': '5' } }))
+      const setting = method === 'query' ? service.query('test:1')
+        : service.update({ key: 'record_thought', enabled: true, expectedVersion: 0, billingConsent: true }, 'test:1')
+      await expect(setting).rejects.toMatchObject({ upstreamStatus: status, retryAfterMillis: 5_000 })
+      for (const path of ['/api/v1/records/create', '/api/v1/records/detail']) {
+        pending.push(runtime.authenticatedPost(path, {}, session, controller.signal).catch(error => error))
+      }
+      pending.push(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, session, controller.signal).catch(error => error))
+      await vi.advanceTimersByTimeAsync(100)
+      expect(fetchImpl).toHaveBeenCalledTimes(4)
+      await expect(Promise.all(pending)).resolves.toEqual([{}, {}, {}])
+    } finally {
+      controller.abort()
+      await Promise.all(pending)
+      runtime.requestCoordinator.dispose()
+      vi.useRealTimers()
+    }
+  })
   it('requires consent and an exact observed version; duplicate delivery never toggles twice', async () => {
     const f = fixture()
     const input = { key: 'record_thought' as const, enabled: true, expectedVersion: 0, billingConsent: false }

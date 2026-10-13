@@ -21,7 +21,9 @@ export class CapabilityService {
   }
   async query(expectedScope?: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
     const { session, scope } = await this.session(expectedScope)
-    const raw = await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', {}, session, signal, { lane: 'interactive-read', bypassCache: true })
+    // Optional feature settings must not publish a Record-wide cooldown that
+    // delays normal reads or writes. Existing request admission still applies.
+    const raw = await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', {}, session, signal, { lane: 'interactive-read', bypassCache: true, publishServiceCooldown: false })
     await this.session(scope)
     if (!Array.isArray(raw)) return invalid()
     const settings = raw.map(parseCapability)
@@ -31,10 +33,10 @@ export class CapabilityService {
   async update(input: ArkmeCapabilityUpdate, expectedScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
     if (!automaticCapabilityKeys.includes(input.key) || typeof input.enabled !== 'boolean' || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0
       || (input.enabled && input.billingConsent !== true) || !expectedScope) {
-      throw new ArkmePluginError('capability-update-invalid', '请确认本次设置与积分消耗说明', false, 400)
+      throw new ArkmePluginError('capability-update-invalid', '请确认本次设置与 AI 额度使用说明', false, 400)
     }
     const { session, scope } = await this.session(expectedScope)
-    const saved = parseCapability(await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/update', { key: input.key, enabled: input.enabled, expected_version: input.expectedVersion }, session, signal))
+    const saved = parseCapability(await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/update', { key: input.key, enabled: input.enabled, expected_version: input.expectedVersion }, session, signal, { publishServiceCooldown: false }))
     await this.session(scope)
     if (saved.key !== input.key || saved.enabled !== input.enabled || (saved.version !== input.expectedVersion && saved.version !== input.expectedVersion + 1)) return invalid()
     if (input.key === 'personal_profile' && input.enabled) await this.activateProfile(scope, signal)
