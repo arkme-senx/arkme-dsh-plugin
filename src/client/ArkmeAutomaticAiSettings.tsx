@@ -4,6 +4,14 @@ import { callArkme } from './api.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 
+const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
+  personal_profile: '移动端「探索 → 个人档案」：查看自动整理的个人档案。',
+  record_thought: '移动端快记列表或详情：查看阿森对这条快记的回应。',
+  chat_thought: '移动端聊天页面：查看仅自己可见的阿森想法。',
+  arrangement_recognition: '左侧「安排」：查看自动识别出的安排。',
+  goal_insight: '移动端「探索 → 目标」：查看自动整理的目标和进展。',
+}
+
 export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: string }) {
   useArkmeLocale()
   const [settings, setSettings] = useState<ArkmeCapabilitySetting[]>()
@@ -71,7 +79,9 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
       <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={tr(setting.title)} aria-checked={setting.enabled} disabled={loading || saving}
         onClick={() => setting.enabled ? void save(setting, false) : setConfirm(setting)}><span aria-hidden="true" /></button>
     </div>)}
-    <details className="arkme-automatic-ai-help"><summary>{tr('额度使用说明')}</summary>
+    <details className="arkme-automatic-ai-help"><summary>{tr('功能与额度说明')}</summary>
+      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title)}</strong><br />{tr(capabilityLocations[setting.key])}</p>)}
+      <p><strong>{tr('额度使用说明')}</strong></p>
       <p>{tr('按实际用量扣除 AI 额度。分析正常完成但没有生成新内容，也会消耗额度。')}</p>
       <p>{tr('额度不足时不再开始新的分析。系统异常后的重试不会重复扣除额度。')}</p>
       <p>{tr('关闭后不再开始新的分析，已开始的分析仍可能完成并消耗额度；已有内容保留。')}</p>

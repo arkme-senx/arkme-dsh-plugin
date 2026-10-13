@@ -1,5 +1,11 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+功能与额度说明|Feature and allowance details
+移动端「探索 → 个人档案」：查看自动整理的个人档案。|Mobile Explore → Personal profile: view your automatically organized profile.
+移动端快记列表或详情：查看阿森对这条快记的回应。|Mobile note list or details: view Asen’s response to the note.
+移动端聊天页面：查看仅自己可见的阿森想法。|Mobile chats: view Asen’s thoughts, visible only to you.
+左侧「安排」：查看自动识别出的安排。|Plans in the left navigation: view automatically identified plans.
+移动端「探索 → 目标」：查看自动整理的目标和进展。|Mobile Explore → Goals: view automatically organized goals and progress.
 开启后在后台自动运行，消耗 AI 额度。|Enabled features run automatically in the background and use your AI allowance.
 额度使用说明|AI allowance usage
 按实际用量扣除 AI 额度。分析正常完成但没有生成新内容，也会消耗额度。|AI allowance is deducted based on actual usage. Completed analysis uses allowance even when no new content is generated.

@@ -110,6 +110,15 @@ describe('automatic capability consent through packed official DSH',()=>{
    await automatic.scrollIntoViewIfNeeded()
    expect(await automatic.getByRole('heading',{name:'AI 自动分析'}).isVisible()).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
+   const help=automatic.locator('details')
+   expect(await help.getAttribute('open')).toBeNull()
+   await help.locator('summary').click()
+   expect(await help.getAttribute('open')).not.toBeNull()
+   expect(await help.getByText('移动端「探索 → 个人档案」：查看自动整理的个人档案。').isVisible()).toBe(true)
+   expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
+   if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-help.png')})
+   await help.locator('summary').click()
+   expect(await help.getAttribute('open')).toBeNull()
   }catch(error){
    failure=error
    if(page && process.env.ARKME_E2E_SCREENSHOT){
