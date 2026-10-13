@@ -57,6 +57,11 @@ describe('Team App owner adapter', () => {
     await expect(f.service.execute('team.app.image',{imageRef})).rejects.toThrow()
     expect(f.requests).toHaveLength(count)
   })
+  it.each([undefined, null, 'true', 'false', 0, 1])('rejects discovery with malformed approval policy %s', async policy => {
+    const f = fixture(() => ({team: {name:'Team',jotmo_id:'approval_team',state:'none',requires_approval:policy}}))
+    await expect(f.service.searchContactTeam('approval_team',await f.runtime.requireSession())).rejects.toThrow()
+  })
+
   it('distinguishes missing teams from invalid discovery responses', async () => {
     const missing = fixture(() => ({team: null})), broken = fixture(() => ({}))
     await expect(missing.service.searchContactTeam('missing', await missing.runtime.requireSession())).resolves.toBeUndefined()

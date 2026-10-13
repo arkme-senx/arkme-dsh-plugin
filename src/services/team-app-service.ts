@@ -71,7 +71,7 @@ export class TeamAppService {
     const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/discovery/search', { jotmo_id: jotmoId }, session, signal, true))
     if (data.team === null) return undefined
     const v = obj(data.team), avatar = obj(v.avatar)
-    if (!str(v.name) || !str(v.jotmo_id) || !['none', 'joined', 'pending', 'rejected', 'not_member'].includes(str(v.state))) throw invalid()
+    if (!str(v.name) || !str(v.jotmo_id) || typeof v.requires_approval !== 'boolean' || !['none', 'joined', 'pending', 'rejected', 'not_member'].includes(str(v.state))) throw invalid()
     const key = await this.key(`avatar:${str(avatar.key)}`, session.userId)
     return { name: str(v.name), jotmoId: str(v.jotmo_id), state: str(v.state), requiresApproval: v.requires_approval === true,
       avatar: { mode: avatar.mode === 'custom' ? 'custom' : 'default', key: avatar.mode === 'custom' ? `team_avatar_asset://${key}` : key,
