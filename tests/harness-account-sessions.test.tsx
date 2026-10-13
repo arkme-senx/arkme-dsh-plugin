@@ -14,7 +14,7 @@ const row = (overrides: Partial<DshAccountSession> = {}): DshAccountSession => (
 const local = { current: 'same', ids: ['same'], byId: { same: { id: 'same', displayTitle: '本机', title: '本机', blank: false, running: true, updatedAt: 10 } }, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined }
 const ws = { items: [{ workspaceId: 'workspace', path: '/repo', title: 'repo', sessionIds: ['same'], createdAt: 1 }], archivedSessionIds: [], phase: 'ready', state: 'idle', error: null }
 const cleanups: Array<() => void> = []
-it('publishes one source per container only after complete pagination, without deleting another device session', async () => {
+it('publishes the complete logical catalog with all sources without deleting a distinct same-title session', async () => {
   const nativeWindow = window as HarnessNativeWindow
   const original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
   const publish = vi.fn()
@@ -23,20 +23,22 @@ it('publishes one source per container only after complete pagination, without d
   const surface = document.createElement('section'); document.body.append(surface)
   const current = row({ runtimeRef: 'mac', local: true, runtimeName: 'web:scope_home', projectionAsOfSeq: 30 })
   const old = { ...current, runtimeRef: 'old', local: false, presence: 'offline' as const }
-  const other = row({ runtimeRef: 'other', runtimeName: 'web:scope_other', projectionAsOfSeq: 30 })
+  const logical = { ...current, logicalSessionRef: current.sessionRef, sources: [current, old] }
+  const other = row({ runtimeRef: 'other', sessionRef: 'distinct', logicalSessionRef: 'distinct', runtimeName: 'web:scope_other', projectionAsOfSeq: 30 })
   let finish!: (page: unknown) => void
   vi.mocked(callArkme)
-    .mockResolvedValueOnce({ contractVersion: 1, items: [old, other, { ...current }], localRuntimeRef: 'mac', nextCursor: { updated_at: 20, session_ref: 'same', runtime_ref: 'old' } })
+    .mockResolvedValueOnce({ contractVersion: 1, catalogVersion: 2, items: [logical], localRuntimeRef: 'mac', nextCursor: { version: 2, updated_at: 20, session_ref: 'same' } })
     .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
   const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   cleanups.push(stop)
   await Promise.resolve(); await Promise.resolve()
   expect(publish).not.toHaveBeenCalled()
-  finish({ contractVersion: 1, items: [current], localRuntimeRef: 'mac' })
+  finish({ contractVersion: 1, catalogVersion: 2, items: [other], localRuntimeRef: 'mac' })
   await Promise.resolve(); await Promise.resolve()
-  expect(publish).toHaveBeenLastCalledWith([other, current])
+  expect(publish).toHaveBeenLastCalledWith([logical, other])
+  expect(publish.mock.lastCall![0][0].sources).toEqual([current, old])
   expect(projectAccountWorkspaces(ws, publish.mock.lastCall![0]).items.flatMap(item => item.sessionIds)).not.toContain(accountSessionKey(old))
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [{ ...old }, { ...other }, { ...current }], localRuntimeRef: 'mac' })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [{ ...logical }, { ...other }], localRuntimeRef: 'mac' })
   document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
   await Promise.resolve(); await Promise.resolve()
   expect(publish).toHaveBeenCalledTimes(1)
