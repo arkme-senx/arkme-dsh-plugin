@@ -16,11 +16,11 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
   const [confirm, setConfirm] = useState<ArkmeCapabilitySetting>()
   const pending = useRef(false), active = useRef(true), generation = useRef(0)
   const controller = useRef<AbortController>(), titleId = useId()
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (failure = '') => {
     const current = ++generation.current
     controller.current?.abort()
     const request = new AbortController(); controller.current = request
-    setLoading(true)
+    setLoading(true); setError(failure)
     try {
       const result = await callArkme<ArkmeCapabilitySettings>('account.capabilities.query', { expectedAccountScope: accountScope }, request.signal)
       if (active.current && current === generation.current) {
@@ -44,16 +44,18 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
     if (pending.current || loadedScope !== accountScope || scopeRef.current !== accountScope) return
     const ownsScope = () => active.current && scopeRef.current === accountScope
     pending.current = true; setSaving(true); setError('')
+    let failure = ''
     try {
       await callArkme<ArkmeCapabilitySettings>('account.capabilities.update', { expectedAccountScope: accountScope, key: setting.key, enabled, expectedVersion: setting.version, billingConsent: enabled })
       if (ownsScope() && setting.key === 'personal_profile') setRetryProfile(false)
     } catch {
       if (ownsScope()) {
-        setError(tr('操作未完成，已重新读取当前设置。请检查后重试。'))
+        failure = tr('操作未完成，已重新读取当前设置。请检查后重试。')
+        setError(failure)
         if (setting.key === 'personal_profile' && enabled) setRetryProfile(true)
       }
     } finally {
-      if (ownsScope()) { pending.current = false; setSaving(false); setConfirm(undefined); await reload() }
+      if (ownsScope()) { pending.current = false; setSaving(false); setConfirm(undefined); await reload(failure) }
     }
   }
   const visibleSettings = loadedScope === accountScope ? settings : undefined

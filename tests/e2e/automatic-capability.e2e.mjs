@@ -74,6 +74,12 @@ describe('automatic capability consent through packed official DSH',()=>{
    expect(result.isError).toBe(false);expect(JSON.stringify(result)).toContain('record_thought')
    await page.getByRole('button',{name:/^(个人资料|Profile)$/}).click()
    await page.getByRole('button',{name:/^(查看用量与额度详情|View usage and limits)$/}).click()
+   // Keep the existing usage/credit entry visible before the new optional controls.
+   const usageTitle=page.getByRole('heading',{name:/^(用量与额度|Usage & limits)$/}).first()
+   await usageTitle.waitFor()
+   const usageBounds=await usageTitle.boundingBox()
+   expect(usageBounds.y).toBeGreaterThanOrEqual(0);expect(usageBounds.y+usageBounds.height).toBeLessThan(900)
+   if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-usage.png')})
    const toggle=page.getByRole('switch',{name:/^(快记建议|Note suggestions)$/})
    await toggle.waitFor();expect(await toggle.getAttribute('aria-checked')).toBe('false')
    expect(await toggle.evaluate(el=>Math.round(el.getBoundingClientRect().width))).toBe(44)
@@ -87,6 +93,20 @@ describe('automatic capability consent through packed official DSH',()=>{
    await expect(sdk.updateAutomaticCapability(scope,{key:'record_thought',enabled:true,expectedVersion:active.version,billingConsent:true})).rejects.toThrow()
    await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
    await expect.poll(()=>toggle.getAttribute('aria-checked')).toBe('false')
+   await page.setViewportSize({width:800,height:600})
+   const automatic=page.getByRole('region',{name:/^(自动 AI|Automatic AI)$/})
+   expect(await automatic.getByRole('switch').count()).toBe(5)
+   for(const item of await automatic.getByRole('switch').all()) {
+    await item.click()
+    const dialog=page.getByRole('dialog').filter({has:page.getByRole('button',{name:/^(同意并开启|Agree and enable)$/})})
+    await dialog.waitFor()
+    const bounds=await dialog.boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(800)
+    expect(bounds.y).toBeGreaterThanOrEqual(0);expect(bounds.y+bounds.height).toBeLessThanOrEqual(600)
+    await page.keyboard.press('Escape')
+    await expect.poll(()=>dialog.count()).toBe(0)
+    expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
+   }
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
   }catch(error){
    failure=error

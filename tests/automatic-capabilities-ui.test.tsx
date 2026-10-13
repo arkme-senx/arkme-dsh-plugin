@@ -76,3 +76,11 @@ it('reads cross-device changes on focus and does not save twice', async () => {
   expect(writes()).toHaveLength(1)
   await act(async () => release())
 })
+it('clears a transient read error after a successful focus refresh', async () => {
+  mocks.call.mockRejectedValueOnce(new Error('offline'))
+  await render()
+  expect(host.querySelector('[role="alert"]')).not.toBeNull()
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(host.querySelector('[role="switch"]')).not.toBeNull()
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+})
