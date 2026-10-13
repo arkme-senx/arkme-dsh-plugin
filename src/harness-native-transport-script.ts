@@ -64,6 +64,18 @@ function installNativeTransport(route: string): void {
       }
       rows.clear(); for (const [id, row] of next) rows.set(id, row)
       for (const runtime of writable.keys()) if (![...rows.values()].some(row => row.runtimeRef === runtime)) writable.delete(runtime)
+      // The account directory is authoritative only after full pagination.
+      // Redirect a retained old selection through the existing native owner.
+      const retired = split(selected)
+      const canonical = retired && incoming.find(row => row.sessionRef === retired.id && row.previousRuntimeRefs?.includes(retired.runtime))
+      if (canonical) {
+        selected = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
+        const doc = surface.ownerDocument
+        doc.dispatchEvent(new doc.defaultView!.CustomEvent('arkme:native-session-open', { detail: {
+          runtimeRef: canonical.local ? '' : canonical.runtimeRef, sessionRef: canonical.sessionRef,
+          accountId: surface.getAttribute('data-arkme-account-id') ?? '', accountScope: surface.getAttribute('data-arkme-account-scope') ?? '',
+        } }))
+      }
       availability()
     },
     writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },

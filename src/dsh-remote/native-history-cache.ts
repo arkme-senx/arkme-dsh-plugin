@@ -49,8 +49,8 @@ export class DshNativeHistoryCache {
     try {
       const old = this.snapshot(key)
       if (snapshot) {
-        if (old && Number(snapshot.cursor) < Number(old.cursor)) { this.db.prepare('DELETE FROM events WHERE session=?').run(key); this.db.prepare('UPDATE sessions SET bytes=length(CAST(snapshot AS BLOB)) WHERE key=?').run(key) }
-        const { records: _records, ...metadata } = snapshot
+        if (old && (snapshot.cacheReset === true || snapshot.cloudRevision !== old.cloudRevision || Number(snapshot.cursor) < Number(old.cursor))) { this.db.prepare('DELETE FROM events WHERE session=?').run(key); this.db.prepare('UPDATE sessions SET bytes=length(CAST(snapshot AS BLOB)) WHERE key=?').run(key) }
+        const { records: _records, cacheReset: _reset, ...metadata } = snapshot
         this.db.prepare('INSERT INTO sessions(key,snapshot,touched,bytes) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET bytes=sessions.bytes+excluded.bytes-length(CAST(sessions.snapshot AS BLOB)),snapshot=excluded.snapshot,touched=excluded.touched').run(key, JSON.stringify(metadata), Date.now(), Buffer.byteLength(JSON.stringify(metadata)))
       } else if (!old) { this.db.exec('COMMIT'); return }
       const insert = this.db.prepare('INSERT INTO events VALUES(?,?,?,?,?) ON CONFLICT(session,seq) DO UPDATE SET turn_start=excluded.turn_start,payload=excluded.payload,bytes=excluded.bytes')

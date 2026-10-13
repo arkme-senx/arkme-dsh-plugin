@@ -3,6 +3,8 @@ import type { DshRemoteTimelineNode } from './types.js'
 export interface DshAccountSessionCursor { updated_at: number; session_ref: string; runtime_ref: string }
 export interface DshAccountSession {
   runtimeRef: string
+  /** Server-verified retired read addresses for this same session. */
+  previousRuntimeRefs?: string[]
   sessionRef: string
   workspaceRef: string
   workspaceName: string

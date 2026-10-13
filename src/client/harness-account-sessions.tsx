@@ -99,7 +99,7 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
   const next = collapseAccountSessionCopies(unique, previous).map(row => {
     const old = known.get(accountSessionKey(row))
     return old && (Object.keys(row) as Array<keyof DshAccountSession>).every(key =>
-      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : row[key] === old[key]) ? old : row
+      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' ? (row.previousRuntimeRefs ?? []).join('\0') === (old.previousRuntimeRefs ?? []).join('\0') : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }

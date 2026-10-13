@@ -33,6 +33,7 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache) {
   }
   const post = vi.fn(async (path: string) => {
     if (path.endsWith('/desktops/list')) return { desktops: [{ desktop: { desktop_ref: 'desktop-remote', display_name: '旧电脑' }, runtimes: [{ runtime: { runtime_ref: 'runtime-remote', profile_ref: 'default', host_client_ref: 'secret-routing-client', host_generation: 3, capabilities: ['session.native', 'session.native.history'] }, presence: { presence: online ? 'online' : 'offline', lease_generation: online ? 8 : 0 } }] }] }
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime-remote', session_ref: 'same-session', title: '云端会话', source_updated_at: 1, projection_as_of_seq: -1 }
     if (path.endsWith('/sessions/account-list')) return { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', workspace_ref: '', title: '云端会话', source_updated_at: 1 }], next_cursor: { updated_at: 1, session_ref: 'same-session', runtime_ref: 'runtime-remote' } }
     if (path.endsWith('/session-turns/list')) return { items: [{ nodes: [{ node_ref: 'message:1', kind: 'user', anchor_seq: 1, ordinal: 0, data: { content: [{ type: 'text', text: '历史正文' }] } }] }], complete: true }
     throw new Error(path)

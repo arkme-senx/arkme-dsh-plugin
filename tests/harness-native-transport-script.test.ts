@@ -185,3 +185,14 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body)).payload.args.request.content).toEqual([{ text: 'arkme:windows:same' }])
   await next.return()
 })
+
+it('redirects a selected retired address after a complete canonical directory refresh', () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  f.directory.publish([f.row('retired')]); f.directory.select('arkme:retired:same')
+  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
+  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'arkme:native-session-open', init: { detail: { runtimeRef: 'canonical', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
+  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+})

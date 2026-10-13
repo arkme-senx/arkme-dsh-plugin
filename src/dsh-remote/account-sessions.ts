@@ -99,7 +99,7 @@ export class DshAccountSessions {
       const row = object(raw), runtimeRef = ref(row.runtime_ref), runtime = runtimes.get(runtimeRef)
       if (!runtime) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '会话目录发生变化，请刷新', true)
       return {
-        runtimeRef, sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
+        runtimeRef, ...(Array.isArray(row.deduplicated_runtime_refs) ? { previousRuntimeRefs: row.deduplicated_runtime_refs.map(ref) } : {}), sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
         capabilities: runtime.capabilities, title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,
         projectionAsOfSeq: Number.isSafeInteger(row.projection_as_of_seq) && Number(row.projection_as_of_seq) >= -1 ? Number(row.projection_as_of_seq) : -1,
         blank: row.blank === true, archived: row.archived === true, origin: String(row.origin ?? ''),
