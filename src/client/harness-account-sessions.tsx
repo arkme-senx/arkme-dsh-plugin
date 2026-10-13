@@ -32,7 +32,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'arkme.accountSessions.directoryFlow': { kind: 'single'; scope: 'root'; owner: object }
   }
 }
-export const accountSessionKey = (row: Pick<DshAccountSession, 'runtimeRef' | 'sessionRef'>): string => `arkme:${encodeURIComponent(row.runtimeRef)}:${encodeURIComponent(row.sessionRef)}`
+export const accountSessionKey = (row: Pick<DshAccountSession, 'runtimeRef' | 'sessionRef' | 'logicalSessionRef'>): string => `arkme:${row.logicalSessionRef ? 'catalog' : encodeURIComponent(row.runtimeRef)}:${encodeURIComponent(row.sessionRef)}`
+const usesNativeIdentity = (row: DshAccountSession, local: SessionsState) => row.local || (row.logicalSessionRef && local.byId[row.sessionRef as SessionId] && !row.sources?.some(source => source.local && source.archived))
 
 /** The native updated mode promotes newly discovered rows, even old remote
  * history. Project its display orders by actual activity time, not arrival. */
@@ -50,19 +51,39 @@ export function projectAccountSessionOrder(view: BrowserView, sessions: Sessions
 /** Local rows keep native identity, blank/activity state and all native actions. */
 export function projectAccountSessions(local: SessionsState, rows: readonly DshAccountSession[], selected?: DshAccountSession): SessionsState {
   const byId = { ...local.byId }, ids = [...local.ids]
+  const nativeIdentity = (row: DshAccountSession) => usesNativeIdentity(row, local)
+  let current = local.current
+  for (const row of rows) {
+    if (!row.logicalSessionRef) continue
+    const id = (nativeIdentity(row) ? row.sessionRef : accountSessionKey(row)) as SessionId
+    const aliases = new Set((row.sources ?? [row]).map(source => accountSessionKey({ runtimeRef: source.runtimeRef, sessionRef: source.sessionRef })))
+    aliases.add(accountSessionKey(row))
+    for (let i = ids.length - 1; i >= 0; i--) if (ids[i] !== id && aliases.has(ids[i]!)) ids.splice(i, 1)
+    if (current && aliases.has(current)) current = id
+  }
   for (const row of selected && !rows.some(row => accountSessionKey(row) === accountSessionKey(selected)) ? [...rows, selected] : rows) {
     if (row.archived || row.origin === 'subagent') continue
-    const id = (row.local ? row.sessionRef : accountSessionKey(row)) as SessionId
-    if (byId[id]) continue
+    const id = (nativeIdentity(row) ? row.sessionRef : accountSessionKey(row)) as SessionId
+    if (byId[id]) {
+      // A locally empty replica cannot hide nonempty history on another source.
+      if (row.logicalSessionRef && !row.blank && byId[id]!.blank) byId[id] = { ...byId[id]!, blank: false, title: row.title, displayTitle: row.title, updatedAt: Math.max(byId[id]!.updatedAt, row.updatedAt) }
+      continue
+    }
     // A row is selectable only after its native added event has landed.
     if (!row.local && (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__) continue
     byId[id] = { id, title: row.title, displayTitle: row.title, updatedAt: row.updatedAt, running: row.running, blank: row.blank }
     ids.push(id)
   }
-  return { ...local, byId, ids: [...new Set(ids)], current: selected ? accountSessionKey(selected) as SessionId : local.current }
+  return { ...local, byId, ids: [...new Set(ids)], current: selected ? accountSessionKey(selected) as SessionId : current }
 }
 
 export function projectAccountWorkspaces(local: WorkspacesState, rows: readonly DshAccountSession[]): WorkspacesState {
+  const aliases = new Map<string, string>()
+  for (const row of rows) if (row.logicalSessionRef) {
+    const id = row.local ? row.sessionRef : accountSessionKey(row)
+    for (const source of row.sources ?? []) aliases.set(accountSessionKey(source), id)
+  }
+  local = { ...local, items: local.items.map(item => ({ ...item, sessionIds: item.sessionIds.filter(id => !aliases.has(id)) })) }
   const groups = new Map<string, Workspace>()
   const names = new Map<string, Set<string>>()
   for (const row of rows) {
@@ -95,7 +116,7 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
   const next = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()].map(row => {
     const old = known.get(accountSessionKey(row))
     return old && (Object.keys(row) as Array<keyof DshAccountSession>).every(key =>
-      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : row[key] === old[key]) ? old : row
+      key === 'capabilities' || key === 'sources' ? JSON.stringify(row[key]) === JSON.stringify(old[key]) : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }
@@ -103,23 +124,26 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
 function createCatalog(surface: Element, remove: () => void) {
     const owner = surface.ownerDocument
     let rows: DshAccountSession[] = [], localRuntimeRef: string | undefined, localDesktopName: string | undefined, users = 0
-    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false
+    let warning: string | undefined
+    let snapshot = { rows, localRuntimeRef, localDesktopName, warning }, active = true, busy = false
     const listeners = new Set<() => void>()
     let controller = new AbortController()
     let stopRefresh: (() => void) | undefined
-    const publish = () => { snapshot = { rows, localRuntimeRef, localDesktopName }; listeners.forEach(listener => listener()) }
+    const publish = () => { snapshot = { rows, localRuntimeRef, localDesktopName, warning }; listeners.forEach(listener => listener()) }
     const refresh = async () => {
       if (!active || busy || owner.hidden) return
       busy = true
       const signal = controller.signal
       try {
         const next: DshAccountSession[] = [], seen = new Set<string>()
+        let nextRuntimeRef: string | undefined, nextDesktopName: string | undefined
         let cursor: DshAccountSessionPage['nextCursor']
         do {
           const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, ...(cursor ? { cursor } : {}) }, signal)
-          if (page.contractVersion !== 1 || !Array.isArray(page.items)) throw new Error('会话目录不可用')
-          localRuntimeRef = page.localRuntimeRef
-          localDesktopName = page.localRuntime?.desktopName
+          if (page.contractVersion !== 1 || page.catalogVersion !== 2 || !Array.isArray(page.items)) throw new Error('会话目录不可用')
+          if (cursor && page.localRuntimeRef !== nextRuntimeRef) throw new Error('会话来源在刷新期间发生变化')
+          nextRuntimeRef = page.localRuntimeRef
+          nextDesktopName = page.localRuntime?.desktopName
           next.push(...page.items.map(row => {
             const previous = rows.find(old => accountSessionKey(old) === accountSessionKey(row))
             return page.warning && previous && row.workspaceName === '工作区信息暂不可用' ? { ...row, workspaceName: previous.workspaceName } : row
@@ -135,10 +159,26 @@ function createCatalog(surface: Element, remove: () => void) {
           if (next.length > 10_000) throw new Error('会话目录过大')
         } while (cursor && active)
         if (!active || signal.aborted) return
-        const merged = reconcileAccountSessions(rows, next)
+        if (new Set(next.map(row => row.logicalSessionRef ?? accountSessionKey(row))).size !== next.length) throw new Error('会话目录刷新期间发生变化')
+        // Pin the selected source across metadata refreshes. A newer source is
+        // discoverable, but cannot silently become an execution target.
+        const pinned = next.map(row => {
+          const old = rows.find(item => item.logicalSessionRef === row.logicalSessionRef)
+          const source = row.sources?.find(item => item.runtimeRef === old?.runtimeRef && !item.archived)
+          return source ? { ...row, ...source, title: source.blank ? row.title : source.title, archived: row.archived, blank: row.blank, updatedAt: row.updatedAt } : row
+        })
+        const merged = reconcileAccountSessions(rows, pinned)
+        localRuntimeRef = nextRuntimeRef
+        localDesktopName = nextDesktopName
+        warning = undefined
         if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows) }
-        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
-      } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
+        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName || snapshot.warning !== warning) publish()
+      } catch (error) {
+        if (active && !signal.aborted) {
+          warning = error instanceof Error ? error.message : '会话目录暂未更新，已保留上次完整结果'
+          publish()
+        }
+      }
       finally { if (signal === controller.signal) busy = false }
     }
     return {
@@ -207,6 +247,7 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   const sourceRuntime: string | null = null
   const creating = useRef(false)
   const [operationError, setOperationError] = useState('')
+  const [sourceChoice, setSourceChoice] = useState<DshAccountSession>()
   const local = props.useSessions(state => state)
   const workspaces = props.useWorkspaces(state => state)
   const catalog = useMemo(() => accountSessionCatalog(surface), [])
@@ -275,10 +316,13 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   }
   const open = (id: string) => {
     const target = remote(id)
+    const logical = rows.find(row => (usesNativeIdentity(row, local) ? row.sessionRef : accountSessionKey(row)) === id)
+    if ((logical?.sources?.length ?? 0) > 1) { setSourceChoice(logical); return }
     if (local.byId[id as SessionId]) props.open(id)
     else if (target) void navigate(target)
   }
   return <>
+    {snapshot.warning && <p role="status">{snapshot.warning}</p>}
     <Native {...props} useSessions={useSessions} useWorkspaces={useWorkspaces} useStore={useStore} open={open}
       renameSession={(id, title) => remote(id) ? command(id, 'session.rename', { title }).then(() => undefined) : props.renameSession(id, title)}
       archiveSession={async id => { if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
@@ -295,6 +339,14 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
           .catch(error => { if (!catalog.signal.aborted) setOperationError(error instanceof Error ? error.message : '新建会话失败') })
           .finally(() => { creating.current = false })
       }} />
+    {sourceChoice && <Modal open onClose={() => setSourceChoice(undefined)} title="选择会话来源">
+      <p>这段对话保存在多个来源。历史可能不同，请选择要查看和继续的来源。</p>
+      {sourceChoice.sources?.map(source => <Button key={source.runtimeRef} onClick={() => {
+        setSourceChoice(undefined)
+        if (source.local && local.byId[source.sessionRef as SessionId]) props.open(source.sessionRef)
+        else void navigate(source)
+      }}>{source.local ? '本机' : source.desktopName} · {source.runtimeName} · {new Date(source.updatedAt).toLocaleString()} · {source.archived ? '已归档' : source.presence === 'online' ? '在线' : '已同步历史'}{source.historyCompleteThroughSeq === undefined || source.historyCompleteThroughSeq < (source.projectionAsOfSeq ?? 0) ? '（历史完整性未确认）' : ''}</Button>)}
+    </Modal>}
     {operationError && <Modal open onClose={() => setOperationError('')} title="无法执行操作"><p>{operationError}</p><Button onClick={() => setOperationError('')}>知道了</Button></Modal>}
   </>
 }

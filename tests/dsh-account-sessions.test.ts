@@ -33,7 +33,7 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache) {
   }
   const post = vi.fn(async (path: string) => {
     if (path.endsWith('/desktops/list')) return { desktops: [{ desktop: { desktop_ref: 'desktop-remote', display_name: '旧电脑' }, runtimes: [{ runtime: { runtime_ref: 'runtime-remote', profile_ref: 'default', host_client_ref: 'secret-routing-client', host_generation: 3, capabilities: ['session.native', 'session.native.history'] }, presence: { presence: online ? 'online' : 'offline', lease_generation: online ? 8 : 0 } }] }] }
-    if (path.endsWith('/sessions/account-list')) return { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', workspace_ref: '', title: '云端会话', source_updated_at: 1 }], next_cursor: { updated_at: 1, session_ref: 'same-session', runtime_ref: 'runtime-remote' } }
+    if (path.endsWith('/sessions/account-list')) return { catalog_version: 2, items: [{ session_ref: 'same-session', updated_at: 1, sources: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', workspace_ref: '', title: '云端会话', source_updated_at: 1 }] }], next_cursor: { version: 2, updated_at: 1, session_ref: 'same-session' } }
     if (path.endsWith('/session-turns/list')) return { items: [{ nodes: [{ node_ref: 'message:1', kind: 'user', anchor_seq: 1, ordinal: 0, data: { content: [{ type: 'text', text: '历史正文' }] } }] }], complete: true }
     throw new Error(path)
   })
@@ -48,9 +48,9 @@ describe('account DSH directory and controller', () => {
     const page = await f.directory.list()
     expect(page).toMatchObject({ contractVersion: 1, items: [{ runtimeRef: 'runtime-remote', sessionRef: 'same-session', workspaceRef: '', local: false, desktopName: '旧电脑', sameDesktop: false, runtimeName: 'default' }] })
     expect(JSON.stringify(page)).not.toContain('secret-routing-client')
-    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/account-list', { limit: 50 }, expect.any(AbortSignal))
+    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/account-list', { catalog_version: 2, limit: 50 }, expect.any(AbortSignal))
     await f.directory.list({ limit: 2, cursor: page.nextCursor, runtime_ref: 'must-not-filter', user_id: 999 })
-    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/account-list', { limit: 2, cursor: page.nextCursor }, expect.any(AbortSignal))
+    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/account-list', { catalog_version: 2, limit: 2, cursor: page.nextCursor }, expect.any(AbortSignal))
     expect(f.transport.connect).not.toHaveBeenCalled()
     const tool = accountSessionTools(f.directory).find(tool => tool.name === 'arkme_dsh_sessions')!
     const value = await tool.execute({}, { signal: new AbortController().signal } as never)
@@ -69,10 +69,11 @@ describe('account DSH directory and controller', () => {
         })),
       })),
     } as never : path.endsWith('/sessions/account-list') ? {
-      items: ['sibling', 'remote'].map(runtime => ({ runtime_ref: `runtime-${runtime}`, session_ref: 'session', workspace_ref: '', source_updated_at: 1 })),
+      catalog_version: 2, items: [{ session_ref: 'session', updated_at: 1, sources: ['sibling', 'remote'].map(runtime => ({ runtime_ref: `runtime-${runtime}`, session_ref: 'session', workspace_ref: '', source_updated_at: 1 })) }],
     } as never : post(path))
     const page = await f.directory.list()
-    expect(page.items.map(row => [row.runtimeName, row.sameDesktop, row.local])).toEqual([
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]!.sources!.map(row => [row.runtimeName, row.sameDesktop, row.local])).toEqual([
       ['sibling', true, false], ['remote', false, false],
     ])
   })
@@ -194,7 +195,7 @@ it('creates only in the selected runtime workspace without injecting a source se
   expect(f.transport.publish).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ operation: 'session.create', body: { workspace_ref: 'workspace-remote' } }), target: expect.objectContaining({ runtimeRef: 'runtime-remote' }) }))
 })
 
-it('hydrates a warm native opening from SQLite, serves cached pages without a remote RPC and isolates account changes', async () => {
+it('revalidates warm native history with the Host instead of replaying an unknown journal generation', async () => {
   const path = mkdtempSync(join(tmpdir(), 'native account cache ')), cache = new DshNativeHistoryCache(path), f = fixture(true, cache)
   const records = Array.from({ length: 30 }, (_, seq) => ({ type: 'event' as const, event: { seq, type: seq % 6 === 0 ? 'turn/start' : 'user/message', data: {} } }))
   const snapshot = { type: 'snapshot', cursor: 29, records, hasMore: false, header: { id: 'same-session' }, assistantStream: { revision: 0 }, projections: { asOfSeq: 29, values: {} } }
@@ -208,12 +209,13 @@ it('hydrates a warm native opening from SQLite, serves cached pages without a re
   try {
     expect(await open('cold-0001')).toEqual({ items: [snapshot], sourceWritable: true })
     f.directory.close()
-    reply = { items: [{ ...snapshot, records: [] }] }
+    reply = { items: [snapshot] }
     expect(await open('warm-0001')).toEqual({ items: [snapshot], sourceWritable: true })
-    expect(f.transport.publish).toHaveBeenLastCalledWith(expect.objectContaining({ payload: expect.objectContaining({ body: expect.objectContaining({ afterSeq: 29 }) }) }))
+    expect(vi.mocked(f.transport.publish).mock.calls.at(-1)![0].payload.body).not.toHaveProperty('afterSeq')
     const count = vi.mocked(f.transport.publish).mock.calls.length
+    reply = { ok: true, value: { records, hasMore: false } }
     expect(await f.directory.native({ runtimeRef: 'runtime-remote', requestRef: 'page-0001', body: { mode: 'call', endpoint: 'session/page', payload: { args: { request: { address, throughSeq: 29 } } } } })).toEqual({ ok: true, value: { records, hasMore: false }, sourceWritable: true })
-    expect(vi.mocked(f.transport.publish).mock.calls).toHaveLength(count)
+    expect(vi.mocked(f.transport.publish).mock.calls).toHaveLength(count + 1)
     f.directory.close(); f.requireAccount.mockResolvedValue('another-account'); reply = { items: [snapshot] }
     await open('other-001')
     expect(vi.mocked(f.transport.publish).mock.calls.at(-1)![0].payload.body).not.toHaveProperty('afterSeq')
@@ -222,7 +224,7 @@ it('hydrates a warm native opening from SQLite, serves cached pages without a re
 
 it('bootstraps an offline account instance, admits an empty history, blocks writes and reconnects to a restored source', async () => {
   const f = fixture(false), post = f.post.getMockImplementation()!
-  f.post.mockImplementation(async path => path.endsWith('/sessions/list') ? { items: [{ session_ref: 'same-session', title: '空会话', source_updated_at: 1 }] } as never
+  f.post.mockImplementation(async path => path.endsWith('/sessions/metadata') ? { runtime_ref: 'runtime-remote', session_ref: 'same-session', title: '空会话', source_updated_at: 1 } as never
     : path.endsWith('/session-events/list') ? { entries: [] } as never
     : path.endsWith('/session-turn-objects/list') ? { items: [] } as never : post(path))
   const native = (body: object) => f.directory.native({ runtimeRef: 'runtime-remote', requestRef: 'request-test', body })
@@ -248,7 +250,7 @@ it('resolves workspace names with at most four concurrent source reads', async (
   let inFlight = 0, peak = 0
   f.post.mockImplementation((async (path: string) => {
     if (path.endsWith('/desktops/list')) return { desktops: [{ desktop: { desktop_ref: 'desktop' }, runtimes: sources.map(runtime_ref => ({ runtime: { runtime_ref, profile_ref: 'web', host_client_ref: 'client', host_generation: 1 }, presence: {} })) }] }
-    if (path.endsWith('/sessions/account-list')) return { items: sources.map(runtime_ref => ({ runtime_ref, session_ref: 'session', workspace_ref: 'workspace' })) }
+    if (path.endsWith('/sessions/account-list')) return { catalog_version: 2, items: [{ session_ref: 'session', updated_at: 1, sources: sources.map(runtime_ref => ({ runtime_ref, session_ref: 'session', workspace_ref: 'workspace' })) }] }
     inFlight++; peak = Math.max(peak, inFlight)
     await new Promise<void>(resolve => pending.push(resolve)); inFlight--
     return { items: [{ workspace_ref: 'workspace', title: 'repo' }] }
@@ -258,7 +260,7 @@ it('resolves workspace names with at most four concurrent source reads', async (
   pending.splice(0).forEach(resolve => resolve())
   await vi.waitFor(() => expect(pending).toHaveLength(2))
   pending.splice(0).forEach(resolve => resolve())
-  expect((await result).items.map(row => row.workspaceName)).toEqual(sources.map(() => 'repo'))
+  expect((await result).items[0]!.sources!.map(row => row.workspaceName)).toEqual(sources.map(() => 'repo'))
   expect(peak).toBe(4)
   f.directory.close()
 })

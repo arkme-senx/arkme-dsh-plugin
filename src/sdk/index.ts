@@ -12,7 +12,7 @@ import { observeDshAccountSession } from '../dsh-remote/account-session-observer
 import type { ArkmeCommonGroupPage } from '../common-groups.js'
 export type { ArkmeCommonGroupPage } from '../common-groups.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
-export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionSource, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
 export type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveEntry, ArkmeArchiveSetInput, ArkmeArchiveSetResult, ArkmeArchivePort } from '../archive-contract.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'

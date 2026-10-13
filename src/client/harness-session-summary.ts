@@ -35,7 +35,7 @@ export function SessionTurnCount({ useProjection, t }: { useProjection: UseProje
 
 export function SessionComputerLocation({ surface, sessionId, t }: { surface: Element; sessionId: string; t: TranslateNS<typeof LOCALE> }) {
   const { rows, localDesktopName } = useAccountSessionCatalog(surface)
-  const row = rows.find(row => !row.archived && accountSessionKey(row) === sessionId)
+  const row = rows.flatMap(row => [row, ...(row.sources ?? [])]).find(row => !row.archived && accountSessionKey(row) === sessionId)
   if (!row || !isRemoteComputer(row, localDesktopName)) return null
   const name = row.desktopName.trim()
   return createElement('span', { 'data-arkme-session-computer': '', title: `${t('remote')} · ${name}`, tabIndex: 0 },

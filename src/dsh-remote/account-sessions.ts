@@ -89,16 +89,27 @@ export class DshAccountSessions {
   async list(params: Record<string, unknown> = {}, requestSignal?: AbortSignal): Promise<DshAccountSessionPage> {
     const signal = await this.scope(requestSignal)
     const [page, runtimes] = await Promise.all([
-      this.options.request.post(`${BASE}/sessions/account-list`, { limit: params.limit ?? 50, ...(params.cursor === undefined ? {} : { cursor: params.cursor }) }, signal),
+      this.options.request.post(`${BASE}/sessions/account-list`, { catalog_version: 2, limit: params.limit ?? 50, ...(params.cursor === undefined ? {} : { cursor: params.cursor }) }, signal),
       this.runtimes(signal),
     ])
     signal.throwIfAborted()
     const localRuntimeRef = this.options.localStatus().runtimeRef
     const localRuntime = localRuntimeRef === undefined ? undefined : runtimes.get(localRuntimeRef)
-    const items = array(page.items).map(raw => {
+    if (page.catalog_version !== 2) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '服务端尚不支持逻辑会话目录，请升级服务端')
+    const groups = array(page.items).map(raw => object(raw))
+    if (groups.length > 100) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '会话目录页过大')
+    const rawSources = groups.flatMap(group => {
+      const sources = array(group.sources)
+      if (!sources.length || sources.length > 64) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '会话来源数量无效')
+      if (sources.some(raw => object(raw).session_ref !== group.session_ref)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '会话来源身份不一致')
+      return sources
+    })
+    const items = rawSources.map(raw => {
       const row = object(raw), runtimeRef = ref(row.runtime_ref), runtime = runtimes.get(runtimeRef)
       if (!runtime) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '会话目录发生变化，请刷新', true)
       return {
+        ...(typeof row.history_revision === 'string' ? { historyRevision: row.history_revision } : {}),
+        historyCompleteThroughSeq: Number.isSafeInteger(row.history_complete_through_seq) ? Number(row.history_complete_through_seq) : -2,
         runtimeRef, sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
         capabilities: runtime.capabilities, title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,
         projectionAsOfSeq: Number.isSafeInteger(row.projection_as_of_seq) && Number(row.projection_as_of_seq) >= -1 ? Number(row.projection_as_of_seq) : -1,
@@ -131,7 +142,14 @@ export class DshAccountSessions {
       } catch { signal.throwIfAborted(); warning = '部分工作区信息暂未更新' }
     }))
     signal.throwIfAborted()
-    return { contractVersion: 1, items, ...(warning === undefined ? {} : { warning }), ...(localRuntime === undefined ? {} : { localRuntime: { desktopName: localRuntime.desktopName, runtimeName: localRuntime.runtimeName } }), ...(page.next_cursor === undefined ? {} : { nextCursor: page.next_cursor as NonNullable<DshAccountSessionPage['nextCursor']> }), ...(localRuntimeRef === undefined ? {} : { localRuntimeRef }) }
+    const logicalItems = groups.map(group => {
+      const sessionRef = ref(group.session_ref), sources = items.filter(item => item.sessionRef === sessionRef)
+      const source = sources.find(item => item.local && !item.archived) ?? sources.find(item => !item.archived && !item.blank) ?? sources[0]!
+      const title = source.blank ? sources.find(item => !item.blank && !item.archived)?.title ?? source.title : source.title
+      return { ...source, title, logicalSessionRef: sessionRef, sources, archived: sources.every(item => item.archived), blank: sources.every(item => item.blank), updatedAt: Number(group.updated_at) }
+    })
+    if (new Set(logicalItems.map(item => item.sessionRef)).size !== logicalItems.length) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '逻辑会话目录重复')
+    return { contractVersion: 1, catalogVersion: 2, items: logicalItems, ...(warning === undefined ? {} : { warning }), ...(localRuntime === undefined ? {} : { localRuntime: { desktopName: localRuntime.desktopName, runtimeName: localRuntime.runtimeName } }), ...(page.next_cursor === undefined ? {} : { nextCursor: page.next_cursor as NonNullable<DshAccountSessionPage['nextCursor']> }), ...(localRuntimeRef === undefined ? {} : { localRuntimeRef }) }
   }
 
   private async runtime(runtimeRef: unknown, signal: AbortSignal): Promise<Runtime> {
@@ -285,14 +303,12 @@ export class DshAccountSessions {
       key = DshNativeHistoryCache.key(account, runtime.target.runtimeRef, identity)
       if (body.mode === 'call' && body.endpoint === 'session/page') {
         if (!Number.isSafeInteger(request.throughSeq) || Number(request.throughSeq) < -1 || (request.beforeSeq !== undefined && (!Number.isSafeInteger(request.beforeSeq) || Number(request.beforeSeq) < 0))) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史分页序号无效')
-        const page = this.cached(() => cache.page(key!, Number(request.throughSeq), request.beforeSeq === undefined ? undefined : Number(request.beforeSeq)))
-        if (page) { signal.throwIfAborted(); return { ok: true, value: page, sourceWritable: true } }
+        // Host generation is an execution fence, not a native journal revision.
+        // Fetch authoritative pages until the Host exposes a journal revision.
       }
       if (body.mode === 'pull') {
         if (this.nativeHistories.size >= 64 && !this.nativeHistories.has(stream)) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '历史订阅数量超限')
         this.nativeHistories.set(stream, { key, address: identity, touched: Date.now() })
-        const cached = this.cached(() => cache.snapshot(key!))
-        if (runtime.capabilities.includes('session.native.history') && cached && this.cached(() => cache.page(key!, Number(cached.cursor)))) body = { ...body, afterSeq: cached.cursor }
       }
     }
     const history = this.nativeHistories.get(stream)
@@ -307,7 +323,7 @@ export class DshAccountSessions {
       for (let i = 0; i < value.items.length; i++) {
         const frame = object(value.items[i])
         if (frame.type === 'snapshot') {
-          this.cached(() => cache.write(history.key, frame.records as NativeHistoryRecord[], frame))
+          this.cached(() => cache.write(history.key, frame.records as NativeHistoryRecord[], { ...frame, cacheReset: true }))
           let page = this.cached(() => cache.page(history.key, Number(frame.cursor)))
           if (!page) {
             const full = object(await this.rpc(runtime, 'session.native', { mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: history.address, throughSeq: frame.cursor } } } }, randomUUID(), signal))

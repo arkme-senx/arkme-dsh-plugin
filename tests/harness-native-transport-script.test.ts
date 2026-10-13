@@ -46,6 +46,51 @@ function fixture(search = '?arkme-harness-embed=1') {
   return { window, attributes, fetch, wire, sockets, listeners, rpc, row, hooks, directory: window.__ARKME_NATIVE_DIRECTORY__ }
 }
 it('leaves non-embedded pages untouched', () => expect(fixture('').hooks).toBeUndefined())
+it('registers logical and exact-source navigation identities and pins commands across directory changes', async () => {
+  const f = fixture()
+  const sources = [f.row('windows'), f.row('linux')]
+  f.directory.publish([f.row('windows', { logicalSessionRef: 'same', sources })])
+  const list = await f.rpc('session/list', {})
+  expect(list.result.value.items.map((item: any) => item.sessionId)).toEqual(['local', 'arkme:catalog:same', 'arkme:windows:same', 'arkme:linux:same'])
+  await f.rpc('session/prompt', { sessionId: 'arkme:catalog:same' })
+  expect(JSON.parse(f.fetch.mock.calls.at(-1)![1].body as string).params.runtimeRef).toBe('windows')
+  f.directory.publish([f.row('linux', { logicalSessionRef: 'same', sources })])
+  await f.rpc('session/prompt', { sessionId: 'arkme:catalog:same' })
+  expect(JSON.parse(f.fetch.mock.calls.at(-1)![1].body as string).params.runtimeRef).toBe('windows')
+  await f.rpc('session/prompt', { sessionId: 'arkme:linux:same' })
+  expect(JSON.parse(f.fetch.mock.calls.at(-1)![1].body as string).params.runtimeRef).toBe('linux')
+  const stream = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:catalog:same' } } } }, new AbortController().signal)[Symbol.asyncIterator]()
+  expect((await stream.next()).value.header.id).toBe('arkme:catalog:same')
+  await stream.return()
+})
+it('registers each catalog source for native navigation and restores exact history after a cold list load', async () => {
+  const f = fixture(), signal = new AbortController().signal
+  const events = f.hooks.openStream('$events', { args: {} }, signal)[Symbol.asyncIterator]()
+  await events.next()
+  const sources = [f.row('windows'), f.row('linux')]
+  const catalog = [f.row('windows', { logicalSessionRef: 'same', sources })]
+  f.directory.publish(catalog)
+  const registered = new Set<string>()
+  for (let i = 0; i < 3; i++) {
+    const event = (await events.next()).value
+    expect(event.event).toBe('api-session/added')
+    registered.add(event.args[0].sessionId)
+  }
+  for (const source of sources) {
+    const id = `arkme:${source.runtimeRef}:same`
+    expect(registered.has(id)).toBe(true)
+    const history = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: id } } } }, signal)[Symbol.asyncIterator]()
+    expect((await history.next()).value.header.id).toBe(id)
+    expect(f.wire.mock.calls.find(([p]) => p.runtimeRef === source.runtimeRef && p.body.endpoint === 'session/follow')).toBeDefined()
+    await history.return()
+  }
+  f.directory.publish(catalog)
+  const cold = fixture(); cold.directory.publish(catalog)
+  expect((await cold.rpc('session/list', {})).result.value.items.slice(1).map((item: any) => item.sessionId)).toEqual([...registered])
+  f.directory.publish([])
+  for (let i = 0; i < 3; i++) expect((await events.next()).value.event).toBe('api-session/removed')
+  await events.return()
+})
 it('merges account rows with native local rows and publishes add/update/delete through the native event stream', async () => {
   const f = fixture(), abort = new AbortController()
   const stream = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
@@ -59,6 +104,15 @@ it('merges account rows with native local rows and publishes add/update/delete t
   expect((await stream.next()).value).toMatchObject({ event: 'api-session/removed', args: ['arkme:linux:same'] })
   expect((await stream.next()).value.args[0].projections.values.title).toBe('renamed')
   await stream.return(); expect(f.sockets[0]!.frames.at(-1).type).toBe('cancel')
+})
+it('withdraws a vanished logical source without blocking catalog refresh or redirecting writes', async () => {
+  const f = fixture(), source = f.row('windows')
+  f.directory.publish([{ ...source, logicalSessionRef: 'same', sources: [source] }])
+  f.directory.select('arkme:catalog:same')
+  expect(() => f.directory.publish([])).not.toThrow()
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
+  await expect(f.rpc('session/prompt', { request: { sessionId: 'arkme:catalog:same', text: 'do not reroute' } })).rejects.toThrow('目录')
+  expect(f.fetch).not.toHaveBeenCalled()
 })
 it('updates native running state on account start/end changes without affecting another source or duplicating unchanged snapshots', async () => {
   const f = fixture(), abort = new AbortController()

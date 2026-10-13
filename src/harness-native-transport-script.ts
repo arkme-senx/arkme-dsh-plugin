@@ -15,19 +15,34 @@ function installNativeTransport(route: string): void {
   const lifetime = new AbortController()
   const writable = new Map<string, boolean>()
   let selected: string | undefined
+  const rows = new Map<string, DshAccountSession>()
+  const bindings = new Map<string, string>()
   const identity = (runtime: string, id: string) => `arkme:${encodeURIComponent(runtime)}:${encodeURIComponent(id)}`
+  const rowIdentity = (row: DshAccountSession) => identity(row.logicalSessionRef ? 'catalog' : row.runtimeRef, row.sessionRef)
   const split = (id: unknown): { runtime: string; id: string } | undefined => {
     if (typeof id !== 'string' || !id.startsWith('arkme:')) return
     const parts = id.split(':')
     if (parts.length !== 3) throw new Error('会话来源标识无效')
-    const runtime = decodeURIComponent(parts[1]!), value = decodeURIComponent(parts[2]!)
+    let runtime = decodeURIComponent(parts[1]!)
+    const value = decodeURIComponent(parts[2]!)
+    if (runtime === 'catalog') {
+      const row = rows.get(id)
+      if (!row) throw new Error('会话目录尚未就绪，请刷新')
+      const pinned = bindings.get(id) ?? row.runtimeRef
+      if (row.runtimeRef !== pinned && !row.sources?.some(source => source.runtimeRef === pinned)) throw new Error('原会话来源已不可用，请重新选择')
+      bindings.set(id, pinned); runtime = pinned
+    }
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(runtime) || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new Error('会话来源标识无效')
     return { runtime, id: value }
   }
-  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected) || writable.get(split(selected)!.runtime) === true))
+  const availability = () => {
+    try {
+      const source = split(selected)
+      surface.setAttribute('data-arkme-source-writable', String(!source || writable.get(source.runtime) === true))
+    } catch { surface.setAttribute('data-arkme-source-writable', 'false') }
+  }
   type Json = Record<string, any>
-  const rows = new Map<string, DshAccountSession>()
-  const summary = (row: DshAccountSession) => ({ sessionId: identity(row.runtimeRef, row.sessionRef), updatedAt: row.updatedAt,
+  const summary = (row: DshAccountSession) => ({ sessionId: rowIdentity(row), updatedAt: row.updatedAt,
     running: row.running, blank: row.blank, projections: { asOfSeq: row.projectionAsOfSeq ?? -1, values: { title: row.title || null } } })
 
   // Bounded queues hold protocol frames, never another copy of conversation state.
@@ -52,10 +67,18 @@ function installNativeTransport(route: string): void {
   const control = (frame: Json) => { for (const queue of controls) queue.push(frame) }
   Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: {
     publish(incoming: readonly DshAccountSession[]) {
-      const next = new Map(incoming.filter(row => !row.local && !row.archived && row.origin !== 'subagent').map(row => [identity(row.runtimeRef, row.sessionRef), row]))
+      const next = new Map(incoming.filter(row => !row.local && !row.archived && row.origin !== 'subagent').map(row => [rowIdentity(row), row]))
+      // Native navigation only opens identities registered in its session store.
+      // Keep exact sources addressable (also after cold selection restoration);
+      // AccountSessionBrowser folds these routing aliases out of the visible list.
+      for (const row of incoming) if (row.logicalSessionRef) for (const source of row.sources ?? []) {
+        if (!source.local && !source.archived && source.origin !== 'subagent') {
+          next.set(identity(source.runtimeRef, source.sessionRef), source)
+        }
+      }
       for (const id of rows.keys()) if (!next.has(id)) emit({ type: 'emit', event: 'api-session/removed', args: [id] })
       for (const [id, row] of next) {
-        writable.set(row.runtimeRef, row.presence === 'online' && row.capabilities.includes('session.native'))
+        for (const source of row.sources ?? [row]) writable.set(source.runtimeRef, source.presence === 'online' && source.capabilities.includes('session.native'))
         const old = rows.get(id)
         if (!old || old.title !== row.title || old.blank !== row.blank || old.projectionAsOfSeq !== row.projectionAsOfSeq) emit({ type: 'emit', event: 'api-session/added', args: [summary(row)] })
         if (old && old.updatedAt !== row.updatedAt) emit({ type: 'emit', event: 'api-session/activity', args: [id, row.updatedAt] })
@@ -63,7 +86,8 @@ function installNativeTransport(route: string): void {
         if (old && old.running !== row.running) emit({ type: 'emit', event: 'api-session/status', args: [id, row.running] })
       }
       rows.clear(); for (const [id, row] of next) rows.set(id, row)
-      for (const runtime of writable.keys()) if (![...rows.values()].some(row => row.runtimeRef === runtime)) writable.delete(runtime)
+      for (const id of bindings.keys()) if (!next.has(id) && id !== selected) bindings.delete(id)
+      for (const runtime of writable.keys()) if (![...rows.values()].some(row => (row.sources ?? [row]).some(source => source.runtimeRef === runtime))) writable.delete(runtime)
       availability()
     },
     writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
@@ -183,10 +207,10 @@ function installNativeTransport(route: string): void {
     return { runtime, payload: value }
   }
   const encodeSummary = (runtime: string, value: Json) => ({ ...value, sessionId: identity(runtime, value.sessionId), ...(value.parentSessionId ? { parentSessionId: identity(runtime, value.parentSessionId) } : {}) })
-  function nativeFrame(runtime: string, frame: Json): Json {
+  function nativeFrame(runtime: string, frame: Json, virtualId?: string): Json {
     // Journal records remain byte-for-byte semantic source values. Only the
     // envelope header carries the virtual identity used by the native view.
-    return { ...frame, ...(frame.header ? { header: { ...frame.header, id: identity(runtime, frame.header.id) } } : {}),
+    return { ...frame, ...(frame.header ? { header: { ...frame.header, id: virtualId ?? identity(runtime, frame.header.id) } } : {}),
       ...(frame.sessionId ? { sessionId: identity(runtime, frame.sessionId) } : {}) }
   }
   const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: Map<string, { value: Json; bytes: number }>; bytes: number }>()
@@ -205,6 +229,13 @@ function installNativeTransport(route: string): void {
         const total = state.bytes - (state.frames.get(key)?.bytes ?? 0) + bytes
         if (total > 64 * 1024 * 1024) throw new Error('远端控制状态大小超限')
         state.bytes = total; state.frames.set(key, { value: frame, bytes }); control(frame)
+        if (typeof frame.sessionId === 'string') {
+          const original = split(frame.sessionId)
+          if (original) {
+            const logical = identity('catalog', original.id)
+            if (bindings.get(logical) === runtime && rows.has(logical)) control({ ...frame, sessionId: logical })
+          }
+        }
       }
       const pump = async (endpoint: string) => {
         while (!scoped.aborted) {
@@ -263,7 +294,10 @@ function installNativeTransport(route: string): void {
         const response = await fetch(url, init)
         if (message.method !== 'session/list' || !response.ok) return response
         const envelope = await response.json() as Json
-        if (envelope.result?.ok) envelope.result.value.items.push(...[...rows.values()].map(summary))
+        if (envelope.result?.ok) {
+          const localIds = new Set(envelope.result.value.items.map((item: Json) => item.sessionId))
+          envelope.result.value.items.push(...[...rows.values()].filter(row => !localIds.has(row.sessionRef)).map(summary))
+        }
         return Response.json(envelope)
       }
       const endpoint = message.method
@@ -278,7 +312,9 @@ function installNativeTransport(route: string): void {
       const scoped = AbortSignal.any([signal, lifetime.signal]), target = addressed(payload)
       if (target.runtime) {
         const release = retainSource(target.runtime, scoped)
-        try { for await (const frame of remoteStream(target.runtime, endpoint, target.payload, scoped)) yield nativeFrame(target.runtime, frame) }
+        const originalAddress = (payload as Json)?.args?.request?.address
+        const virtualId = originalAddress?.kind === 'session' && typeof originalAddress.sessionId === 'string' ? originalAddress.sessionId : undefined
+        try { for await (const frame of remoteStream(target.runtime, endpoint, target.payload, scoped)) yield nativeFrame(target.runtime, frame, virtualId) }
         finally { release() }
         return
       }

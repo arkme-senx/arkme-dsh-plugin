@@ -1,7 +1,13 @@
 import type { DshRemoteTimelineNode } from './types.js'
 
-export interface DshAccountSessionCursor { updated_at: number; session_ref: string; runtime_ref: string }
+export interface DshAccountSessionCursor { updated_at: number; session_ref: string; runtime_ref?: string; version?: 2 }
 export interface DshAccountSession {
+
+  /** Account-scoped logical identity; concrete runtimeRef always binds execution. */
+  logicalSessionRef?: string
+  sources?: DshAccountSessionSource[]
+  historyRevision?: string
+  historyCompleteThroughSeq?: number
   runtimeRef: string
   sessionRef: string
   workspaceRef: string
@@ -21,8 +27,10 @@ export interface DshAccountSession {
   presence: 'online' | 'offline' | 'unknown'
   local: boolean
 }
+export type DshAccountSessionSource = Omit<DshAccountSession, 'sources' | 'logicalSessionRef'>
 export interface DshAccountSessionPage {
   contractVersion: 1
+  catalogVersion?: 2
   warning?: string
   items: DshAccountSession[]
   nextCursor?: DshAccountSessionCursor

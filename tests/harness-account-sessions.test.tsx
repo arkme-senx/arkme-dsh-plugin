@@ -16,7 +16,7 @@ const cleanups: Array<() => void> = []
 it('refreshes the surface catalog without a mounted menu, single-flights pulls, and stops when hidden or disposed', async () => {
   vi.useFakeTimers()
   const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'; document.body.append(surface)
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [row()] })
   const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   cleanups.push(stop)
   await vi.advanceTimersByTimeAsync(5_000)
@@ -27,12 +27,12 @@ it('refreshes the surface catalog without a mounted menu, single-flights pulls, 
   window.dispatchEvent(new Event('focus'))
   await vi.advanceTimersByTimeAsync(10_000)
   expect(callArkme).toHaveBeenCalledTimes(3)
-  finish({ contractVersion: 1, items: [row({ sessionRef: 'new-instance' })] })
+  finish({ contractVersion: 1, catalogVersion: 2, items: [row({ sessionRef: 'new-instance' })] })
   await vi.advanceTimersByTimeAsync(0)
   surface.dataset.arkmeVisible = 'false'
   await vi.advanceTimersByTimeAsync(10_000)
   expect(callArkme).toHaveBeenCalledTimes(3)
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [] })
   surface.dataset.arkmeVisible = 'true'
   await vi.advanceTimersByTimeAsync(0)
   expect(callArkme).toHaveBeenCalledTimes(4)
@@ -48,7 +48,7 @@ it('uses the embedding window focus and visibility to resume discovery', async (
   const owner = frame.contentDocument!, surface = owner.body
   const hidden = vi.spyOn(owner, 'hidden', 'get').mockReturnValue(false)
   cleanups.push(() => hidden.mockRestore())
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [row()] })
   const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   cleanups.push(stop)
   await Promise.resolve(); await Promise.resolve()
@@ -119,7 +119,7 @@ it('keeps remote navigation out of native open, retains last good rows after fai
   const open = vi.fn()
   let props: Record<string, any> = {}
   const Native = (p: Record<string, any>) => { props = p; const state = p.useSessions((s: unknown) => s); return createElement('div', { 'data-native': '' }, state.ids.map((id: string) => createElement('button', { key: id, onClick: () => p.open(id) }, state.byId[id].displayTitle))) }
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [row()] })
   await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, useStore: (select: any) => select({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (select: any) => select(local), useWorkspaces: (select: any) => select(ws), startSession: vi.fn() })))
   expect(container.textContent).toContain('Windows 对话')
   act(() => props.open(accountSessionKey(row())))
@@ -142,13 +142,61 @@ it('applies catalog add/update/delete without replacing unchanged rows or an unc
   const removed = reconcileAccountSessions(next, [structuredClone(next[1]!)])
   expect(removed).toEqual([next[1]]); expect(removed[0]).toBe(next[1])
 })
+
+it('collapses migrated remote aliases into the native local identity without changing stored source data', () => {
+  const sources = [row(), row({ runtimeRef: 'linux' })]
+  const logical = row({ logicalSessionRef: 'same', sources })
+  const aliases = sources.map(accountSessionKey)
+  const state = { ...local, ids: ['same', ...aliases], byId: { ...local.byId, ...Object.fromEntries(aliases.map(id => [id, { ...local.byId.same, id }])) }, current: aliases[0] }
+  const before = structuredClone(state)
+  const projected = projectAccountSessions(state as never, [logical])
+  expect(projected.ids).toEqual(['same'])
+  expect(projected.current).toBe('same')
+  expect(state).toEqual(before)
+  expect(logical.sources).toHaveLength(2)
+})
+it('shows one remote catalog entry while retaining exact-source identities for native history routing', () => {
+  const sources = [row(), row({ runtimeRef: 'linux' })]
+  const logical = row({ logicalSessionRef: 'same', sources })
+  const catalogId = accountSessionKey(logical), aliases = sources.map(accountSessionKey)
+  const ids = [catalogId, ...aliases]
+  const state = { ...local, ids, byId: Object.fromEntries(ids.map(id => [id, { ...local.byId.same, id }])), current: aliases[1] }
+  const before = structuredClone(state)
+  const projected = projectAccountSessions(state as never, [logical])
+  expect(projected.ids).toEqual([catalogId])
+  expect(projected.current).toBe(catalogId)
+  expect(projected.byId[catalogId]).toBe(state.byId[catalogId])
+  expect(state).toEqual(before)
+})
+it('still offers all sources when a not-yet-uploaded native session owns the visible identity', async () => {
+  const surface = document.createElement('section'); surface.dataset.arkmeAccountId = '3016'; document.body.append(surface)
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
+  const sources = [row(), row({ runtimeRef: 'old', desktopName: '旧电脑' })]
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [row({ logicalSessionRef: 'same', sources })] })
+  const open = vi.fn()
+  const Native = (p: Record<string, any>) => createElement('button', { onClick: () => p.open('same') }, 'native entry')
+  await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => s(local), useWorkspaces: (s: any) => s(ws) })))
+  await act(async () => container.querySelector('button')!.click())
+  expect(document.body.textContent).toContain('选择会话来源')
+  expect(document.body.textContent).toContain('旧电脑')
+  expect(open).not.toHaveBeenCalled()
+})
+it('does not hide nonempty remote history behind a locally blank replica', () => {
+  const empty = { ...local, byId: { same: { ...local.byId.same, blank: true } } }
+  const logical = row({ logicalSessionRef: 'same', local: true, title: 'retained history', sources: [row({ local: true, blank: true }), row({ runtimeRef: 'old' })] })
+  const projected = projectAccountSessions(empty as never, [logical])
+  expect(projected.ids).toEqual(['same'])
+  expect(projected.byId.same).toMatchObject({ blank: false, displayTitle: 'retained history' })
+  expect(empty.byId.same.blank).toBe(true)
+})
 it('binds equal-title native rows by order and keeps physical-local origin after opening another source', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const surface = document.createElement('section'); surface.dataset.arkmeAccountId = '3016'; document.body.append(surface)
   const container = document.createElement('div'); container.dataset.slot = 'sidebar.workspaces'; document.body.append(container)
   const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
   const remoteRow = row({ title: '本机' })
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, localRuntimeRef: 'mac', localRuntime: { desktopName: 'Mac', runtimeName: 'web' }, items: [remoteRow, row({ local: true, runtimeRef: 'mac', title: '本机', sameDesktop: true })] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, localRuntimeRef: 'mac', localRuntime: { desktopName: 'Mac', runtimeName: 'web' }, items: [remoteRow, row({ local: true, runtimeRef: 'mac', title: '本机', sameDesktop: true })] })
   const Native = (p: Record<string, any>) => {
     const state = p.useSessions((s: unknown) => s)
     return createElement('div', { role: 'tree' }, ['same', accountSessionKey(remoteRow)].filter(id => state.byId[id]).map(id => createElement('span', { key: id }, createElement('div', { role: 'treeitem', 'aria-selected': id === state.current, 'data-test-id': id }, createElement('span', null, state.byId[id].displayTitle)))))
@@ -182,7 +230,7 @@ it('keeps source-owned rows and workspaces present until native discovery takes 
 it('preloads the account catalog before the native menu mounts and retains it across menu remounts', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const surface = document.createElement('section'); surface.dataset.arkmeAccountId = '3016'; document.body.append(surface)
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, catalogVersion: 2, items: [row()] })
   const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   cleanups.push(stop)
   await Promise.resolve(); await Promise.resolve()
