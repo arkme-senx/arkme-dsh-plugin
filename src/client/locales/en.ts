@@ -1,5 +1,8 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+按需开启，使用时消耗 AI 积分。|Enable as needed. Usage consumes AI points.
+使用说明|Usage details
+关闭后，已开始的分析仍可能完成并计费。|After turning this off, analysis already started may finish and incur charges.
 个人档案已授权，重试启动分析|Profile authorized. Retry starting analysis
 操作未完成，已重新读取当前设置。请检查后重试。|The operation did not complete. Current settings have been reloaded. Review them and try again.
 无法读取当前设置，请重试|Could not load current settings. Please try again.

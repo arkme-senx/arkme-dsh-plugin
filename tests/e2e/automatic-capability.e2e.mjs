@@ -16,7 +16,7 @@ if (!dshRoot || !profile || !recordOrigin || new URL(recordOrigin).hostname !== 
 }
 const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
 const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
-const { connectFreshWorkspace } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
+const { connectFreshWorkspaceZh } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(profileManifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) {
@@ -63,10 +63,10 @@ describe('automatic capability consent through packed official DSH',()=>{
    expect((await sdk.automaticCapabilities(scope)).settings).toHaveLength(5)
    expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
-   page=await browser.newPage({viewport:{width:1280,height:900},locale:'en-US'})
+   page=await browser.newPage({viewport:{width:1280,height:900},locale:'zh-CN'})
    await page.goto(scaffold.authenticatedUrl,{waitUntil:'load'})
    const frame=page.frameLocator('iframe[title="DeepSeek Harness"]')
-   await connectFreshWorkspace(frame,scaffold.workspaceCwd)
+   await connectFreshWorkspaceZh(frame,scaffold.workspaceCwd)
    const input=frame.locator('[data-composer-input]').first();await input.fill(prompt)
    const settled=scaffold.whenTurnSettled();await input.press('Enter');const sessionId=await settled
    const agent=scaffold.ctx.agents.get(sessionId)
@@ -107,6 +107,8 @@ describe('automatic capability consent through packed official DSH',()=>{
     await expect.poll(()=>dialog.count()).toBe(0)
     expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    }
+   await automatic.scrollIntoViewIfNeeded()
+   expect(await automatic.getByRole('heading',{name:'自动 AI'}).isVisible()).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
   }catch(error){
    failure=error
