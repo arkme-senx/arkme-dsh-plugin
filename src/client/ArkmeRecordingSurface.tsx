@@ -331,12 +331,28 @@ export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted 
   selectionControl?: ReactNode
   onToggleSelection?(): void
 }) {
+  const speakerStyle: CSSProperties = {
+    ...styles.transcriptSpeaker,
+    ...(item.isSelf ? { gridColumn: 2, gridRow: 1, justifySelf: 'end', flexDirection: 'row-reverse' } : {}),
+  }
+  const speakerIdentity = <>
+    {item.speakerAvatarRef === undefined
+      ? <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
+      : <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={16} label={tr("{v0}头像", { v0: item.speakerLabel })} />}
+    <span style={{
+      ...styles.transcriptSpeakerName,
+      ...(item.speakerAvatarRef === undefined ? {} : { color: recordingSpeakerColor(item.speakerColorIndex) }),
+      ...(item.speakerLabel === tr("说话人 {v0}", { v0: item.speakerNumber }) ? {} : styles.transcriptNamedSpeaker),
+      ...(item.isSelf ? { marginLeft: 0, marginRight: 4 } : {}),
+    }}>{item.speakerLabel}</span>
+  </>
   return <li
     data-recording-transcript-item={item.itemId}
     data-recording-search-highlight={searchHighlighted || undefined}
     style={{
       ...styles.transcript,
       ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr)', contentVisibility:'visible' as const } : {}),
+      ...(item.isSelf ? { gridTemplateColumns: readOnly ? 'minmax(0,1fr) 64px' : 'minmax(0, 1fr) minmax(0, min(128px, 45%))' } : {}),
       ...(selected ? { background: colors.input } : {}),
       ...(searchHighlighted ? { background: `color-mix(in srgb, ${colors.base} 88%, ${colors.text} 12%)` } : {}),
       ...(selectionControl ? { paddingLeft: 27 } : {}),
@@ -345,26 +361,20 @@ export function ArkmeRecordingTranscriptRow({ item, selected, searchHighlighted 
     onClick={readOnly ? undefined : onToggleSelection}
   >
     {selectionControl && <span style={{ position: 'absolute', left: 0, top: 4, zIndex: 1, display: 'flex' }}>{selectionControl}</span>}
-    {readOnly ? <span style={styles.transcriptSpeaker}>
-      {item.speakerAvatarRef === undefined
-        ? <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
-        : <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={16} label={tr("{v0}头像", { v0: item.speakerLabel })} />}
-      <span style={{ ...styles.transcriptSpeakerName, ...(item.speakerAvatarRef === undefined ? {} : { color: recordingSpeakerColor(item.speakerColorIndex) }), ...(item.speakerLabel === tr("说话人 {v0}", { v0: item.speakerNumber }) ? {} : styles.transcriptNamedSpeaker) }}>{item.speakerLabel}</span>
+    {readOnly ? <span style={speakerStyle}>
+      {speakerIdentity}
     </span> : <button data-arkme-feedback="neutral"
       type="button"
       className="arkme-recording-transcript-speaker"
-      style={styles.transcriptSpeaker}
+      style={speakerStyle}
       title={item.speakerLabel}
       aria-label={tr("编辑说话人 {v0}", { v0: item.speakerLabel })}
       onClick={event => { event.stopPropagation(); onEditSpeaker?.(event) }}
     >
-      {item.speakerAvatarRef === undefined
-        ? <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
-        : <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={16} label={tr("{v0}头像", { v0: item.speakerLabel })} />}
-      <span style={{ ...styles.transcriptSpeakerName, ...(item.speakerAvatarRef === undefined ? {} : { color: recordingSpeakerColor(item.speakerColorIndex) }), ...(item.speakerLabel === tr("说话人 {v0}", { v0: item.speakerNumber }) ? {} : styles.transcriptNamedSpeaker) }}>{item.speakerLabel}</span>
-      <span aria-hidden="true" style={styles.transcriptEditSlot}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
+      {speakerIdentity}
+      <span aria-hidden="true" style={{ ...styles.transcriptEditSlot, ...(item.isSelf ? { marginLeft: 0, marginRight: 2 } : {}) }}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
     </button>}
-    <div style={styles.transcriptContent}>
+    <div style={{ ...styles.transcriptContent, ...(item.isSelf ? { gridColumn: 1, gridRow: 1, justifySelf: 'end', maxWidth: '100%', textAlign: 'left' } : {}) }}>
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
         {recordingTranscriptTimeLabel(item.startAtMillis)} {recordingTranscriptDurationLabel(item.startAtMillis, item.endAtMillis)}
@@ -759,7 +769,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const targetDate = startOfLocalDay(new Date(target.dateStamp))
     setSelectedDate(current => current.getTime() === targetDate.getTime() ? current : targetDate)
     setVisibleMonth(current => current.getTime() === monthStart(targetDate).getTime() ? current : monthStart(targetDate))
-    setActiveTab(target.summary ? 'summary' : 'transcript')
+    setActiveTab(target.summary ? 'summary' : target.timeline ? 'timeline' : 'transcript')
     setSelectionMode(false)
     setEditingSpeaker(undefined)
   }, [ui.recordingTarget])
@@ -835,6 +845,21 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }, [ui.recordingTarget, day, dayLoading, selectedDate])
   const summarySourceUnavailable = missingSummaryTarget !== undefined && missingSummaryTarget === ui.recordingTarget
     && dateKey(new Date(missingSummaryTarget.dateStamp)) === dateKey(selectedDate)
+
+  const appliedTimelineTarget = useRef<typeof ui.recordingTarget>()
+  const [missingTimelineTarget, setMissingTimelineTarget] = useState<typeof ui.recordingTarget>()
+  useEffect(() => {
+    const target = ui.recordingTarget
+    if (!target?.timeline || dayLoading || !day || day.dateStamp !== selectedDate.getTime()
+      || dateKey(new Date(target.dateStamp)) !== dateKey(selectedDate) || appliedTimelineTarget.current === target) return
+    const version = target.timeline.versionId ? day.timeline.items.find(item => item.id === target.timeline!.versionId && item.selectable) : undefined
+    if (version) setTimelineVersionId(version.id)
+    if (!version && day.timeline.state === 'processing') return
+    appliedTimelineTarget.current = target
+    setMissingTimelineTarget(target.timeline.versionId && !version ? target : undefined)
+  }, [ui.recordingTarget, day, dayLoading, selectedDate])
+  const timelineSourceUnavailable = missingTimelineTarget !== undefined && missingTimelineTarget === ui.recordingTarget
+    && dateKey(new Date(missingTimelineTarget.dateStamp)) === dateKey(selectedDate)
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
@@ -1049,7 +1074,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
 
   const renderTimeline = () => {
     const section = day?.timeline
+    const sourceNotice = timelineSourceUnavailable && <div role="status" style={styles.status}>{tr('来源时间轴版本暂不可用，当前显示该日可用内容。')}</div>
     if (dayLoading || section === undefined || selectedTimeline === undefined) return <>
+      {sourceNotice}
       <SectionState
         section={generatingKinds.timeline && section?.state !== 'processing'
           ? { state: 'processing', items: section?.items ?? [], message: '内容仍在生成' }
@@ -1060,6 +1087,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       />
     </>
     return <>
+      {sourceNotice}
       <StatusBanner section={section} />
       <VersionPicker
         kind="timeline"

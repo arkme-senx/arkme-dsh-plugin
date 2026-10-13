@@ -832,6 +832,24 @@ describe('AudioRecordingImportGateway', () => {
     expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ recording_kind: recordingKind })
   })
 
+  it('passes the durable batch identity atomically with cloud session creation', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-1' }
+        return {}
+      },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ batch: { batchId: 'batch-0001', itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' } }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ import_batch: { batch_id: 'batch-0001', item_index: 1, item_count: 2, time_zone: 'Asia/Shanghai' } })
+  })
+
   it('rejects names returned by the owner using the conservative local conflict key', async () => {
     const runtime = {
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

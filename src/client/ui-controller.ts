@@ -293,6 +293,12 @@ export class ArkmeUiController {
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, summary: { ...(versionId ? { versionId } : {}) } } })
   }
+  showRecordingTimelineTarget(dateStamp: number, versionId?: string): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, timeline: { ...(versionId ? { versionId } : {}) } } })
+  }
+
 
   showSearch(): void {
     this.leaveContacts()

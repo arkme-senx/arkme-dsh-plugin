@@ -1,3 +1,4 @@
+import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
 import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
 import { randomUUID } from 'node:crypto'
@@ -86,6 +87,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
+    ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
     userId: source.userId as number,
     revision: source.revision as number,
     phase: source.phase as RecordingImportPhase,
