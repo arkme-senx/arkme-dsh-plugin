@@ -30,3 +30,30 @@ it('renders a team and retains accepted admission without a second search', asyn
  expect(api.call.mock.calls.some(c=>c[0]==='contacts.add')).toBe(false)
  expect(api.call.mock.calls.filter(c=>c[0]==='contacts.search')).toHaveLength(1)
 })
+
+it.each([
+ ['none', false, 'Join team', false],
+ ['none', true, 'Apply to join team', false],
+ ['pending', true, 'Request submitted, awaiting approval', true],
+ ['joined', true, 'Joined the team', true],
+ ['rejected', true, 'Apply to join again', false],
+] as const)('uses existing team translations for %s / approval=%s', async (state, requiresApproval, label, disabled) => {
+ const { connectArkmeLocale } = await import('../src/client/locale.js')
+ const disconnect = connectArkmeLocale({getLocale:()=>({active:'en'}),subscribe:()=>()=>{}})
+ try {
+  api.call.mockImplementation(async (op:string) => op === 'user.profile' ? {profile:null} : {
+   registered:false, canAdd:false, identifierKind:'arkme_id',
+   team:{name:'International team',jotmoId:'arkme_cn',state,requiresApproval,avatar:{mode:'default',key:'team'}},
+  })
+  await act(async()=>{renderer=create(<ArkmeContactAddSurface compact shareWebsite="https://jiwo.cc" onSourceActivated={vi.fn()}/>)})
+  await act(async()=>{renderer.root.findAllByType('input')[0]!.props.onChange({target:{value:'arkme_cn'}})})
+  await act(async()=>{renderer.root.findByType('form').props.onSubmit({preventDefault(){}})})
+  const card = renderer.root.findAllByType('section').find(v=>v.props['aria-label']==='Team search result')!
+  const button = card.findByType('button')
+  expect(button.props.children).toBe(label)
+  expect(button.props.disabled).toBe(disabled)
+  expect(card.findAllByType('p')[1]!.props.children[0]).toBe('Team')
+ } finally {
+  disconnect(); connectArkmeLocale({getLocale:()=>({active:'zh'}),subscribe:()=>()=>{}})()
+ }
+})

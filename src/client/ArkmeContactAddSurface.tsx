@@ -6,6 +6,7 @@ import type { ArkmeContactAddResult, ArkmeContactSearchResult, ArkmeSourceItem, 
 import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
+import { teamText } from './team-messaging-i18n.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -35,6 +36,7 @@ const styles: Record<string, CSSProperties> = {
   identity: { display: 'flex', alignItems: 'center', gap: 14 },
   identityText: { minWidth: 0, flex: 1 },
   name: { margin: 0, fontSize: 17, fontWeight: 600 },
+  teamName: { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
   meta: { margin: '5px 0 0', color: arkmeTheme.secondary, fontSize: 13 },
   remark: { width: '100%', height: 42, marginTop: 18, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
   primary: { width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontWeight: 600 },
@@ -162,7 +164,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
         teamRequestUid.current = undefined
         if (result.state === 'joined') arkmeContactsTab.refresh()
-        setNotice(result.state === 'joined' ? tr('已加入团队') : result.state === 'pending' ? tr('申请已提交，等待团队负责人批准') : '')
+        setNotice(result.state === 'joined' ? teamText('已加入团队') : result.state === 'pending' ? teamText('申请已提交') : '')
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }
@@ -323,11 +325,11 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
           {candidate.isSelf ? <div style={styles.notice}>{tr("这是你自己，不能添加为联系人")}</div> : !candidate.canAdd ? <div style={styles.notice}>{tr("该账号当前无法添加")}</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder={tr("备注（可选）")} onChange={event => { setRemark(event.target.value) }} /><button data-arkme-feedback="primary" type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>{submitLabel}</button></>}
         </section>}
         {candidate?.team !== undefined && <section style={styles.card} aria-label={tr("团队搜索结果")}>
-          <div style={styles.identity}><ArkmeTeamAvatar avatar={candidate.team.avatar} name={candidate.team.name} size={48}/><div style={styles.identityText}>
-            <p style={styles.name}>{candidate.team.name}</p><p style={styles.meta}>{tr("团队")} · {tr("即我号：")}{candidate.team.jotmoId}</p>
+          <div style={styles.identity}><ArkmeTeamAvatar avatar={candidate.team.avatar} name={candidate.team.name} size={48}/><div style={{ ...styles.identityText, overflowWrap: 'anywhere' }}>
+            <p style={{ ...styles.name, ...styles.teamName }} title={candidate.team.name}>{candidate.team.name}</p><p style={styles.meta}>{teamText("团队")} · {tr("即我号：")}{candidate.team.jotmoId}</p>
           </div></div>
           <button type="button" data-arkme-feedback="primary" style={styles.primary} disabled={busy || ['pending', 'joined'].includes(candidate.team.state)} onClick={() => { void joinTeam() }}>
-            {tr(candidate.team.state === 'joined' ? '已加入团队' : candidate.team.state === 'pending' ? '申请已提交，等待审批' : candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
+            {teamText(candidate.team.state === 'joined' ? '已加入团队' : candidate.team.state === 'pending' ? '申请已提交，等待审批' : candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
           </button>
         </section>}
       </div>
