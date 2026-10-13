@@ -40,7 +40,8 @@ it.each([
  ['none', true, 'Apply to join team', false],
  ['pending', true, 'Request submitted, awaiting approval', true],
  ['joined', true, 'Joined the team', true],
- ['rejected', true, 'Apply to join again', false],
+ ['rejected', true, 'Apply to join team', false],
+ ['rejected', false, 'Join team', false],
 ] as const)('uses existing team translations for %s / approval=%s', async (state, requiresApproval, label, disabled) => {
  const { connectArkmeLocale } = await import('../src/client/locale.js')
  const disconnect = connectArkmeLocale({getLocale:()=>({active:'en'}),subscribe:()=>()=>{}})

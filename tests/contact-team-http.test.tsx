@@ -81,7 +81,7 @@ it.skipIf(!process.env.JOTMO_CONTACT_E2E_DIR)('real plugin UI and SDK → Host �
     const application = list.data.items.find((v:any)=>v.user_id===13); expect(application.display_name).toBe('插件申请人')
     expect((await post('join-requests/decide',{team_id:7,user_id:13,revision:application.revision,approve:true},team.mobile)).code).not.toBe(200)
     expect((await post('join-requests/decide',{team_id:7,user_id:13,revision:application.revision,approve:false})).code).toBe(200)
-    await search('arkme_cn'); expect(text()).toContain('重新申请加入团队')
+    await search('arkme_cn'); expect(text()).toContain('申请加入团队')
     await expect(sdk.joinContactTeam('arkme_cn',crypto.randomUUID())).resolves.toEqual({state:'pending'})
     const second = (await post('join-requests/list',{team_id:7})).data.items.find((v:any)=>v.user_id===13)
     expect(second.revision).toBeGreaterThan(application.revision)

@@ -330,7 +330,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
           {['pending', 'joined'].includes(candidate.team.state)
             ? <div style={styles.notice} role="status">{teamText(candidate.team.state === 'joined' ? '已加入团队' : '申请已提交，等待审批')}</div>
             : <button type="button" data-arkme-feedback="primary" style={styles.primary} disabled={busy} onClick={() => { void joinTeam() }}>
-              {teamText(candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
+              {teamText(candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
             </button>}
         </section>}
       </div>
