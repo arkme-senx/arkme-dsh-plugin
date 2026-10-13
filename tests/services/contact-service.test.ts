@@ -20,13 +20,36 @@ function fixture(authResult: Record<string, unknown>) {
   }
   const profile = { sealProfileImageRef: vi.fn(async () => 'safe-avatar-ref') }
   const realtime = { nextChatClientRevision: vi.fn(() => 1), emitChatClientEvent: vi.fn() }
+  const teams = { searchContactTeam: vi.fn(async (): Promise<any> => undefined) }
   return {
-    service: new ContactService(runtime as never, sourceOwner as never, profile as never, realtime as never),
+    teams,
+    service: new ContactService(runtime as never, sourceOwner as never, profile as never, realtime as never, teams),
     runtime, sourceOwner, profile, realtime,
   }
 }
 
 describe('ContactService', () => {
+  it('returns a same-name team independently and never creates a chat for a team-only result', async () => {
+    const f = fixture({exists: false, is_registered: false, can_add: false})
+    f.teams.searchContactTeam.mockResolvedValue({ name: '官方团队', jotmoId: 'arkme_cn', state: 'none', requiresApproval: true, avatar: {mode: 'default', key: 'public'} })
+    const result = await f.service.search('arkme_cn')
+    expect(result.team?.name).toBe('官方团队')
+    expect(result.canAdd).toBe(false)
+    await expect(f.service.add(result.contactRef)).rejects.toMatchObject({code: 'contact-add-unavailable'})
+    expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+    f.runtime.authenticatedAuthPost.mockResolvedValue({exists: true, is_registered: true, can_add: true, user_id: 88, nick_name: '同名个人'})
+    const both = await f.service.search('arkme_cn')
+    expect(both.displayName).toBe('同名个人')
+    expect(both.team?.name).toBe('官方团队')
+  })
+  it('does not call Team for phone searches and does not disguise Team failure as not found', async () => {
+    const f = fixture({is_registered: false, can_add: true})
+    await f.service.search('13800138000')
+    expect(f.teams.searchContactTeam).not.toHaveBeenCalled()
+    f.teams.searchContactTeam.mockRejectedValue(new Error('team unavailable'))
+    await expect(f.service.search('arkme_cn')).rejects.toThrow('team unavailable')
+  })
+
   it('keeps internal user IDs and avatar URLs behind an opaque search result, then uses the registered contact endpoint', async () => {
     const { service, runtime, sourceOwner, realtime } = fixture({
       exists: true, is_registered: true, can_add: true, is_self: false, invite_by_sms: false,

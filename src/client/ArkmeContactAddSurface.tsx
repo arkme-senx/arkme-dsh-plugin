@@ -4,6 +4,8 @@ import jsQRModule from 'jsqr'
 import qrcode from 'qrcode-generator'
 import type { ArkmeContactAddResult, ArkmeContactSearchResult, ArkmeSourceItem, ArkmeUserProfileSnapshot } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
+import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -26,7 +28,7 @@ const styles: Record<string, CSSProperties> = {
   statusFeedback: { position: 'absolute', inset: '14px 0 0', height: 39, margin: 0, padding: '11px 13px', boxSizing: 'border-box', borderRadius: 10, fontSize: 13 },
   statusNotice: { background: arkmeTheme.subtle, color: arkmeTheme.secondary },
   statusError: { background: arkmeTheme.dangerSoft, color: arkmeTheme.danger },
-  candidateArea: { gridRow: 2, minHeight: 0, overflow: 'hidden' },
+  candidateArea: { gridRow: 2, minHeight: 0, overflowY: 'auto' },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
   card: { marginTop: 20, padding: 20, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base },
@@ -119,6 +121,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
   const cameraFrameRef = useRef<number>()
   const scanResolvedRef = useRef(false)
   const requestRevision = useRef(0)
+  const teamRequestUid = useRef<string>()
 
   useEffect(() => {
     let active = true
@@ -139,13 +142,31 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
 
   const searchIdentifier = useCallback(async (value: string) => {
     const revision = ++requestRevision.current
-    setBusy(true); setError(''); setNotice(''); setCandidate(undefined)
+    setBusy(true); setError(''); setNotice(''); setCandidate(undefined); teamRequestUid.current = undefined
     try {
       const result = await callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: value })
       if (revision === requestRevision.current) setCandidate(result)
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }
   }, [])
+
+  const joinTeam = async () => {
+    const team = candidate?.team
+    if (!team || busy || team.state === 'pending' || team.state === 'joined') return
+    const revision = requestRevision.current
+    teamRequestUid.current ??= crypto.randomUUID()
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await callArkme('contacts.team-join', { jotmoId: team.jotmoId, requestUid: teamRequestUid.current })
+      const updated = await callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: team.jotmoId })
+      if (revision === requestRevision.current) {
+        setCandidate(updated)
+        arkmeContactsTab.refresh()
+        setNotice(updated.team?.state === 'joined' ? '已加入团队' : '申请已提交，等待团队负责人批准')
+      }
+    } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
+    finally { if (revision === requestRevision.current) setBusy(false) }
+  }
 
   const search = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -295,11 +316,19 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         {!busy && notice !== '' && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>{notice}</div>}
       </div>
       <div style={styles.candidateArea} data-arkme-contact-candidate-area>
-        {candidate !== undefined && <section style={styles.card} aria-label={tr("联系人搜索结果")}>
+        {candidate !== undefined && (candidate.team === undefined || candidate.registered || candidate.identifierKind === 'phone') && <section style={styles.card} aria-label={tr("联系人搜索结果")}>
           <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={tr("{v0}的头像", { v0: candidate.displayName })} /><div style={styles.identityText}>
             <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : tr("即我号：{v0} · ", { v0: candidate.arkmeId })}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
           </div></div>
           {candidate.isSelf ? <div style={styles.notice}>{tr("这是你自己，不能添加为联系人")}</div> : !candidate.canAdd ? <div style={styles.notice}>{tr("该账号当前无法添加")}</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder={tr("备注（可选）")} onChange={event => { setRemark(event.target.value) }} /><button data-arkme-feedback="primary" type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>{submitLabel}</button></>}
+        </section>}
+        {candidate?.team !== undefined && <section style={styles.card} aria-label={tr("团队搜索结果")}>
+          <div style={styles.identity}><ArkmeTeamAvatar avatar={candidate.team.avatar} name={candidate.team.name} size={48}/><div style={styles.identityText}>
+            <p style={styles.name}>{candidate.team.name}</p><p style={styles.meta}>{tr("团队")} · {tr("即我号：")}{candidate.team.jotmoId}</p>
+          </div></div>
+          <button type="button" data-arkme-feedback="primary" style={styles.primary} disabled={busy || ['pending', 'joined'].includes(candidate.team.state)} onClick={() => { void joinTeam() }}>
+            {tr(candidate.team.state === 'joined' ? '已加入团队' : candidate.team.state === 'pending' ? '申请已提交，等待审批' : candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
+          </button>
         </section>}
       </div>
     </div>

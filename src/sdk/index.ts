@@ -57,6 +57,7 @@ import type {
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteStickerList,
   ArkmeFavoriteStickerAddInput,
@@ -222,6 +223,7 @@ export type {
   ArkmeContactAddResult,
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
@@ -942,6 +944,13 @@ export class ArkmeSdk {
   }
 
   /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
+  /** Join an open team or submit an approval request; reuse requestUid when retrying. */
+  async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal): Promise<{ state: string }> {
+    if ((await this.capabilities(signal)).features.contactTeamDiscovery !== true) throw new Error('当前 Provider 不支持搜索团队并申请加入，请升级')
+    const result = await this.call<{ state: string }>('contacts.team-join', { jotmoId, requestUid }, signal)
+    return { state: result.state }
+  }
+
   async searchContact(identifier: string, signal?: AbortSignal): Promise<ArkmeContactSearchResult> {
     const value = identifier.trim()
     if (value === '' || value.length > 64) throw new TypeError('Arkme contact identifier is invalid')

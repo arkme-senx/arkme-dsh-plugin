@@ -31,6 +31,21 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('projects discovered teams without signed URLs or internal identity and revalidates images through discovery', async () => {
+    const f = fixture(() => ({team: {name: '公开团队', jotmo_id: 'public_team', state: 'pending', requires_approval: true,
+      owner_user_id: 11, team_id: 'private-id', avatar: {mode: 'custom', key: 'avatar-key', url: 'https://signed.invalid/private'}}}))
+    const result = await f.service.searchContactTeam('public_team', await f.runtime.requireSession())
+    expect(result).toMatchObject({name: '公开团队', state: 'pending', requiresApproval: true, avatar: {mode: 'custom', imageRef: expect.stringMatching(/^team-app-profile-image\./)}})
+    expect(JSON.stringify(result)).not.toMatch(/signed.invalid|owner_user_id|private-id/)
+    expect(f.requests[0]?.path).toBe('/api/v1/team/discovery/search')
+    expect(f.requests[0]?.body).toEqual({jotmo_id: 'public_team'})
+  })
+  it('distinguishes missing teams from invalid discovery responses', async () => {
+    const missing = fixture(() => ({team: null})), broken = fixture(() => ({}))
+    await expect(missing.service.searchContactTeam('missing', await missing.runtime.requireSession())).resolves.toBeUndefined()
+    await expect(broken.service.searchContactTeam('missing', await broken.runtime.requireSession())).rejects.toThrow()
+  })
+
   it.each(['team.app.official','team.app.conversations','team.app.open'] as const)('rejects a stale browser account before %s can return another account data', async operation => {
     const f=fixture(()=>({channel,conversation}))
     await expect(f.service.execute(operation,{expectedAccountKey:'test:91'})).rejects.toMatchObject({code:'team-account-changed'})

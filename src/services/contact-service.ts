@@ -1,3 +1,4 @@
+import type { TeamAppService } from './team-app-service.js'
 import { randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -63,6 +64,7 @@ export class ContactService {
     private readonly source: SourceService,
     private readonly profile: ProfileService,
     private readonly realtime: ChatRealtimeService,
+    private readonly teams: Pick<TeamAppService, 'searchContactTeam'>,
   ) {}
 
   dispose(): void { this.candidates.clear() }
@@ -70,7 +72,11 @@ export class ContactService {
   async search(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> {
     const session = await this.runtime.requireSession()
     const normalized = normalizeIdentifier(identifier)
-    const candidate = await this.lookup(normalized, session, options.signal)
+    const [candidate, team] = await Promise.all([
+      this.lookup(normalized, session, options.signal),
+      normalized.kind === 'arkme_id' ? this.teams.searchContactTeam(normalized.identifier, session, options.signal) : undefined,
+    ])
+    if (team !== undefined) candidate.result = { ...candidate.result, team }
     this.prune()
     this.candidates.set(candidate.result.contactRef, candidate)
     this.prune()

@@ -1,5 +1,10 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+团队搜索结果|Team search result
+申请已提交，等待审批|Request submitted, awaiting approval
+重新申请加入团队|Apply to join again
+申请加入团队|Apply to join team
+
 历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
 识别安排|Detected plans
 查看当天录音识别的安排|View plans detected from this day's recordings

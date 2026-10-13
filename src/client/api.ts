@@ -266,7 +266,7 @@ export async function callArkme<T>(
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
-  const accountKey = operation.startsWith('team.app.') && auth?.status === 'authenticated'
+  const accountKey = (operation.startsWith('team.app.') || operation === 'contacts.team-join') && auth?.status === 'authenticated'
     ? `${auth.environment}:${auth.userId}` : undefined
   // A retained view can still hold the previous account's refs during teardown.
   // Reject it locally instead of replacing its scope with the latest login.

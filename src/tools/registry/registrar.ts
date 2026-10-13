@@ -37,6 +37,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_join_restriction_set',
   'arkme_message_withdraw',
   'arkme_contact_add',
+  'arkme_team_join',
   'arkme_contact_private_chat_open',
   'arkme_group_create',
   'arkme_group_rename',
@@ -82,6 +83,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_reactions_write') {
