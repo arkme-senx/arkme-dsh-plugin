@@ -243,7 +243,7 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(summaryLoading).toContain('生成总结中...')
     expect(summaryLoading).not.toContain('>点击生成')
     expect(timelineFailure).toContain('时间轴生成失败，')
-    expect(timelineFailure).toContain('>点击生成时间轴</button>')
+    expect(timelineFailure).toContain('>选择模型并重试</button>')
   })
 
   it('formats transcript timestamps and durations with the desktop contract', () => {

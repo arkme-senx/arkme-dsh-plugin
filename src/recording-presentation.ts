@@ -692,7 +692,7 @@ export function projectRecordingVersions(
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),
       content,
       timelineEvents,
-      error: stringValue(version.error ?? version.error_message).trim(),
+      error: stringValue(version.llm_error).trim() || stringValue(version.error).trim() || stringValue(version.error_message).trim(),
       sourceIndex,
     })
     sourceIndex += 1

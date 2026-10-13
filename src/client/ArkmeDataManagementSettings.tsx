@@ -6,10 +6,49 @@ import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { copyText } from './clipboard-text.js'
+
+const OPEN_PLATFORM_DOCS_URL = 'https://openapi.jotmo.cc/docs'
+const OPEN_PLATFORM_AGENT_GUIDE_URL = 'https://openapi.jotmo.cc/docs/mcp/agent'
+
+function OpenPlatformEntry() {
+  useArkmeLocale()
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle')
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const copyGuide = async () => {
+    if (copyState === 'copying') return
+    setCopyState('copying')
+    try {
+      await copyText(OPEN_PLATFORM_AGENT_GUIDE_URL)
+      if (mounted.current) setCopyState('copied')
+    } catch {
+      if (mounted.current) setCopyState('error')
+    }
+  }
+  return <section className="arkme-data-open-platform" aria-label={tr('开放平台')}>
+    <p className="arkme-data-open-platform-label">{tr('开放平台')}</p>
+    <h3>{tr('让其他 AI 使用你的即我数据')}</h3>
+    <p className="arkme-data-hint">{tr('将记录、录音转写、对话和安排接入其他 AI 助手或自己的应用。')}</p>
+    <div className="arkme-data-open-platform-actions">
+      <a href={OPEN_PLATFORM_DOCS_URL} target="_blank" rel="noopener noreferrer">
+        {tr('前往开放平台')}<ArrowSquareOut size={16} aria-hidden />
+      </a>
+      <button type="button" disabled={copyState === 'copying'} onClick={() => { void copyGuide() }}>
+        <Copy size={16} aria-hidden /><span aria-live="polite">{copyState === 'copied' ? tr('已复制') : tr('复制 Agent 接入指南')}</span>
+      </button>
+    </div>
+    {copyState === 'error' && <p className="arkme-data-error" role="alert">
+      {tr('复制失败，请打开指南后复制链接。')}{' '}
+      <a href={OPEN_PLATFORM_AGENT_GUIDE_URL} target="_blank" rel="noopener noreferrer">{tr('查看接入指南')}</a>
+    </p>}
+  </section>
+}
 
 export function ArkmeDataManagementSettings({ close }: { close?: () => void } = {}) {
   useArkmeLocale()
@@ -62,6 +101,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <h2>{({ home: '数据管理', archived: '已归档主题', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
     {page === 'home' ? <>
       <p className="arkme-data-hint">{tr("管理、迁入和保留属于你的记录。")}</p>
+      <OpenPlatformEntry />
       <div className="arkme-data-entries">
         <button type="button" onClick={() => setPage('archived')}><Archive size={20} aria-hidden /><span>{tr("已归档主题")}</span><CaretRight size={15} aria-hidden /></button>
         <button type="button" onClick={() => setPage('deleted')}><Trash size={20} aria-hidden /><span>{tr("最近删除")}</span><CaretRight size={15} aria-hidden /></button>

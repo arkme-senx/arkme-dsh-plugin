@@ -58,7 +58,8 @@ describe('profile/settings navigation', () => {
   it('shows data entries without requesting or mutating data on entry', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     expect(mocks.call).not.toHaveBeenCalled()
-    expect([...host.querySelectorAll('button')].map(b => b.textContent)).toEqual(['已归档主题', '最近删除', '导入数据', '导出数据'])
+    expect([...host.querySelectorAll('.arkme-data-entries button')].map(b => b.textContent)).toEqual(['已归档主题', '最近删除', '导入数据', '导出数据'])
+    expect(host.querySelector('.arkme-data-open-platform a')?.getAttribute('href')).toBe('https://openapi.jotmo.cc/docs')
     await act(async () => button('导入数据').click())
     expect(host.querySelector('a')?.href).toBe('https://jiwo.cc/import')
     expect(host.querySelector('a')?.rel).toContain('noopener')
