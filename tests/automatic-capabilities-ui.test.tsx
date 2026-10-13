@@ -28,8 +28,10 @@ const writes = () => mocks.call.mock.calls.filter(([op]) => op === 'account.capa
 
 it('requires human billing consent, carries the observed version, and closes directly', async () => {
   await render(); expect(writes()).toHaveLength(0)
+  expect(host.querySelector('.arkme-automatic-ai > p')?.textContent).toBe('开启后在后台自动运行，消耗 AI 额度。')
+  expect(host.querySelector('details')?.textContent).toContain('没有生成新内容，也会消耗额度')
   await click(host.querySelector('[role="switch"]')!)
-  expect(writes()).toHaveLength(0); expect(document.querySelector('[role="dialog"]')?.textContent).toContain('没有生成结果也会计费')
+  expect(writes()).toHaveLength(0); expect(document.querySelector('[role="dialog"]')?.textContent).toContain('首次开启会分析所选来源的历史材料'); expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('AI 额度')
   await click(button('同意并开启'))
   expect(writes()[0]?.[1]).toMatchObject({ enabled: true, expectedVersion: 0, billingConsent: true, expectedAccountScope: 'prod:1' })
   expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true')

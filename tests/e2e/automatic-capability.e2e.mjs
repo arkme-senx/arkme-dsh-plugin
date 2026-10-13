@@ -80,7 +80,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    const usageBounds=await usageTitle.boundingBox()
    expect(usageBounds.y).toBeGreaterThanOrEqual(0);expect(usageBounds.y+usageBounds.height).toBeLessThan(900)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-usage.png')})
-   const toggle=page.getByRole('switch',{name:/^(快记建议|Note suggestions)$/})
+   const toggle=page.getByRole('switch',{name:/^(阿森有想法（快记）|Asen’s thoughts \(notes\))$/})
    await toggle.waitFor();expect(await toggle.getAttribute('aria-checked')).toBe('false')
    expect(await toggle.evaluate(el=>Math.round(el.getBoundingClientRect().width))).toBe(44)
    expect(await toggle.evaluate(el=>getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
@@ -94,7 +94,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
    await expect.poll(()=>toggle.getAttribute('aria-checked')).toBe('false')
    await page.setViewportSize({width:800,height:600})
-   const automatic=page.getByRole('region',{name:/^(自动 AI|Automatic AI)$/})
+   const automatic=page.getByRole('region',{name:/^(AI 自动分析|Automatic AI analysis)$/})
    expect(await automatic.getByRole('switch').count()).toBe(5)
    for(const item of await automatic.getByRole('switch').all()) {
     await item.click()
@@ -108,7 +108,7 @@ describe('automatic capability consent through packed official DSH',()=>{
     expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    }
    await automatic.scrollIntoViewIfNeeded()
-   expect(await automatic.getByRole('heading',{name:'自动 AI'}).isVisible()).toBe(true)
+   expect(await automatic.getByRole('heading',{name:'AI 自动分析'}).isVisible()).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
   }catch(error){
    failure=error
