@@ -346,10 +346,6 @@ export function ArkmePersistentSidebar({
       left: ${String(renderedSidebarWidth)}px !important;
       pointer-events: none;
     }
-    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
-    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
-      transition: none !important;
-    }
     @media (max-width: 760px) {
       :root:has([data-arkme-owned="team-conversation-layer"]) { --arkme-persistent-sidebar-width: 184px !important; }
       :root:has([data-arkme-owned="team-conversation-layer"]) [data-side="sidebar"] { left: 184px !important; }
@@ -439,7 +435,7 @@ export function ArkmePersistentSidebar({
     />
     <PersistentDirectoryPanel key={`${contactsAccountKey}:contacts`} active={directoryVisible && contactsMode} mode="contacts">
       <ContactDirectorySurface active={directoryVisible && contactsMode}
-        accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
+        accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection}
         contactsAddedRevision={contactsAddedRevision}
         cacheFresh={contactsDirectoryCache?.fresh ?? false}
         expandedSections={scopedContacts.expandedSections}

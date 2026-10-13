@@ -85,7 +85,7 @@ describe('first-rail personal day calendar', () => {
     expect(view!.root.findAllByProps({'aria-label':'关闭我的一天'})).toHaveLength(0)
     const labels = view!.root.findAllByType('button').map(button => button.props.children)
     expect(labels).toContain('个人记录'); expect(labels).toContain('录音')
-    expect(labels).toContain('对话'); expect(labels).not.toContain('私聊'); expect(labels).toContain('通话'); expect(labels).toContain('原始明细')
+    expect(labels).toContain('对话'); expect(labels).not.toContain('私聊'); expect(labels).toContain('通话'); expect(labels).not.toContain('原始明细')
   })
   it('renders rich details lazily without navigation/read receipts until explicitly requested', async () => {
     const navigate = vi.spyOn(arkmeUi, 'showRecordingTarget').mockImplementation(() => {})

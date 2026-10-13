@@ -39,14 +39,14 @@ describe('contact directory state', () => {
     const state = createContactDirectoryState('account-a')
 
     expect(CONTACT_DIRECTORY_SECTION_ORDER).toEqual([
-      'groups', 'bots', 'unmarked-speakers', 'teams', 'contacts',
+      'groups', 'bots', 'teams', 'contacts',
     ])
     expect(CONTACT_DIRECTORY_SECTION_ORDER.map(section => state.sections[section].expanded))
-      .toEqual([false, false, false, false, true])
+      .toEqual([false, false, false, true])
     expect(CONTACT_DIRECTORY_SECTION_ORDER.map(section => state.sections[section].status))
-      .toEqual(['idle', 'idle', 'idle', 'idle', 'idle'])
+      .toEqual(['idle', 'idle', 'idle', 'idle'])
     expect(CONTACT_DIRECTORY_SECTION_ORDER.filter(section => sectionNeedsInitialLoad(state.sections[section])))
-      .toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+      .toEqual(['groups', 'bots', 'teams', 'contacts'])
     expect(state.selection).toEqual({ kind: 'none' })
   })
 
@@ -241,7 +241,6 @@ describe('contact directory state', () => {
     }))).toEqual([
       { section: 'groups', accountKey: 'account-b', status: 'idle', items: [], generation: 0, expanded: false },
       { section: 'bots', accountKey: 'account-b', status: 'idle', items: [], generation: 0, expanded: false },
-      { section: 'unmarked-speakers', accountKey: 'account-b', status: 'idle', items: [], generation: 0, expanded: false },
       { section: 'teams', accountKey: 'account-b', status: 'idle', items: [], generation: 0, expanded: false },
       { section: 'contacts', accountKey: 'account-b', status: 'idle', items: [], generation: 0, expanded: true },
     ])

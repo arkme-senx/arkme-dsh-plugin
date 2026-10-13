@@ -71,3 +71,15 @@ it('does not cache or display failed, malformed, or cancelled conversions', asyn
   callback({ status: 0, points })
   expect(cache.size).toBe(0)
 })
+
+it('runs at most two coordinate batches concurrently instead of serializing the whole map', async () => {
+  const completions: (() => void)[] = []
+  translate.mockImplementation((points, _from, _to, callback) => { completions.push(() => callback({ status: 0, points })) })
+  const points = Array.from({ length: 30 }, (_, i) => ({ lng: 116 + i / 1000, lat: 39 }))
+  const result = convertBaiduPoints(sdk, points, new Map(), new AbortController().signal)
+  expect(translate).toHaveBeenCalledTimes(2)
+  completions[0]!(); await Promise.resolve()
+  expect(translate).toHaveBeenCalledTimes(3)
+  completions[1]!(); completions[2]!()
+  await expect(result).resolves.toHaveLength(30)
+})
