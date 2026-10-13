@@ -1111,6 +1111,29 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     await owner.dispose()
   })
 
+  it('freezes duration and detaches the submitted draft while recorder startup is pending', async () => {
+    const recorder = new FakeRecorder()
+    let now = 1_000
+    let finishStart!: () => void
+    recorder.startOverride = async () => await new Promise<void>(resolve => { finishStart = resolve })
+    const owner = createOwner({ recorder, now: () => now })
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: true })
+    await flushLifecycle()
+    now = 4_500
+    const submission = owner.finishForSubmit('stable-key')
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: false })
+    now = 5_000
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: true })
+    recorder.startOverride = undefined
+    finishStart()
+    const result = await submission
+    expect(result).toMatchObject({ startedAtMillis: 1_000, completedAtMillis: 4_500, recordDurationMillis: 3_500 })
+    expect(result.backgroundSound.segments).toHaveLength(1)
+    expect(owner.getStartedAtMillis('stable-key')).toBe(5_000)
+    await owner.dispose()
+    expect(recorder.amplitudeListeners.size).toBe(0)
+  })
+
   it('cancels an empty blurred draft and does not retain its audio', async () => {
     const recorder = new FakeRecorder()
     const owner = createOwner({ recorder })

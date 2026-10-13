@@ -20,6 +20,8 @@ export interface LocationQuery {
   mode: 'list' | 'viewport' | 'cluster'
   bounds?: LocationBounds; zoom?: number; clusterKeys?: string[]
   offset?: number; cursor?: { sendAt: number; recordUid: string }
+  /** Bound initial reads: one map anchor or a small first page in the record sheet. */
+  limit?: number
 }
 export const worldLocationViewport: LocationViewport = {
   bounds: { swLat: -85, swLon: -180, neLat: 85, neLon: 180 }, zoom: 3,

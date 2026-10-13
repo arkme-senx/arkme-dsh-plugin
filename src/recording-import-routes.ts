@@ -1,3 +1,4 @@
+import { validRecordingImportBatch, type RecordingImportBatch } from './recording-workflow-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -45,7 +46,7 @@ interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3 },
+    metadata: { batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3 },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -113,6 +114,12 @@ export function createArkmeRecordingImportHandler(
       if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) {
         throw new ArkmePluginError('recording-import-kind-invalid', '录音来源分类无效', false)
       }
+      let batch: RecordingImportBatch | undefined
+      const batchHeader = headerText(req, 'x-arkme-import-batch')
+      if (batchHeader) {
+        try { if (batchHeader.length <= 2048) batch = JSON.parse(decodeURIComponent(batchHeader)) } catch { /* Validated below. */ }
+        if (!validRecordingImportBatch(batch)) throw new ArkmePluginError('recording-import-batch-invalid', '录音导入批次无效', false, 400)
+      }
       let fileName = ''
       try { fileName = decodeURIComponent(headerText(req, 'x-arkme-file-name')).trim() } catch { fileName = '' }
       if (fileName === '' || fileName.length > 255) {
@@ -162,6 +169,7 @@ export function createArkmeRecordingImportHandler(
         startAtMillis,
         belongUserId,
         recordingKind,
+        ...(batch ? { batch } : {}),
       }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })

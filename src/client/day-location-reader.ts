@@ -6,6 +6,7 @@ export interface DayLocationPoint {
   id: string
   recordedAtMillis: number
   location: ArkmeRecordLocationObservation
+  record?: Pick<ArkmeCalendarRecordItem, 'title' | 'preview' | 'sourceKind' | 'source' | 'topicTitle'>
 }
 export interface DayLocationsSnapshot {
   points: DayLocationPoint[]
@@ -34,8 +35,8 @@ export async function readDayLocations(query: Pick<DayActivityQuery, 'bucketDate
     )
     if (!Array.isArray(page.items)) throw new Error('当天位置数据不完整，请重试')
     const records = page.items.map(item => item.record_projection).filter(item => item?.recordUid && !seenRecords.has(item.recordUid))
-    for (let index = 0; index < records.length; index += 2) {
-      await Promise.all(records.slice(index, index + 2).map(async record => {
+    for (let index = 0; index < records.length; index += 4) {
+      await Promise.all(records.slice(index, index + 4).map(async record => {
         seenRecords.add(record.recordUid)
         if (record.protected || record.accessState !== 'available') return
         let location = record.locationObservation
@@ -50,7 +51,12 @@ export async function readDayLocations(query: Pick<DayActivityQuery, 'bucketDate
             failed++; return
           }
         }
-        if (validDeviceLocation(location)) points.set(record.recordUid, { id: record.recordUid, recordedAtMillis: record.sendAtMillis, location })
+        if (validDeviceLocation(location)) {
+          points.set(record.recordUid, { id: record.recordUid, recordedAtMillis: record.sendAtMillis, location,
+            record: { title: (record.title ?? '').slice(0, 240), preview: (record.preview || record.textContent || '').slice(0, 500), sourceKind: record.sourceKind,
+              ...(record.source ? { source: record.source } : {}), ...(record.topicTitle ? { topicTitle: record.topicTitle } : {}) } })
+          if (points.size === 1) { signal.throwIfAborted(); progress(snapshot(false)) }
+        }
       }))
       signal.throwIfAborted()
       progress(snapshot(false))

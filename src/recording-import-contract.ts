@@ -1,3 +1,4 @@
+import type { RecordingImportBatch } from './recording-workflow-contract.js'
 import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
@@ -148,6 +149,7 @@ export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
+  batch?: RecordingImportBatch
   jobId: string
   userId: number
   revision: number

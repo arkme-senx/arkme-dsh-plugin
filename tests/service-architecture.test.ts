@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
   'teamCodexPost',
@@ -43,7 +44,7 @@ const expectedPublicMethods = [
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
-  'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
+  'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
@@ -100,6 +101,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'profile-image.ts',
   'team-codex-transport.ts',
   'reaction-service.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
@@ -123,7 +125,7 @@ const expectedServiceFiles = [
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'member-event-service.ts', 'official-notification-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
   'recording-presence-writer.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',

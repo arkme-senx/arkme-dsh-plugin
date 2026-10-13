@@ -21,7 +21,8 @@ export interface ArkmeAvatarPersistentCache {
 
 /** These references identify immutable bytes, unlike mutable profile references. */
 export function isImmutableAvatarRef(ref: string): boolean {
-  return /^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(ref)
+  return /^team_avatar_asset:\/\/[A-Fa-f0-9]{64}$/.test(ref)
+    || /^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(ref)
     || /^arkme-self-role-image-v1\.[A-Za-z0-9_-]+$/.test(ref)
 }
 
