@@ -164,7 +164,6 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
         teamRequestUid.current = undefined
         if (result.state === 'joined') arkmeContactsTab.refresh()
-        setNotice(result.state === 'joined' ? teamText('已加入团队') : result.state === 'pending' ? teamText('申请已提交') : '')
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }
@@ -328,9 +327,11 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
           <div style={styles.identity}><ArkmeTeamAvatar avatar={candidate.team.avatar} name={candidate.team.name} size={48}/><div style={{ ...styles.identityText, overflowWrap: 'anywhere' }}>
             <p style={{ ...styles.name, ...styles.teamName }} title={candidate.team.name}>{candidate.team.name}</p><p style={styles.meta}>{teamText("团队")} · {tr("即我号：")}{candidate.team.jotmoId}</p>
           </div></div>
-          <button type="button" data-arkme-feedback="primary" style={styles.primary} disabled={busy || ['pending', 'joined'].includes(candidate.team.state)} onClick={() => { void joinTeam() }}>
-            {teamText(candidate.team.state === 'joined' ? '已加入团队' : candidate.team.state === 'pending' ? '申请已提交，等待审批' : candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
-          </button>
+          {['pending', 'joined'].includes(candidate.team.state)
+            ? <div style={styles.notice} role="status">{teamText(candidate.team.state === 'joined' ? '已加入团队' : '申请已提交，等待审批')}</div>
+            : <button type="button" data-arkme-feedback="primary" style={styles.primary} disabled={busy} onClick={() => { void joinTeam() }}>
+              {teamText(candidate.team.state === 'rejected' ? '重新申请加入团队' : candidate.team.requiresApproval ? '申请加入团队' : '加入团队')}
+            </button>}
         </section>}
       </div>
     </div>

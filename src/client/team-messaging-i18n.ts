@@ -1,6 +1,5 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
-  '申请已提交': 'Request submitted',
   '无法连接本机插件，请确认插件正在运行后重试': 'Cannot reach the local plugin. Check that it is running and retry.',
   '暂时无法打开对话，请重试': 'Unable to open the conversation. Please retry.',
   '发送状态暂时无法确认，请重试': 'Unable to confirm delivery. Please retry.',
