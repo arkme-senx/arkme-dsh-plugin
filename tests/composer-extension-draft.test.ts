@@ -105,6 +105,18 @@ describe('extension draft ownership', () => {
     expect(restored).not.toHaveProperty('locationCapture')
   })
 
+  it.each([20_000, 100_000])('restores long-message action refs with a %s-character signed payload', length => {
+    const { store, storage } = fixture()
+    // Host action refs contain the original text, up to the configured maxTextLength.
+    const messageActionRef = `arkme-message-action-v1.${Buffer.from(JSON.stringify({ textContent: '长'.repeat(length) })).toString('base64url')}.signature`
+    store.setExtensionTarget(key, { ...parent, messageActionRef })
+    store.setText(key, '延展正文')
+    expect(new ArkmeComposerDraftStore(storage).get(key).extensionTarget?.item.messageActionRef).toBe(messageActionRef)
+    const secondary = new ArkmeComposerDraftStore()
+    secondary.applyRemote(key, JSON.parse(JSON.stringify(store.get(key))))
+    expect(secondary.get(key).extensionTarget?.item.messageActionRef).toBe(messageActionRef)
+  })
+
   it('does not downgrade a corrupt persisted extension draft into an ordinary send', () => {
     const saved = JSON.stringify([[key, { text: '延展正文', attachments: [], mentions: [], emojis: [],
       extensionTarget: { item: { ...parent, messageActionRef: '' } } }]])

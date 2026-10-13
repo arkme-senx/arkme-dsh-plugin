@@ -8265,7 +8265,8 @@ describe('conversation send directory projection', () => {
     }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
   })
 
-  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable'] as const)(
+  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable',
+    'deleted-mention-remount', 'deleted-mention-remote', 'manual-mention-remote'] as const)(
     'defaults a group extension mention without overwriting user input (%s)', async scenario => {
       activeSource = scenario === 'private' ? target : group
       arkmeChatDirectory.publish([other, activeSource])
@@ -8305,6 +8306,23 @@ describe('conversation send directory projection', () => {
       }
       await extend()
       await extend()
+      if (scenario === 'deleted-mention-remount' || scenario === 'deleted-mention-remote' || scenario === 'manual-mention-remote') {
+        act(() => {
+          arkmeComposerDraftStore.setText(draftKey, '')
+          if (scenario === 'manual-mention-remote') arkmeComposerDraftStore.insertMention(draftKey, 'manual-mention', '其他成员', 0)
+        })
+        const expected = arkmeComposerDraftStore.get(draftKey)
+        if (scenario === 'deleted-mention-remount') {
+          act(() => renderer!.unmount())
+          await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+        } else {
+          await act(async () => { arkmeComposerDraftStore.applyRemote(draftKey, JSON.parse(JSON.stringify(expected))) })
+        }
+        expect(arkmeComposerDraftStore.get(draftKey).extensionTarget?.item.itemUid).toBe('mention-parent')
+        expect(arkmeComposerDraftStore.get(draftKey).text).toBe(expected.text)
+        expect(arkmeComposerDraftStore.get(draftKey).mentions).toEqual(expected.mentions)
+        return
+      }
       const draft = arkmeComposerDraftStore.get(draftKey)
       if (scenario === 'empty' || scenario === 'single-mention') {
         expect(draft.text).toBe('@群昵称 ')
@@ -8592,7 +8610,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(newer ? 0 : 1)
   })
 
-  it('reuses the extension record uid after failure and removes staged attachments only after success', async () => {
+  it.each([false, true])('reuses the extension record uid after failure and removes staged attachments only after success (rotated reference: %s)', async rotateReference => {
     timeline = [{
       itemUid: 'extension-retry-source', messageActionRef: 'opaque-extension-retry-action',
       senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '带附件的问题', status: 1,
@@ -8641,6 +8659,12 @@ describe('conversation send directory projection', () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
     })
+    if (rotateReference) {
+      await act(async () => {
+        activeSource = { ...target, sourceRef: 'refreshed-extension-retry-source' }
+        arkmeUi.selectSource(activeSource)
+      })
+    }
     await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
@@ -8648,6 +8672,7 @@ describe('conversation send directory projection', () => {
 
     const extensionCalls = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')
     expect(extensionCalls).toHaveLength(2)
+    expect(extensionCalls[1]?.[1]?.sourceRef).toBe(activeSource.sourceRef)
     expect(extensionCalls[0]?.[1]?.recordUid).toBe('11111111-1111-4111-8111-111111111111')
     expect(extensionCalls[1]?.[1]?.recordUid).toBe(extensionCalls[0]?.[1]?.recordUid)
     expect(extensionCalls[0]?.[1]?.relationUid).toBe('22222222-2222-4222-8222-222222222222')

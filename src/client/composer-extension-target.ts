@@ -2,6 +2,10 @@ import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 
 export interface ArkmeComposerExtensionTarget { item: ArkmeTimelineItem }
 
+// Host action refs encode the original text (maxTextLength allows 100,000
+// code units), so the signed reference can be much larger than its UI preview.
+const MAX_MESSAGE_ACTION_REF_LENGTH = 1_048_576
+
 /** Keep only the bounded preview and opaque action reference owned by a draft. */
 export function composerExtensionTarget(item: ArkmeTimelineItem): ArkmeComposerExtensionTarget {
   return { item: {
@@ -22,7 +26,7 @@ export function readComposerExtensionTarget(value: unknown): ArkmeComposerExtens
   const item = (value as Partial<ArkmeComposerExtensionTarget> | null)?.item
   const bounded = (text: unknown, limit: number): text is string => typeof text === 'string' && text.length <= limit
   if (!item || !bounded(item.itemUid, 512) || item.itemUid === ''
-    || !bounded(item.messageActionRef, 16_384) || item.messageActionRef.trim() === ''
+    || !bounded(item.messageActionRef, MAX_MESSAGE_ACTION_REF_LENGTH) || item.messageActionRef.trim() === ''
     || !bounded(item.senderName, 256) || !bounded(item.title, 500) || !bounded(item.textContent, 2_000)
     || typeof item.isMe !== 'boolean' || !Number.isFinite(item.sendAtMillis) || !Number.isFinite(item.status)
     || (item.textFormat !== undefined && item.textFormat !== 'plain' && item.textFormat !== 'markdown')

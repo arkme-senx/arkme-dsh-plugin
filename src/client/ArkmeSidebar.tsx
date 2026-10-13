@@ -5041,7 +5041,7 @@ export function ArkmeSurface({
       targetDraftKey,
       extensionTarget === undefined
         ? undefined
-        : JSON.stringify(['source-message-extension', targetSource.sourceRef, arkmeTimelineMessageActionRef(extensionTarget.item)]),
+        : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid]),
     )
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
@@ -6707,6 +6707,7 @@ export function ArkmeSurface({
     })
     closeMessageMenu()
   }
+  const pendingExtensionMentionTargetRef = useRef<typeof composerExtensionTarget>()
   const startMessageExtension = useCallback((item: ArkmeTimelineItem) => {
     const actionRef = arkmeTimelineMessageActionRef(item)
     closeMessageMenu()
@@ -6716,22 +6717,24 @@ export function ArkmeSurface({
       return
     }
     arkmeComposerDraftStore.setExtensionTarget(composerDraftKey, item)
+    pendingExtensionMentionTargetRef.current = arkmeComposerDraftStore.get(composerDraftKey).extensionTarget
     setDrawer(undefined)
     requestAnimationFrame(() => { textareaRef.current?.focus() })
   }, [activeRecordReeditComposer, closeMessageMenu, composerDraftKey, showMessageActionStatus, source])
-  const defaultExtensionMentionTargetRef = useRef<typeof composerExtensionTarget>()
   useEffect(() => {
-    if (composerExtensionTarget === undefined) {
-      defaultExtensionMentionTargetRef.current = undefined
+    // Default mentions belong to an explicit selection in this window. Restoring
+    // or replicating a draft must not undo the user's mention edits.
+    if (pendingExtensionMentionTargetRef.current !== composerExtensionTarget) {
+      pendingExtensionMentionTargetRef.current = undefined
       return
     }
-    if (defaultExtensionMentionTargetRef.current === composerExtensionTarget
+    if (composerExtensionTarget === undefined
       || source?.kind !== 'group_chat'
       || !activeConversation || activeRecordReeditComposer !== undefined) return
     const item = composerExtensionTarget.item
     const member = item.memberRef === undefined ? undefined : conversationMemberByRef.get(item.memberRef)
     if (member === undefined && !conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined) return
-    defaultExtensionMentionTargetRef.current = composerExtensionTarget
+    pendingExtensionMentionTargetRef.current = undefined
     if (item.isMe || member === undefined || member.isSelf || member.status !== 'active'
       || member.mentionRef === undefined || member.mentionDisplayName === undefined) return
     const current = arkmeComposerDraftStore.get(composerDraftKey)
