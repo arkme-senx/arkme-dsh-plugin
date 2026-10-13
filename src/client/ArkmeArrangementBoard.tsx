@@ -10,7 +10,6 @@ import { Lightbulb } from '@phosphor-icons/react/dist/icons/Lightbulb'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import type { ArkmeArrangementItem, ArkmeArrangementPage, ArkmeArrangementReorderResult } from '../types.js'
 import { callArkme } from './api.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -23,11 +22,11 @@ type PendingMove = { item: ArkmeArrangementItem; target: ArrangementColumn; plac
 const columnIcons = { identified: Lightbulb, following: ArrowsClockwise, completed: Check }
 const emptyColumn = (): ColumnState => ({ total: undefined, items: [], loading: false, error: false, nextOffset: undefined })
 
-export function ArkmeArrangementBoard(props: { accountScope: string; onBack(): void; onAddArrangement?(): void; createdItems?: ArkmeArrangementItem[] }) {
+export function ArkmeArrangementBoard(props: { accountScope: string; onAddArrangement?(): void; createdItems?: ArkmeArrangementItem[] }) {
   return <ArrangementBoard key={props.accountScope} {...props} />
 }
 
-function ArrangementBoard({ accountScope, onBack, onAddArrangement, createdItems }: { accountScope: string; onBack(): void; onAddArrangement?(): void; createdItems?: ArkmeArrangementItem[] }) {
+function ArrangementBoard({ accountScope, onAddArrangement, createdItems }: { accountScope: string; onAddArrangement?(): void; createdItems?: ArkmeArrangementItem[] }) {
   useArkmeLocale()
   const [expanded, setExpanded] = useState(new Set<string>())
   const suppressedClick = useRef(false)
@@ -334,7 +333,7 @@ function ArrangementBoard({ accountScope, onBack, onAddArrangement, createdItems
   }
 
   return <section className="arkme-arrangement-board" aria-label={tr('安排')}>
-    <header className="arkme-arrangement-header"><button type="button" aria-label={tr('返回日历')} onClick={onBack}><ArrowLeft size={20} aria-hidden /></button><h2>{tr('安排')}</h2>{onAddArrangement && <button type="button" className="arkme-arrangement-add" data-arkme-hover="none" onClick={onAddArrangement}><Plus size={16} aria-hidden />{tr('添加安排')}</button>}</header>
+    <header className="arkme-arrangement-header"><h2>{tr('安排')}</h2>{onAddArrangement && <button type="button" className="arkme-arrangement-add" data-arkme-hover="none" onClick={onAddArrangement}><Plus size={16} aria-hidden />{tr('添加安排')}</button>}</header>
     {message && <p role="status" className="arkme-arrangement-message">{message}</p>}
     {!accountScope && <p role="status">{tr('请先登录')}</p>}
     {arrangementColumns.some(status => !columns[status].cached && columns[status].board?.supported === false) && <p className="arkme-arrangement-message" role="status">{tr('当前服务暂不支持手动排序')}</p>}

@@ -64,11 +64,9 @@ describe('ArkmeRecordingSurface layout', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
-    expect(markup).toContain('aria-label="选择月份"')
-    expect(markup).toContain('aria-label="选择年份"')
-    expect(source).toContain('function RecordingCalendarDropdown')
-    expect(source).toContain('interface RecordingDropdownAnchor')
-    expect(source).toContain('useState<RecordingDropdownAnchor>()')
+    expect(markup).toContain('aria-label="选择年月"')
+    expect(markup).toContain('aria-haspopup="dialog"')
+    expect(source).toContain('<ArkmeCalendarMonthHeader')
     expect(source).not.toContain('<select aria-label="月份"')
     expect(source).not.toContain('<select aria-label="年份"')
   })
@@ -114,8 +112,7 @@ describe('ArkmeRecordingSurface layout', () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(source).not.toContain('calendarExpanded')
-    expect(source).toContain('{tr("回到今日")}</button>')
-    expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
+    expect(renderToStaticMarkup(recordingSurfaceElement())).toContain('回到今日')
     expect(source).toContain('disabled={future}')
   })
 
@@ -198,13 +195,13 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(onSelect).toHaveBeenCalledOnce()
   })
 
-  it('reserves a separate tooltip row and lets the outer timeline grow for feedback', async () => {
+  it('keeps detail in a floating panel and lets the header grow for feedback', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
-    expect(timelineSource).toContain('minHeight: 162')
-    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto auto'")
+    expect(timelineSource).toContain('detailPopover: { position: \'absolute\'')
+    expect(timelineSource).toContain('hidden={!detailOpen || !hasRecording}')
     expect(timelineSource).toContain('<RecordingDailyMetrics')
   })
 

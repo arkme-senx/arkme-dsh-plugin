@@ -69,12 +69,12 @@ it('shows icon names on keyboard focus and dismisses them on Escape, activation 
   await act(async () => root.render(null)); expect(label()).toBeNull()
 })
 
-it('keeps version and membership details available without persistent rail text', async () => {
+it('keeps the membership label visible and additional account details in the tooltip', async () => {
   await render()
   const brand = host.querySelector<HTMLElement>('[data-arkme-owned="product-brand"]')!
   const profile = host.querySelector<HTMLButtonElement>('[aria-label="个人资料"]')!
   expect(brand.textContent).not.toContain('v3.0.0')
-  expect(profile.querySelector('.arkme-member-label')).toBeNull()
+  expect(profile.querySelector('.arkme-member-label')).not.toBeNull()
   act(() => brand.focus())
   expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('Arkme v')
   act(() => profile.focus())

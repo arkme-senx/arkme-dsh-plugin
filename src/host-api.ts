@@ -1766,7 +1766,10 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.create': {
       if (!Array.isArray(params.texts) || params.texts.some(text => typeof text !== 'string')) throw new ArkmePluginError('arrangement-create-invalid', '安排输入无效', false, 400)
-      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[] })
+      if (params.dueAtMillis !== undefined || (params.dateContext !== undefined && (!params.dateContext || typeof params.dateContext !== 'object' || Array.isArray(params.dateContext)))) throw new ArkmePluginError('arrangement-create-invalid', '安排日期参数无效，请刷新后重试', false, 400)
+      const context = params.dateContext === undefined ? undefined : params.dateContext as Record<string, unknown>
+      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[],
+        ...(context ? { dateContext: { defaultDate: stringParam(context, 'defaultDate'), timezone: stringParam(context, 'timezone') } } : {}) }, requestSignal)
     }
     case 'arrangements.recognition': {
       if (!Array.isArray(params.arrangementRefs) || params.arrangementRefs.some(ref => typeof ref !== 'string')) throw new ArkmePluginError('arrangement-read-invalid', '安排引用无效', false, 400)
@@ -1774,10 +1777,18 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.list': return await service.listArrangements({
       status: arrangementListStatusParam(params),
+      ...(params.dueStartAtMillis === undefined ? {} : { dueStartAtMillis: numberParam(params, 'dueStartAtMillis', 0) }),
+      ...(params.dueEndAtMillis === undefined ? {} : { dueEndAtMillis: numberParam(params, 'dueEndAtMillis', 0) }),
       ...(params.order === 'board' ? { order: 'board' as const, ...(stringParam(params, 'boardVersion') ? { boardVersion: stringParam(params, 'boardVersion') } : {}) } : {}),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.recording-day': return await service.recordingDayArrangements({
+      dateStamp: numberParam(params, 'dateStamp', 0), tzOffsetMillis: numberParam(params, 'tzOffsetMillis', Number.NaN),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      ...(stringParam(params, 'snapshotVersion') ? { snapshotVersion: stringParam(params, 'snapshotVersion') } : {}),
+    }, requestSignal)
     case 'arrangements.reorder': {
       const status = arrangementListStatusParam(params)
       if (status === 'all') throw new ArkmePluginError('arrangement-order-invalid', '安排排序状态无效', false, 400)

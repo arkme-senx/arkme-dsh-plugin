@@ -31,6 +31,8 @@ import type {
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -185,6 +187,8 @@ export type {
   ArkmeArrangementMutationOutcome,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderEvent,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
@@ -1379,6 +1383,11 @@ export class ArkmeSdk {
       ...(options.offset === undefined ? {} : { offset: options.offset }),
       ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { boardVersion: options.boardVersion } : {}) } : {}),
     }, options.signal)
+  }
+
+  /** Read plans by their source recording day, never by creation or due date. */
+  async recordingDayArrangements(query: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.call<ArkmeRecordingArrangementPage>('arrangements.recording-day', { ...query }, signal)
   }
 
   /** Read public reviews and rating summary for one extension. */
