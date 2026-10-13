@@ -1283,6 +1283,7 @@ export interface ArkmeRecordingTarget {
   startAtMillis: number
   segment?: ArkmeRecordingSearchIdentity
   summary?: { versionId?: string }
+  timeline?: { versionId?: string }
 }
 
 export interface ArkmeRecordingSearchItem {
@@ -4261,6 +4262,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
+  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.history'

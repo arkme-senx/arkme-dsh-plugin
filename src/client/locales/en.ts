@@ -1746,4 +1746,29 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 打开你的录音，点击说话人名称并选择自己；请先试听确认。|Open your recording, listen to confirm, then click the speaker name and select yourself.
 从录音中标记我|Label myself in a recording
 管理声纹|Manage voiceprint
+处理完成后将通知你，并自动更新对应日期的总结和时间轴。|You will be notified when processing finishes. Summaries and timelines for the affected dates will then update automatically.
+录音仍可导入；完成通知与自动整理暂不可用。|You can still import recordings. Completion notifications and automatic summaries are currently unavailable.
+录音处理完成|Recording processing complete
+录音处理未全部完成|Some recordings could not be processed
+录音总结与时间轴已更新|Recording summaries and timelines updated
+录音暂无可整理内容|No recording content available to summarize
+录音整理未全部完成|Some recording summaries or timelines could not be updated
+本次 {total} 个文件，已完成 {completed} 个。|{completed} of {total} files processed.
+涉及 {count} 个录音日期。|Covers {count} recording dates.
+已更新|Updated
+部分完成|Partially complete
+无可用内容|No content available
+未完成|Incomplete
+返回通知|Back to notifications
+对应日期的总结和时间轴正在自动整理，完成后会再次通知。|Summaries and timelines for the affected dates are being updated. You will be notified when they are ready.
+查看录音|View recordings
+查看总结|View summary
+查看时间轴|View timeline
+通知操作失败，请重试|Notification action failed. Try again.
+部分录音通知未能标记已读，请重试|Some recording notifications could not be marked as read. Try again.
+录音通知暂时不可用|Recording notifications are currently unavailable
+加载更多录音通知|Load more recording notifications
+来源时间轴版本暂不可用，当前显示该日可用内容。|The original timeline version is unavailable. Showing available content for that day.
+重试录音通知|Retry recording notifications
+等待处理|Waiting for processing
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

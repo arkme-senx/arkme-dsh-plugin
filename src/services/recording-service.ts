@@ -1,3 +1,4 @@
+import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
@@ -748,6 +749,7 @@ export class RecordingService {
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
+      batch?: RecordingImportBatch
       fileName: string
       mimeType: string
       fileSize: number
@@ -781,6 +783,7 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
     }
+    if (metadata.batch !== undefined && !validRecordingImportBatch(metadata.batch)) throw new ArkmePluginError('recording-import-batch-invalid', '录音导入批次无效', false, 400)
     const recordingKind = metadata.recordingKind ?? 0
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
@@ -820,6 +823,7 @@ export class RecordingService {
     const now = Date.now()
     const job: RecordingImportJob = {
       jobId: randomUUID(),
+      ...(metadata.batch ? { batch: { ...metadata.batch } } : {}),
       userId: session.userId,
       revision: 1,
       phase: 'prepared',

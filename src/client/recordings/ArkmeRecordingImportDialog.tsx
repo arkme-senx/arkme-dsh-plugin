@@ -680,6 +680,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const [backgroundNoticeVisible, setBackgroundNoticeVisible] = useState(false)
   const [error, setError] = useState('')
   const [jobsError, setJobsError] = useState('')
+  const [workflowNotice, setWorkflowNotice] = useState('')
   const [duplicateNames, setDuplicateNames] = useState<string[]>([])
   const [ownershipChange, setOwnershipChange] = useState<OwnershipChange>()
   const [jobDeletion, setJobDeletion] = useState<ImportDeletion>()
@@ -982,8 +983,15 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       return
     }
     clearDuplicateNames()
+    let batchId: string | undefined
+    try {
+      const capability = await callArkme<{ supported: boolean }>('recordings.workflow', { operation: 'capabilities' }, controller.signal)
+      if (capability?.supported === true) batchId = crypto.randomUUID()
+    } catch { /* Upload remains usable when automatic follow-up is unavailable. */ }
+    if (controller.signal.aborted) { finishSubmission(); return }
+    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
     const succeeded = new Set<string>()
-    for (const { row, start } of prepared) {
+    for (const [itemIndex, { row, start }] of prepared.entries()) {
       if (controller.signal.aborted) break
       const uploadStartedAtMillis = Date.now()
       updateRow(row.id, { error: '', uploadStartedAtMillis, uploadedBytes: 0 })
@@ -994,6 +1002,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           start,
           row.ownership === 'self' ? currentUserId : 0,
           {
+            ...(batchId ? { batch: { batchId, itemIndex, itemCount: prepared.length, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } } : {}),
             signal: controller.signal,
             onProgress: progress => {
               if (controller.signal.aborted || !inspectionActiveRef.current) return
@@ -1340,6 +1349,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
         {jobsError !== '' && <div role="alert" style={{ ...styles.error, margin: '12px 16px 0' }}>{jobsError}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.error, margin: '12px 16px 0' }}>{error}</div>}
       </div>
+      {workflowNotice && <p role="status" style={{ margin: '8px 24px', fontSize: 12, color: desktop.secondary }}>{workflowNotice}</p>}
       <footer style={styles.footer}><span style={styles.selection}><span style={styles.checkboxSlot}>{selectableRows.length > 0 && <input style={styles.checkbox} aria-label={tr("全选")} type="checkbox" disabled={pending || submittingRows.length > 0} checked={selectedRows.length === selectableRows.length} onChange={event => { publishRows(current => current.map(row => row.submitting ? row : { ...row, selected: event.target.checked })) }} />}</span><span>{tr("共")}{rows.length + visibleJobs.length}{tr("个文件")}{selectedRows.length > 0 ? tr("，已选择{v0}个", { v0: String(selectedRows.length) }) : ''}</span></span><span style={styles.footerActions}><button data-arkme-feedback="primary" type="button" style={{ ...styles.primaryButton, ...(importDisabled ? { borderColor: arkmeTheme.subtle, background: arkmeTheme.subtle, color: desktop.tertiary, cursor: 'default' } : {}) }} disabled={importDisabled} onClick={() => { void submitRows() }}><UploadSimple size={16} aria-hidden />{tr("导入")}</button></span></footer>
       </> : <section style={styles.historyDialog} aria-label={tr("已完成录音导入")}>
         <header style={styles.header}><h2 style={styles.historyTitle}><span>{tr("已完成")}</span>{history.total !== undefined && <span style={styles.historyTotal}>（{history.total}）</span>}</h2><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭已完成")} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined); setStatusDetails(undefined); setHistory(undefined) }}><X size={16} aria-hidden /></button></header>
