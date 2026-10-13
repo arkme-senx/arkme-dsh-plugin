@@ -1,3 +1,5 @@
+import { projectRecordingVersions } from '../recording-presentation.js'
+import type { ArkmeRecordingVersion } from '../types.js'
 import { EMPTY_RECORDING_WORKFLOW, type RecordingWorkflowNotice, type RecordingWorkflowPage, type RecordingWorkflowState } from '../recording-workflow-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 
@@ -23,14 +25,18 @@ export function recordingWorkflowNotice(value: unknown): RecordingWorkflowNotice
     const day = objectValue(value), date = text(day.date)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00Z`))
       || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) invalid()
-    return { date, summary: projection(day.summary), timeline: projection(day.timeline) }
+    const dateStamp = count(day.date_stamp), endStamp = count(day.end_stamp)
+    if (!dateStamp || endStamp <= dateStamp || endStamp - dateStamp > 26 * 3600_000) invalid()
+    return { date, dateStamp, endStamp, summary: projection(day.summary), timeline: projection(day.timeline) }
   })
   if (new Set(days.map(day => day.date)).size !== days.length) invalid()
   const result: RecordingWorkflowNotice = {
-    id: id(raw.id), batchId: id(raw.batch_id), stage: raw.stage, state: state(raw.state),
+    id: id(raw.id), batchId: id(raw.batch_id), timeZone: text(raw.time_zone), stage: raw.stage, state: state(raw.state),
     fileCount: count(raw.file_count), completedCount: count(raw.completed_count), failedCount: count(raw.failed_count),
-    atMillis: count(raw.created_at), readAtMillis: count(raw.read_at), message: text(raw.message), days,
+    atMillis: count(raw.updated_at ?? raw.created_at), readAtMillis: count(raw.read_at), message: text(raw.message), days,
   }
+  try { new Intl.DateTimeFormat('en', { timeZone: result.timeZone }) } catch { invalid() }
+  if (!result.timeZone) invalid()
   if (!result.fileCount || !result.atMillis || result.completedCount + result.failedCount > result.fileCount
     || (result.stage === 'processing' && result.state === 'completed' && result.completedCount !== result.fileCount)
     || (result.stage === 'analysis' && days.some(day => day.summary.state === 'pending' || day.timeline.state === 'pending'))
@@ -54,7 +60,7 @@ export function recordingWorkflowPage(value: unknown): RecordingWorkflowPage {
 
 export class RecordingWorkflowService {
   constructor(private readonly runtime: ServiceRuntime) {}
-  async request(input: Record<string, unknown>, signal?: AbortSignal): Promise<RecordingWorkflowPage | { supported: boolean } | void> {
+  async request(input: Record<string, unknown>, signal?: AbortSignal): Promise<RecordingWorkflowPage | { supported: boolean } | { version: ArkmeRecordingVersion | null } | void> {
     const session = await this.runtime.requireSession()
     const scope = `${this.runtime.config.environment}:${session.userId}`
     const current = async () => {
@@ -64,6 +70,15 @@ export class RecordingWorkflowService {
       }
     }
     const operation = input.operation
+    if (operation === 'version') {
+      if (input.kind !== 'summary' && input.kind !== 'timeline') invalid()
+      const versionId = text(input.versionId)
+      if (!/^[a-f0-9]{24}$/.test(versionId)) invalid()
+      const raw = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/get-by-ids', { ids: [versionId] }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      await current()
+      const version = projectRecordingVersions(raw, input.kind).find(item => item.id === versionId && item.selectable) ?? null
+      return { version }
+    }
     let suffix: string, body: Record<string, unknown>
     if (operation === 'capabilities') { suffix = 'capabilities'; body = {} }
     else if (operation === 'query') {
@@ -92,7 +107,7 @@ export class RecordingWorkflowService {
       if (operation === 'query') {
         const result = recordingWorkflowPage(raw)
         if (result.nextCursor && result.nextCursor === body.cursor) invalid()
-        return result
+        return { ...result, accountKey: scope }
       }
       if (objectValue(raw).acknowledged !== true) invalid()
     } catch (error) {

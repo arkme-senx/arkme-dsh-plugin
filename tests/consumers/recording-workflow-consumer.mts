@@ -1,0 +1,13 @@
+function assert(value: unknown): asserts value { if (!value) throw new Error('Assertion failed') }
+import { createArkmeSdk, type RecordingWorkflowPage } from '@senguoyun/dsh-arkme/sdk'
+const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+const page: RecordingWorkflowPage = { supported: true, accountKey: 'test:42', items: [], total: 0, unreadCount: 0, throughSequence: '', nextCursor: '' }
+const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+  const call = JSON.parse(String(init?.body)); calls.push(call)
+  const value = call.operation === 'provider.capabilities' ? { contractVersion: 1, features: { recordingWorkflowV1: true } } : call.params?.operation === 'capabilities' ? { supported: true } : call.params?.operation === 'query' ? page : undefined
+  return new Response(JSON.stringify({ ok: true, value }), { headers: { 'Content-Type': 'application/json' } })
+} })
+assert((await sdk.recordingNotifications()).accountKey === 'test:42')
+await sdk.readRecordingNotifications({ accountKey: 'test:42', throughSequence: '3' })
+assert(calls.some(call => call.params?.operation === 'read' && call.params?.throughSequence === '3'))
+console.log('public recording workflow consumer: passed')

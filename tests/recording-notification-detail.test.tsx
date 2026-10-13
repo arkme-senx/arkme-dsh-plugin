@@ -3,9 +3,9 @@ import { expect, it, vi } from 'vitest'
 import { ArkmeRecordingNotificationDetail, recordingNoticeTitle } from '../src/client/ArkmeRecordingNotificationDetail.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { RecordingWorkflowNotice } from '../src/recording-workflow-contract.js'
-const notice: RecordingWorkflowNotice = { id: 'notice-0001', batchId: 'batch-0001', stage: 'analysis', state: 'partial', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '时间轴生成失败', days: [
-  { date: '2026-10-09', summary: { state: 'completed', versionId: 'summary-old' }, timeline: { state: 'failed' } },
-  { date: '2026-10-10', summary: { state: 'completed', versionId: 'summary-new' }, timeline: { state: 'completed', versionId: 'timeline-new' } },
+const notice: RecordingWorkflowNotice = { id: 'notice-0001', batchId: 'batch-0001', timeZone: 'America/New_York', stage: 'analysis', state: 'partial', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '时间轴生成失败', days: [
+  { date: '2026-10-09', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00'), summary: { state: 'completed', versionId: 'summary-old' }, timeline: { state: 'failed' } },
+  { date: '2026-10-10', dateStamp: Date.parse('2026-10-10T00:00:00-04:00'), endStamp: Date.parse('2026-10-11T00:00:00-04:00'), summary: { state: 'completed', versionId: 'summary-new' }, timeline: { state: 'completed', versionId: 'timeline-new' } },
 ] }
 it('opens the chosen recording date and exact generated version, withholding failed result links', () => {
   const summary = vi.spyOn(arkmeUi, 'showRecordingSummaryTarget'), timeline = vi.spyOn(arkmeUi, 'showRecordingTimelineTarget')
@@ -16,8 +16,8 @@ it('opens the chosen recording date and exact generated version, withholding fai
   const timelines = buttons.filter(b => b.children.includes('查看时间轴'))
   expect(summaries).toHaveLength(2); expect(timelines).toHaveLength(1)
   act(() => { summaries[0]!.props.onClick(); timelines[0]!.props.onClick() })
-  expect(summary).toHaveBeenCalledWith(new Date(2026, 9, 9).getTime(), 'summary-old')
-  expect(timeline).toHaveBeenCalledWith(new Date(2026, 9, 10).getTime(), 'timeline-new')
+  expect(summary).toHaveBeenCalledWith(Date.parse('2026-10-09T00:00:00-04:00'), 'summary-old', expect.objectContaining({ date: '2026-10-09', timeZone: 'America/New_York' }))
+  expect(timeline).toHaveBeenCalledWith(Date.parse('2026-10-10T00:00:00-04:00'), 'timeline-new', expect.objectContaining({ date: '2026-10-10', timeZone: 'America/New_York' }))
   expect(arkmeUi.getSnapshot().recordingTarget?.timeline?.versionId).toBe('timeline-new')
   act(() => renderer.unmount()); vi.restoreAllMocks()
 })

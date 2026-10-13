@@ -66,6 +66,22 @@ describe('RecordingService', () => {
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
 
+  it('validates original civil windows and retains them for transcript and version reads', async () => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    try {
+      const browserDate = Date.parse('2026-03-08T00:00:00+09:00')
+      const day = await fixture.service.recordingDay(browserDate, undefined, window)
+      expect(day.dateStamp).toBe(browserDate)
+      const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
+      expect(requests.find(call => call.path.endsWith('/one-day-trans'))?.body).toEqual({ start_at: window.dateStamp, end_at: window.endStamp, tz_offset: -5 * 3600_000 })
+      expect(requests.filter(call => call.path.endsWith('/list-timeline-by-range')).map(call => call.body)).toEqual([1, 2].map(kind => ({ from_stamp: window.dateStamp, to_stamp: window.endStamp, date_stamp: window.dateStamp, kind })).reverse())
+      for (const invalid of [{ ...window, timeZone: 'invalid-zone' }, { ...window, endStamp: window.dateStamp + 86400_000 }]) {
+        await expect(fixture.service.recordingDay(window.dateStamp, undefined, invalid)).rejects.toMatchObject({ code: 'recording-window-invalid' })
+      }
+    } finally { await fixture.close() }
+  })
+
   it('enriches only requested speaker IDs through existing public profiles, with no contact or presence scan', async () => {
     const profiles = vi.fn(async () => new Map([[7, { userId: 7, displayName: '同名', nickname: '同名', avatarUrl: 'https://avatar.test/7' }]]))
     const seal = vi.fn(async (viewer: number, user: number) => `sealed-${viewer}-${user}`)
@@ -286,12 +302,13 @@ describe('RecordingService', () => {
     return bytes
   }
 
-  it('starts summary generation with the desktop transcript contract and returns the owner processing projection', async () => {
+  it.each([false, true])('starts summary generation with the desktop transcript contract (original window=%s)', async (originalWindow) => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const dayStart = new Date(2026, 7, 31).getTime()
+    const window = originalWindow ? { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') } : undefined
+    const dayStart = window?.dateStamp ?? new Date(2026, 7, 31).getTime()
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
@@ -324,11 +341,11 @@ describe('RecordingService', () => {
       dependencies(),
     )
 
-    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max')).resolves.toMatchObject({
+    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max', undefined, window)).resolves.toMatchObject({
       state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
     })
     const create = requests.find(request => request.path.endsWith('/summary/create'))
-    const timezoneOffset = -new Date(dayStart).getTimezoneOffset() * 60_000
+    const timezoneOffset = window ? -5 * 3600_000 : -new Date(dayStart).getTimezoneOffset() * 60_000
     expect(create?.body).toMatchObject({
       date_stamp: dayStart,
       // JSON serialization normalizes UTC's negative zero to positive zero.
@@ -340,6 +357,7 @@ describe('RecordingService', () => {
       route_key: 'dashscope/qwen3-max',
       kind: 1,
     })
+    if (window) expect(create?.body.transcripts).toContain('2026-03-08 15:00:00')
     expect(create?.body.transcripts).toContain('说话人：我')
     expect(create?.body.transcripts).toContain('其中，我是我自己')
     expect(JSON.stringify(create?.body)).not.toContain('session-secret')

@@ -1,3 +1,4 @@
+import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
 import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
 import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
@@ -88,6 +89,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   return {
     jobId: source.jobId as string,
     ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
+    ...(validRecordingCreateRequestUID(source.createRequestUID) ? { createRequestUID: source.createRequestUID } : {}),
     userId: source.userId as number,
     revision: source.revision as number,
     phase: source.phase as RecordingImportPhase,
@@ -651,7 +653,7 @@ export class ArkmeStateStore {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
         .filter(isUnresolvedRecordingImportJob)
-      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
+      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return

@@ -1181,3 +1181,20 @@ describe('AudioRecordingImportGateway', () => {
     expect(cancel).toHaveBeenCalledTimes(1)
   })
 })
+it('replays new batch creation without a filename scan after an unknown result', async () => {
+  const posts: Array<{path: string; body: Record<string, unknown>}> = []
+  const runtime = {
+    async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      posts.push({ path, body })
+      if (path.endsWith('/new-session')) return { session_id: 'session-1' }
+      throw new Error(`unexpected request ${path}`)
+    },
+  } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: 'batch-0001', itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
+  const gateway = new AudioRecordingImportGateway(runtime)
+  await gateway.ensureSession(input); await gateway.ensureSession(input)
+  expect(posts).toHaveLength(2)
+  expect(posts[0]).toEqual(posts[1])
+  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { file_sha256: input.sha256, file_size: input.fileSize } })
+})

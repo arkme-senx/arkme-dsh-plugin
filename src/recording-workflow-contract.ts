@@ -1,4 +1,4 @@
-/** Proposed Audio contract v1. Enable only after the server advertises support. */
+/** Audio recording-import contract. Enable only after the server advertises support. */
 export interface RecordingImportBatch {
   batchId: string
   itemIndex: number
@@ -19,12 +19,15 @@ export type RecordingWorkflowState = 'completed' | 'partial' | 'failed' | 'skipp
 export interface RecordingWorkflowDay {
   /** Calendar date in the recording's timezone, not the notification timestamp. */
   date: string
+  dateStamp: number
+  endStamp: number
   summary: { state: RecordingWorkflowState | 'pending'; versionId?: string }
   timeline: { state: RecordingWorkflowState | 'pending'; versionId?: string }
 }
 export interface RecordingWorkflowNotice {
   id: string
   batchId: string
+  timeZone: string
   stage: 'processing' | 'analysis'
   state: RecordingWorkflowState
   fileCount: number
@@ -36,6 +39,7 @@ export interface RecordingWorkflowNotice {
   days: RecordingWorkflowDay[]
 }
 export interface RecordingWorkflowPage {
+  accountKey?: string
   supported: boolean
   items: RecordingWorkflowNotice[]
   total: number

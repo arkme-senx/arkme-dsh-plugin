@@ -149,6 +149,7 @@ export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
+  createRequestUID?: string
   batch?: RecordingImportBatch
   jobId: string
   userId: number

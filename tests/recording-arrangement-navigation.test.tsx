@@ -68,3 +68,31 @@ it('opens day-only provenance and lets normal search replace the summary target'
   controller.showRecordingTarget(dateStamp, dateStamp + 2000)
   expect(controller.getSnapshot().recordingTarget?.summary).toBeUndefined()
 })
+it('opens a notification version outside the local-day list with its original day range', async () => {
+  const originalCall = mock.call.getMockImplementation()!
+  const id = '0123456789abcdef01234567'
+  mock.call.mockImplementation(async (op, params) => op === 'recordings.workflow' ? { version: { id, status: 'done', selectable: true, generationStage: 1, generatedAtMillis: dateStamp, modelDisplayName: 'model', content: '精确历史版本', timelineEvents: [], error: '' } } : originalCall(op, params))
+  const window = { date: '2026-10-09', timeZone: 'America/New_York', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00') }
+  await act(async () => {
+    arkmeUi.showRecordingSummaryTarget(window.dateStamp, id, window)
+    renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)
+  })
+  expect(version()).toBe(id)
+  expect(JSON.stringify(renderer!.toJSON())).toContain('精确历史版本')
+  expect(mock.call.mock.calls).toContainEqual(['recordings.workflow', { operation: 'version', versionId: id, kind: 'summary' }, expect.any(AbortSignal)])
+  expect(mock.call.mock.calls.some(([op, params]) => op === 'recordings.day' && params.window?.dateStamp === window.dateStamp)).toBe(true)
+})
+
+it('keeps an exact notification result visible when the local calendar has no recording', async () => {
+  const id = '0123456789abcdef01234567'
+  const previous = mock.call.getMockImplementation()!
+  mock.call.mockImplementation(async (op, params) => {
+    if (op === 'recordings.workflow') return { version: { id, status: 'done', selectable: true, generationStage: 1, generatedAtMillis: dateStamp, content: '保留的历史总结', timelineEvents: [] } }
+    const value = await previous(op, params)
+    if (op === 'recordings.day') return { ...value, totalDurationMillis: 0, transcript: { ...value.transcript, state: 'empty', totalDurationMillis: 0 }, coverage: { state: 'empty', intervals: [] }, summary: { state: 'empty', items: [] } }
+    return value
+  })
+  const window = { date: '2026-10-09', timeZone: 'America/New_York', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00') }
+  await act(async () => { arkmeUi.showRecordingSummaryTarget(window.dateStamp, id, window); renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+  expect(JSON.stringify(renderer!.toJSON())).toContain('保留的历史总结')
+})

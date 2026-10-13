@@ -1,3 +1,5 @@
+import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
+export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
 import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
 export type {ArkmeTeamAvatar,ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
 export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
@@ -487,6 +489,23 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
+    if ((await this.capabilities(signal)).features.recordingWorkflowV1 !== true) return { supported: false }
+    return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
+  }
+  async recordingNotifications(cursor = '', signal?: AbortSignal): Promise<RecordingWorkflowPage> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'query', cursor }, signal)
+  }
+  async readRecordingNotifications(input: { accountKey: string; ids?: string[]; throughSequence?: string }, signal?: AbortSignal): Promise<void> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    await this.call('recordings.workflow', { ...input, operation: 'read' }, signal)
+  }
+  async recordingNotificationVersion(versionId: string, kind: 'summary' | 'timeline', signal?: AbortSignal): Promise<{ version: import('../types.js').ArkmeRecordingVersion | null }> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'version', versionId, kind }, signal)
   }
 
   /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */
