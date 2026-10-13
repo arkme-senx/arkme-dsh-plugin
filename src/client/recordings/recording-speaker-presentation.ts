@@ -1,3 +1,18 @@
+import type { ArkmeRecordingWorkbenchItem } from '../../types.js'
+
+/** Only adjacent entries in the same recording/source can share a visible identity. */
+export function recordingTranscriptContinuesSpeaker(
+  previous: ArkmeRecordingWorkbenchItem | undefined,
+  item: ArkmeRecordingWorkbenchItem,
+): boolean {
+  return previous !== undefined && item.speakerKey.trim() !== ''
+    && previous.speakerKey === item.speakerKey
+    && previous.sessionKey === item.sessionKey
+    && previous.transcriptSource === item.transcriptSource
+    && previous.isSelf === item.isSelf
+    && previous.isBackground === item.isBackground
+}
+
 const RECORDING_SPEAKER_PALETTE = [
   '#ec7fa9', '#799eff', '#80a1ba', '#b4debd', '#f5d2d2',
   '#ffde63', '#e69db8', '#b7b1f2', '#91c4c3', '#4cc9fe',
