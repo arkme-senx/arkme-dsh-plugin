@@ -421,9 +421,9 @@ const loginStyles = `
   }
   .dsh-arkme-login-wordmark { width: 106px; height: 27px; display: block; object-fit: contain; object-position: left center; }
 
-  /* The translated block is a stacking context: inherit its surface so the
-     original white-backed light mark can blend without a white rectangle. */
-  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); background: inherit; }
+  /* Keep the offset mark in the story's stacking context so its white-backed
+     light asset blends with the surface, including its negative left margin. */
+  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; position: relative; top: -18px; background: inherit; }
   .dsh-arkme-login-definition h1 { margin: 0; color: var(--arkme-login-text); font-size: 47px; line-height: 1.16; font-weight: 600; letter-spacing: -.045em; }
   .dsh-arkme-login-description { margin: 24px 0 0; color: var(--arkme-login-secondary); font-size: 14px; line-height: 24px; font-weight: 400; }
   .dsh-arkme-login-card {
@@ -621,7 +621,7 @@ const loginStyles = `
   }
   @media (max-height: 690px) and (min-width: 921px) {
     .dsh-arkme-login-story { padding-top: 48px; padding-bottom: 36px; }
-    .dsh-arkme-login-definition { transform: none; }
+    .dsh-arkme-login-definition { top: 0; }
     .dsh-arkme-login-definition h1 { font-size: 40px; }
     .dsh-arkme-login-card { max-height: calc(100vh - 48px); overflow-y: auto; padding: 8px 4px; }
   }
