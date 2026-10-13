@@ -103,3 +103,14 @@ it('dismisses when clicking inside the embedded Harness document', async () => {
   await act(async () => frame.contentDocument!.body.dispatchEvent(new frame.contentWindow!.MouseEvent('pointerdown', { bubbles: true })))
   expect(close).toHaveBeenCalledOnce(); frame.remove()
 })
+
+it('keeps an opted-in modal menu inside the dialog and retains keyboard dismissal', async()=>{
+ const close=vi.fn()
+ await act(async()=>root.render(<dialog open><ArkmeActionMenu open portal={false} label="头像操作" autoFocus onClose={close} anchor={<button>更换头像</button>} actions={[{id:'image',label:'上传图片',onSelect:vi.fn()}]}/></dialog>))
+ const menu=document.querySelector<HTMLElement>('[role="menu"]')!
+ expect(host.querySelector('dialog')!.contains(menu)).toBe(true)
+ expect(document.activeElement).toBe(menu.querySelector('button'))
+ await act(async()=>menu.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+ expect(close).toHaveBeenCalledOnce()
+ expect(document.activeElement).toBe(host.querySelector('dialog button'))
+})
