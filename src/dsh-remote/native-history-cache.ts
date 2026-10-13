@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { isDeepStrictEqual } from 'node:util'
 import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
 import { fiveTurnPage, type NativeHistoryPage, type NativeHistoryRecord } from './native-history.js'
 
@@ -49,16 +50,20 @@ export class DshNativeHistoryCache {
     try {
       const old = this.snapshot(key)
       if (snapshot) {
-        if (old && (snapshot.cacheReset === true || snapshot.cloudRevision !== old.cloudRevision || Number(snapshot.cursor) < Number(old.cursor))) { this.db.prepare('DELETE FROM events WHERE session=?').run(key); this.db.prepare('UPDATE sessions SET bytes=length(CAST(snapshot AS BLOB)) WHERE key=?').run(key) }
+        const sameGeneration = typeof snapshot.cloudGeneration === 'string' && snapshot.cloudGeneration === old?.cloudGeneration
+        if (old && (snapshot.cacheReset === true || (snapshot.cloudRevision !== old.cloudRevision && !sameGeneration) || Number(snapshot.cursor) < Number(old.cursor))) { this.db.prepare('DELETE FROM events WHERE session=?').run(key); this.db.prepare('UPDATE sessions SET bytes=length(CAST(snapshot AS BLOB)) WHERE key=?').run(key) }
         const { records: _records, cacheReset: _reset, ...metadata } = snapshot
         this.db.prepare('INSERT INTO sessions(key,snapshot,touched,bytes) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET bytes=sessions.bytes+excluded.bytes-length(CAST(sessions.snapshot AS BLOB)),snapshot=excluded.snapshot,touched=excluded.touched').run(key, JSON.stringify(metadata), Date.now(), Buffer.byteLength(JSON.stringify(metadata)))
       } else if (!old) { this.db.exec('COMMIT'); return }
       const insert = this.db.prepare('INSERT INTO events VALUES(?,?,?,?,?) ON CONFLICT(session,seq) DO UPDATE SET turn_start=excluded.turn_start,payload=excluded.payload,bytes=excluded.bytes')
+      const existing = this.db.prepare('SELECT bytes,payload FROM events WHERE session=? AND seq=?')
       let delta = 0
       for (const record of records) {
         if (!Number.isSafeInteger(record.event.seq) || record.event.seq < 0) throw new Error('原生历史序号无效')
         const payload = JSON.stringify(record), bytes = Buffer.byteLength(payload)
-        delta += bytes - Number(this.db.prepare('SELECT bytes FROM events WHERE session=? AND seq=?').get(key, record.event.seq)?.bytes ?? 0)
+        const previous = existing.get(key, record.event.seq)
+        if (previous && (previous.payload === payload || isDeepStrictEqual(JSON.parse(String(previous.payload)), record))) continue
+        delta += bytes - Number(previous?.bytes ?? 0)
         insert.run(key, record.event.seq, Number(record.event.type === 'turn/start'), payload, bytes)
       }
       this.db.prepare('UPDATE sessions SET bytes=bytes+? WHERE key=?').run(delta, key)

@@ -14,13 +14,22 @@ import type { DshNativeHistoryCache } from './native-history-cache.js'
 const BASE = '/api/v1/dsh-remote'
 const unavailable = () => new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端原始历史不完整或与当前 DSH 不兼容，需要源电脑补齐')
 // Old servers have no trustworthy generation fence: their persisted cache is a
-// miss. Progress/metadata participate so a nonempty old page cannot mask updates.
+// miss. History progress invalidates content; display metadata does not.
 function cacheRevision(row: Record<string, unknown>): string | undefined {
   if (typeof row.history_revision !== 'string' || !row.history_revision) return
-  return JSON.stringify([row.history_revision, row.history_storage_version, row.projection_as_of_seq, row.last_event_seq, row.history_complete_through_seq, row.turn_projection_as_of_seq, row.turn_projection_complete_through_seq, row.source_updated_at, row.title])
+  return JSON.stringify(['cloud-history-v2', row.history_revision, row.history_storage_version, row.projection_as_of_seq, row.last_event_seq, row.history_complete_through_seq, row.turn_projection_as_of_seq, row.turn_projection_complete_through_seq])
+}
+function cacheGeneration(row: Record<string, unknown>): string | undefined {
+  return cacheRevision(row) === undefined ? undefined : JSON.stringify([row.history_revision, row.history_storage_version])
+}
+function metadataRevision(row: Record<string, unknown>): string {
+  return JSON.stringify([row.created_at ?? null, row.title ?? null])
+}
+function watchRevision(row: Record<string, unknown>): string {
+  return JSON.stringify([cacheRevision(row), metadataRevision(row)])
 }
 type Cache = { store: Pick<DshNativeHistoryCache, 'snapshot' | 'page' | 'write'>; key(session: string): string }
-type Lease = { controller: AbortController; touched: number; busy: boolean; watch?: { runtime: string; session: string; revision: string | undefined; body: Record<string, unknown>; cache: Cache | undefined } }
+type Lease = { controller: AbortController; touched: number; busy: boolean; watch?: { runtime: string; session: string; revision: string; body: Record<string, unknown>; cache: Cache | undefined } }
 
 function nativeHistoryRecord(raw: unknown): NativeHistoryRecord {
   const validators = surface as unknown as { validateSurfaceMetadata?: (event: unknown) => void; validateSessionEventData?: (event: unknown, subject: string) => void }
@@ -117,7 +126,7 @@ export class DshCloudNativeTransport {
     return page
   }
 
-  async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: Cache, refreshing?: Lease): Promise<Record<string, unknown>> {
+  async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: Cache, refreshing?: Lease, verifiedMetadata?: Record<string, unknown>): Promise<Record<string, unknown>> {
     const mode = body.mode, endpoint = String(body.endpoint ?? '')
     for (const [key, lease] of this.streams) if (Date.now() - lease.touched > 45_000) this.release(key)
     if (mode === 'close') { this.release(id); return { done: true } }
@@ -132,7 +141,7 @@ export class DshCloudNativeTransport {
         scoped.throwIfAborted()
         if (lease.watch) {
           const current = await this.metadata(lease.watch.runtime, lease.watch.session, scoped)
-          if (cacheRevision(current) !== lease.watch.revision) return await this.call(lease.watch.runtime, lease.watch.body, id, scoped, lease.watch.cache, lease)
+          if (watchRevision(current) !== lease.watch.revision) return await this.call(lease.watch.runtime, lease.watch.body, id, scoped, lease.watch.cache, lease, current)
         }
         return { items: [] }
       }
@@ -156,11 +165,10 @@ export class DshCloudNativeTransport {
       if (address.kind !== 'session' || typeof address.sessionId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(address.sessionId)) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端不支持该会话地址')
       const session = address.sessionId
       // Prove current account ownership before consulting local cached content.
-      const row = await this.metadata(runtime, session, signal)
+      let row = verifiedMetadata ?? await this.metadata(runtime, session, signal)
       if (endpoint === 'session/page' && (!Number.isSafeInteger(request.throughSeq) || Number(request.throughSeq) < -1 || (request.beforeSeq !== undefined && (!Number.isSafeInteger(request.beforeSeq) || Number(request.beforeSeq) < 0)))) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史分页序号无效')
       const key = cache?.key(session)
       const revision = cacheRevision(row), snapshot = key ? cache?.store.snapshot(key) : undefined
-      if (mode === 'pull') watch = { runtime, session, revision, body, cache }
       const through = endpoint === 'session/page' ? Number(request.throughSeq) : undefined
       const before = request.beforeSeq === undefined ? undefined : Number(request.beforeSeq)
       const expectedCursor = Math.max(Number(row.projection_as_of_seq ?? -1), Number(row.last_event_seq ?? -1), Number(row.history_complete_through_seq ?? -1))
@@ -172,6 +180,7 @@ export class DshCloudNativeTransport {
         const current = await this.metadata(runtime, session, signal)
         signal.throwIfAborted()
         if (!current || cacheRevision(current) !== revision) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '历史版本发生变化，请重新打开会话', true)
+        row = current
       }
       if (mode === 'call') {
         if (cache && key && !cached && revision && snapshot?.cloudRevision === revision) cache.store.write(key, page.records)
@@ -179,9 +188,14 @@ export class DshCloudNativeTransport {
       }
       const cursor = page.records.at(-1)?.event.seq ?? -1
       if (cursor < expectedCursor) throw unavailable()
-      frame = { type: 'snapshot', cloudRevision: revision, header: { version: 3, id: session, createdAt: Number(row.created_at ?? row.source_updated_at), isSeeded: false }, cursor, ...page,
+      const displayRevision = metadataRevision(row)
+      frame = { type: 'snapshot', cloudRevision: revision, cloudGeneration: cacheGeneration(row), cloudMetadataRevision: displayRevision,
+        header: { version: 3, id: session, createdAt: Number(row.created_at ?? (cached ? object(snapshot?.header).createdAt : undefined) ?? row.source_updated_at), isSeeded: false }, cursor, ...page,
         projections: { asOfSeq: cursor, values: { title: row.title || null } }, assistantStream: { revision: 0 } }
-      if (cache && key) cache.store.write(key, page.records, frame as Record<string, unknown>)
+      // A warm open must not replay the event INSERT loop. Metadata-only changes
+      // replace just the small snapshot, preserving every cached older page.
+      if (cache && key && (!cached || snapshot?.cloudMetadataRevision !== displayRevision)) cache.store.write(key, cached ? [] : page.records, frame as Record<string, unknown>)
+      watch = { runtime, session, revision: watchRevision(row), body, cache }
     } else throw new DshRemoteError('RUNTIME_OFFLINE', '源实例暂不可执行', true)
     if (this.streams.has(id) && this.streams.get(id) !== refreshing) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '云端订阅已存在')
     if (!refreshing && this.streams.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '云端订阅数量超限')
