@@ -76,7 +76,7 @@ it('keeps the membership label visible and additional account details in the too
   expect(brand.textContent).not.toContain('v3.0.0')
   expect(profile.querySelector('.arkme-member-label')).not.toBeNull()
   act(() => brand.focus())
-  expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('Arkme v')
+  expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('即我 v')
   act(() => profile.focus())
   expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('个人资料')
 })

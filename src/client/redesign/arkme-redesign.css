@@ -1335,9 +1335,6 @@ body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-c
 body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-composer-resize-highlighted="true"] {
   border-color: var(--dsw-alias-state-success-primary) !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
-  filter: invert(1) hue-rotate(180deg);
-}
 body[data-ds-dark-theme] .arkme-redesign-hero-input {
   border-color: var(--dsw-alias-border-l2) !important;
   background: var(--dsw-specific-input-major) !important;

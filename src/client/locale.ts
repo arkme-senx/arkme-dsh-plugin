@@ -13,13 +13,18 @@ interface LocaleSource {
 let active: ArkmeLocale = 'zh'
 const listeners = new Set<() => void>()
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
+export const subscribeArkmeLocale = subscribe
 export const getArkmeLocale = (): ArkmeLocale => active
+
+export function resolveArkmeLocale(locale: string): ArkmeLocale {
+  return /^zh(?:[-_]|$)/i.test(locale) ? 'zh' : 'en'
+}
 
 /** One language owner: the Harness preference. No second persisted preference,
  * component remount, network translation, theme mutation, or access to user-authored content. */
 export function connectArkmeLocale(source: LocaleSource): () => void {
   const sync = () => {
-    const next = source.getLocale().active === 'en' ? 'en' : 'zh'
+    const next = resolveArkmeLocale(source.getLocale().active)
     if (next === active) return
     active = next
     for (const listener of listeners) listener()
