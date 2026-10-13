@@ -4,8 +4,9 @@ import { tr } from './locale.js'
 import { arkmeUi } from './ui-controller.js'
 
 export function recordingNoticeTitle(item: RecordingWorkflowNotice) {
+  if (item.state === 'skipped') return tr('录音暂无可整理内容')
   if (item.stage === 'processing') return item.state === 'completed' ? tr('录音处理完成') : tr('录音处理未全部完成')
-  return item.state === 'completed' ? tr('录音总结与时间轴已更新') : item.state === 'skipped' ? tr('录音暂无可整理内容') : tr('录音整理未全部完成')
+  return item.state === 'completed' ? tr('录音总结与时间轴已更新') : tr('录音整理未全部完成')
 }
 export function recordingNoticePreview(item: RecordingWorkflowNotice) {
   return item.stage === 'processing'
@@ -13,7 +14,7 @@ export function recordingNoticePreview(item: RecordingWorkflowNotice) {
     : tr('涉及 {count} 个录音日期。', { count: item.days.length })
 }
 function stateLabel(state: RecordingWorkflowState | 'pending') {
-  return state === 'pending' ? tr('等待处理') : state === 'completed' ? tr('已更新') : state === 'partial' ? tr('部分完成') : state === 'skipped' ? tr('无可用内容') : tr('未完成')
+  return state === 'pending' ? tr('等待处理') : state === 'completed' ? tr('已更新') : state === 'partial' ? tr('部分完成') : state === 'skipped' ? tr('无可用内容') : tr('生成失败')
 }
 export function ArkmeRecordingNotificationDetail({ notice, onClose }: { notice: RecordingWorkflowNotice; onClose(): void }) {
   const button = { border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, padding: '6px 10px', background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 12 }

@@ -25,3 +25,20 @@ it('never describes partial processing as all complete', () => {
   expect(recordingNoticeTitle({ ...notice, stage: 'processing', state: 'partial' })).toBe('录音处理未全部完成')
   expect(recordingNoticeTitle(notice)).toBe('录音整理未全部完成')
 })
+
+it.each(['processing', 'analysis'] as const)('shows an empty-result title for skipped %s without failure actions', stage => {
+  const empty = { ...notice, stage, state: 'skipped' as const, message: '没有可供整理的转写', days: [] }
+  expect(recordingNoticeTitle(empty)).toBe('录音暂无可整理内容')
+  let renderer!: ReturnType<typeof create>
+  act(() => { renderer = create(<ArkmeRecordingNotificationDetail notice={empty} onClose={() => {}} />) })
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('未全部完成')
+  expect(renderer.root.findAllByType('button').map(button => button.children.join(''))).toEqual(['返回通知'])
+  act(() => renderer.unmount())
+})
+it('labels a failed projection as generation failure while preserving the successful link', () => {
+  let renderer!: ReturnType<typeof create>
+  act(() => { renderer = create(<ArkmeRecordingNotificationDetail notice={notice} onClose={() => {}} />) })
+  expect(JSON.stringify(renderer.toJSON())).toContain('生成失败')
+  expect(renderer.root.findAllByType('button').filter(button => button.children.includes('查看总结'))).toHaveLength(2)
+  act(() => renderer.unmount())
+})

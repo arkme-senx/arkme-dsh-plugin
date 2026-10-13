@@ -83,8 +83,9 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     await wait(() => !!importButton() && !importButton().disabled)
     await act(async () => { importButton().click() })
     await wait(() => accepted)
+    const invalidTimeline = process.env.JOTMO_IMPORT_E2E_SCENARIO === 'invalid-timeline'
     let page: Awaited<ReturnType<typeof sdk.recordingNotifications>>
-    await wait(async () => { page = await sdk.recordingNotifications(); return page.items.some(n => n.stage === 'analysis' && n.state === 'completed') })
+    await wait(async () => { page = await sdk.recordingNotifications(); return page.items.some(n => n.stage === 'analysis' && n.state === (invalidTimeline ? 'partial' : 'completed')) })
     expect(page!.items).toHaveLength(2)
     expect(page!.items.map(n => n.stage).sort()).toEqual(['analysis', 'processing'])
     expect((await nativeFetch(`${fixture.url}/api/v1/audio/import-batches/notifications/query`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(403)
@@ -92,6 +93,15 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     expect((await sdk.recordingNotifications()).unreadCount).toBe(0)
     const analysis = page!.items.find(n => n.stage === 'analysis')!
     expect(analysis.days).toHaveLength(1)
+    expect(analysis.days[0]!.summary.state).toBe('completed')
+    expect(analysis.days[0]!.timeline.state).toBe(invalidTimeline ? 'failed' : 'completed')
+    if (invalidTimeline) {
+      await expect(sdk.recordingNotificationVersion(analysis.days[0]!.timeline.versionId!, 'timeline')).rejects.toThrow()
+    } else {
+      const timeline = await sdk.recordingNotificationVersion(analysis.days[0]!.timeline.versionId!, 'timeline')
+      expect(timeline.version?.timelineEvents.length).toBeGreaterThan(0)
+      expect(timeline.version?.timelineEvents[0]?.title).toContain('本地链路验收')
+    }
     expect(uploadBodies).toHaveLength(1)
     expect(uploadBodies[0]).toMatchObject({ import_batch: { item_count: 1, item_index: 0, ownership: 'self', time_zone: 'Asia/Shanghai' } })
     expect(calls).toEqual(expect.arrayContaining(['/api/v1/audio/new-session', '/api/v1/audio/new-child', '/api/v1/audio/child-upload-finish', '/api/v1/audio/finish-session']))
@@ -99,9 +109,17 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     expect(version.version?.content).toContain('本地链路验收')
     const [{ ArkmeRecordingNotificationDetail }, { ArkmeRecordingSurface }] = await Promise.all([import('../../src/client/ArkmeRecordingNotificationDetail.js'), import('../../src/client/ArkmeRecordingSurface.js')])
     await act(async () => { root.render(<><ArkmeRecordingNotificationDetail notice={analysis} onClose={() => {}} /><ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={1} /></>) })
+    const detail = container.querySelector('section[aria-label="录音整理未全部完成"], section[aria-label="录音总结与时间轴已更新"]')!
+    expect([...detail.querySelectorAll('button')].some(button => button.textContent === '查看时间轴')).toBe(!invalidTimeline)
+    if (invalidTimeline) expect(detail.textContent).toContain('生成失败')
     const view = [...container.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === '查看总结')!
     await act(async () => { view.click() })
     await wait(() => container.textContent?.includes('本地链路验收') === true)
+    if (!invalidTimeline) {
+      const viewTimeline = [...detail.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '查看时间轴')!
+      await act(async () => { viewTimeline.click() })
+      await wait(() => container.querySelector('[data-arkme-recording-timeline-event-header]')?.textContent?.includes('本地链路验收') === true)
+    }
     expect(calls.filter(p => p === '/api/v1/summary/get-by-ids').length).toBeGreaterThan(0)
   } finally {
     await act(async () => { root.unmount() }); service.dispose(); container.remove(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllGlobals(); await rm(state, { recursive: true, force: true }); await writeFile(join(directory!, 'stop'), 'done', { mode: 0o600 })
