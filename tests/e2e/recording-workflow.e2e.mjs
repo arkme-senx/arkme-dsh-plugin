@@ -23,7 +23,7 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
   const id = '0123456789abcdef01234567'
   const dateStamp = Date.parse('2026-10-09T00:00:00-04:00'), endStamp = Date.parse('2026-10-10T00:00:00-04:00')
   const notice = { id, batch_id: 'batch-e2e-001', time_zone: 'America/New_York', stage: 'analysis', state: 'partial', file_count: 2, completed_count: 2, failed_count: 0, created_at: Date.now(), updated_at: Date.now(), read_at: 0, message: '部分整理完成', days: [{ date: '2026-10-09', date_stamp: dateStamp, end_stamp: endStamp, summary: { state: 'completed', version_id: id }, timeline: { state: 'failed' } }] }
-  let scaffold, browser
+  let scaffold, browser, failVersionRead = false
   const server = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
     const buffers = []; for await (const chunk of req) buffers.push(chunk)
     const body = JSON.parse(Buffer.concat(buffers).toString() || '{}'); calls.push({ path: req.url, body })
@@ -33,6 +33,7 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
     else if (req.url?.endsWith('/import-batches/capabilities')) data = { supported: true }
     else if (req.url?.endsWith('/notifications/query') && req.url.includes('import-batches')) data = { supported: true, items: [notice], latest: notice, total: 1, unread_count: notice.read_at ? 0 : 1, through_sequence: '1', next_cursor: '' }
     else if (req.url?.endsWith('/notifications/read') && req.url.includes('import-batches')) { notice.read_at = Date.now(); data = { acknowledged: true } }
+    else if (req.url === '/api/v1/summary/get-by-ids' && failVersionRead) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 500, message: '临时读取失败', data: {} })); return }
     else if (req.url === '/api/v1/summary/get-by-ids') data = { audio_summary_ls: [{ id, kind: 2, status: 2, answer: '跨时区的精确版本正文', date_stamp: dateStamp }] }
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 200, data }))
   })
@@ -64,7 +65,15 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
     await page.getByRole('button', { name: '对话', exact: true }).click()
     await page.getByRole('treeitem', { name: /通知/ }).click()
     await page.getByRole('listitem', { name: '录音：录音整理未全部完成', exact: true }).click()
+    const detail = page.getByRole('region', { name: '录音整理未全部完成', exact: true })
+    expect(await detail.innerText()).not.toContain('America/New_York')
+    failVersionRead = true
     await page.getByRole('button', { name: '查看总结', exact: true }).click()
+    await page.getByText(/读取总结失败/).waitFor()
+    expect(await page.getByText('跨时区的精确版本正文', { exact: true }).count()).toBe(0)
+    expect(calls.some(call => call.path === '/api/v1/summary/create')).toBe(false)
+    failVersionRead = false
+    await page.getByRole('button', { name: '重新读取', exact: true }).click()
     try { await page.getByText('跨时区的精确版本正文', { exact: true }).waitFor({ timeout: 10000 }) } catch (error) {
       await page.screenshot({ path: join(root, 'failure.png') })
       await writeFile(join(root, 'failure.txt'), (await page.locator('body').innerText()) + '\n' + JSON.stringify(calls.filter(call => call.path?.includes('summary') || call.path?.includes('one-day-trans'))))

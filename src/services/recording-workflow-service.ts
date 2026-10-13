@@ -76,7 +76,12 @@ export class RecordingWorkflowService {
       if (!/^[a-f0-9]{24}$/.test(versionId)) invalid()
       const raw = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/get-by-ids', { ids: [versionId] }, session, signal, { lane: 'interactive-read', bypassCache: true })
       await current()
-      const version = projectRecordingVersions(raw, input.kind).find(item => item.id === versionId && item.selectable) ?? null
+      if (!Array.isArray(raw.audio_summary_ls)) invalid()
+      const record = raw.audio_summary_ls.find(item => objectValue(item).id === versionId)
+      if (record === undefined) return { version: null }
+      const version = projectRecordingVersions({ audio_summary_ls: [record] }, input.kind)[0]
+      if (!version) invalid()
+      if (!version.selectable) throw new ArkmePluginError('recording-workflow-version-unreadable', '该版本的内容暂时无法读取，请稍后重新读取', true, 502)
       return { version }
     }
     let suffix: string, body: Record<string, unknown>

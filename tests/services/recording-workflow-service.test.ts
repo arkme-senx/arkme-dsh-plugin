@@ -71,3 +71,32 @@ it.each([['UTC', '1970-01-01', 0, 86400000], ['Asia/Shanghai', '1970-01-01', -28
  const item = { ...notice, time_zone: zone, days: [{ ...notice.days[0], date, date_stamp: start, end_stamp: end }] }
  expect(recordingWorkflowPage({ ...page, items: [item], latest: item }).items[0]!.days[0]!.dateStamp).toBe(start)
 })
+
+it.each([401, 403, 500])('preserves exact-version read failures (%s) rather than returning missing', async status => {
+ const f = fixture()
+ f.post.mockRejectedValue(new ArkmePluginError('read-failed', '读取失败', true, status))
+ await expect(f.service.request({ operation: 'version', kind: 'summary', versionId: '0123456789abcdef01234567' })).rejects.toThrow('读取失败')
+})
+it.each([
+ {},
+ { audio_summary_ls: [{ id: '0123456789abcdef01234567', kind: 1, status: 2, answer: '错误类型' }] },
+ { audio_summary_ls: [{ id: '0123456789abcdef01234567', kind: 2, status: 1, answer: '' }] },
+ { audio_summary_ls: [{ id: '0123456789abcdef01234567', kind: 2, status: 2, answer: '' }] },
+])('does not report invalid or unreadable exact-version data as missing', async response => {
+ const f = fixture(); f.post.mockResolvedValue(response)
+ await expect(f.service.request({ operation: 'version', kind: 'summary', versionId: '0123456789abcdef01234567' })).rejects.toThrow()
+})
+
+it.each([
+ { status: 2, answer: '[]', timeline_snapshot_valid: true },
+ { status: 2, answer: 'invalid snapshot', timeline_snapshot_valid: false },
+ { status: 3, answer: '' },
+])('reports an unreadable timeline as an error instead of a missing version', async row => {
+ const f = fixture(); const versionId = '0123456789abcdef01234567'
+ f.post.mockResolvedValue({ audio_summary_ls: [{ ...row, id: versionId, kind: 1 }] })
+ await expect(f.service.request({ operation: 'version', kind: 'timeline', versionId })).rejects.toMatchObject({ code: 'recording-workflow-version-unreadable' })
+})
+it('returns missing only when a successful authorized lookup contains no requested version', async () => {
+ const f = fixture(); f.post.mockResolvedValue({ audio_summary_ls: [] })
+ expect(await f.service.request({ operation: 'version', kind: 'summary', versionId: '0123456789abcdef01234567' })).toEqual({ version: null })
+})

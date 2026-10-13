@@ -96,3 +96,71 @@ it('keeps an exact notification result visible when the local calendar has no re
   await act(async () => { arkmeUi.showRecordingSummaryTarget(window.dateStamp, id, window); renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
   expect(JSON.stringify(renderer!.toJSON())).toContain('保留的历史总结')
 })
+
+const notificationVersionId = '0123456789abcdef01234567'
+const notificationWindow = { date: '2026-10-09', timeZone: 'America/New_York', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00') }
+const openNotification = async (kind: 'summary' | 'timeline' = 'summary') => { await act(async () => {
+  if (kind === 'summary') arkmeUi.showRecordingSummaryTarget(notificationWindow.dateStamp, notificationVersionId, notificationWindow)
+  else arkmeUi.showRecordingTimelineTarget(notificationWindow.dateStamp, notificationVersionId, notificationWindow)
+  renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)
+}) }
+
+it.each(['summary', 'timeline'] as const)('retries a failed %s read without generating or displaying a different version', async kind => {
+  const previous = mock.call.getMockImplementation()!
+  let failed = true
+  mock.call.mockImplementation(async (op, params) => {
+    if (op !== 'recordings.workflow') return previous(op, params)
+    if (failed) throw new Error('网络连接中断')
+    return { version: { id: notificationVersionId, status: 'done', selectable: true, generatedAtMillis: dateStamp, content: '恢复的原版本正文', timelineEvents: [], modelDisplayName: '', error: '' } }
+  })
+  await openNotification(kind)
+  const text = JSON.stringify(renderer!.toJSON())
+  expect(text).toContain('读取' + (kind === 'summary' ? '总结' : '时间轴') + '失败')
+  expect(text).toContain('网络连接中断')
+  expect(text).not.toContain('latest summary')
+  expect(text).not.toContain('未找到')
+  expect(renderer!.root.findAllByType('button').some(node => node.children.includes('重新生成'))).toBe(false)
+  failed = false
+  await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('重新读取'))!.props.onClick())
+  expect(mock.call.mock.calls.filter(([op]) => op === 'recordings.workflow')).toHaveLength(2)
+  expect(mock.call.mock.calls.some(([op]) => op === 'recordings.generate')).toBe(false)
+  const picker = renderer!.root.findAll(node => node.props.ariaLabel === (kind === 'summary' ? '切换总结版本' : '切换时间轴版本'))[0]
+  expect(picker?.props.value).toBe(notificationVersionId)
+})
+
+it('offers explicit selection after a missing version without silently falling back', async () => {
+  const previous = mock.call.getMockImplementation()!
+  mock.call.mockImplementation(async (op, params) => op === 'recordings.workflow' ? { version: null } : previous(op, params))
+  await openNotification()
+  expect(JSON.stringify(renderer!.toJSON())).toContain('当前账号下未找到该总结版本')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('latest summary')
+  const picker = renderer!.root.findAll(node => node.props.ariaLabel === '切换总结版本')[0]!
+  expect(picker.props.value).toBe(notificationVersionId)
+  await act(async () => picker.props.onChange('latest'))
+  expect(JSON.stringify(renderer!.toJSON())).toContain('latest summary')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('未找到该总结版本')
+})
+
+it('keeps a pending version read in loading state without a false read failure', async () => {
+  const previous = mock.call.getMockImplementation()!
+  mock.call.mockImplementation((op, params) => op === 'recordings.workflow' ? new Promise(() => {}) : previous(op, params))
+  await openNotification()
+  expect(JSON.stringify(renderer!.toJSON())).toContain('正在读取')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('读取失败')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('latest summary')
+})
+
+it('does not offer regeneration when a missing notification version has no alternatives', async () => {
+  const previous = mock.call.getMockImplementation()!
+  mock.call.mockImplementation(async (op, params) => {
+    if (op === 'recordings.workflow') return { version: null }
+    const result = await previous(op, params)
+    return op === 'recordings.day' ? { ...result, summary: { state: 'empty', items: [] } } : result
+  })
+  await openNotification()
+  expect(JSON.stringify(renderer!.toJSON())).toContain('当前账号下未找到该总结版本')
+  const buttons = renderer!.root.findAllByType('button')
+  expect(buttons.some(node => node.children.includes('重新读取'))).toBe(true)
+  expect(buttons.some(node => node.children.includes('重新生成'))).toBe(false)
+  expect(version()).toBeUndefined()
+})

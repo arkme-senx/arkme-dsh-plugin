@@ -27,7 +27,7 @@ export function ArkmeRecordingNotificationDetail({ notice, onClose }: { notice: 
       const dateStamp = day.dateStamp
       const window = { dateStamp, endStamp: day.endStamp, timeZone: notice.timeZone, date: day.date }
       return <article key={day.date} style={{ borderTop: `1px solid ${arkmeTheme.border}`, padding: '14px 0' }}>
-        <strong>{day.date}</strong> <small>{notice.timeZone}</small>
+        <strong>{day.date}</strong>
         {notice.stage === 'analysis' && <p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{tr('总结')} · {stateLabel(day.summary.state)}　{tr('时间轴')} · {stateLabel(day.timeline.state)}</p>}
         <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
           <button type="button" style={button} onClick={() => arkmeUi.showRecordingTarget(dateStamp, dateStamp, undefined, window)}>{tr('查看录音')}</button>

@@ -879,7 +879,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     appliedSummaryTarget.current = target
     setMissingSummaryTarget(target.summary.versionId && !version ? target : undefined)
   }, [ui.recordingTarget, day, dayLoading, selectedDate])
-  const legacySummarySourceUnavailable = missingSummaryTarget !== undefined && missingSummaryTarget === ui.recordingTarget
+  const summarySourceUnavailable = missingSummaryTarget !== undefined && missingSummaryTarget === ui.recordingTarget
     && dateKey(new Date(missingSummaryTarget.dateStamp)) === dateKey(selectedDate)
 
   const appliedTimelineTarget = useRef<typeof ui.recordingTarget>()
@@ -894,10 +894,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     appliedTimelineTarget.current = target
     setMissingTimelineTarget(target.timeline.versionId && !version ? target : undefined)
   }, [ui.recordingTarget, day, dayLoading, selectedDate])
-  const legacyTimelineSourceUnavailable = missingTimelineTarget !== undefined && missingTimelineTarget === ui.recordingTarget
+  const timelineSourceUnavailable = missingTimelineTarget !== undefined && missingTimelineTarget === ui.recordingTarget
     && dateKey(new Date(missingTimelineTarget.dateStamp)) === dateKey(selectedDate)
 
-  const [exactVersion, setExactVersion] = useState<{ target: typeof ui.recordingTarget; version: ArkmeRecordingVersion | null }>()
+  const [exactVersion, setExactVersion] = useState<{ target: typeof ui.recordingTarget; version: ArkmeRecordingVersion | null; error?: string }>()
+  const [exactVersionReadRevision, setExactVersionReadRevision] = useState(0)
   useEffect(() => {
     const target = ui.recordingTarget
     const versionId = target?.summary?.versionId ?? target?.timeline?.versionId
@@ -909,13 +910,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       operation: 'version', versionId, kind: target?.summary ? 'summary' : 'timeline',
     }, controller.signal).then(result => {
       if (!controller.signal.aborted) setExactVersion({ target, version: result.version })
-    }).catch(() => { if (!controller.signal.aborted) setExactVersion({ target, version: null }) })
+    }).catch(error => { if (!controller.signal.aborted) setExactVersion({ target, version: null, error: errorMessage(error) }) })
     return () => controller.abort()
-  }, [ui.recordingTarget, auth.auth])
+  }, [ui.recordingTarget, auth.auth, exactVersionReadRevision])
   const exactTargetActive = ui.recordingTarget !== undefined && (ui.recordingTarget.window ? dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) : dateKey(new Date(ui.recordingTarget.dateStamp))) === dateKey(selectedDate)
   const exactTargetVersion = exactTargetActive && exactVersion?.target === ui.recordingTarget ? exactVersion : undefined
-  const summarySourceUnavailable = legacySummarySourceUnavailable || exactTargetActive && Boolean(ui.recordingTarget?.summary?.versionId) && exactTargetVersion?.version === null
-  const timelineSourceUnavailable = legacyTimelineSourceUnavailable || exactTargetActive && Boolean(ui.recordingTarget?.timeline?.versionId) && exactTargetVersion?.version === null
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
@@ -1104,9 +1103,34 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     })}</ul></>
   }
 
+  // Notification reads never imply generation or silently select a different result.
+  const renderNotificationVersionState = (kind: 'summary' | 'timeline', selectedId: string, onChange: (id: string) => void) => {
+    const requestedId = ui.recordingTarget?.[kind]?.versionId
+    if (!exactTargetActive || !ui.recordingTarget?.window || !requestedId || (selectedId && selectedId !== requestedId)) return null
+    if (!exactTargetVersion) return <SectionState section={undefined} loading kind={kind} />
+    if (exactTargetVersion.version) return null
+    const alternatives = (day?.[kind].items ?? []).filter(item => item.selectable && item.id !== requestedId)
+    const message = exactTargetVersion.error !== undefined
+      ? tr(kind === 'summary' ? '读取总结失败：{v0}' : '读取时间轴失败：{v0}', { v0: exactTargetVersion.error })
+      : tr(kind === 'summary' ? '当前账号下未找到该总结版本。' : '当前账号下未找到该时间轴版本。')
+    return <>
+      <div role={exactTargetVersion.error !== undefined ? 'alert' : 'status'} style={exactTargetVersion.error !== undefined ? styles.error : styles.status}>
+        {message} <button type="button" style={{ color: 'inherit', background: 'transparent', border: 0, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => { setExactVersion(undefined); setExactVersionReadRevision(value => value + 1) }}>{tr('重新读取')}</button>
+      </div>
+      {alternatives.length > 0 && <div style={styles.versionBar}>
+        <span style={styles.versionLabel}>{tr('历史版本：')}</span>
+        <RecordingAnalysisDropdown ariaLabel={`切换${kind === 'summary' ? tr('总结') : tr('时间轴')}版本`} value={requestedId}
+          options={[{ value: requestedId, label: tr('选择其他版本') }, ...alternatives.map(item => ({ value: item.id, label: versionLabel(item) }))]}
+          width={320} variant="version" onChange={onChange} />
+      </div>}
+    </>
+  }
+
   const renderSummary = () => {
     const section = day?.summary
-    const sourceNotice = summarySourceUnavailable && <div role="status" style={styles.status}>{ui.recordingTarget?.window ? tr('本次生成的总结版本暂不可用，请重试或查看其他版本。') : tr('来源总结版本暂不可用，当前显示该日可用内容。')}</div>
+    const notificationState = renderNotificationVersionState('summary', summaryVersionId, setSummaryVersionId)
+    if (notificationState) return notificationState
+    const sourceNotice = summarySourceUnavailable && <div role="status" style={styles.status}>{tr('来源总结版本暂不可用，当前显示该日可用内容。')}</div>
     if (dayLoading || section === undefined || selectedSummary === undefined) return <>
       {sourceNotice}
       <SectionState
@@ -1130,7 +1154,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
 
   const renderTimeline = () => {
     const section = day?.timeline
-    const sourceNotice = timelineSourceUnavailable && <div role="status" style={styles.status}>{ui.recordingTarget?.window ? tr('本次生成的时间轴版本暂不可用，请重试或查看其他版本。') : tr('来源时间轴版本暂不可用，当前显示该日可用内容。')}</div>
+    const notificationState = renderNotificationVersionState('timeline', timelineVersionId, setTimelineVersionId)
+    if (notificationState) return notificationState
+    const sourceNotice = timelineSourceUnavailable && <div role="status" style={styles.status}>{tr('来源时间轴版本暂不可用，当前显示该日可用内容。')}</div>
     if (dayLoading || section === undefined || selectedTimeline === undefined) return <>
       {sourceNotice}
       <SectionState
