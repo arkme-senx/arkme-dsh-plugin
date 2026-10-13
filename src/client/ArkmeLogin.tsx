@@ -1,5 +1,6 @@
 import { ArkmeScanGuide } from './ArkmeScanGuide.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
+import { useArkmeBrand } from './product-brand.js'
 import type { ChangeEvent } from 'react'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
@@ -673,6 +674,7 @@ const loginStyles = `
 `
 
 export function ArkmeLogin(props: ArkmeLoginProps) {
+  const brand = useArkmeBrand()
   const t = props.t ?? defaultArkmeLoginTranslate
   const effectiveMode = props.phoneBindingRequired === true
     ? 'phone'
@@ -713,7 +715,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
       <div className="dsh-arkme-login-definition">
         <h1>
           <ArkmeJiwoBrandMark label={t('brand.alt')} className="dsh-arkme-login-story-mark"
-            style={{ width: '2.5em', height: '1.16em', marginLeft: '-.25em', marginBottom: '.14em' }} />
+            style={{ width: '2.5em', height: '1.16em', marginLeft: brand.name === '即我' ? '-.25em' : 0, marginBottom: '.14em' }} />
           {t('story.title.second')}
         </h1>
         <p className="dsh-arkme-login-description">{t('story.description')}</p>
