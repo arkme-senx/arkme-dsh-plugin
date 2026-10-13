@@ -6,7 +6,8 @@ import { ArkmeContactAddSurface } from '../src/client/ArkmeContactAddSurface.js'
 let renderer: ReactTestRenderer
 function text(): string { return JSON.stringify(renderer.toJSON()) }
 afterEach(() => { if (renderer) act(() => renderer.unmount()); api.call.mockReset() })
-it.each([false, true])('renders a team independently from personal registration (%s) and submits once', async registered => {
+it('renders a team and retains accepted admission without a second search', async () => {
+ const registered = false
  let pending = false
  api.call.mockImplementation(async (op: string) => {
   if (op === 'user.profile') return {profile: {displayName:'本人'}}
@@ -27,4 +28,5 @@ it.each([false, true])('renders a team independently from personal registration 
  const joins=api.call.mock.calls.filter(c=>c[0]==='contacts.team-join');expect(joins).toHaveLength(1)
  expect(joins[0]?.[1]).toMatchObject({jotmoId:'arkme_cn',requestUid:expect.stringMatching(/^[0-9a-f-]{36}$/)})
  expect(api.call.mock.calls.some(c=>c[0]==='contacts.add')).toBe(false)
+ expect(api.call.mock.calls.filter(c=>c[0]==='contacts.search')).toHaveLength(1)
 })

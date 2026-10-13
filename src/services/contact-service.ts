@@ -72,10 +72,11 @@ export class ContactService {
   async search(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> {
     const session = await this.runtime.requireSession()
     const normalized = normalizeIdentifier(identifier)
-    const [candidate, team] = await Promise.all([
-      this.lookup(normalized, session, options.signal),
-      normalized.kind === 'arkme_id' ? this.teams.searchContactTeam(normalized.identifier, session, options.signal) : undefined,
-    ])
+    const candidate = await this.lookup(normalized, session, options.signal)
+    // IDs use one claim namespace. Resolved personal contacts must not acquire
+    // a Team dependency; voiceprint invitations and calls also use this owner.
+    const team = normalized.kind === 'arkme_id' && !candidate.result.registered
+      ? await this.teams.searchContactTeam(normalized.identifier, session, options.signal) : undefined
     if (team !== undefined) candidate.result = { ...candidate.result, team }
     this.prune()
     this.candidates.set(candidate.result.contactRef, candidate)

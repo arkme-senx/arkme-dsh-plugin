@@ -29,7 +29,7 @@ function fixture(authResult: Record<string, unknown>) {
 }
 
 describe('ContactService', () => {
-  it('returns a same-name team independently and never creates a chat for a team-only result', async () => {
+  it('discovers unresolved team IDs without ever creating a private chat', async () => {
     const f = fixture({exists: false, is_registered: false, can_add: false})
     f.teams.searchContactTeam.mockResolvedValue({ name: '官方团队', jotmoId: 'arkme_cn', state: 'none', requiresApproval: true, avatar: {mode: 'default', key: 'public'} })
     const result = await f.service.search('arkme_cn')
@@ -38,9 +38,11 @@ describe('ContactService', () => {
     await expect(f.service.add(result.contactRef)).rejects.toMatchObject({code: 'contact-add-unavailable'})
     expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
     f.runtime.authenticatedAuthPost.mockResolvedValue({exists: true, is_registered: true, can_add: true, user_id: 88, nick_name: '同名个人'})
-    const both = await f.service.search('arkme_cn')
-    expect(both.displayName).toBe('同名个人')
-    expect(both.team?.name).toBe('官方团队')
+    f.teams.searchContactTeam.mockClear().mockRejectedValue(new Error('team unavailable'))
+    const person = await f.service.search('person')
+    expect(person.displayName).toBe('同名个人')
+    expect(person.team).toBeUndefined()
+    expect(f.teams.searchContactTeam).not.toHaveBeenCalled()
   })
   it('does not call Team for phone searches and does not disguise Team failure as not found', async () => {
     const f = fixture({is_registered: false, can_add: true})

@@ -302,8 +302,20 @@ export class TeamAppService {
         try { return { state: 'joined', team: await this.team((await post('join-by-jotmo-id', { jotmo_id: str(p.jotmoId) })).team, actor) } }
         catch (error) {
           if (!(error instanceof ArkmeUpstreamResponseError) || obj(error.responseData).reason !== 'approval_required') throw error
-          const result = await post('join-requests/create', { jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })
-          return { state: str(result.state) }
+          try {
+            const result = await post('join-requests/create', { jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })
+            if (result.state === 'pending' || result.state === 'rejected') return { state: result.state }
+            // A retry may replay an old approved application after the member left.
+            // Resolve current membership; approval history alone never means joined.
+            if (result.state === 'approved') {
+              const status = await post('join-requests/status', { jotmo_id: str(p.jotmoId) }, true)
+              if (['joined', 'not_member'].includes(str(status.state))) return { state: str(status.state) }
+            }
+            throw invalid()
+          } catch (applyError) {
+            if (applyError instanceof ArkmeUpstreamResponseError && obj(applyError.responseData).reason === 'already_member') return { state: 'joined' }
+            throw applyError
+          }
         }
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)

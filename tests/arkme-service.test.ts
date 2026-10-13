@@ -5598,18 +5598,17 @@ describe('ArkmeService', () => {
     })
     expect(requests.map(item => new URL(item.url).pathname)).toEqual([
       '/api/v1/auth/search-contact-account',
-      '/api/v1/team/discovery/search',
       '/api/v1/auth/search-contact-account',
       '/api/v1/auth/get-public-users-by-ids',
       '/api/v1/chats/create-private',
     ])
     expect(requests.map(item => new URL(item.url).pathname)).not.toContain('/api/v1/chats/contacts/add-and-open-private')
-    expect(requests[4]?.body).toMatchObject({
+    expect(requests[3]?.body).toMatchObject({
       peer_user_id: 2001,
     })
-    expect(requests[4]?.body).not.toHaveProperty('title')
-    expect(requests[4]?.body).not.toHaveProperty('owner_display_name_snapshot')
-    expect(requests[4]?.body).not.toHaveProperty('peer_display_name_snapshot')
+    expect(requests[3]?.body).not.toHaveProperty('title')
+    expect(requests[3]?.body).not.toHaveProperty('owner_display_name_snapshot')
+    expect(requests[3]?.body).not.toHaveProperty('peer_display_name_snapshot')
   })
 
   it('opens the official author chat through the same Subject owner as the mobile contact-author entry', async () => {

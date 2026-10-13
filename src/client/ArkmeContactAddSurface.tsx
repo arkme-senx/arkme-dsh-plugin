@@ -157,12 +157,12 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
     teamRequestUid.current ??= crypto.randomUUID()
     setBusy(true); setError(''); setNotice('')
     try {
-      await callArkme('contacts.team-join', { jotmoId: team.jotmoId, requestUid: teamRequestUid.current })
-      const updated = await callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: team.jotmoId })
+      const result = await callArkme<{ state: string }>('contacts.team-join', { jotmoId: team.jotmoId, requestUid: teamRequestUid.current })
       if (revision === requestRevision.current) {
-        setCandidate(updated)
-        arkmeContactsTab.refresh()
-        setNotice(updated.team?.state === 'joined' ? '已加入团队' : '申请已提交，等待团队负责人批准')
+        setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
+        teamRequestUid.current = undefined
+        if (result.state === 'joined') arkmeContactsTab.refresh()
+        setNotice(result.state === 'joined' ? tr('已加入团队') : result.state === 'pending' ? tr('申请已提交，等待团队负责人批准') : '')
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }
