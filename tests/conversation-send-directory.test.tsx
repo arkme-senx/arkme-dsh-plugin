@@ -1500,6 +1500,46 @@ describe('conversation send directory projection', () => {
     process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
     expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
   })
+  it.each([target, group, sendToSelf])('preserves input duration when consuming the $kind composer', async selectedSource => {
+    activeSource = selectedSource
+    arkmeUi.selectSource(selectedSource)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('计时消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.send-text', expect.objectContaining({
+      sourceRef: selectedSource.sourceRef, textContent: '计时消息', recordDurationMillis: 3_500,
+    }))
+  })
+
+  it.each([false, true])('preserves the correct duration on send failure with newer draft=%s', async newerDraft => {
+    const pending = deferred<never>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.send-text' && attempts++ === 0) return await pending.promise
+      return await baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('失败的消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    if (newerDraft) {
+      vi.mocked(Date.now).mockReturnValue(5_000)
+      await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条消息') })
+    }
+    vi.mocked(Date.now).mockReturnValue(6_000)
+    await act(async () => { pending.reject(new Error('网络失败')) })
+    expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(42, target)).text)
+      .toBe(newerDraft ? '下一条消息' : '失败的消息')
+    vi.mocked(Date.now).mockReturnValue(8_000)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')
+      .map(([, params]) => params.recordDurationMillis)).toEqual([3_500, newerDraft ? 3_000 : 7_000])
+  })
+
   it('shows the submitted bubble before context capture finishes and preserves the next draft', async () => {
     const capture = deferred<Awaited<ReturnType<ArkmeRecordInputCaptureOwner['finishForSubmit']>>>()
     vi.spyOn(ArkmeRecordInputCaptureOwner.prototype, 'finishForSubmit').mockReturnValue(capture.promise)
@@ -1993,8 +2033,10 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(undefined)
     arkmeInterwovenInvalidation.activateAccount(undefined)
     arkmeMessagePreparing.activateAccount(undefined)
+    resetSelfTopicDirectories()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
@@ -2121,6 +2163,9 @@ describe('conversation send directory projection', () => {
   })
 
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
+    // This checks explicit invalidation batches. The directory's 250ms scheduled
+    // refresh has separate tests and must not depend on the render machine load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
     const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
     const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }

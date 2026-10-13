@@ -5053,8 +5053,19 @@ export function ArkmeSurface({
     )
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
+    // Capture must detach synchronously before take() notifies React of the empty
+    // composer; otherwise its effect clears the submitted draft's timer/audio.
+    const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
+    void capturePromise.catch(() => undefined) // observed below, including early submission failures
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
-    try { await consumed() } catch (caught) { if (sameTargetAccount()) arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft); throw caught }
+    try { await consumed() } catch (caught) {
+      const capture = await capturePromise.catch(() => undefined)
+      if (sameTargetAccount()) {
+        if (capture !== undefined) recordInputCaptureOwner.restoreForRetry(targetDraftKey, capture)
+        arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      } else releaseArkmeComposerDraft(pendingDraft)
+      throw caught
+    }
     // The reference belongs to the submitted draft, not the next message. Do not
     // leave it visible until the network request and attachment cleanup finish.
     if (extensionTarget !== undefined && sameTargetComposer()) {
@@ -5150,13 +5161,16 @@ export function ArkmeSurface({
           ? { ...item, selfRole: snapshot } : item))
       } catch (caught) {
         if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
-        if (sameTargetAccount()) restorePendingDraft()
+        const capture = await capturePromise.catch(() => undefined)
+        if (sameTargetAccount()) {
+          if (capture !== undefined) recordInputCaptureOwner.restoreForRetry(targetDraftKey, capture)
+          restorePendingDraft()
+        }
         else releaseArkmeComposerDraft(pendingDraft)
         if (sameTargetComposer()) setError(`角色尚未保存，本条内容未发送：${errorMessage(caught)}`)
         return
       }
     }
-    const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
     const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = locationCaptureRequested
       ? captureArkmeRecordLocationForSend()
         .catch(caught => ({ state: 'failed', message: errorMessage(caught) || '位置采集失败，请稍后重试' }))
@@ -5545,8 +5559,8 @@ export function ArkmeSurface({
       if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
         if (!durableFileSendUncertain) {
-          restorePendingDraft()
           recordInputCaptureOwner.restoreForRetry(targetDraftKey, inputCapture)
+          restorePendingDraft()
         } else releaseArkmeComposerDraft(pendingDraft)
       } else {
         releaseArkmeComposerDraft(pendingDraft)

@@ -133,6 +133,31 @@ describe('TeamDetailPane', () => {
     expect(text(renderer!.root)).not.toContain('退出团队')
   })
 
+  it('places an accessible owner edit icon next to the name and opens the fresh profile', async () => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = 'owner'
+    teamPage.team.canEditProfile = true
+    const profile = {profileRef: teamRefA, name: '团队 A', jotmoId: 'team_a', profileRevision: 3, canEditProfile: true, avatar: {mode: 'default', key: 'default'}}
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : operation === 'team.app.profile.get' ? profile : {canManage: false})
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    const entry = renderer!.root.findByProps({'aria-label': '编辑团队'})
+    expect(entry.type).toBe('button')
+    expect(text(entry)).toBe('')
+    expect(entry.parent!.findByType('h1').children).toEqual(['团队 A'])
+    await act(async () => { entry.props.onClick(); await tick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.app.profile.get', {teamRef: teamRefA}, expect.any(AbortSignal))
+    expect(renderer!.root.findByType('dialog').props['aria-label']).toBe('编辑团队')
+  })
+
+  it.each(['owner', 'admin', 'member'] as const)('hides editing without the server capability for %s', async role => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = role
+    teamPage.team.canEditProfile = false
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : {canManage: false})
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(renderer!.root.findAllByProps({'aria-label': '编辑团队'})).toHaveLength(0)
+  })
+
   it('renders real member avatars and identity degradation without mixing their semantics', async () => {
     const teamPage = page(teamRefA, '团队 A', {
       items: [
