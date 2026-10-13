@@ -17,7 +17,7 @@ function runPnpm(args: string[]) {
   ], {
     cwd: projectRoot,
     encoding: 'utf8',
-  })
+  }, 30_000)
 }
 
 describe('published package contents', () => {

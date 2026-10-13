@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSPrope
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
+import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -15,6 +16,7 @@ import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import pluginManifest from '../../package.json' with { type: 'json' }
+import { useArkmeBrand } from './product-brand.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { ArkmeMembershipDialog } from './ArkmeMembershipDialog.js'
@@ -44,7 +46,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
@@ -55,6 +57,7 @@ const items: NavigationItem[] = [
   { id: 'calls', get label() { return tr("通话") }, icon: PhoneCall },
   { id: 'recordings', get label() { return tr("录音") }, icon: Waveform },
   { id: 'calendar', get label() { return tr("日历") }, icon: CalendarBlank },
+  { id: 'arrangements', get label() { return tr("安排") }, icon: ListChecks },
   { id: 'world', get label() { return tr("世界") }, icon: GlobeHemisphereWest },
   { id: 'extensions', get label() { return tr("市集") }, icon: PuzzlePiece },
 ]
@@ -94,6 +97,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', justifyContent: 'flex-start', gap: 2,
     overflow: 'visible', borderRadius: 10, background: 'transparent',
   },
+  brandVersion: { color: theme.tertiary, fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
     minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
     // Keep the existing edge marker and focus outline inside the scroll viewport.
@@ -139,6 +143,7 @@ export function ArkmeProductNavigation({
   compact, hosted = false, taskExpanded = false, hidden = false, locked = false, currentSessionId,
 }: ArkmeProductNavigationProps) {
   useArkmeLocale()
+  const brand = useArkmeBrand()
   usePhoneBindingStatus()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -200,6 +205,7 @@ export function ArkmeProductNavigation({
   const activeId = locked ? 'conversations'
     : ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
+    : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calls' ? 'calls'
@@ -236,13 +242,14 @@ export function ArkmeProductNavigation({
     else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
+    else if (id === 'arrangements') arkmeUi.showArrangements()
     else arkmeUi.showConversations()
   }
 
   return <nav
       data-arkme-owned="product-navigation"
       data-arkme-window-drag-mode={windowDragMode}
-      aria-label={tr("Arkme 功能导航")}
+      aria-label={tr("Arkme 功能导航").replace('Arkme', brand.name)}
       aria-hidden={hidden ? true : undefined}
       style={{
         ...styles.rail,
@@ -252,14 +259,15 @@ export function ArkmeProductNavigation({
         ...(hidden ? { display: 'none' } : {}),
       }}
     >
-      {!compact && <div data-arkme-owned="product-brand" data-arkme-plugin-version={pluginManifest.version}
-        style={styles.brand} tabIndex={0} aria-label={`Arkme ${productVersion}`}
+      {!compact && <div data-arkme-owned="product-brand"
+        style={styles.brand} tabIndex={0} aria-label={`${brand.name} ${productVersion}`}
         aria-describedby={navigationHint.describedBy('brand')}
-        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`) }}
+        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
         onMouseLeave={navigationHint.hide}
-        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`, true) }}
+        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`, true) }}
         onBlur={navigationHint.hide}>
         <ArkmeJiwoBrandMark />
+        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>{productVersion}</span>
       </div>}
       <div style={{ ...styles.primary,
         ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
@@ -373,6 +381,7 @@ export function ArkmeProductNavigation({
           onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
           onBlur={navigationHint.hide}
           onClick={() => { navigationHint.hide(); setProfileOpen(value => !value) }}>
+          <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label={tr("当前用户头像")} />
         </button>
         {memberScope && memberUserId !== undefined && membershipOpenScope === memberScope && <ArkmeMembershipDialog key={memberScope} userId={memberUserId} state={membership.state} onRefresh={membership.refresh} returnFocusRef={profileTriggerRef} onClose={() => { setMembershipOpenScope(undefined) }} />}

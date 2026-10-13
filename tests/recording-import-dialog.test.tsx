@@ -81,6 +81,22 @@ describe('recording import dialog behavior', () => {
     })
   }
 
+  it('assigns manually submitted files one batch only after capability confirmation', async () => {
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' }), new File(['b'], 'B.m4a', { type: 'audio/mp4' })])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    const batches = mocks.uploadArkmeRecording.mock.calls.map(call => call[4].batch)
+    expect(batches).toHaveLength(2)
+    expect(batches[0]).toMatchObject({ itemIndex: 0, itemCount: 2 })
+    expect(batches[1]).toMatchObject({ batchId: batches[0].batchId, itemIndex: 1, itemCount: 2 })
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'recordings.generate')).toBe(false)
+  })
+
   it('matches the desktop modal chrome with the upload-dialog close control', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '关闭上传文件' })).toHaveLength(1)
     expect(renderer.root.findByType('dialog').props.style).toMatchObject({ border: 0, outline: 'none' })

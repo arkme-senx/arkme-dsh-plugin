@@ -1500,6 +1500,46 @@ describe('conversation send directory projection', () => {
     process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
     expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
   })
+  it.each([target, group, sendToSelf])('preserves input duration when consuming the $kind composer', async selectedSource => {
+    activeSource = selectedSource
+    arkmeUi.selectSource(selectedSource)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('计时消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.send-text', expect.objectContaining({
+      sourceRef: selectedSource.sourceRef, textContent: '计时消息', recordDurationMillis: 3_500,
+    }))
+  })
+
+  it.each([false, true])('preserves the correct duration on send failure with newer draft=%s', async newerDraft => {
+    const pending = deferred<never>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.send-text' && attempts++ === 0) return await pending.promise
+      return await baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    vi.mocked(Date.now).mockReturnValue(1_000)
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('失败的消息') })
+    vi.mocked(Date.now).mockReturnValue(4_500)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    if (newerDraft) {
+      vi.mocked(Date.now).mockReturnValue(5_000)
+      await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条消息') })
+    }
+    vi.mocked(Date.now).mockReturnValue(6_000)
+    await act(async () => { pending.reject(new Error('网络失败')) })
+    expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(42, target)).text)
+      .toBe(newerDraft ? '下一条消息' : '失败的消息')
+    vi.mocked(Date.now).mockReturnValue(8_000)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')
+      .map(([, params]) => params.recordDurationMillis)).toEqual([3_500, newerDraft ? 3_000 : 7_000])
+  })
+
   it('shows the submitted bubble before context capture finishes and preserves the next draft', async () => {
     const capture = deferred<Awaited<ReturnType<ArkmeRecordInputCaptureOwner['finishForSubmit']>>>()
     vi.spyOn(ArkmeRecordInputCaptureOwner.prototype, 'finishForSubmit').mockReturnValue(capture.promise)
@@ -1993,8 +2033,10 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(undefined)
     arkmeInterwovenInvalidation.activateAccount(undefined)
     arkmeMessagePreparing.activateAccount(undefined)
+    resetSelfTopicDirectories()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
@@ -2120,7 +2162,12 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('原主题未发送草稿')
   })
 
+  // This exercises 21 full refreshes of up to 400 real rows; elapsed wall time
+  // is diagnostic, not an SLA. Keep the workload and continuity assertions intact.
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
+    // This checks explicit invalidation batches. The directory's 250ms scheduled
+    // refresh has separate tests and must not depend on the render machine load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const uncategorized = { ...sendToSelf, sourceRef: 'default', kind: 'default_category' as const }
     const topic = { ...sendToSelf, sourceRef: 'private-topic', kind: 'topic' as const, recordCount: 7 }
     const page = { items: [sendToSelf, uncategorized, topic], hasMore: false }
@@ -2197,7 +2244,7 @@ describe('conversation send directory projection', () => {
     })
     expect(renderer!.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
     expect(renderedText(renderer!.toJSON())).toContain('请重新登录')
-  }, 30_000)
+  }, 90_000)
 
   it('shows a partial child-creation warning with the directory closed and retains it after an older read finishes', async () => {
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
@@ -6549,6 +6596,45 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息给@Harness…')
   })
 
+  it.each(['reference-refresh', 'remount', 'switch-back'] as const)('keeps the extension parent with its draft after %s', async change => {
+    timeline = [{ itemUid: 'retained-parent', messageActionRef: 'retained-parent-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '应保留的父消息', status: 1 }]
+    const mount = () => create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+        ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+    })
+    await act(async () => { renderer = mount() })
+    act(() => renderer!.root.findByProps({ 'aria-label': '打开快记详情' }).props.onContextMenu({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+    }))
+    const extend = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extend.props.onClick() })
+    act(() => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('仍在输入的延展正文'))
+    if (change === 'reference-refresh') {
+      activeSource = { ...target, sourceRef: 'renewed-source-harness' }
+      await act(async () => { arkmeUi.selectSource(activeSource) })
+    } else if (change === 'remount') {
+      await act(async () => { renderer!.unmount() })
+      await act(async () => { renderer = mount() })
+    } else {
+      activeSource = other
+      await act(async () => { arkmeUi.selectSource(other) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(0)
+      activeSource = target
+      await act(async () => { arkmeUi.selectSource(target) })
+    }
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('仍在输入的延展正文')
+    const preview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
+    expect(renderedText(preview)).toContain('应保留的父消息')
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: change === 'reference-refresh' ? 'renewed-source-harness' : target.sourceRef,
+      messageActionRef: 'retained-parent-action', textContent: '仍在输入的延展正文',
+    }))
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.send-text')).toBe(false)
+  })
+
   it('omits the non-text fallback label when extending an attachment-only quick note', async () => {
     timeline = [{
       itemUid: 'extension-image-source', messageActionRef: 'opaque-extension-image-action',
@@ -8181,7 +8267,8 @@ describe('conversation send directory projection', () => {
     }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
   })
 
-  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable'] as const)(
+  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable',
+    'deleted-mention-remount', 'deleted-mention-remote', 'manual-mention-remote'] as const)(
     'defaults a group extension mention without overwriting user input (%s)', async scenario => {
       activeSource = scenario === 'private' ? target : group
       arkmeChatDirectory.publish([other, activeSource])
@@ -8221,6 +8308,23 @@ describe('conversation send directory projection', () => {
       }
       await extend()
       await extend()
+      if (scenario === 'deleted-mention-remount' || scenario === 'deleted-mention-remote' || scenario === 'manual-mention-remote') {
+        act(() => {
+          arkmeComposerDraftStore.setText(draftKey, '')
+          if (scenario === 'manual-mention-remote') arkmeComposerDraftStore.insertMention(draftKey, 'manual-mention', '其他成员', 0)
+        })
+        const expected = arkmeComposerDraftStore.get(draftKey)
+        if (scenario === 'deleted-mention-remount') {
+          act(() => renderer!.unmount())
+          await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+        } else {
+          await act(async () => { arkmeComposerDraftStore.applyRemote(draftKey, JSON.parse(JSON.stringify(expected))) })
+        }
+        expect(arkmeComposerDraftStore.get(draftKey).extensionTarget?.item.itemUid).toBe('mention-parent')
+        expect(arkmeComposerDraftStore.get(draftKey).text).toBe(expected.text)
+        expect(arkmeComposerDraftStore.get(draftKey).mentions).toEqual(expected.mentions)
+        return
+      }
       const draft = arkmeComposerDraftStore.get(draftKey)
       if (scenario === 'empty' || scenario === 'single-mention') {
         expect(draft.text).toBe('@群昵称 ')
@@ -8508,7 +8612,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(newer ? 0 : 1)
   })
 
-  it('reuses the extension record uid after failure and removes staged attachments only after success', async () => {
+  it.each([false, true])('reuses the extension record uid after failure and removes staged attachments only after success (rotated reference: %s)', async rotateReference => {
     timeline = [{
       itemUid: 'extension-retry-source', messageActionRef: 'opaque-extension-retry-action',
       senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '带附件的问题', status: 1,
@@ -8557,6 +8661,12 @@ describe('conversation send directory projection', () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
     })
+    if (rotateReference) {
+      await act(async () => {
+        activeSource = { ...target, sourceRef: 'refreshed-extension-retry-source' }
+        arkmeUi.selectSource(activeSource)
+      })
+    }
     await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
@@ -8564,6 +8674,7 @@ describe('conversation send directory projection', () => {
 
     const extensionCalls = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')
     expect(extensionCalls).toHaveLength(2)
+    expect(extensionCalls[1]?.[1]?.sourceRef).toBe(activeSource.sourceRef)
     expect(extensionCalls[0]?.[1]?.recordUid).toBe('11111111-1111-4111-8111-111111111111')
     expect(extensionCalls[1]?.[1]?.recordUid).toBe(extensionCalls[0]?.[1]?.recordUid)
     expect(extensionCalls[0]?.[1]?.relationUid).toBe('22222222-2222-4222-8222-222222222222')

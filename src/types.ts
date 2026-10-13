@@ -1,3 +1,4 @@
+import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
 
@@ -165,7 +166,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
-  | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole }
+  | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
 
 export interface ArkmeDirectoryPage {
@@ -187,6 +188,9 @@ export type ArkmeTeamJoinRejectReason = 'team_not_found'
 export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
 
 export interface ArkmeTeam {
+  profileRevision?: number
+  canEditProfile?: boolean
+  avatar?: ArkmeTeamAvatar
   teamRef: string
   name: string
   jotmoId: string
@@ -941,6 +945,18 @@ export interface ArkmeAiLetterUnread {
 export type ArkmeArrangementStatus = 'identified' | 'following' | 'completed' | 'unknown'
 export type ArkmeArrangementListStatus = Exclude<ArkmeArrangementStatus, 'unknown'> | 'all'
 
+export interface ArkmeArrangementDateContext {
+  /** Calendar fallback only. Explicit dates in the user's text take precedence. */
+  defaultDate: string
+  timezone: string
+}
+
+export interface ArkmeArrangementCreateInput {
+  requestId: string
+  texts: string[]
+  dateContext?: ArkmeArrangementDateContext
+}
+
 /** Browser-safe Arrangement projection. Stable owner UIDs stay inside the Provider. */
 export interface ArkmeArrangementCreationSource {
   kind: 'quick-note' | 'input' | 'none'
@@ -948,10 +964,28 @@ export interface ArkmeArrangementCreationSource {
   unavailableCount: number
 }
 
+/** Only explicit recording provenance can provide a return link. */
+export type ArkmeArrangementRecordingSource =
+  | { kind: 'daily-summary'; state: 'unavailable' }
+  | { kind: 'daily-summary'; state: 'ready'; dateStamp: number; tzOffsetMillis: number; summaryVersionId?: string }
+
+export interface ArkmeRecordingArrangementQuery {
+  dateStamp: number
+  tzOffsetMillis: number
+  limit?: number
+  offset?: number
+  snapshotVersion?: string
+}
+
+export type ArkmeRecordingArrangementPage =
+  | { state: 'unavailable'; items: []; total: null; hasMore: false }
+  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
+
 export interface ArkmeArrangementItem {
   recognitionState?: string
 
   creationSource?: ArkmeArrangementCreationSource
+  recordingSource?: ArkmeArrangementRecordingSource
   arrangementRef: string
   title: string
   description: string
@@ -1244,9 +1278,12 @@ export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentit
 }
 
 export interface ArkmeRecordingTarget {
+  revision?: number
   dateStamp: number
   startAtMillis: number
   segment?: ArkmeRecordingSearchIdentity
+  summary?: { versionId?: string }
+  timeline?: { versionId?: string }
 }
 
 export interface ArkmeRecordingSearchItem {
@@ -1414,6 +1451,7 @@ export interface ArkmeProviderCapabilities {
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    teamProfiles?: true
     groupSelfNickname?: true
     commonGroups?: true
     dshAccountSessions?: true
@@ -3898,6 +3936,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
   | 'team.members.list'
@@ -4013,6 +4052,7 @@ export type ArkmePluginOperation =
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'
   | 'arrangements.list'
+  | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'
@@ -4225,6 +4265,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
+  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.history'
@@ -4239,6 +4280,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'

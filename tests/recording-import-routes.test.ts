@@ -61,12 +61,14 @@ describe('recording import route', () => {
         'x-arkme-start-at': '1725000000000',
         'x-arkme-belong-user': '42',
         'x-arkme-recording-kind': '1',
+        'x-arkme-import-batch': encodeURIComponent(JSON.stringify({ batchId: 'batch-0001', itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' })),
       },
       body: Buffer.from('recording-bytes'),
     })
     expect(response.status).toBe(202)
     await expect(response.json()).resolves.toMatchObject({ ok: true, value: { importRef: 'opaque' } })
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.stringMatching(/\.upload$/), expect.objectContaining({
+      batch: { batchId: 'batch-0001', itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' },
       fileName: '会议.wav', mimeType: 'audio/wav', fileSize: 15,
       startAtMillis: 1_725_000_000_000, recordingKind: 1, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), 42)

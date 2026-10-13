@@ -1,4 +1,5 @@
 import type { ArkmeArrangementPage, ArkmeArrangementStatus } from './types.js'
+import { validRecordingSourceDay } from './arrangement-recording-source.js'
 
 export type ArkmeArrangementBoardCachePages = Partial<Record<Exclude<ArkmeArrangementStatus, 'unknown'>, ArkmeArrangementPage>>
 export interface ArkmeArrangementBoardCache { pages: ArkmeArrangementBoardCachePages }
@@ -34,7 +35,7 @@ export function parseArrangementBoardCachePages(value: unknown): ArkmeArrangemen
     const refs = new Set<string>()
     for (const rawItem of page.items as unknown[]) {
       const item = object(rawItem)
-      keys(item, ['arrangementRef', 'title', 'description', 'status', 'reminderEnabled', 'reminderState', 'createdAtMillis', 'updatedAtMillis', 'dueAtMillis', 'remindAtMillis', 'creationSource', 'recognitionState'])
+      keys(item, ['arrangementRef', 'title', 'description', 'status', 'reminderEnabled', 'reminderState', 'createdAtMillis', 'updatedAtMillis', 'dueAtMillis', 'remindAtMillis', 'creationSource', 'recognitionState', 'recordingSource'])
       if (item.status !== column || typeof item.reminderEnabled !== 'boolean' || typeof item.arrangementRef !== 'string'
         || !/^arkme-arrangement-v1\.[A-Za-z0-9_-]{43}$/.test(item.arrangementRef) || refs.has(item.arrangementRef)) fail()
       refs.add(item.arrangementRef as string)
@@ -42,6 +43,15 @@ export function parseArrangementBoardCachePages(value: unknown): ArkmeArrangemen
       integer(item.createdAtMillis); integer(item.updatedAtMillis)
       for (const key of ['dueAtMillis', 'remindAtMillis']) if (item[key] !== undefined) integer(item[key])
       if (item.recognitionState !== undefined) text(item.recognitionState, 256)
+      if (item.recordingSource !== undefined) {
+        const source = object(item.recordingSource)
+        if (source.kind !== 'daily-summary' || !['ready', 'unavailable'].includes(source.state as string)) fail()
+        keys(source, source.state === 'ready' ? ['kind', 'state', 'dateStamp', 'tzOffsetMillis', 'summaryVersionId'] : ['kind', 'state'])
+        if (source.state === 'ready') {
+          if (!validRecordingSourceDay(source.dateStamp, source.tzOffsetMillis)) fail()
+          if (source.summaryVersionId !== undefined) { text(source.summaryVersionId, 512); if (!(source.summaryVersionId as string).trim()) fail() }
+        }
+      }
       if (item.creationSource !== undefined) {
         const source = object(item.creationSource)
         keys(source, ['kind', 'items', 'unavailableCount'])

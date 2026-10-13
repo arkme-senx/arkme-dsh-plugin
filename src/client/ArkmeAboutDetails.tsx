@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ArkmeInvitationRewards } from '../types.js'
 import { callArkme } from './api.js'
 import { tr, useArkmeLocale } from './locale.js'
-import productIcon from '../../assets/branding/jiwo-about-icon.png'
+import { useArkmeBrand } from './product-brand.js'
 import wechatQr from '../../assets/branding/jiwo-official-wechat.png'
 import wechatSocialIcon from '../../assets/branding/icon_run_weixin_gongzhonghao.svg'
 import xiaohongshuIcon from '../../assets/branding/icon_run_xiaohongshu.svg'
@@ -20,7 +20,8 @@ export const aboutSocialLinks = [
 ] as const
 
 export function ArkmeAboutProduct() {
-  return <div className="arkme-about-product"><img src={`data:image/png;base64,${productIcon}`} alt={tr('即我')} /></div>
+  const brand = useArkmeBrand()
+  return <div className="arkme-about-product"><img src={brand.about} alt={brand.name} /></div>
 }
 
 export function ArkmeAboutDetails({ accountScope }: { accountScope?: string | undefined }) {

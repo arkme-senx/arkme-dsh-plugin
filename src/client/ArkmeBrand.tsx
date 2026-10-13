@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
-import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
+import { useArkmeBrand } from './product-brand.js'
+import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
@@ -39,13 +39,9 @@ function wordmarkWidth(height: number): number {
 
 /** Arkme's brand asset is one complete wordmark, so the mark slot supplies it without splitting the A. */
 export function ArkmeSidebarBrandMark({ size }: SidebarMarkProps) {
-  return <img
-    src={ARKME_WORDMARK_DATA_URL}
-    alt="Arkme"
-    width={wordmarkWidth(size)}
-    height={size}
-    style={{ ...imageStyle, width: wordmarkWidth(size), height: size, maxWidth: 'none' }}
-  />
+  const brand = useArkmeBrand()
+  const width = brand.name === '即我' ? size * 2 : wordmarkWidth(size)
+  return <ArkmeJiwoBrandMark style={{ width, height: size, maxWidth: 'none' }} />
 }
 
 /** The complete wordmark is already rendered by the adjacent mark slot. */
@@ -55,10 +51,11 @@ export function ArkmeSidebarBrandName() {
 
 /** The public new-session contract is a square mark slot beside a host-owned headline. */
 export function ArkmeHeroBrandMark({ size, className }: HeroMarkProps) {
+  const brand = useArkmeBrand()
   return (
     <img
-      src={ARKME_ICON_DATA_URL}
-      alt="Arkme"
+      src={brand.icon}
+      alt={brand.name}
       width={size}
       height={size}
       className={className}

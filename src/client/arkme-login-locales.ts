@@ -109,7 +109,7 @@ export const arkmeLoginEn: Record<ArkmeLoginLocaleKey, string> = {
   'cancellation.waiting': 'Account deletion requested',
   'story.aria': 'About Arkme',
   'story.title.first': 'Arkme,',
-  'story.title.second': 'Digital ark, true me',
+  'story.title.second': 'See Yourself,Live Smarter.',
   'story.description': 'Your experiences, connected into a digital you.',
   'brand.alt': 'Arkme',
   'account.setup': 'Finish account setup',

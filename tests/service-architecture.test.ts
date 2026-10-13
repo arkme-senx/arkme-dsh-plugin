@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'automaticCapabilities', 'updateAutomaticCapability',
+  'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
   'teamCodexPost',
@@ -44,9 +45,9 @@ const expectedPublicMethods = [
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
-  'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
+  'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
-  'recordingDay', 'recordingPlayback',
+  'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
@@ -80,7 +81,7 @@ const expectedPublicMethods = [
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendEmailBindCode', 'bindEmail', 'sendPhoneCode', 'verifyPhoneCode', 'checkPhoneUnbindEligibility', 'sendPhoneUnbindCode', 'unbindPhone', 'previewCancellation', 'submitCancellation', 'resolveCancellationLogin', 'logout', 'logoutFailureFeedback', 'cachedSnapshot', 'queryCached', 'refreshLatest',
-  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
+  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages', 'searchLocations',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
   'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
@@ -102,6 +103,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'capability-service.ts',
+  'profile-image.ts',
   'team-codex-transport.ts',
   'reaction-service.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
@@ -125,7 +127,7 @@ const expectedServiceFiles = [
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'member-event-service.ts', 'official-notification-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
   'recording-presence-writer.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
@@ -135,7 +137,7 @@ const expectedServiceFiles = [
   'speaker-directory-service.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
+  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {

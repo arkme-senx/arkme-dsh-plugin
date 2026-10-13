@@ -1,3 +1,4 @@
+import type { RecordingImportBatch } from '../recording-workflow-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeClientError } from '../sdk/index.js'
 import type { TeamAppOperation } from '../team-app-contract.js'
@@ -19,6 +20,7 @@ export interface RecordingImportUploadProgress {
 }
 
 export interface RecordingImportUploadOptions {
+  batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
   /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
@@ -64,6 +66,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
     request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
       options.onProgress?.({
         uploadedBytes: Math.max(0, Math.min(file.size, Math.trunc(event.loaded))),
@@ -151,6 +154,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.generate'
   | 'recordings.import.list'
   | 'recordings.import.history'
+  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
@@ -245,6 +249,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'search.history.create'
   | 'search.records'
   | 'search.conversations'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'

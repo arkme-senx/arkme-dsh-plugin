@@ -22,6 +22,7 @@ import './composer-draft-auth-binding.js'
 import './private-chat-actions-auth-binding.js'
 import { callArkme } from './api.js'
 import { connectArkmeLocale, tr } from './locale.js'
+import { connectDesktopBranding, type DesktopBrandingBridge } from './desktop-branding.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -178,6 +179,9 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
+  ctx.effect(() => connectDesktopBranding((window as Window & {
+    arkmeDesktop?: { branding?: DesktopBrandingBridge }
+  }).arkmeDesktop?.branding), 'dsh-arkme: desktop brand language')
 
   ctx.effect(() => {
     if (!localMigrationDesktop()) return () => undefined

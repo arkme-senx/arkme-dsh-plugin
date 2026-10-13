@@ -1,15 +1,18 @@
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
+import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
+  | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
 }`
 export type TeamSide = 'team' | 'external'
 export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
 export interface TeamChannel {
+  avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
   link: string; enabled: boolean; revision: number; canManage: boolean
   /** Older Host responses and retained snapshots use canManage when absent. */

@@ -49,7 +49,7 @@ describe('profile/settings navigation', () => {
     const nav = readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')
     expect(nav.indexOf('className="arkme-member-entry"')).toBeGreaterThan(nav.indexOf('className="arkme-profile-identity-row"'))
     const trigger = nav.slice(nav.indexOf('<button ref={profileTriggerRef}'))
-    expect(trigger).not.toContain('className="arkme-member-label"')
+    expect(trigger).toContain('className="arkme-member-label"')
     expect(trigger).toContain("navigationHint.describedBy('profile')")
     expect(nav).not.toContain('ArkmeAccountUsageDialog')
     expect(nav).not.toContain('设置声音识别')

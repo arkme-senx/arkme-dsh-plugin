@@ -15,6 +15,16 @@ const item: ArkmeTimelineItem = {
 }
 
 describe('message snapshot dialog', () => {
+  it('renders the persisted duration after details load and the captured duration while loading', () => {
+    const loading = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={{ ...item, recordDurationMillis: 3_500 }} loading />)
+    const loaded = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} detail={{
+      itemUid: item.itemUid, textContent: item.textContent, backgroundSound: 'not-recorded',
+      recordDurationMillis: 3_500, editDurationMillis: 1_500,
+    }} />)
+    expect(loading).toContain('00:03')
+    expect(loaded).toContain('00:05')
+  })
+
   it('makes a failed detail load explicit instead of presenting sparse timeline data as a snapshot', () => {
     const markup = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} loadError="完整记录读取失败，请稍后重试" />)
 
