@@ -1,7 +1,6 @@
 import { ArkmeScanGuide } from './ArkmeScanGuide.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import type { ChangeEvent } from 'react'
-import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
 } from './arkme-login-locales.js'
@@ -420,7 +419,7 @@ const loginStyles = `
     background: var(--arkme-login-subtle);
   }
   .dsh-arkme-login-wordmark { width: 106px; height: 27px; display: block; object-fit: contain; object-position: left center; }
-  body[data-ds-dark-theme] .dsh-arkme-login-wordmark { filter: invert(1) hue-rotate(180deg); }
+
   /* The translated block is a stacking context: inherit its surface so the
      original white-backed light mark can blend without a white rectangle. */
   .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); background: inherit; }
@@ -554,7 +553,7 @@ const loginStyles = `
   }
   body[data-ds-dark-theme] .dsh-arkme-login-page::after { background: var(--arkme-login-border); }
   body[data-ds-dark-theme] .dsh-arkme-login-story { background: var(--dsw-alias-bg-layer-1); }
-  body[data-ds-dark-theme] .dsh-arkme-login-wordmark { filter: invert(1) hue-rotate(180deg); }
+
   body[data-ds-dark-theme] .dsh-arkme-login-definition h1 { color: var(--arkme-login-text); }
   body[data-ds-dark-theme] .dsh-arkme-login-description,
   body[data-ds-dark-theme] .dsh-arkme-login-brand > p,
@@ -710,7 +709,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     <span className="dsh-arkme-login-glow-top" aria-hidden />
     <span className="dsh-arkme-login-glow-bottom" aria-hidden />
     <section className="dsh-arkme-login-story" aria-label={t('story.aria')}>
-      <img className="dsh-arkme-login-wordmark" src={ARKME_WORDMARK_DATA_URL} alt={t('brand.alt')} />
+      <ArkmeJiwoBrandMark className="dsh-arkme-login-wordmark" wordmarkHeight={27} />
       <div className="dsh-arkme-login-definition">
         <h1>
           <ArkmeJiwoBrandMark label={t('brand.alt')} className="dsh-arkme-login-story-mark"

@@ -52,7 +52,7 @@ describe('ArkmeFooterAction', () => {
   it('shows the total Chat unread count on the right', () => {
     const html = renderFooter({ authenticated: true, unreadCount: 12 })
 
-    expect(html).toContain('Arkme · 12 条未读')
+    expect(html).toContain('即我 · 12 条未读')
     expect(html).toContain('>12</span>')
   })
 
@@ -64,7 +64,7 @@ describe('ArkmeFooterAction', () => {
   it('does not expose a plugin update marker alongside Chat unread', () => {
     const html = renderFooter({ authenticated: true, unreadCount: 12, updateStatus: availableUpdate })
 
-    expect(html).toContain('Arkme · 12 条未读')
+    expect(html).toContain('即我 · 12 条未读')
     expect(html).not.toContain('插件有可用更新')
     expect(html).not.toContain('data-arkme-update-level')
     expect(html).toContain('>12</span>')
