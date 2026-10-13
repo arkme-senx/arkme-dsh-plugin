@@ -5,7 +5,7 @@ import { expressionLabel } from './reaction-expression.js'
 import type { ReactionPreviewEvent } from './reaction-preview-store.js'
 
 /** Explicit cursor pages; never silently presents a capped history as complete. */
-export function useReactionHistory(scope: string | undefined, start?: number, end?: number) {
+export function useReactionHistory(scope: string | undefined, start?: number, end?: number, refreshVersion = 0) {
   const [page, setPage] = useState<ReactionHistoryPage>()
   const loadedFor = useRef<string>()
   const queryKey = JSON.stringify([scope, start, end])
@@ -18,13 +18,27 @@ export function useReactionHistory(scope: string | undefined, start?: number, en
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller
     setBusy(true); setError('')
     try {
-      const result = await callArkme<ReactionHistoryPage>('reactions', { action: 'history', accountKey: scope, start_at: start, end_at: end, limit: 100,
+      let result = await callArkme<ReactionHistoryPage>('reactions', { action: 'history', accountKey: scope, start_at: start, end_at: end, limit: 100,
         ...(more && visiblePage?.has_more ? { before_at: visiblePage.before_at, before_id: visiblePage.before_id } : {}) }, controller.signal)
+      const wanted = more ? 0 : visiblePage?.items.length ?? 0
+      const cursors = new Set<string>()
+      while (!controller.signal.aborted && result.has_more && result.items.length < wanted) {
+        const cursor = JSON.stringify([result.before_at, result.before_id])
+        if (cursors.has(cursor)) throw Error('表态记录分页已变化，请重试')
+        cursors.add(cursor)
+        const next = await callArkme<ReactionHistoryPage>('reactions', { action: 'history', accountKey: scope, start_at: start, end_at: end, limit: 100,
+          before_at: result.before_at, before_id: result.before_id }, controller.signal)
+        result = { ...next, items: [...result.items, ...next.items] }
+      }
       if (!controller.signal.aborted) { loadedFor.current = queryKey; setPage({ ...result, items: more ? [...(visiblePage?.items ?? []), ...result.items] : result.items }) }
     } catch (error) { if (!controller.signal.aborted) { setPage(undefined); setError(error instanceof Error ? error.message : '表态记录加载失败') } }
     finally { if (!controller.signal.aborted) setBusy(false) }
   }
-  useEffect(() => { setPage(undefined); void load(); return () => abort.current?.abort() }, [scope, start, end])
+  useEffect(() => {
+    if (loadedFor.current !== queryKey) setPage(undefined)
+    void load()
+    return () => abort.current?.abort()
+  }, [scope, start, end, refreshVersion])
   useEffect(() => {
     if (typeof window === 'undefined') return
     const refresh = () => { setPage(undefined); void load() }

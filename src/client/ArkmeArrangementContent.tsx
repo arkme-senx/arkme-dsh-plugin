@@ -3,8 +3,9 @@ import type { ArkmeArrangementDetail, ArkmeArrangementItem } from '../types.js'
 import { callArkme } from './api.js'
 import { tr } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
+import { ArkmeArrangementRecordingSource } from './ArkmeArrangementRecordingSource.js'
 
-export function ArkmeArrangementContent({ item, expanded }: { item: ArkmeArrangementItem; expanded: boolean }) {
+export function ArkmeArrangementContent({ item, expanded, onSourceNavigate }: { item: ArkmeArrangementItem; expanded: boolean; onSourceNavigate?(): void }) {
   const { arrangementRef } = item
   const [detail, setDetail] = useState<ArkmeArrangementDetail>()
   const [loading, setLoading] = useState(false)
@@ -26,10 +27,12 @@ export function ArkmeArrangementContent({ item, expanded }: { item: ArkmeArrange
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [arrangementRef, expanded, attempt])
-  const source = detail?.creationSource ?? item.creationSource
+  const currentDetail = detail?.arrangementRef === arrangementRef ? detail : undefined
+  const source = currentDetail?.creationSource ?? item.creationSource
   const hasSource = !!source?.items.length || !!source?.unavailableCount
   return <div className="arkme-arrangement-content" draggable={false}
     onDragStart={event => { event.preventDefault(); event.stopPropagation() }}>
+    <ArkmeArrangementRecordingSource source={currentDetail?.recordingSource ?? item.recordingSource} {...(onSourceNavigate ? { onNavigate: onSourceNavigate } : {})} />
     {expanded && <div id={regionId} className="arkme-arrangement-content-detail" role="region" aria-label={tr('创建原文')}>
       <strong>{tr('创建原文')}</strong>
       {source?.items.map((entry, index) => <div className="arkme-arrangement-source-item" key={index}>

@@ -45,7 +45,7 @@ const expectedPublicMethods = [
   'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
   'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
-  'recordingDay', 'recordingPlayback',
+  'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
@@ -79,7 +79,7 @@ const expectedPublicMethods = [
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendEmailBindCode', 'bindEmail', 'sendPhoneCode', 'verifyPhoneCode', 'checkPhoneUnbindEligibility', 'sendPhoneUnbindCode', 'unbindPhone', 'previewCancellation', 'submitCancellation', 'resolveCancellationLogin', 'logout', 'logoutFailureFeedback', 'cachedSnapshot', 'queryCached', 'refreshLatest',
-  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
+  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages', 'searchLocations',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
   'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
@@ -133,7 +133,7 @@ const expectedServiceFiles = [
   'speaker-directory-service.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
+  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {

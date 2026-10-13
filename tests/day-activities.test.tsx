@@ -66,6 +66,28 @@ describe('day activity read model', () => {
 })
 
 describe('day timeline integration boundary', () => {
+  it('retains loaded pages and expanded content while an automatic refresh rebuilds the same prefix', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValueOnce(page([entry('a')], {hasMore:true,nextCursor:'p2'}))
+      .mockResolvedValueOnce(page([entry('b')]))
+    await mount(source)
+    await act(async () => { button('加载更多').props.onClick() })
+    await act(async () => { activityButton('a').props.onClick() })
+    const pending = deferred<DayActivityPage>()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page([entry('b', {preview:'新第二页'})], {snapshotId:'v2'}))
+    source.loadDetail.mockResolvedValue(detail('a',{snapshotId:'v2'}))
+    await act(async () => { renderer!.update(<ArkmeDayTimeline query={query} reader={source} refreshVersion={1} onQueryChange={() => {}} />) })
+    expect(renderer!.root.findAllByProps({'data-activity-id':'b'})).toHaveLength(1)
+    expect(text()).toContain('详情文本')
+    expect(text()).not.toContain('正在加载当天活动…')
+    await act(async () => { pending.resolve(page([entry('a', {preview:'新第一页'})], {snapshotId:'v2',hasMore:true,nextCursor:'new-p2'})) })
+    expect(source.loadDay).toHaveBeenCalledTimes(4)
+    expect(source.loadDay.mock.calls[3]?.[1]).toMatchObject({cursor:'new-p2',snapshotId:'v2'})
+    expect(text()).toContain('新第一页'); expect(text()).toContain('新第二页')
+    expect(activityButton('a').props['aria-expanded']).toBe(true)
+    expect(text()).toContain('详情文本')
+  })
   it('renders selected original excerpts and compact metadata without repeating a source name', async () => {
     const source = reader()
     source.loadDay.mockResolvedValue(page([entry('group', { kind: 'group_chat', participant: undefined,
@@ -165,7 +187,7 @@ describe('day timeline integration boundary', () => {
     expect(text()).toContain('已加载来源中暂无匹配内容')
     expect(text()).not.toContain('这一天暂无匹配内容')
     source.loadDay.mockRejectedValueOnce(new Error('网络不可用'))
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '刷新当天活动' }).props.onClick() })
+    await act(async () => { renderer!.update(<ArkmeDayTimeline query={query} reader={source} refreshVersion={1} onQueryChange={() => {}} />) })
     expect(text()).toContain('网络不可用')
     expect(text()).not.toContain('暂无匹配内容')
     source.loadDay.mockResolvedValueOnce(page([]))

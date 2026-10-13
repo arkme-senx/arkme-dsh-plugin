@@ -156,6 +156,7 @@ import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
+import { ArkmeArrangementSurface } from './ArkmeArrangementSurface.js'
 import { ArkmeRecognizedSpeakersSurface } from './ArkmeRecognizedSpeakersSurface.js'
 import { ArkmeDirectRecordingStatus, useDirectRecordingOwner } from './recordings/ArkmeDirectRecording.js'
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
@@ -7591,6 +7592,7 @@ export function ArkmeSurface({
   )
   const showMessageAvatars = arkmeSourceShowsMessageAvatars(source)
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+    : ui.mode === 'arrangements' ? tr('安排')
     : ui.mode === 'recognized-speakers' ? '已识别说话人'
     : ui.mode === 'calls' ? '通话'
     : ui.mode === 'world' ? '世界'
@@ -7603,7 +7605,7 @@ export function ArkmeSurface({
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
+    && (ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
@@ -8627,6 +8629,9 @@ export function ArkmeSurface({
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? null
           : ui.mode === 'notifications' ? <ArkmeNotificationCenter />
+          : ui.mode === 'arrangements' ? <ArkmeArrangementSurface
+            accountScope={auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''}
+          />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface
             active={active}
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}

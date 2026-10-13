@@ -941,6 +941,18 @@ export interface ArkmeAiLetterUnread {
 export type ArkmeArrangementStatus = 'identified' | 'following' | 'completed' | 'unknown'
 export type ArkmeArrangementListStatus = Exclude<ArkmeArrangementStatus, 'unknown'> | 'all'
 
+export interface ArkmeArrangementDateContext {
+  /** Calendar fallback only. Explicit dates in the user's text take precedence. */
+  defaultDate: string
+  timezone: string
+}
+
+export interface ArkmeArrangementCreateInput {
+  requestId: string
+  texts: string[]
+  dateContext?: ArkmeArrangementDateContext
+}
+
 /** Browser-safe Arrangement projection. Stable owner UIDs stay inside the Provider. */
 export interface ArkmeArrangementCreationSource {
   kind: 'quick-note' | 'input' | 'none'
@@ -948,10 +960,28 @@ export interface ArkmeArrangementCreationSource {
   unavailableCount: number
 }
 
+/** Only explicit recording provenance can provide a return link. */
+export type ArkmeArrangementRecordingSource =
+  | { kind: 'daily-summary'; state: 'unavailable' }
+  | { kind: 'daily-summary'; state: 'ready'; dateStamp: number; tzOffsetMillis: number; summaryVersionId?: string }
+
+export interface ArkmeRecordingArrangementQuery {
+  dateStamp: number
+  tzOffsetMillis: number
+  limit?: number
+  offset?: number
+  snapshotVersion?: string
+}
+
+export type ArkmeRecordingArrangementPage =
+  | { state: 'unavailable'; items: []; total: null; hasMore: false }
+  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
+
 export interface ArkmeArrangementItem {
   recognitionState?: string
 
   creationSource?: ArkmeArrangementCreationSource
+  recordingSource?: ArkmeArrangementRecordingSource
   arrangementRef: string
   title: string
   description: string
@@ -1244,9 +1274,11 @@ export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentit
 }
 
 export interface ArkmeRecordingTarget {
+  revision?: number
   dateStamp: number
   startAtMillis: number
   segment?: ArkmeRecordingSearchIdentity
+  summary?: { versionId?: string }
 }
 
 export interface ArkmeRecordingSearchItem {
@@ -4010,6 +4042,7 @@ export type ArkmePluginOperation =
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'
   | 'arrangements.list'
+  | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'
@@ -4236,6 +4269,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'

@@ -45,7 +45,7 @@ export interface ArkmeUiState {
   chatRevision: number
   recordRevision: number
   topicDirectoryRevision: number
-  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness' | 'codex' | 'team'
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
@@ -123,6 +123,7 @@ export class ArkmeUiController {
   private conversationTargetRevision = 0
   private notificationActivationRevision = 0
   private searchTargetRevision = 0
+  private recordingTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
   /** Navigation and presentation state, stable across projection-only invalidations. */
@@ -220,6 +221,12 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'calls' })
   }
 
+  showArrangements(): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'arrangements' })
+  }
+
   showCalendar(): void {
     this.leaveContacts()
     if (this.state.calendarOpen === true) {
@@ -279,6 +286,12 @@ export class ArkmeUiController {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(segment === undefined ? {} : { segment }) } })
+  }
+
+  showRecordingSummaryTarget(dateStamp: number, versionId?: string): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, summary: { ...(versionId ? { versionId } : {}) } } })
   }
 
   showSearch(): void {
@@ -537,6 +550,8 @@ export class ArkmeUiController {
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && JSON.stringify(next.recordingTarget?.segment) === JSON.stringify(this.state.recordingTarget?.segment)
+      && JSON.stringify(next.recordingTarget?.summary) === JSON.stringify(this.state.recordingTarget?.summary)
+      && next.recordingTarget?.revision === this.state.recordingTarget?.revision
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
       && next.extensionShareRef === this.state.extensionShareRef

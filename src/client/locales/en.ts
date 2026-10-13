@@ -1,5 +1,26 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
+识别安排|Detected plans
+查看当天录音识别的安排|View plans detected from this day's recordings
+当天录音识别的安排|Plans from this day's recordings
+由当天录音总结识别，与安排板块保持同步。|Detected from this day's recording summary and kept in sync with Plans.
+{count} 项|{count} plans
+共 {count} 项|{count} plans in total
+已识别 {count} 项|{count} plans detected so far
+识别安排加载失败，请刷新重试。|Couldn't load detected plans. Refresh to retry.
+当天录音与安排的关联暂不可用，已有安排仍可在安排板块查看。|Recording-to-plan links are temporarily unavailable. Existing plans are still available in Plans.
+录音安排仍在整理，当前数量可能不完整。|Recording plans are still being processed. The count may be incomplete.
+当天录音尚未识别出安排|No plans detected from this day's recordings yet
+前往安排|Go to Plans
+来自录音 · 来源暂不可定位|From a recording · source location unavailable
+查看来源录音总结|View the source recording summary
+来源：{date}录音|Source: recording on {date}
+来源总结版本暂不可用，当前显示该日可用内容。|The source summary version is unavailable. Showing available content for that day.
+默认日期：{date}|Default date: {date}
+未写日期时使用此日期，内容中的明确日期优先。|Used when no date is specified. Explicit dates in your text take priority.
+当前服务暂不支持日历默认日期，尚未提交安排；输入已保留。|Calendar default dates are not supported by the service yet. No plan was submitted; your input is saved.
+安排已保存，正在识别内容和日期…|Plan saved. Interpreting its content and date…
 统计尚未启用|Statistics not enabled
 录音转写统计尚未启用|Recording transcription statistics are not enabled yet
 来源明细|Source breakdown
@@ -13,6 +34,10 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 减免|Waived
 长录音|Long recordings
 全天候录音|All-day recordings
+开始录音|Start recording
+正在准备录音…|Preparing recording…
+正在保存录音…|Saving recording…
+正在上传录音…|Uploading recording…
 文件上传|File uploads
 还有 {v0} 段录音待结算，当前用量仅含已结算部分|{v0} recording segments await settlement. Usage includes settled segments only.
 录音按人声时长计量，录音静音时长不计量|Recordings are measured by speech duration; silence is not counted.
@@ -44,6 +69,18 @@ AI 对话|AI conversation
 当天已识别|Identified on this day
 今天到期|Due today
 当天到期|Due on this day
+当天安排|Arrangements for this day
+当天暂无安排|No arrangements for this day
+未来安排|Upcoming arrangements
+刷新当天安排|Refresh arrangements for this day
+安排时间|Arrangement time
+安排内容|Arrangement details
+日期|Date
+时间|Time
+创建安排|Create arrangement
+请选择有效的安排时间|Choose a valid arrangement time
+安排内容最多500字|Arrangement details can contain up to 500 characters
+输入想做的事…|Enter what you want to do…
 正在加载当天安排…|Loading arrangements for this day…
 当天正在更新…|Updating…
 更新失败，已保留当前内容|Update failed. Current content has been kept.
@@ -64,6 +101,7 @@ AI识别中…|AI recognition in progress…
 当天创建|Created on this day
 更新识别结果|Update recognition result
 安排已保存，未完成AI识别|Saved; AI recognition did not complete
+安排已保存，未完成AI识别，可在安排模块查看原始内容。|Saved, but AI recognition did not complete. View the original content in Plans.
 安排已保存，AI识别尚未结束，可稍后更新结果。|Saved. AI recognition is still running; you can update the result later.
 安排已保存，暂未获取识别结果，请稍后重试。|Saved. Recognition results are unavailable; try again later.
 安排已不可访问，请刷新确认。|Arrangement is unavailable. Refresh to check.
@@ -1044,6 +1082,15 @@ Bot 接入方式|Bot connection method
 下个月|Next month
 跳转月份|Go to month
 跳转年月|Go to month and year
+选择年月|Choose month and year
+年月选择|Month and year
+关闭年月选择|Close month and year picker
+转写操作|Transcript actions
+总结操作|Summary actions
+时间轴操作|Timeline actions
+录音状态|Recording status
+取消多选|Cancel selection
+正在准备转写对比|Preparing transcript comparison
 调整日历高度|Resize calendar
 拖动调整高度，方向键也可调整|Drag or use arrow keys to resize
 打开快记详情|Open note details

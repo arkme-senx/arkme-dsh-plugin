@@ -180,6 +180,9 @@ import type {
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeArrangementCreateInput,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -2510,6 +2513,8 @@ export class ArkmeService {
 
   async searchTagRecords(options: { normalizedTag: string; limit: number; cursorSendAt?: number; cursorRecordUid?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> { return await this.search.searchTagRecords(options) }
 
+  async searchLocations(query: import('./location-search.js').LocationQuery, signal?: AbortSignal) { return await this.search.searchLocations(query, signal) }
+
   async searchHistory(limit = 10): Promise<ArkmeSearchHistoryResult> {
     return await this.search.searchHistory(limit)
   }
@@ -2621,19 +2626,23 @@ export class ArkmeService {
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
   async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
 
-  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal) {
+  async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {
     return this.arrangement.createArrangement(input, signal)
   }
   async arrangementRecognition(refs: string[], signal?: AbortSignal) {
     return this.arrangement.arrangementRecognition(refs, signal)
   }
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; dueStartAtMillis?: number; dueEndAtMillis?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.arrangement.listArrangements(options)
   }
 
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */
+  async recordingDayArrangements(options: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.arrangement.recordingDayArrangements(options, signal)
+  }
+
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
     return await this.arrangement.reorderArrangement(input, signal)
   }
