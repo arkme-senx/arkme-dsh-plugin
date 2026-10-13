@@ -33,7 +33,29 @@ const redesignCss = readUiSource(
 )
 
 describe('Arkme product navigation', () => {
-  it('uses a 60px icon rail with 44px controls and a 36px footer avatar', () => {
+  it('opens arrangements directly after Calendar and clears the calendar overlay', () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
+    arkmeUi.showConversations()
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<ArkmeProductNavigation compact={false} />) })
+    try {
+      const buttons = renderer.root.findAllByType('button')
+      const calendar = buttons.findIndex(button => button.props['aria-label'] === '日历')
+      expect(buttons[calendar + 1]?.props['aria-label']).toBe('安排')
+      act(() => arkmeUi.showCalendar())
+      act(() => renderer.root.findByProps({ 'aria-label': '安排' }).props.onClick())
+      expect(arkmeUi.getViewSnapshot().mode).toBe('arrangements')
+      expect(arkmeUi.getViewSnapshot().calendarOpen).toBeUndefined()
+      expect(renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('安排')
+      act(() => renderer.root.findByProps({ 'aria-label': '录音' }).props.onClick())
+      expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
+    } finally {
+      act(() => renderer.unmount())
+      arkmeUi.showConversations()
+    }
+  })
+
+  it('uses a 60px icon rail with 44px navigation controls and a permanent membership label above the 36px footer avatar', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
     arkmeUi.showConversations()
     let renderer!: ReactTestRenderer
@@ -48,7 +70,7 @@ describe('Arkme product navigation', () => {
       expect(version.props.style).toMatchObject({ fontSize: 10, lineHeight: '13px', color: arkmeTheme.tertiary })
       const profile = renderer.root.findByProps({ 'aria-label': '个人资料' })
       const avatar = profile.findByProps({ 'data-arkme-avatar': true })
-      expect(profile.findAllByProps({ className: 'arkme-member-label' })).toHaveLength(0)
+      expect(profile.findAllByProps({ className: 'arkme-member-label' })).toHaveLength(1)
       expect(avatar.props.style.width).toBe(36)
       expect(avatar.props.style.height).toBe(36)
       const active = renderer.root.findByProps({ 'aria-current': 'page' })
@@ -69,7 +91,7 @@ describe('Arkme product navigation', () => {
     try {
       expect(mode()).toBe('conversation')
       for (const activate of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(),
-        () => arkmeUi.showRecordings(), () => arkmeUi.showWorld(),
+        () => arkmeUi.showRecordings(), () => arkmeUi.showArrangements(), () => arkmeUi.showWorld(),
         () => arkmeUi.showCalendar(),
         () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showRecognizedSpeakers(), () => arkmeUi.showContactAdd()]) {
         act(activate)

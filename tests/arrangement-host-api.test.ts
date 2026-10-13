@@ -3,6 +3,33 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('Arrangement Host operations', () => {
+  it.each([{dateContext:null}, {dateContext:[]}, {dateContext:'2026-10-20'}, {dueAtMillis:1792458000000}])('rejects malformed or legacy creation dates before any write: %j', async params => {
+    const createArrangement = vi.fn()
+    await expect(dispatchArkmeHostOperation({createArrangement} as unknown as ArkmeService, 'arrangements.create', {requestId:'test',texts:['开会'],...params})).rejects.toMatchObject({code:'arrangement-create-invalid'})
+    expect(createArrangement).not.toHaveBeenCalled()
+  })
+  it('forwards cancellation and only allowed date context fields', async () => {
+    const createArrangement = vi.fn(async () => ({items:[]}))
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation({createArrangement} as unknown as ArkmeService, 'arrangements.create', {
+      requestId:'context', texts:['开会'], userId:999, dateContext:{defaultDate:'2026-10-20',timezone:'Asia/Shanghai',userId:999},
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(createArrangement).toHaveBeenCalledWith({requestId:'context',texts:['开会'],dateContext:{defaultDate:'2026-10-20',timezone:'Asia/Shanghai'}},signal)
+  })
+  it('uses a dedicated source-day operation without trusting browser owner IDs', async () => {
+    const recordingDayArrangements = vi.fn(async (options: unknown) => options)
+    await dispatchArkmeHostOperation({ recordingDayArrangements } as unknown as ArkmeService, 'arrangements.recording-day', { dateStamp: 1791475200000, tzOffsetMillis: 28800000, limit: 900, offset: 20, snapshotVersion: 'snapshot', userId: 99 })
+    expect(recordingDayArrangements).toHaveBeenCalledWith({ dateStamp: 1791475200000, tzOffsetMillis: 28800000, limit: 50, offset: 20, snapshotVersion: 'snapshot' }, undefined)
+  })
+  it('carries explicit arrangement dates through the host boundary', async () => {
+    const createArrangement = vi.fn(async (input: unknown) => input)
+    const listArrangements = vi.fn(async (input: unknown) => input)
+    const service = { createArrangement, listArrangements } as unknown as ArkmeService
+    await dispatchArkmeHostOperation(service, 'arrangements.create', { requestId:'dated', texts:['开会'], dateContext:{defaultDate:'2026-10-20',timezone:'Asia/Shanghai'} })
+    expect(createArrangement).toHaveBeenCalledWith({ requestId:'dated', texts:['开会'], dateContext:{defaultDate:'2026-10-20',timezone:'Asia/Shanghai'} }, undefined)
+    await dispatchArkmeHostOperation(service, 'arrangements.list', { dueStartAtMillis:1000, dueEndAtMillis:2000 })
+    expect(listArrangements).toHaveBeenCalledWith({ status:'all', limit:20, offset:0, dueStartAtMillis:1000, dueEndAtMillis:2000 })
+  })
   it('dispatches only bounded list inputs and an opaque detail reference', async () => {
     const listArrangements = vi.fn(async (options: unknown) => options)
     const arrangementDetail = vi.fn(async (arrangementRef: string) => ({ arrangementRef }))
@@ -94,7 +121,7 @@ it('dispatches versioned board list and reorder with opaque anchors only', async
 it('keeps creation identity and recognition queries on the opaque host contract', async () => {
  const service={createArrangement:vi.fn(async()=>({items:[]})),arrangementRecognition:vi.fn(async()=>({items:[]}))}
  await dispatchArkmeHostOperation(service as never,'arrangements.create',{requestId:'create-1',texts:['开会'],userId:99,topicUid:'not-allowed',uid:'not-allowed'})
- expect(service.createArrangement).toHaveBeenCalledWith({requestId:'create-1',texts:['开会']})
+ expect(service.createArrangement).toHaveBeenCalledWith({requestId:'create-1',texts:['开会']},undefined)
  await dispatchArkmeHostOperation(service as never,'arrangements.recognition',{arrangementRefs:['opaque'],uids:['not-allowed']})
  expect(service.arrangementRecognition).toHaveBeenCalledWith(['opaque'])
 })

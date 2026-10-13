@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSPrope
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
+import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -44,7 +45,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
@@ -55,6 +56,7 @@ const items: NavigationItem[] = [
   { id: 'calls', get label() { return tr("通话") }, icon: PhoneCall },
   { id: 'recordings', get label() { return tr("录音") }, icon: Waveform },
   { id: 'calendar', get label() { return tr("日历") }, icon: CalendarBlank },
+  { id: 'arrangements', get label() { return tr("安排") }, icon: ListChecks },
   { id: 'world', get label() { return tr("世界") }, icon: GlobeHemisphereWest },
   { id: 'extensions', get label() { return tr("市集") }, icon: PuzzlePiece },
 ]
@@ -201,6 +203,7 @@ export function ArkmeProductNavigation({
   const activeId = locked ? 'conversations'
     : ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
+    : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calls' ? 'calls'
@@ -237,6 +240,7 @@ export function ArkmeProductNavigation({
     else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
+    else if (id === 'arrangements') arkmeUi.showArrangements()
     else arkmeUi.showConversations()
   }
 
@@ -375,6 +379,7 @@ export function ArkmeProductNavigation({
           onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
           onBlur={navigationHint.hide}
           onClick={() => { navigationHint.hide(); setProfileOpen(value => !value) }}>
+          <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label={tr("当前用户头像")} />
         </button>
         {memberScope && memberUserId !== undefined && membershipOpenScope === memberScope && <ArkmeMembershipDialog key={memberScope} userId={memberUserId} state={membership.state} onRefresh={membership.refresh} returnFocusRef={profileTriggerRef} onClose={() => { setMembershipOpenScope(undefined) }} />}

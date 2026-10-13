@@ -8,7 +8,8 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type React
 import { ArkmeDayRecap, DayRecordingReview } from './ArkmeDayRecap.js'
 import type { DayRecapGenerator } from './day-recap-input.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
 import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
@@ -35,13 +36,13 @@ export interface ArkmeDayTimelineProps {
   onQueryChange(query: DayActivityQuery): void
   onOpenSource?(sourceRef: string): void
   onOpenReactionSource?(message: ReactionOriginalMessage, expression?: ReactionExpression): void
-  onClose?(): void
+  refreshVersion?: number
   renderRecord?(record: DayActivityDetailPage['items'][number]): ReactNode
   renderCallDetail?(call: NonNullable<DayActivityDetailPage['call']>): ReactNode
-  onRefresh?(): void
   onDetailChange?(): void
   arrangementsActive?: boolean
   onArrangementsChange?(active: boolean): void
+  onAddArrangement?(): void
   arrangementsContent?: ReactNode
   onOpenLocations?(location?: ArkmeRecordLocationObservation): void
   generateRecap?: DayRecapGenerator
@@ -52,11 +53,11 @@ export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, onClose, renderRecord, renderCallDetail, onRefresh, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent }: ArkmeDayTimelineProps) {
+function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, refreshVersion = 0, renderRecord, renderCallDetail, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent, onAddArrangement }: ArkmeDayTimelineProps) {
   useArkmeLocale()
-  const data = useDayActivities(query, reader)
+  const data = useDayActivities(query, reader, refreshVersion)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
-  const reactionData = useReactionHistory(auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined, data.page?.dayStartMillis, data.page?.dayEndMillis)
+  const reactionData = useReactionHistory(auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined, data.page?.dayStartMillis, data.page?.dayEndMillis, refreshVersion)
   const reactionEvents = reactionData.events
   const [selectedId, setSelectedId] = useState<string>()
   const [locationRequestedId, setLocationRequestedId] = useState<string>()
@@ -141,20 +142,18 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
 
   return <section ref={root} className="arkme-day-timeline" aria-label={tr("我的一天")}>
     <header className="arkme-day-heading">
-      <div><h2>{tr("我的一天")}</h2><p>{query.bucketDate} · {query.timezone}</p></div>
+      <div><h2>{tr("我的一天")}</h2><p>{query.bucketDate}<ArkmeCalendarLunarDate date={query.bucketDate} /> · {query.timezone}</p></div>
       <div className="arkme-day-heading-actions">
+        {onAddArrangement && <button type="button" className="arkme-day-source" onClick={onAddArrangement}><Plus size={15} aria-hidden /> {tr('添加安排')}</button>}
         {onOpenLocations && <button type="button" className="arkme-day-source" onClick={() => onOpenLocations()}><MapPin size={15} aria-hidden /> {tr("当天位置")}</button>}
         {!arrangementsActive && (!reader?.capabilities || reader.capabilities.modes.length > 1) && <div className="arkme-day-modes" aria-label={tr("显示方式")}>
           <button type="button" aria-pressed={query.mode === 'activities'} onClick={() => change({ mode: 'activities' })}>{tr("活动片段")}</button>
           <button type="button" aria-pressed={query.mode === 'records'} onClick={() => change({ mode: 'records', includeBackground: true })}>{tr("原始明细")}</button>
         </div>}
-        <button type="button" aria-label={tr("刷新当天活动")} disabled={!reader || data.loading} className="arkme-day-icon"
-          onClick={() => { setSelectedId(undefined); setLocationRequestedId(undefined); setLocations({ values: {} }); setRestrictedIds(new Set()); data.refresh(); void reactionData.load(); onRefresh?.() }}><ArrowClockwise size={18} aria-hidden /></button>
-        {onClose && <button type="button" className="arkme-day-icon" aria-label={tr("关闭我的一天")} onClick={onClose}><X size={18} aria-hidden /></button>}
       </div>
     </header>
 
-    {!arrangementsActive && reactionData.busy && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
+    {!arrangementsActive && reactionData.busy && !reactionData.events.length && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
     {!arrangementsActive && reactionData.error && <p role="alert">{reactionData.error} <button type="button" onClick={() => void reactionData.load()}>重试表态记录</button></p>}
     {!arrangementsActive && reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
     {!arrangementsActive && data.page && <>

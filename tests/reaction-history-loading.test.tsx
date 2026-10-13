@@ -5,12 +5,26 @@ const remote = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: remote.call }))
 let state!: ReturnType<typeof useReactionHistory>
 let view: ReactTestRenderer | undefined
-function Harness({ scope = 'test:7', start = 1, end = 100 }: { scope?: string; start?: number; end?: number }) {
-  state = useReactionHistory(scope, start, end)
+function Harness({ scope = 'test:7', start = 1, end = 100, refreshVersion = 0 }: { scope?: string; start?: number; end?: number; refreshVersion?: number }) {
+  state = useReactionHistory(scope, start, end, refreshVersion)
   return null
 }
 const row = (id: string, at = 20) => ({ event_uid: id, target_id: id, expression: { text: '收到' }, active: true, at, restricted: false, source_kind: 'group_chat', sourceName: '项目群', authorName: '张三', text: '原文' })
 afterEach(() => { act(() => view?.unmount()); view = undefined; remote.call.mockReset(); vi.unstubAllGlobals() })
+it('retains history during automatic refresh and rebuilds the already loaded range', async () => {
+  remote.call.mockResolvedValueOnce({items:[row('a')],has_more:true,before_at:20,before_id:'a'})
+    .mockResolvedValueOnce({items:[row('b',10)],has_more:false})
+  await act(async()=>{view=create(<Harness/>)})
+  await act(async()=>{await state.load(true)})
+  let finish!:(value:unknown)=>void
+  remote.call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
+    .mockResolvedValueOnce({items:[row('b',10)],has_more:false})
+  await act(async()=>view!.update(<Harness refreshVersion={1}/>))
+  expect(state.events.map(item=>item.id)).toEqual(['a','b'])
+  await act(async()=>finish({items:[row('new')],has_more:true,before_at:20,before_id:'new'}))
+  expect(state.events.map(item=>item.id)).toEqual(['new','b'])
+  expect(remote.call).toHaveBeenCalledTimes(4)
+})
 it('appends cursor pages and refresh replaces the previous snapshot', async () => {
   remote.call.mockResolvedValueOnce({ items: [row('a')], has_more: true, before_at: 20, before_id: 'a' })
     .mockResolvedValueOnce({ items: [row('b', 10)], has_more: false })
