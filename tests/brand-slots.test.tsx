@@ -9,7 +9,8 @@ describe('Arkme public brand slots', () => {
     const hero = renderToStaticMarkup(<ArkmeHeroBrandMark size={40} className="hero-mark" />)
     const name = renderToStaticMarkup(<ArkmeSidebarBrandName />)
 
-    expect(sidebar).toContain('width="97"')
+    expect(sidebar).toContain('width:48px')
+    expect(sidebar).toContain('alt="即我"')
     expect(sidebar).toContain('data:image/png;base64,')
     expect(hero).toContain('width="40"')
     expect(hero).toContain('hero-mark')

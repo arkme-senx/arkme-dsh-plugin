@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { connectArkmeLocale } from '../src/client/locale.js'
+const selectLocale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })()
+beforeEach(() => { selectLocale('zh') })
 import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/client/ArkmeLogin.js'
 import { ArkmeJiwoBrandMark } from '../src/client/ArkmeJiwoBrandMark.js'
 import {
@@ -231,6 +234,7 @@ describe('ArkmeLogin', () => {
   })
 
   it('renders the complete login surface in English without Chinese copy', () => {
+    selectLocale('en')
     const html = renderLogin({ t: english, mode: 'phone', phoneBindingRequired: true })
 
     expect(html).toContain('Finish signing in')
@@ -287,7 +291,7 @@ describe('ArkmeLogin', () => {
     expect(darkCss).toMatch(/\.dsh-arkme-login-definition h1 \{[^}]*color: var\(--arkme-login-text\)/)
     expect(darkCss).toContain('.dsh-arkme-login-description,')
     expect(darkCss).toContain('.dsh-arkme-login-agreement')
-    expect(darkCss).toMatch(/\.dsh-arkme-login-wordmark \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/)
+    expect(renderToStaticMarkup(<ArkmeJiwoBrandMark />).replaceAll('&quot;', '"')).toContain('[data-brand-language="en"] { filter: invert(1) hue-rotate(180deg); }')
     expect(darkCss).not.toContain('prefers-color-scheme')
   })
 

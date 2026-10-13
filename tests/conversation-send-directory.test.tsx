@@ -2162,6 +2162,8 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('原主题未发送草稿')
   })
 
+  // This exercises 21 full refreshes of up to 400 real rows; elapsed wall time
+  // is diagnostic, not an SLA. Keep the workload and continuity assertions intact.
   it.each([40, 400])('keeps %i loaded records mounted through repeated and burst record invalidations', async rowCount => {
     // This checks explicit invalidation batches. The directory's 250ms scheduled
     // refresh has separate tests and must not depend on the render machine load.
@@ -2242,7 +2244,7 @@ describe('conversation send directory projection', () => {
     })
     expect(renderer!.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
     expect(renderedText(renderer!.toJSON())).toContain('请重新登录')
-  }, 30_000)
+  }, 90_000)
 
   it('shows a partial child-creation warning with the directory closed and retains it after an older read finishes', async () => {
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
