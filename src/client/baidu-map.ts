@@ -60,14 +60,17 @@ export function loadBaiduMaps(key: string): Promise<BaiduMaps> {
 
 /** Record/device observations are WGS84, matching the mobile location contract.
  * Use Baidu's converter, in batches of at most ten; never plot unconverted GPS points.
- * The caller owns the cache so closing a day/account discards location data.
+ * The caller owns the cache and its account/lifetime boundary. At most two batches run at once.
  */
 export async function convertBaiduPoints(sdk: BaiduMaps, points: readonly BaiduPoint[], cache: Map<string, BaiduPoint>, signal: AbortSignal): Promise<BaiduPoint[]> {
   const key = (point: BaiduPoint) => `${point.lng},${point.lat}`
   const pending = [...new Map(points.filter(point => !cache.has(key(point))).map(point => [key(point), point])).values()]
-  for (let offset = 0; offset < pending.length; offset += 10) {
+  let offset = 0
+  await Promise.all(Array.from({ length: Math.min(2, Math.ceil(pending.length / 10)) }, async () => {
+    while (offset < pending.length) {
     signal.throwIfAborted()
     const batch = pending.slice(offset, offset + 10)
+    offset += 10
     const converted = await new Promise<BaiduPoint[]>((resolve, reject) => {
       let settled = false
       const finish = (value?: BaiduPoint[], error?: unknown) => {
@@ -88,7 +91,8 @@ export async function convertBaiduPoints(sdk: BaiduMaps, points: readonly BaiduP
     })
     signal.throwIfAborted()
     batch.forEach((point, index) => cache.set(key(point), converted[index]!))
-  }
+    }
+  }))
   signal.throwIfAborted()
   return points.map(point => cache.get(key(point))!)
 }

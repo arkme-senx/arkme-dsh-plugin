@@ -33,6 +33,16 @@
 .arkme-data-settings button:disabled { opacity: .5; cursor: default; }
 .arkme-data-settings button:focus-visible, .arkme-data-settings a:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 3px; }
 .arkme-data-hint, .arkme-data-settings small { color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-data-open-platform { margin-top: 20px; padding: 18px 20px; border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 12px; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-data-open-platform-label { margin: 0 0 6px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; }
+.arkme-data-open-platform .arkme-data-hint { margin: 0; }
+.arkme-data-open-platform-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; }
+.arkme-data-open-platform-actions > :is(a, button) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 6px 10px; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 8px; background: var(--dsw-alias-bg-base, #fff); color: inherit; font: inherit; line-height: inherit; text-decoration: none; }
+.arkme-data-open-platform-actions > button { background: transparent; border-color: transparent; }
+.arkme-data-open-platform-actions > :is(a, button):hover:not(:disabled) { background: var(--dsw-alias-bg-layer-1, #ebedef); }
+.arkme-data-open-platform-actions svg { flex: none; }
+.arkme-data-open-platform .arkme-data-error { margin: 12px 0 0; }
+.arkme-data-open-platform .arkme-data-error a { color: inherit; text-underline-offset: 3px; }
 .arkme-data-entries { border: 1px solid var(--dsw-alias-border-l2, #e1e3e6); border-radius: 12px; overflow: hidden; margin-top: 20px; }
 .arkme-data-entries button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 17px 16px; background: transparent; color: inherit; border: 0; border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); text-align: left; }
 .arkme-data-entries button:last-child { border-bottom: 0; }

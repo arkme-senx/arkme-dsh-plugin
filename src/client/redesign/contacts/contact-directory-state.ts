@@ -10,7 +10,6 @@ import { contactDirectoryLetter } from '../../../contact-directory-presentation.
 export const CONTACT_DIRECTORY_SECTION_ORDER = [
   'groups',
   'bots',
-  'unmarked-speakers',
   'teams',
   'contacts',
 ] as const satisfies readonly ArkmeDirectorySectionKind[]

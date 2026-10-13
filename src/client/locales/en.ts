@@ -35,6 +35,43 @@ AI 自动分析|Automatic AI analysis
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
 持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
+模型请求失败，请稍后重试或选择其他模型。|The model request failed. Try again later or choose another model.
+模型生成超时，请重试或选择其他模型。|Generation timed out. Try again or choose another model.
+模型生成已中断，请重试。|Generation was interrupted. Try again.
+模型输出不完整，请重试或选择其他模型。|The model returned an incomplete result. Try again or choose another model.
+当天录音内容超出本次处理范围，请联系开发团队。|This day's recordings exceed the processing limit. Contact the development team.
+生成内容未通过完整性检查，请重试。|The generated content failed the completeness check. Try again.
+生成未完成，请重试或选择其他模型。|Generation did not complete. Try again or choose another model.
+正在读取模型…|Loading models…
+选择模型并重试|Choose a model and retry
+暂无可用生成模型，请稍后重试。|No generation models are available. Try again later.
+位置来源|Location sources
+位置日期|Location date
+查看所有位置|View all locations
+全部日期|All dates
+返回 {date}|Back to {date}
+当前日期显示个人记录的设备位置|This date shows device locations from your own records.
+返回位置|Back to locations
+定位到当前位置|Go to current location
+当前位置|Current location
+正在获取当前位置…|Getting current location…
+请在系统或浏览器设置中允许位置访问后重试|Allow location access in your system or browser settings, then try again.
+请开启系统定位服务后重试|Turn on system location services, then try again.
+请完成位置授权后重试|Allow location access, then try again.
+当前环境不支持定位，请在支持定位的客户端或浏览器中打开|Location is unavailable here. Open in a client or browser that supports location.
+获取当前位置超时，请重试|Getting your location timed out. Try again.
+暂时无法定位到当前位置，请重试|Could not get your current location. Try again.
+百度地图加载失败，可选择下方地点查看记录|Baidu Maps could not load. Select a location below to view its records.
+可查看的地点|Available locations
+位置来源筛选|Filter location sources
+筛选位置来源|Filter location sources
+关闭地点记录|Close location records
+该地点的记录|Records at this location
+{count} 条位置记录|{count} location records
+快记的位置|Locations in my notes
+我发送的位置|Locations I sent
+发给我的位置|Locations sent to me
+群聊中的位置|Locations in group chats
 历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
 识别安排|Detected plans
 查看当天录音识别的安排|View plans detected from this day's recordings
@@ -442,6 +479,13 @@ DSH 内测群|DSH beta group
 登录后查看数据管理|Sign in to manage your data
 ‹ 数据管理|‹ Data management
 管理、迁入和保留属于你的记录。|Manage, import, and preserve your records.
+开放平台|Open platform
+让其他 AI 使用你的即我数据|Connect other AI assistants to your Arkme data
+将记录、录音转写、对话和安排接入其他 AI 助手或自己的应用。|Use your notes, recording transcripts, conversations, and arrangements with other AI assistants or your own apps.
+前往开放平台|Open platform
+复制 Agent 接入指南|Copy Agent setup guide
+复制失败，请打开指南后复制链接。|Could not copy. Open the guide to copy its link.
+查看接入指南|View setup guide
 最近删除|Recently deleted
 导入数据|Import data
 导出数据|Export data
@@ -480,6 +524,10 @@ AI 小结|AI recap
 活动片段|Activity timeline
 原始明细|Original records
 查看范围|Scope
+部分来源已加载|Some sources loaded
+当前来源已加载|Current sources loaded
+{v0}尚未完整覆盖；有更多页面时可继续加载。|{v0} is not fully covered yet; load more pages when available.
+部分数据尚未完整同步。|Some data has not finished syncing.
 当前仅显示部分来源。|Only some sources are shown.
 概览只统计当前筛选下已加载、可查看的内容，不是全天总量。|This overview counts accessible, loaded content matching your filters, not the full day's totals.
 地点|Location
