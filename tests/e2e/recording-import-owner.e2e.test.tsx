@@ -41,7 +41,10 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
   }
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('File', NodeFile); vi.stubGlobal('Blob', NodeBlob)
-  vi.stubGlobal('fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => nativeFetch(new URL(typeof input === 'string' || input instanceof URL ? input : input.url, origin), init))
+  vi.stubGlobal('fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const headers = new Headers(init?.headers); headers.set('origin', origin) // Same-origin browser POST header.
+    return nativeFetch(new URL(typeof input === 'string' || input instanceof URL ? input : input.url, origin), { ...init, headers })
+  })
   // JSDOM supplies the DOM; this XHR transport sends the untouched file and
   // production upload headers to the actual streaming Host route.
   vi.stubGlobal('XMLHttpRequest', class {
@@ -124,6 +127,26 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
       await wait(() => container.querySelector('[data-arkme-recording-timeline-event-header]')?.textContent?.includes('本地链路验收') === true)
     }
     expect(calls.filter(p => p === '/api/v1/summary/get-by-ids').length).toBeGreaterThan(0)
+    // Follow the notification into its original day while the display day is in
+    // another timezone; speaker writes and their returned refs must retain it.
+    const { callArkme } = await import('../../src/client/api.js')
+    const day = analysis.days[0]!
+    const window = { date: day.date, dateStamp: day.dateStamp, endStamp: day.endStamp, timeZone: analysis.timeZone }
+    const displayDate = Date.parse(`${day.date}T00:00:00+09:00`)
+    let recordingDay = await callArkme<import('../../src/types.js').ArkmeRecordingDay>('recordings.day', { dateStamp: displayDate, window })
+    expect(recordingDay.transcript.items.length).toBeGreaterThan(0)
+    for (const scope of ['item', 'speaker'] as const) {
+      const result = await callArkme<import('../../src/types.js').ArkmeRecordingSpeakerMutationResult>('recordings.speaker.assign-item', {
+        itemRef: recordingDay.transcript.items[0]!.itemRef, newSpeakerName: `链路核验${scope}`, scope,
+      })
+      expect(result.affectedCount).toBeGreaterThan(0)
+      expect(result.day.dateStamp).toBe(displayDate)
+      expect(result.day.transcript.items[0]!.speakerLabel).toBe(`链路核验${scope}`)
+      recordingDay = result.day
+    }
+    expect(calls).toContain('/api/v1/audio/assign-asr-item-to-spk')
+    expect(calls).toContain('/api/v1/audio/batch-change-flag-session-spk')
+
   } finally {
     await act(async () => { root.unmount() }); service.dispose(); container.remove(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllGlobals(); await rm(state, { recursive: true, force: true }); await writeFile(join(directory!, 'stop'), 'done', { mode: 0o600 })
   }

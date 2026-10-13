@@ -107,6 +107,7 @@ export interface RecordingServiceDependencies {
 
 interface RecordingItemRefPayload {
   version: 1
+  window?: ArkmeRecordingWindow
   viewerUserId: number
   dateStamp: number
   sessionId: string
@@ -673,7 +674,7 @@ export class RecordingService {
         { lane: 'write', bypassCache: true },
       )
     }
-    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal) }
+    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal, item.window) }
   }
 
   async recordingImportUserId(): Promise<number> {
@@ -1662,6 +1663,7 @@ export class RecordingService {
           session.userId,
           recordingItemRefKey,
           speakerRefKey,
+          window,
         ), recordingBelongsToViewer: transcriptResult.value.ownSessionIds.has(item.sessionId) })),
       }
     } else {
@@ -1693,11 +1695,13 @@ export class RecordingService {
     viewerUserId: number,
     refKey: Buffer,
     speakerRefKey: Buffer,
+    window?: ArkmeRecordingWindow,
   ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId,
       dateStamp,
+      ...(window ? { window } : {}),
       sessionId: item.sessionId,
       childId: item.childId,
       asrItemIndex: item.asrItemIndex,
@@ -1770,7 +1774,8 @@ export class RecordingService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
-    const current = await this.recordingTranscriptWithSession(item.dateStamp, session, signal)
+    // Revalidate against the same civil day that produced the opaque item ref.
+    const current = (await this.readRecordingTranscripts(item.dateStamp, session, signal, item.window)).section('system')
     const currentItems = current.items
     const currentItem = currentItems.find(candidate => candidate.childId === item.childId
       && candidate.asrItemIndex === item.asrItemIndex && candidate.transcriptSource === item.transcriptSource)
@@ -1793,10 +1798,13 @@ export class RecordingService {
 
   private async openRecordingItemRef(itemRef: string): Promise<RecordingItemRefPayload> {
     const raw = await this.openRecordingRef('arkme-recording-item-v1', itemRef)
+    const window = raw.window as ArkmeRecordingWindow | undefined
+    this.validateRecordingWindow(window)
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId: numberValue(raw.viewerUserId),
       dateStamp: numberValue(raw.dateStamp),
+      ...(window ? { window } : {}),
       sessionId: stringValue(raw.sessionId).trim(),
       childId: stringValue(raw.childId).trim(),
       asrItemIndex: Math.trunc(numberValue(raw.asrItemIndex)),
