@@ -1,17 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
-功能与额度说明|Feature and allowance details
-移动端「探索 → 个人档案」：查看自动整理的个人档案。|Mobile Explore → Personal profile: view your automatically organized profile.
-移动端快记列表或详情：查看阿森对这条快记的回应。|Mobile note list or details: view Asen’s response to the note.
-移动端聊天页面：查看仅自己可见的阿森想法。|Mobile chats: view Asen’s thoughts, visible only to you.
-左侧「安排」：查看自动识别出的安排。|Plans in the left navigation: view automatically identified plans.
-移动端「探索 → 目标」：查看自动整理的目标和进展。|Mobile Explore → Goals: view automatically organized goals and progress.
+额度规则|Allowance rules
+手机「探索 → 个人档案」|Mobile: Explore → Personal profile
+手机快记列表或详情|Mobile: note list or details
+手机聊天页面|Mobile: chat page
+左侧「安排」|Plans in the left navigation
+手机「探索 → 目标」|Mobile: Explore → Goals
 开启后在后台自动运行，消耗 AI 额度。|Enabled features run automatically in the background and use your AI allowance.
 额度使用说明|AI allowance usage
-按实际用量扣除 AI 额度。分析正常完成但没有生成新内容，也会消耗额度。|AI allowance is deducted based on actual usage. Completed analysis uses allowance even when no new content is generated.
-额度不足时不再开始新的分析。系统异常后的重试不会重复扣除额度。|New analysis pauses when your allowance is insufficient. Retries after system errors do not deduct allowance again.
-关闭后不再开始新的分析，已开始的分析仍可能完成并消耗额度；已有内容保留。|Turning a feature off prevents new analysis. Analysis already started may finish and use allowance. Existing content is kept.
-所有功能默认关闭，设置在各设备间同步。|All features are off by default. Settings sync across your devices.
+按实际用量扣额度，无新结果也会扣除。|Allowance is deducted by actual usage, even without a new result.
+额度不足暂停；系统异常重试不重复扣除。|Analysis pauses when allowance is insufficient. System retries do not deduct twice.
+关闭后保留已有内容，已开始的分析仍可能扣额度。|Existing content is kept when disabled. Analysis already started may still use allowance.
 AI 自动分析|Automatic AI analysis
 开启功能|Enable feature
 自动整理个人档案|Automatically organize personal profile

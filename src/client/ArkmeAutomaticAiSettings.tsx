@@ -5,11 +5,11 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 
 const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
-  personal_profile: '移动端「探索 → 个人档案」：查看自动整理的个人档案。',
-  record_thought: '移动端快记列表或详情：查看阿森对这条快记的回应。',
-  chat_thought: '移动端聊天页面：查看仅自己可见的阿森想法。',
-  arrangement_recognition: '左侧「安排」：查看自动识别出的安排。',
-  goal_insight: '移动端「探索 → 目标」：查看自动整理的目标和进展。',
+  personal_profile: '手机「探索 → 个人档案」',
+  record_thought: '手机快记列表或详情',
+  chat_thought: '手机聊天页面',
+  arrangement_recognition: '左侧「安排」',
+  goal_insight: '手机「探索 → 目标」',
 }
 
 export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: string }) {
@@ -79,13 +79,12 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
       <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={tr(setting.title)} aria-checked={setting.enabled} disabled={loading || saving}
         onClick={() => setting.enabled ? void save(setting, false) : setConfirm(setting)}><span aria-hidden="true" /></button>
     </div>)}
-    <details className="arkme-automatic-ai-help"><summary>{tr('功能与额度说明')}</summary>
-      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title)}</strong><br />{tr(capabilityLocations[setting.key])}</p>)}
-      <p><strong>{tr('额度使用说明')}</strong></p>
-      <p>{tr('按实际用量扣除 AI 额度。分析正常完成但没有生成新内容，也会消耗额度。')}</p>
-      <p>{tr('额度不足时不再开始新的分析。系统异常后的重试不会重复扣除额度。')}</p>
-      <p>{tr('关闭后不再开始新的分析，已开始的分析仍可能完成并消耗额度；已有内容保留。')}</p>
-      <p>{tr('所有功能默认关闭，设置在各设备间同步。')}</p>
+    <details className="arkme-automatic-ai-help"><summary>{tr('使用说明')}</summary>
+      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title)}</strong>：{tr(capabilityLocations[setting.key])}</p>)}
+      <p><strong>{tr('额度规则')}</strong></p>
+      <p>{tr('按实际用量扣额度，无新结果也会扣除。')}</p>
+      <p>{tr('额度不足暂停；系统异常重试不重复扣除。')}</p>
+      <p>{tr('关闭后保留已有内容，已开始的分析仍可能扣额度。')}</p>
     </details>
     {retryProfile && profile && !loading && <button type="button" disabled={saving} onClick={() => { void save(profile, true) }}>{tr('个人档案已授权，重试启动分析')}</button>}
     {confirm && loadedScope === accountScope && <ArkmeConfirmDialog titleId={titleId} title={tr('开启功能')} busy={saving} onClose={() => setConfirm(undefined)}
