@@ -66,3 +66,8 @@ it('reads the exact authorized version without using a date list or fallback', a
   f.post.mockResolvedValue({ audio_summary_ls: [{ id: 'another', kind: 2, status: 2, answer: '旧正文' }] })
   expect(await f.service.request({ operation: 'version', kind: 'summary', versionId })).toEqual({ version: null })
 })
+
+it.each([['UTC', '1970-01-01', 0, 86400000], ['Asia/Shanghai', '1970-01-01', -28800000, 57600000]])('preserves the supported Unix epoch civil window in %s', (zone, date, start, end) => {
+ const item = { ...notice, time_zone: zone, days: [{ ...notice.days[0], date, date_stamp: start, end_stamp: end }] }
+ expect(recordingWorkflowPage({ ...page, items: [item], latest: item }).items[0]!.days[0]!.dateStamp).toBe(start)
+})

@@ -25,8 +25,8 @@ export function recordingWorkflowNotice(value: unknown): RecordingWorkflowNotice
     const day = objectValue(value), date = text(day.date)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00Z`))
       || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) invalid()
-    const dateStamp = count(day.date_stamp), endStamp = count(day.end_stamp)
-    if (!dateStamp || endStamp <= dateStamp || endStamp - dateStamp > 26 * 3600_000) invalid()
+    const dateStamp = day.date_stamp, endStamp = count(day.end_stamp)
+    if (typeof dateStamp !== 'number' || !Number.isSafeInteger(dateStamp) || dateStamp < -26 * 3600_000 || endStamp <= 0 || endStamp <= dateStamp || endStamp - dateStamp > 26 * 3600_000) invalid()
     return { date, dateStamp, endStamp, summary: projection(day.summary), timeline: projection(day.timeline) }
   })
   if (new Set(days.map(day => day.date)).size !== days.length) invalid()

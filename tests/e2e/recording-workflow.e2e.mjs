@@ -66,8 +66,8 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
     await page.getByRole('listitem', { name: '录音：录音整理未全部完成', exact: true }).click()
     await page.getByRole('button', { name: '查看总结', exact: true }).click()
     try { await page.getByText('跨时区的精确版本正文', { exact: true }).waitFor({ timeout: 10000 }) } catch (error) {
-      await page.screenshot({ path: '/tmp/c20261013-recording-e2e-failure.png' })
-      await writeFile('/tmp/c20261013-recording-e2e-failure.txt', (await page.locator('body').innerText()) + '\n' + JSON.stringify(calls.filter(call => call.path?.includes('summary') || call.path?.includes('one-day-trans'))))
+      await page.screenshot({ path: join(root, 'failure.png') })
+      await writeFile(join(root, 'failure.txt'), (await page.locator('body').innerText()) + '\n' + JSON.stringify(calls.filter(call => call.path?.includes('summary') || call.path?.includes('one-day-trans'))))
       throw error
     }
     expect(calls.some(call => call.path === '/api/v1/summary/get-by-ids' && call.body.ids?.[0] === id)).toBe(true)

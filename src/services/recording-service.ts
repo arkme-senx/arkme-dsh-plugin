@@ -1533,6 +1533,7 @@ export class RecordingService {
       '/api/v1/summary/create',
       {
         date_stamp: dayStart.getTime(),
+        ...(window ? { time_zone: window.timeZone, day_end_stamp: window.endStamp } : {}),
         tz_offset: window ? recordingBatchOffset(window.dateStamp, window.timeZone) : -dayStart.getTimezoneOffset() * 60_000,
         from_stamp: firstItem.startAtMillis,
         to_stamp: lastItem.endAtMillis,
@@ -1616,7 +1617,7 @@ export class RecordingService {
   private validateRecordingWindow(window?: ArkmeRecordingWindow): void {
     if (!window) return
     try {
-      if (!Number.isSafeInteger(window.dateStamp) || !Number.isSafeInteger(window.endStamp) || window.dateStamp <= 0 || window.endStamp <= window.dateStamp || window.endStamp - window.dateStamp > 26 * 3600_000) throw new Error()
+      if (!Number.isSafeInteger(window.dateStamp) || !Number.isSafeInteger(window.endStamp) || window.dateStamp < -26 * 3600_000 || window.endStamp <= 0 || window.endStamp <= window.dateStamp || window.endStamp - window.dateStamp > 26 * 3600_000) throw new Error()
       const civil = new Date(window.dateStamp + recordingBatchOffset(window.dateStamp, window.timeZone))
       const end = new Date(window.endStamp + recordingBatchOffset(window.endStamp, window.timeZone))
       if (civil.toISOString() !== `${window.date}T00:00:00.000Z` || end.getTime() - civil.getTime() !== 86400_000) throw new Error()
@@ -1625,7 +1626,7 @@ export class RecordingService {
 
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingDay> {
     this.validateRecordingWindow(window)
-    if (window && (!Number.isSafeInteger(dateStamp) || dateStamp <= 0)) throw new ArkmePluginError('recording-date-invalid', '录音日期无效', false, 400)
+    if (window && (!Number.isSafeInteger(dateStamp) || dateStamp < -26 * 3600_000)) throw new ArkmePluginError('recording-date-invalid', '录音日期无效', false, 400)
     return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal, window)
   }
 

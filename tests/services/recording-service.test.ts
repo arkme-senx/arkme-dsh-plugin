@@ -357,7 +357,10 @@ describe('RecordingService', () => {
       route_key: 'dashscope/qwen3-max',
       kind: 1,
     })
-    if (window) expect(create?.body.transcripts).toContain('2026-03-08 15:00:00')
+    if (window) {
+      expect(create?.body.transcripts).toContain('2026-03-08 15:00:00')
+      expect(create?.body).toMatchObject({ time_zone: window.timeZone, day_end_stamp: window.endStamp })
+    }
     expect(create?.body.transcripts).toContain('说话人：我')
     expect(create?.body.transcripts).toContain('其中，我是我自己')
     expect(JSON.stringify(create?.body)).not.toContain('session-secret')
