@@ -1,3 +1,4 @@
+import { recordingImportBatchID } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
@@ -986,10 +987,10 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     let batchId: string | undefined
     try {
       const capability = await callArkme<{ supported: boolean }>('recordings.workflow', { operation: 'capabilities' }, controller.signal)
-      if (capability?.supported === true) batchId = crypto.randomUUID()
+      if (capability?.supported === true) batchId = recordingImportBatchID()
     } catch { /* Upload remains usable when automatic follow-up is unavailable. */ }
     if (controller.signal.aborted) { finishSubmission(); return }
-    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
+    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。批次续传与自动整理期限为 30 天，通知保留 90 天；已有录音和整理结果不受影响。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
     const succeeded = new Set<string>()
     for (const [itemIndex, { row, start }] of prepared.entries()) {
       if (controller.signal.aborted) break

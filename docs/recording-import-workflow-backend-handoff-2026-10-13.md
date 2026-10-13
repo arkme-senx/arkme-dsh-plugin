@@ -18,8 +18,8 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 {
   "create_request_uid": "019a0000-0000-7000-8000-000000000001",
   "import_batch": {
-    "contract_version": 1,
-    "batch_id": "batch-example-001",
+    "contract_version": 2,
+    "batch_id": "01a00000-0000-7000-8000-000000000001",
     "item_index": 0,
     "item_count": 12,
     "time_zone": "Asia/Shanghai",
@@ -30,12 +30,13 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 }
 ```
 
-- 每个新任务持久化一个 UUIDv7，丢失响应/重启后重放同一身份；不靠文件名扫描恢复新批次。
-- 成员最多 10000，index 从 0 起。固定数量、时区、文件身份、归属及创建信息冲突明确拒绝；同请求返回原 Session。
+- batch_id 使用点击导入时生成的 UUIDv7，其时间确定 30 天恢复截止时间；示例仅展示格式，实际值由 SDK `recordingImportBatchID()` 或 UI 生成。服务端拒绝未来超过 5 分钟或已经过期的身份，不限制录音 start_at 的历史日期。
+- 每个新任务持久化一个独立的 create_request_uid UUIDv7，丢失响应/重启后重放同一身份；不靠文件名扫描恢复新批次。
+- 成员最多 10000，index 从 0 起。固定数量、时区、文件身份、归属及创建信息冲突明确拒绝；同请求在 30 天窗口内返回原 Session。
 - Session 创建与批次成员绑定同一个 Mongo 事务。不增加独立成员集合，不复制 Child 状态。
 - 本地任务只在 batch/index/count/timezone 和录音分类相符时复用；新批次不会偷用旧批次身份。
 - 无 batch 的旧端、实时/设备录音保留原路径。尚未上传字节不可能在关机后继续上传。
-- 最后一个新成员接纳后 24 小时仍未完整结束，给出软提醒并降低检查频率；不自动取消，后续恢复继续推进。明确失败可以更早提醒。
+- 最后一个新成员接纳后 24 小时仍未完整结束，给出软提醒并降低检查频率；30 天窗口内恢复可继续推进。明确失败可以更早提醒。
 
 ## 通知 HTTP 合同
 
@@ -43,16 +44,16 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 
 | 后缀 | 请求 | 用途 |
 | --- | --- | --- |
-| capabilities | `{"contract_version":1}` | 返回 `supported` 与服务端 `contract_version:1`；仅版本相等才支持 |
-| notifications/query | `{"contract_version":1,"cursor":"","limit":50}` | 账号级通知页和统计 |
-| notifications/read | `{"contract_version":1,"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
-| notifications/read | `{"contract_version":1,"through_sequence":"60"}` | 只标记已观察序号及之前的通知 |
+| capabilities | `{"contract_version":2}` | 返回 `supported` 与服务端 `contract_version:2`；仅版本相等才支持 |
+| notifications/query | `{"contract_version":2,"cursor":"","limit":50}` | 账号级通知页和统计 |
+| notifications/read | `{"contract_version":2,"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
+| notifications/read | `{"contract_version":2,"read_through":"0123456789abcdef01234567:60"}` | 只标记已观察序号及之前的通知 |
 
-query data 包含 `contract_version,supported,items,total,unread_count,latest,through_sequence,next_cursor`。序号是服务端十进制整数字符串，分页 cursor 为不透明编码。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 through_sequence 互斥。列表/统计/水位在一致快照中读取。
+query data 包含 `contract_version,supported,items,total,unread_count,latest,read_through,next_cursor`。sequence 是服务端十进制整数字符串；read_through 是绑定头通知 ID 与观察序号的不透明凭据，调用者原样回传，不能自行拼装。分页 cursor 同时绑定该锚点。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 read_through 互斥。列表/统计/水位在一致快照中读取。
 
-notice 字段：`id,sequence,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped。时间戳均毫秒，未读 read_at=0。
+notice 字段：`id,sequence,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped/expired。时间戳均毫秒，未读 read_at=0。
 
-days 的每项包含 `date,date_stamp,end_stamp,summary,timeline`。日期为固定 IANA 时区的自然日 `[date_stamp,end_stamp)`，DST 可为 23/25 小时；最多 366 天。summary/timeline 各含 `state` 与可选 `version_id`，completed 必须有可读的精确 ID。处理通知允许 pending；生成通知仅含终态。
+days 的每项包含 `date,date_stamp,end_stamp,summary,timeline`。日期为固定 IANA 时区的自然日 `[date_stamp,end_stamp)`，DST 可为 23/25 小时；最多 366 天。summary/timeline 各含 `state` 与可选 `version_id`，completed 必须有可读的精确 ID。处理通知允许 pending；生成通知仅含终态。expired 表示批次自动协调窗口结束，不代表 underlying summary 版本写为 failed。
 
 文件数量始终表示文件处理数量，不能拿生成版本数冒充。普通说明不包含密钥或录音全文。权限校验覆盖列表、已读及版本读取。
 
@@ -70,10 +71,28 @@ Host `RecordingWorkflowService` 是 UI、SDK 与 Tools 的统一 owner。SDK 提
 
 通知携带原时区/日界。详情按既有 `/api/v1/summary/get-by-ids` 的 `ids` 数组查询精确版本，不依赖浏览器本地日期列表；版本缺失明确显示不可用。日查询、轮询及手动再生成保持通知原日界。手动 `/api/v1/summary/create` 随通知传 `time_zone` 与 `day_end_stamp`，Audio 校验完整自然日、由该时区推导 offset，并为时间轴冻结同一窗口的 system 证据；未携带这两个字段的原手动入口保持已有合同。零时间戳附近的日界允许因时区为负数，不改变历史录音起点下限。原通知存储的账号切换保护、分页和轮询继续使用。
 
-能力与查询双向校验 `contract_version:1`：缺失/不同版本或接口 404/501 均不启用新批次，查询显示不支持；鉴权错误和服务故障仍报错。后端对批次接纳和已读写入也独立验证版本，版本不符不写入。已进入批次的任务在专用创建接口不可用时保留失败/重试语义，绝不降级普通创建；版本判定不是用户配置。旧服务明确不支持时仍可普通上传；不存在本地伪造的完成通知，也没有新增灰度配置。通知轮询不是秒级推送。
+能力与查询双向校验 `contract_version:2`：缺失/不同版本或接口 404/501 均不启用新批次，查询显示不支持；鉴权错误和服务故障仍报错。后端对批次接纳和已读写入也独立验证版本，版本不符不写入。已进入批次的任务在专用创建接口不可用时保留失败/重试语义，绝不降级普通创建；版本判定不是用户配置。旧服务明确不支持时仍可普通上传；不存在本地伪造的完成通知，也没有新增灰度配置。通知轮询不是秒级推送。
 
 ## 存储与发布
 
-仅新增 `recording_import_batch` 和 `recording_import_notification` 两个集合，分别承载固定成员/恢复锚点与录音导入结果通知。后者按批次阶段唯一，保存通知未读状态和版本引用，既不承载 IM 消息，也不是通用通知平台。集合名称由尚未上线草案的 `recording_notification` 收窄而来，不增加第三个集合，不为未上线草案加入迁移或双写。五个显式索引覆盖批次唯一性/到期扫描、阶段唯一性/序号唯一性/未读扫描；audio_summary 增加自动 identity 的 partial unique 索引。没有历史回填，没有 Session 新索引，没有独立结果表或 counter 集合。
+仅新增 `recording_import_batch` 和 `recording_import_notification` 两个集合，分别承载固定成员/恢复锚点与录音导入结果通知。后者按批次阶段唯一，保存通知未读状态和版本引用，既不承载 IM 消息，也不是通用通知平台。集合名称由尚未上线草案的 `recording_notification` 收窄而来，不增加第三个集合，不为未上线草案加入迁移或双写。六个显式索引覆盖批次唯一性/到期扫描、阶段唯一性/序号唯一性/未读扫描和通知 expires_at TTL 清理；audio_summary 增加自动 identity 的 partial unique 索引。没有历史回填，没有 Session 新索引，没有独立结果表或 counter 集合。
 
 发布前核对目标 Mongo 副本集事务、预建索引成本和共享资源容量，再完整部署 API、cron、summary worker；插件是否匹配由代码自动协商，发布人员无需手工判断字段版本。回滚保留新增数据与历史版本；旧服务不会继续推进新批次。生产发布与真实付费模型验收尚未执行。
+
+## 辅助数据生命周期（最终合同 v2）
+
+本次选择 30 天批次恢复窗口、90 天通知保留期，这是明确的产品规则，不是现网既有保留策略或录音存储期限，也没有新增可配置开关。
+
+| 数据 | 保留与收口 | 仍然可用的能力 |
+| --- | --- | --- |
+| 进行中的批次 | 自提交时间起最多 30 天；缺项/故障在窗口内恢复 | 已上传录音由原 Audio 主链继续处理 |
+| 已完成批次 | 阶段结果与通知事务提交后立即移除 members/days 大字段，仅保留身份及期限至 30 天 | 同一创建请求可返回原 Session，不会新建成员或模型任务 |
+| 30 天到期但未结束的批次 | 同一事务写入 expired 通知并删除批次；使用已有 due_batches 索引、cron 和 revision fence | 已完成日期仍有结果链接；未完成项显示自动整理已到期，按日期手动整理 |
+| 录音导入通知 | 自最后实质内容更新保留 90 天，已读/轮询不延长；expires_at 为 BSON Date，TTL 索引物理清理 | 列表、最新项及未读数到期立即排除；不等待 TTL 后台删除 |
+| 录音、转写、总结和时间轴 | 不受上述辅助数据清理影响 | 沿用原录音页面及历史版本读取 |
+
+到期不会取消或删除已经交给 Audio/summary owner 的任务；已上传完的客户端 finalizing 仍可完成确认。过期批次不能新接纳或重新续传；只有未上传文件需要重新导入，避免重复导入已有录音。
+
+通知全读在同一个 Mongo snapshot 中确认锚点存在后按观察序号写入；锚点失效则不写。即使 TTL 清空历史记录后数值序号重新分配，旧请求也不能消费新通知。旧分页锚点返回无效游标，UI 自动重新请求首页；常规刷新替换旧列表，避免已清理通知永久滞留本机。选中已读继续匹配 ID + sequence。
+
+API 常量和 Host 为 v2，公开 SDK capability 为 recordingWorkflowV2，不保留尚未上线 v1 草案的适配层。批次不新增 TTL 索引，复用现有调度索引；本次仅多一个通知 TTL 索引，整个功能累计七个显式新增索引（批次 2、通知 4、audio_summary 1）。无第三个集合、counter、额外清理服务或生产配置。

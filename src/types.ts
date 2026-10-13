@@ -1459,7 +1459,7 @@ export interface ArkmeProviderCapabilities {
     remoteRecordSearch?: true
     contactDirectoryReads?: true
     speakerPresence?: true
-    recordingWorkflowV1?: true
+    recordingWorkflowV2?: true
     unifiedChatTimeline?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */

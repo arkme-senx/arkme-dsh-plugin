@@ -1,5 +1,6 @@
 import {
   RecordingImportContractError,
+  assertRecordingImportBatchActive,
   advanceRecordingImportJob,
   isRecordingImportDuplicateRejection,
   type RecordingImportJob,
@@ -66,6 +67,7 @@ export class RecordingImportCoordinator {
     let job = await this.requiredJob(userId, jobId)
     try {
       this.throwIfAborted(signal)
+      if (job.phase === 'prepared' || job.phase === 'uploading') assertRecordingImportBatchActive(job.batch, this.nowMillis())
       if (job.phase === 'prepared') job = await this.prepareOwnerUpload(job, signal)
       if (job.phase === 'uploading') job = await this.upload(job, signal)
       if (job.phase === 'finalizing') {

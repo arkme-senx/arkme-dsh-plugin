@@ -23,15 +23,15 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
   const id = '0123456789abcdef01234567'
   const dateStamp = Date.parse('2026-10-09T00:00:00-04:00'), endStamp = Date.parse('2026-10-10T00:00:00-04:00')
   const notice = { id, sequence: '1', batch_id: 'batch-e2e-001', time_zone: 'America/New_York', stage: 'analysis', state: 'partial', file_count: 2, completed_count: 2, failed_count: 0, created_at: Date.now(), updated_at: Date.now(), read_at: 0, message: '部分整理完成', days: [{ date: '2026-10-09', date_stamp: dateStamp, end_stamp: endStamp, summary: { state: 'completed', version_id: id }, timeline: { state: 'failed' } }] }
-  let scaffold, browser, failVersionRead = false
+  let scaffold, browser, failVersionRead = false, noticesExpired = false
   const server = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
     const buffers = []; for await (const chunk of req) buffers.push(chunk)
     const body = JSON.parse(Buffer.concat(buffers).toString() || '{}'); calls.push({ path: req.url, body })
     let data = { items: [], users: [], has_more: false }
     if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: 'isolated-access', refresh_token: 'isolated-refresh' }
     else if (req.url === '/api/v1/auth/get-user-info') data = { user_id: 10001, nick_name: '录音测试', phone: '13800000000' }
-    else if (req.url?.endsWith('/import-batches/capabilities')) data = { supported: true, contract_version: 1 }
-    else if (req.url?.endsWith('/notifications/query') && req.url.includes('import-batches')) data = { supported: true, contract_version: 1, items: [notice], latest: notice, total: 1, unread_count: notice.read_at ? 0 : 1, through_sequence: '1', next_cursor: '' }
+    else if (req.url?.endsWith('/import-batches/capabilities')) data = { supported: true, contract_version: 2 }
+    else if (req.url?.endsWith('/notifications/query') && req.url.includes('import-batches')) data = noticesExpired ? { supported: true, contract_version: 2, items: [], total: 0, unread_count: 0, read_through: '', next_cursor: '' } : { supported: true, contract_version: 2, items: [notice], latest: notice, total: 1, unread_count: notice.read_at ? 0 : 1, read_through: `${id}:${notice.sequence}`, next_cursor: '' }
     else if (req.url?.endsWith('/notifications/read') && req.url.includes('import-batches')) { notice.read_at = Date.now(); data = { acknowledged: true } }
     else if (req.url === '/api/v1/summary/get-by-ids' && failVersionRead) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 500, message: '临时读取失败', data: {} })); return }
     else if (req.url === '/api/v1/summary/get-by-ids') data = { audio_summary_ls: [{ id, kind: 2, status: 2, answer: '跨时区的精确版本正文', date_stamp: dateStamp }] }
@@ -83,7 +83,26 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
     expect(calls.some(call => call.path?.endsWith('/notifications/read') && call.body.items?.[0]?.id === id && call.body.items[0].sequence === '1')).toBe(true)
     const marked = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_notifications_read', arguments: { account_key: 'test:10001', items: [{ id, sequence: '1' }] }, agent, signal: new AbortController().signal })
     expect(marked.isError).toBe(false)
+    const markedAll = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_notifications_read', arguments: { account_key: 'test:10001', read_through: pageResult.readThrough }, agent, signal: new AbortController().signal })
+    expect(markedAll.isError).toBe(false)
+    expect(calls.some(call => call.body.read_through === pageResult.readThrough && call.body.contract_version === 2)).toBe(true)
+    notice.state = 'expired'; notice.sequence = '2'; notice.read_at = 0; notice.updated_at = Date.now()
+    notice.days[0].timeline.state = 'expired'
+    notice.message = '本批次的 30 天自动整理期限已到；已有录音和整理结果仍保留，可按日期查看或手动整理'
+    await page.getByRole('button', { name: '对话', exact: true }).click()
+    await page.getByRole('treeitem', { name: /通知/ }).click()
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.getByRole('listitem', { name: '录音：录音自动整理已到期', exact: true }).click()
+    const expired = page.getByRole('region', { name: '录音自动整理已到期', exact: true })
+    expect(await expired.innerText()).toContain('已有录音和整理结果仍保留')
+    expect(await expired.getByRole('button', { name: '查看总结', exact: true }).count()).toBe(1)
+    expect(await expired.getByRole('button', { name: '查看时间轴', exact: true }).count()).toBe(0)
+    expect(await expired.innerText()).not.toContain('生成失败')
     if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+    await expired.getByRole('button', { name: '返回通知', exact: true }).click()
+    noticesExpired = true
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.getByRole('listitem', { name: '录音：录音自动整理已到期', exact: true }).waitFor({ state: 'detached' })
   } finally {
     await browser?.close()
     if (scaffold) await scaffold.ctx.get('arkmeData').logout()

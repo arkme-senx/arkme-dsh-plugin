@@ -969,7 +969,7 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
-        recordingWorkflowV1: true,
+        recordingWorkflowV2: true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
         forwardContent: true,

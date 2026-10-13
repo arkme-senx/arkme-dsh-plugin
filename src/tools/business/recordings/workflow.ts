@@ -21,15 +21,15 @@ const read = defineArkmeCoreToolModule({
   meta: { id: 'business.recordings.notifications-read.v1', toolName: 'arkme_recording_notifications_read', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
     name: 'arkme_recording_notifications_read',
-    description: 'Only after explicit user request, mark selected recording notices read, or all through the observed sequence. Never mark read just because the model queried them. Use accountKey and throughSequence returned by query; newer results remain unread.',
+    description: 'Only after explicit user request, mark selected recording notices read, or all through the observed notification anchor. Never mark read just because the model queried them. Use accountKey and readThrough returned by query; newer results remain unread.',
     parameters: {
       account_key: { type: 'string', required: true },
-      items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string', required: true }, sequence: { type: 'string', required: true } } }, description: 'Up to 50 observed notification id/sequence pairs from query; mutually exclusive with through_sequence.' },
-      through_sequence: { type: 'string', description: 'Observed throughSequence; mutually exclusive with items.' },
+      items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string', required: true }, sequence: { type: 'string', required: true } } }, description: 'Up to 50 observed notification id/sequence pairs from query; mutually exclusive with read_through.' },
+      read_through: { type: 'string', description: 'Observed opaque readThrough token; mutually exclusive with items.' },
     },
     output: TEXT_OUTPUT,
     execute: async (args, exec) => {
-      await ports.recordingWorkflow({ operation: 'read', accountKey: args.account_key, ...(args.items === undefined ? {} : { items: args.items }), ...(args.through_sequence === undefined ? {} : { throughSequence: args.through_sequence }) }, exec.signal)
+      await ports.recordingWorkflow({ operation: 'read', accountKey: args.account_key, ...(args.items === undefined ? {} : { items: args.items }), ...(args.read_through === undefined ? {} : { readThrough: args.read_through }) }, exec.signal)
       return taggedJSON('录音通知已读', { acknowledged: true })
     },
   }),

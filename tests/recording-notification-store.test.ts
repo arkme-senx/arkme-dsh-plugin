@@ -8,7 +8,7 @@ vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: {
 } }))
 import { RecordingNotificationStore } from '../src/client/recording-notification-store.js'
 const notice = { id: 'notice-0001', sequence: '60', batchId: 'batch-0001', stage: 'processing', state: 'completed', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '', days: [] }
-const page = { ...EMPTY_RECORDING_WORKFLOW, supported: true, items: [notice], latest: notice, total: 60, unreadCount: 55, nextCursor: 'next', throughSequence: '60' }
+const page = { ...EMPTY_RECORDING_WORKFLOW, supported: true, items: [notice], latest: notice, total: 60, unreadCount: 55, nextCursor: 'next', readThrough: '0123456789abcdef01234567:60' }
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 let store: RecordingNotificationStore, releases: (() => void)[]
 beforeEach(() => { mocks.scope = 'test:42'; mocks.call.mockReset().mockResolvedValue(page); store = new RecordingNotificationStore(); releases = [] })
@@ -44,7 +44,7 @@ it('does not mark new events arriving during read-all as read or reorder the old
   const reading = store.read('test:42'); await tick(); await store.refresh(); finish(); await reading
   expect(store.getSnapshot().items.find(item => item.id === newer.id)?.readAtMillis).toBe(0)
   expect(store.getSnapshot().items.find(item => item.id === notice.id)?.atMillis).toBe(1000)
-  expect(mocks.call.mock.calls.find(call => call[1].operation === 'read')?.[1]).toMatchObject({ throughSequence: '60' })
+  expect(mocks.call.mock.calls.find(call => call[1].operation === 'read')?.[1]).toMatchObject({ readThrough: '0123456789abcdef01234567:60' })
 })
 it('backs off unsupported servers and never invents completion events', async () => {
   vi.useFakeTimers(); mocks.call.mockResolvedValue(EMPTY_RECORDING_WORKFLOW)
@@ -63,12 +63,35 @@ it.each([false, true])('keeps a newer revision of the same notice unread while %
   mocks.call.mockImplementation(async (_op, input) => {
     if (input.operation === 'read') return new Promise<void>(resolve => { finish = resolve })
     if (failRefresh) throw new Error('offline')
-    return { ...page, items: [newer], latest: newer, throughSequence: '61' }
+    return { ...page, items: [newer], latest: newer, readThrough: '0123456789abcdef01234567:61' }
   })
   const reading = store.read('test:42', all ? undefined : [{ id: notice.id, sequence: notice.sequence }])
   await tick(); await store.refresh()
   failRefresh = true; finish(); await reading
   expect(store.getSnapshot().items[0]).toMatchObject({ sequence: '61', readAtMillis: 0 })
   expect(mocks.call.mock.calls.find(call => call[1].operation === 'read')?.[1]).toMatchObject(all
-    ? { throughSequence: '60' } : { items: [{ id: notice.id, sequence: '60' }] })
+    ? { readThrough: '0123456789abcdef01234567:60' } : { items: [{ id: notice.id, sequence: '60' }] })
+})
+
+it('replaces stale pages on refresh so deleted or expired notices do not accumulate', async () => {
+  releases.push(store.acquire('test:42')); await tick()
+  const older = { ...notice, id: 'notice-older' }
+  mocks.call.mockResolvedValue({ ...page, items: [older], nextCursor: 'third' })
+  await store.refresh(true)
+  expect(store.getSnapshot().items).toHaveLength(2)
+  mocks.call.mockResolvedValue({ ...page, items: [], latest: undefined, total: 0, unreadCount: 0, readThrough: '', nextCursor: '' })
+  await store.refresh()
+  expect(store.getSnapshot()).toMatchObject({ items: [], total: 0, unreadCount: 0, readThrough: '', nextCursor: '' })
+})
+
+it('recovers an expired pagination anchor by replacing with the current first page', async () => {
+  releases.push(store.acquire('test:42')); await tick()
+  const newer = { ...notice, id: 'new-epoch', sequence: '1' }
+  mocks.call.mockImplementation(async (_op, input) => {
+    if (input.cursor) throw new Error('expired cursor')
+    return { ...page, items: [newer], latest: newer, total: 1, unreadCount: 1, nextCursor: '' }
+  })
+  await store.refresh(true)
+  expect(store.getSnapshot().items).toEqual([newer])
+  expect(store.getSnapshot().error).toBeUndefined()
 })

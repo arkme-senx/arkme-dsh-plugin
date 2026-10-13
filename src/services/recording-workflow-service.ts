@@ -6,10 +6,15 @@ import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js
 function invalid(): never { throw new ArkmePluginError('recording-workflow-invalid', '录音通知数据不完整，请重试', true, 502) }
 function text(value: unknown): string { if (typeof value !== 'string') invalid(); return value }
 function sequence(value: unknown): string { const result = text(value); if (!/^[1-9][0-9]{0,18}$/.test(result) || BigInt(result) > 9223372036854775807n) invalid(); return result }
+function readToken(value: unknown): string {
+  const token = text(value), parts = token.split(':')
+  if (parts.length !== 2 || !/^[a-f0-9]{24}$/.test(parts[0]!)) invalid()
+  sequence(parts[1]); return token
+}
 function count(value: unknown): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) invalid(); return value }
 function id(value: unknown): string { const result = text(value); if (!/^[a-zA-Z0-9_-]{8,80}$/.test(result)) invalid(); return result }
 function state(value: unknown): RecordingWorkflowState {
-  if (!['completed', 'partial', 'failed', 'skipped'].includes(String(value))) invalid()
+  if (!['completed', 'partial', 'failed', 'skipped', 'expired'].includes(String(value))) invalid()
   return value as RecordingWorkflowState
 }
 function projection(value: unknown) {
@@ -50,12 +55,13 @@ export function recordingWorkflowPage(value: unknown): RecordingWorkflowPage {
   if (raw.supported !== true || !Array.isArray(raw.items) || raw.items.length > 50) invalid()
   const result: RecordingWorkflowPage = {
     supported: true, items: raw.items.map(recordingWorkflowNotice), total: count(raw.total), unreadCount: count(raw.unread_count),
-    nextCursor: text(raw.next_cursor), throughSequence: text(raw.through_sequence),
+    nextCursor: text(raw.next_cursor), readThrough: text(raw.read_through),
     ...(raw.latest == null ? {} : { latest: recordingWorkflowNotice(raw.latest) }),
   }
   if (result.unreadCount > result.total || result.items.length > result.total
     || new Set(result.items.map(item => item.id)).size !== result.items.length
-    || (result.total > 0 && (!result.latest || !result.throughSequence))) invalid()
+    || (result.total > 0 && (!result.latest || !result.readThrough))) invalid()
+  if (result.readThrough) readToken(result.readThrough)
   return result
 }
 
@@ -93,9 +99,9 @@ export class RecordingWorkflowService {
     } else if (operation === 'read') {
       if (input.accountKey !== scope) throw new ArkmePluginError('recording-workflow-account-changed', '账号已变化，请重试', false, 409)
       suffix = 'notifications/read'
-      if (input.throughSequence !== undefined) {
+      if (input.readThrough !== undefined) {
         if (input.items !== undefined || input.ids !== undefined) invalid()
-        body = { through_sequence: sequence(input.throughSequence) }
+        body = { read_through: readToken(input.readThrough) }
       } else {
         if (input.ids !== undefined || !Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) invalid()
         body = { items: input.items.map(value => { const item = objectValue(value); return { id: id(item.id), sequence: sequence(item.sequence) } }) }

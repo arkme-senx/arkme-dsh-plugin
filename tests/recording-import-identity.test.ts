@@ -1,3 +1,4 @@
+import { recordingImportBatchID, recordingImportDeadline, RECORDING_IMPORT_RECOVERY_MILLIS } from '../src/recording-workflow-contract.js'
 import { expect, it } from 'vitest'
 import { recordingCreateRequestUID, recordingBatchOffset, sameRecordingImportBatch, validRecordingCreateRequestUID } from '../src/recording-import-identity.js'
 it('encodes the persisted creation timestamp as a canonical random UUIDv7', () => {
@@ -17,4 +18,11 @@ it('does not use the current computer timezone when replaying a batch', () => {
   expect(recordingBatchOffset(Date.parse('2026-03-08T06:30:00Z'), 'America/New_York')).toBe(-5 * 3600_000)
   expect(recordingBatchOffset(Date.parse('2026-03-08T07:30:00Z'), 'America/New_York')).toBe(-4 * 3600_000)
   expect(recordingBatchOffset(Date.parse('2026-03-08T07:30:00Z'), 'Asia/Shanghai')).toBe(8 * 3600_000)
+})
+
+it('encodes the submission time in a browser-safe UUIDv7 and rejects unbounded batch IDs', () => {
+  const now = Date.now(), id = recordingImportBatchID(now)
+  expect(recordingImportDeadline(id)).toBe(now + RECORDING_IMPORT_RECOVERY_MILLIS)
+  expect(recordingImportBatchID(now)).not.toBe(id)
+  expect(recordingImportDeadline('batch-0001')).toBeUndefined()
 })

@@ -1,3 +1,4 @@
+export { recordingImportBatchID } from '../recording-workflow-contract.js'
 import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
 export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
 import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
@@ -492,14 +493,14 @@ export class ArkmeSdk {
   }
 
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
-    if ((await this.capabilities(signal)).features.recordingWorkflowV1 !== true) return { supported: false }
+    if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
     return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
   }
   async recordingNotifications(cursor = '', signal?: AbortSignal): Promise<RecordingWorkflowPage> {
     if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
     return this.call('recordings.workflow', { operation: 'query', cursor }, signal)
   }
-  async readRecordingNotifications(input: { accountKey: string; items?: Array<{ id: string; sequence: string }>; throughSequence?: string }, signal?: AbortSignal): Promise<void> {
+  async readRecordingNotifications(input: { accountKey: string; items?: Array<{ id: string; sequence: string }>; readThrough?: string }, signal?: AbortSignal): Promise<void> {
     if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
     await this.call('recordings.workflow', { ...input, operation: 'read' }, signal)
   }

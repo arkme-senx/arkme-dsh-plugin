@@ -1,9 +1,11 @@
+import { recordingImportBatchID } from '../../src/recording-workflow-contract.js'
+const testBatchID = recordingImportBatchID()
 import { describe, expect, it, vi } from 'vitest'
 import { recordingWorkflowPage, RecordingWorkflowService } from '../../src/services/recording-workflow-service.js'
 import { ArkmePluginError, type ServiceRuntime } from '../../src/services/service.js'
 import { validRecordingImportBatch } from '../../src/recording-workflow-contract.js'
-const notice = { id: 'notice-0001', sequence: '60', batch_id: 'batch-0001', time_zone: 'Asia/Shanghai', stage: 'processing', state: 'completed', file_count: 2, completed_count: 2, failed_count: 0, created_at: 1000, read_at: 0, message: '', days: [{ date: '2026-10-09', date_stamp: Date.parse('2026-10-09T00:00:00+08:00'), end_stamp: Date.parse('2026-10-10T00:00:00+08:00'), summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
-const page = { supported: true, contract_version: 1, items: [notice], total: 60, unread_count: 55, next_cursor: 'next', through_sequence: '60', latest: notice }
+const notice = { id: 'notice-0001', sequence: '60', batch_id: testBatchID, time_zone: 'Asia/Shanghai', stage: 'processing', state: 'completed', file_count: 2, completed_count: 2, failed_count: 0, created_at: 1000, read_at: 0, message: '', days: [{ date: '2026-10-09', date_stamp: Date.parse('2026-10-09T00:00:00+08:00'), end_stamp: Date.parse('2026-10-10T00:00:00+08:00'), summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
+const page = { supported: true, contract_version: 2, items: [notice], total: 60, unread_count: 55, next_cursor: 'next', read_through: '0123456789abcdef01234567:60', latest: notice }
 function fixture() {
   let session = { userId: 42, refreshToken: 'test-refresh' }
   const post = vi.fn().mockResolvedValue(page)
@@ -36,8 +38,8 @@ describe('recording import workflow contract', () => {
   })
   it('marks all only through the observed sequence, never future notices', async () => {
     const f = fixture(); f.post.mockResolvedValue({ acknowledged: true })
-    await f.service.request({ operation: 'read', accountKey: 'test:42', throughSequence: '60' })
-    expect(f.post.mock.calls[0]![1]).toEqual({ through_sequence: '60', contract_version: 1 })
+    await f.service.request({ operation: 'read', accountKey: 'test:42', readThrough: '0123456789abcdef01234567:60' })
+    expect(f.post.mock.calls[0]![1]).toEqual({ read_through: '0123456789abcdef01234567:60', contract_version: 2 })
     f.post.mockResolvedValue({})
     await expect(f.service.request({ operation: 'read', accountKey: 'test:42', items: [{ id: 'notice-0001', sequence: '60' }] })).rejects.toThrow('不完整')
   })
@@ -45,8 +47,8 @@ describe('recording import workflow contract', () => {
     const f = fixture(); f.post.mockResolvedValue({ acknowledged: true })
     const items = [{ id: 'notice-0001', sequence: '60' }]
     await f.service.request({ operation: 'read', accountKey: 'test:42', items })
-    expect(f.post.mock.calls[0]![1]).toEqual({ items, contract_version: 1 })
-    for (const args of [{ ids: ['notice-0001'] }, { items, throughSequence: '60' }, { items: [{ id: 'notice-0001', sequence: '0' }] }, { throughSequence: '9223372036854775808' }]) {
+    expect(f.post.mock.calls[0]![1]).toEqual({ items, contract_version: 2 })
+    for (const args of [{ ids: ['notice-0001'] }, { items, readThrough: '0123456789abcdef01234567:60' }, { items: [{ id: 'notice-0001', sequence: '0' }] }, { readThrough: '9223372036854775808' }]) {
       await expect(f.service.request({ operation: 'read', accountKey: 'test:42', ...args })).rejects.toThrow()
     }
     expect(f.post).toHaveBeenCalledOnce()
@@ -62,7 +64,7 @@ describe('recording import workflow contract', () => {
     expect(() => recordingWorkflowPage(value)).toThrow()
   })
   it('bounds batch membership and freezes a real timezone for day allocation', () => {
-    const batch = { batchId: 'batch-0001', itemIndex: 0, itemCount: 2, timeZone: 'Asia/Shanghai' }
+    const batch = { batchId: testBatchID, itemIndex: 0, itemCount: 2, timeZone: 'Asia/Shanghai' }
     expect(validRecordingImportBatch(batch)).toBe(true)
     expect(validRecordingImportBatch({ ...batch, itemIndex: 2 })).toBe(false)
     expect(validRecordingImportBatch({ ...batch, timeZone: 'invalid-zone' })).toBe(false)
@@ -111,15 +113,15 @@ it('returns missing only when a successful authorized lookup contains no request
  expect(await f.service.request({ operation: 'version', kind: 'summary', versionId: '0123456789abcdef01234567' })).toEqual({ version: null })
 })
 
-it.each([undefined, 0, 2, '1'])('does not enable an absent or different contract version (%s)', async version => {
+it.each([undefined, 0, 1, 3, '2'])('does not enable an absent or different contract version (%s)', async version => {
   const f = fixture()
   f.post.mockResolvedValue({ ...page, contract_version: version })
   expect(await f.service.request({ operation: 'capabilities' })).toEqual({ supported: false })
   expect(await f.service.request({ operation: 'query' })).toMatchObject({ supported: false, items: [] })
-  expect(f.post.mock.calls.every(call => call[1].contract_version === 1)).toBe(true)
+  expect(f.post.mock.calls.every(call => call[1].contract_version === 2)).toBe(true)
 })
 it('enables only the exact complete contract', async () => {
   const f = fixture()
   expect(await f.service.request({ operation: 'capabilities' })).toEqual({ supported: true })
-  expect(f.post.mock.calls[0]![1]).toEqual({ contract_version: 1 })
+  expect(f.post.mock.calls[0]![1]).toEqual({ contract_version: 2 })
 })

@@ -92,7 +92,7 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     const firstNotice = page!.items[0]!
     await sdk.readRecordingNotifications({ accountKey: page!.accountKey!, items: [{ id: firstNotice.id, sequence: firstNotice.sequence }] })
     expect((await sdk.recordingNotifications()).unreadCount).toBe(1)
-    await sdk.readRecordingNotifications({ accountKey: page!.accountKey!, throughSequence: page!.throughSequence })
+    await sdk.readRecordingNotifications({ accountKey: page!.accountKey!, readThrough: page!.readThrough })
     expect((await sdk.recordingNotifications()).unreadCount).toBe(0)
     const analysis = page!.items.find(n => n.stage === 'analysis')!
     expect(analysis.days).toHaveLength(1)

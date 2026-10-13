@@ -120,6 +120,10 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
       && !Array.isArray(source.uploadCheckpoint)
       ? { uploadCheckpoint: source.uploadCheckpoint as Record<string, unknown> }
       : {}),
+    // Invalid persisted batch metadata must never silently become an ordinary upload.
+    ...(source.batch !== undefined && !validRecordingImportBatch(source.batch) && !['accepted', 'cancelled'].includes(source.phase)
+      ? { phase: 'failed' as const, retryable: false, errorCode: 'recording-import-batch-invalid', errorMessage: '导入批次数据无效，请重新选择未上传的文件', failedFromPhase: undefined }
+      : {}),
   }
 }
 

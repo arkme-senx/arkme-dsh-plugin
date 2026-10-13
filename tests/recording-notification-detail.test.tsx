@@ -42,3 +42,15 @@ it('labels a failed projection as generation failure while preserving the succes
   expect(renderer.root.findAllByType('button').filter(button => button.children.includes('查看总结'))).toHaveLength(2)
   act(() => renderer.unmount())
 })
+
+it('presents expiry as the automation lifecycle while retaining successful result links', () => {
+  const expired: RecordingWorkflowNotice = { ...notice, state: 'expired', message: '30 天自动整理期限已到', days: [{ ...notice.days[0]!, timeline: { state: 'expired' } }] }
+  let renderer!: ReturnType<typeof create>
+  act(() => { renderer = create(<ArkmeRecordingNotificationDetail notice={expired} onClose={() => {}} />) })
+  expect(recordingNoticeTitle(expired)).toBe('录音自动整理已到期')
+  expect(JSON.stringify(renderer.toJSON())).toContain('已有录音和整理结果仍保留')
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('生成失败')
+  expect(renderer.root.findAllByType('button').filter(button => button.children.includes('查看总结'))).toHaveLength(1)
+  expect(renderer.root.findAllByType('button').filter(button => button.children.includes('查看时间轴'))).toHaveLength(0)
+  act(() => renderer.unmount())
+})

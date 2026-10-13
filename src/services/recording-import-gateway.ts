@@ -1,3 +1,4 @@
+import { assertRecordingImportBatchActive } from '../recording-import-contract.js'
 import { RECORDING_IMPORT_CONTRACT_VERSION } from '../recording-workflow-contract.js'
 import { recordingBatchOffset } from '../recording-import-identity.js'
 import OSS from 'ali-oss'
@@ -518,6 +519,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
   }
 
   async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
+    assertRecordingImportBatchActive(job.batch)
     const recovered = job.createRequestUID && !job.sessionId ? undefined : await this.recoverSession(job, signal)
     if (recovered !== undefined) return recovered.sessionId
 

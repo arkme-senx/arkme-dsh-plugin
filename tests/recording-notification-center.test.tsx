@@ -21,7 +21,7 @@ it('includes recording events in the total notification conversation with server
   mocks.call.mockImplementation(async (operation, input) => {
     if (operation === 'recordings.workflow') {
       if (input.operation === 'read') { read = true; return }
-      return { supported: true, items: [{ ...notice, readAtMillis: read ? 2000 : 0 }], latest: notice, total: 60, unreadCount: read ? 54 : 55, nextCursor: 'next', throughSequence: '60' }
+      return { supported: true, items: [{ ...notice, readAtMillis: read ? 2000 : 0 }], latest: notice, total: 60, unreadCount: read ? 54 : 55, nextCursor: 'next', readThrough: '0123456789abcdef01234567:60' }
     }
     return { items: [], unreadCount: 0, total: 0, seenThroughSequence: 0 }
   })
