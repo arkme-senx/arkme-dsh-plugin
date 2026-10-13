@@ -21,7 +21,7 @@
 
 ## 验证
 
-插件交付基线为 `1dac49561b15b6a0a27dec767617561bda2891fe`（`dev`）；客户端只读兼容基线为 `566ac5986b0d8dbf6cfff2a6da274535716d9021`。插件版本保持 `3.0.0`，根 README、版本字段和 lockfile 未修改；客户端与 DSH 源码未修改。
+插件交付基线为 `1dac49561b15b6a0a27dec767617561bda2891fe`（`dev`）；客户端只读兼容基线为 `566ac5986b0d8dbf6cfff2a6da274535716d9021`。插件版本保持最新基线的 `3.0.5`，根 README、版本字段和 lockfile 未修改；客户端与 DSH 源码未修改。
 
 - `composer-extension-draft.test.ts`：父消息及正文刷新恢复、编辑操作、取消、失败重试身份、新草稿隔离、账号清理、JSON 同步、预览上限、长消息引用、损坏数据及存储不可用。
 - `conversation-send-directory.test.tsx`：实际 `ArkmeSurface` 的引用轮换、组件重建、切换返回、@ 编辑保留、提交后清理与失败恢复，以及引用轮换后的重试编号。
