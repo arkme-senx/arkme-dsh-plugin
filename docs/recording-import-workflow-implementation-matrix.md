@@ -48,6 +48,14 @@ Runner 使用 `process.execPath` 启动 Vitest、argv 启动 Go，创建带空�
 - 产物 SHA256：`98d4d0b829b9bc54e5249797ae6188eb3cfae85f1fc8f8d1a9a3f47311eaf26a`。日志、截图与 tgz 保存在任务交付的 `validation` 目录，绝对证据路径由运行结果给出，不固化开发者目录。
 - 插件基线已同步最新 `dev@56b6b8b2`；DSH tracked 保持 clean，根 README、版本和锁文件未改，原用户 checkout 未改。
 
-## 验证边界与发布条件
+## 第二轮完整复核
+
+- 基线同步为 `dev@284273d5`；对应 Audio 已同步 `master@86aaf77`，meta 为 `master@55190ed9`。
+- 单条已读使用通知的 `id/sequence`；客户端回写也只更新观察到的版本。复用已有序号，避免通知恢复后新结果被旧点击读掉。API、Host、SDK、Tool 和 UI 合同同步，不新增配置或存储结构。
+- Audio 12 个相关 package race 通过，包含新基线历史存储补报与计费回归；插件 948 文件、11150 项通过，14 文件/19 项原有 opt-in/skip 保留。两个跨仓 opt-in 场景独立执行通过。
+- 跨仓正常场景实际点击总结与时间轴，并调用单条精确已读及全部已读；非法时间轴场景验证部分成功及正确按钮。组件测试覆盖已读期间同 ID 更新后最终刷新失败，更新结果保持未读。
+- typecheck、backend_guard 与 OpenSpec strict 通过；最终不可变包、官方宿主和仓外 Consumer 的精确证据见任务交付 `validation/premerge2-manifest.json`。
+
+## 验证边界与发布条件（继续有效）
 
 本地测试不等于生产容量和真实供应商验收。尚未执行目标环境副本集事务/索引构建耗时与容量测量、真实模型付费调用、真实云对象上传、测试服和生产部署。自动队列隔离手动 FIFO，但共享模型、Mongo 和进程资源；发布前必须核对预算并完整部署 API、cron、summary worker 与匹配插件。没有新增业务灰度开关，没有做历史回填。结果支持本地代码合并审查结论，不构成“线上绝无影响”的保证。

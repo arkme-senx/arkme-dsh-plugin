@@ -11,3 +11,6 @@ assert((await sdk.recordingNotifications()).accountKey === 'test:42')
 await sdk.readRecordingNotifications({ accountKey: 'test:42', throughSequence: '3' })
 assert(calls.some(call => call.params?.operation === 'read' && call.params?.throughSequence === '3'))
 console.log('public recording workflow consumer: passed')
+
+await sdk.readRecordingNotifications({ accountKey: 'test:42', items: [{ id: '0123456789abcdef01234567', sequence: '3' }] })
+assert(calls.some(call => call.params?.operation === 'read' && Array.isArray(call.params?.items)))

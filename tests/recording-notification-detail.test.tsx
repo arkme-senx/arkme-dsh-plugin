@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { ArkmeRecordingNotificationDetail, recordingNoticeTitle } from '../src/client/ArkmeRecordingNotificationDetail.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { RecordingWorkflowNotice } from '../src/recording-workflow-contract.js'
-const notice: RecordingWorkflowNotice = { id: 'notice-0001', batchId: 'batch-0001', timeZone: 'America/New_York', stage: 'analysis', state: 'partial', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '时间轴生成失败', days: [
+const notice: RecordingWorkflowNotice = { id: 'notice-0001', sequence: '60', batchId: 'batch-0001', timeZone: 'America/New_York', stage: 'analysis', state: 'partial', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '时间轴生成失败', days: [
   { date: '2026-10-09', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00'), summary: { state: 'completed', versionId: 'summary-old' }, timeline: { state: 'failed' } },
   { date: '2026-10-10', dateStamp: Date.parse('2026-10-10T00:00:00-04:00'), endStamp: Date.parse('2026-10-11T00:00:00-04:00'), summary: { state: 'completed', versionId: 'summary-new' }, timeline: { state: 'completed', versionId: 'timeline-new' } },
 ] }

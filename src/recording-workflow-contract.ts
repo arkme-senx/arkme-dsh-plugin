@@ -26,6 +26,8 @@ export interface RecordingWorkflowDay {
 }
 export interface RecordingWorkflowNotice {
   id: string
+  /** Persisted notification revision, encoded without JS integer precision loss. */
+  sequence: string
   batchId: string
   timeZone: string
   stage: 'processing' | 'analysis'

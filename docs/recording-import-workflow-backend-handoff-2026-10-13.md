@@ -44,12 +44,12 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 | --- | --- | --- |
 | capabilities | `{}` | 返回 `supported:true`；启动已验证事务与必要索引，部署时须完整提供 API/cron/worker |
 | notifications/query | `{"cursor":"","limit":50}` | 账号级通知页和统计 |
-| notifications/read | `{"ids":["ObjectID"]}` | 标记当前账号指定通知，最多 50 个 |
+| notifications/read | `{"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
 | notifications/read | `{"through_sequence":"60"}` | 只标记已观察序号及之前的通知 |
 
-query data 包含 `supported,items,total,unread_count,latest,through_sequence,next_cursor`。序号是服务端十进制整数字符串，分页 cursor 为不透明编码。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。列表/统计/水位在一致快照中读取。
+query data 包含 `supported,items,total,unread_count,latest,through_sequence,next_cursor`。序号是服务端十进制整数字符串，分页 cursor 为不透明编码。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 through_sequence 互斥。列表/统计/水位在一致快照中读取。
 
-notice 字段：`id,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped。时间戳均毫秒，未读 read_at=0。
+notice 字段：`id,sequence,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped。时间戳均毫秒，未读 read_at=0。
 
 days 的每项包含 `date,date_stamp,end_stamp,summary,timeline`。日期为固定 IANA 时区的自然日 `[date_stamp,end_stamp)`，DST 可为 23/25 小时；最多 366 天。summary/timeline 各含 `state` 与可选 `version_id`，completed 必须有可读的精确 ID。处理通知允许 pending；生成通知仅含终态。
 

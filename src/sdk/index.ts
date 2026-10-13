@@ -499,7 +499,7 @@ export class ArkmeSdk {
     if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
     return this.call('recordings.workflow', { operation: 'query', cursor }, signal)
   }
-  async readRecordingNotifications(input: { accountKey: string; ids?: string[]; throughSequence?: string }, signal?: AbortSignal): Promise<void> {
+  async readRecordingNotifications(input: { accountKey: string; items?: Array<{ id: string; sequence: string }>; throughSequence?: string }, signal?: AbortSignal): Promise<void> {
     if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
     await this.call('recordings.workflow', { ...input, operation: 'read' }, signal)
   }

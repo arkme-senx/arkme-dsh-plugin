@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { recordingWorkflowPage, RecordingWorkflowService } from '../../src/services/recording-workflow-service.js'
 import { ArkmePluginError, type ServiceRuntime } from '../../src/services/service.js'
 import { validRecordingImportBatch } from '../../src/recording-workflow-contract.js'
-const notice = { id: 'notice-0001', batch_id: 'batch-0001', time_zone: 'Asia/Shanghai', stage: 'processing', state: 'completed', file_count: 2, completed_count: 2, failed_count: 0, created_at: 1000, read_at: 0, message: '', days: [{ date: '2026-10-09', date_stamp: Date.parse('2026-10-09T00:00:00+08:00'), end_stamp: Date.parse('2026-10-10T00:00:00+08:00'), summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
+const notice = { id: 'notice-0001', sequence: '60', batch_id: 'batch-0001', time_zone: 'Asia/Shanghai', stage: 'processing', state: 'completed', file_count: 2, completed_count: 2, failed_count: 0, created_at: 1000, read_at: 0, message: '', days: [{ date: '2026-10-09', date_stamp: Date.parse('2026-10-09T00:00:00+08:00'), end_stamp: Date.parse('2026-10-10T00:00:00+08:00'), summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
 const page = { supported: true, items: [notice], total: 60, unread_count: 55, next_cursor: 'next', through_sequence: '60', latest: notice }
 function fixture() {
   let session = { userId: 42, refreshToken: 'test-refresh' }
@@ -21,7 +21,7 @@ describe('recording import workflow contract', () => {
     const f = fixture(); f.post.mockRejectedValue(new ArkmePluginError('missing', 'missing', false, status))
     expect(await f.service.request({ operation: 'capabilities' })).toEqual({ supported: false })
     expect(await f.service.request({ operation: 'query' })).toMatchObject({ supported: false, items: [] })
-    await expect(f.service.request({ operation: 'read', accountKey: 'test:42', ids: ['notice-0001'] })).rejects.toThrow()
+    await expect(f.service.request({ operation: 'read', accountKey: 'test:42', items: [{ id: 'notice-0001', sequence: '60' }] })).rejects.toThrow()
   })
   it.each([401, 403, 500])('does not misreport an auth error or outage (%s) as unsupported', async status => {
     const f = fixture(); f.post.mockRejectedValue(new ArkmePluginError('failure', 'failure', true, status))
@@ -29,7 +29,7 @@ describe('recording import workflow contract', () => {
   })
   it('rejects cross-account writes and discards responses arriving after an account change', async () => {
     const f = fixture()
-    await expect(f.service.request({ operation: 'read', accountKey: 'test:43', ids: ['notice-0001'] })).rejects.toThrow('账号已变化')
+    await expect(f.service.request({ operation: 'read', accountKey: 'test:43', items: [{ id: 'notice-0001', sequence: '60' }] })).rejects.toThrow('账号已变化')
     expect(f.post).not.toHaveBeenCalled()
     f.post.mockImplementation(async () => { f.change(); return page })
     await expect(f.service.request({ operation: 'query' })).rejects.toThrow('账号已变化')
@@ -39,7 +39,17 @@ describe('recording import workflow contract', () => {
     await f.service.request({ operation: 'read', accountKey: 'test:42', throughSequence: '60' })
     expect(f.post.mock.calls[0]![1]).toEqual({ through_sequence: '60' })
     f.post.mockResolvedValue({})
-    await expect(f.service.request({ operation: 'read', accountKey: 'test:42', ids: ['notice-0001'] })).rejects.toThrow('不完整')
+    await expect(f.service.request({ operation: 'read', accountKey: 'test:42', items: [{ id: 'notice-0001', sequence: '60' }] })).rejects.toThrow('不完整')
+  })
+  it('forwards exact observed revisions and rejects unbounded or mixed read requests', async () => {
+    const f = fixture(); f.post.mockResolvedValue({ acknowledged: true })
+    const items = [{ id: 'notice-0001', sequence: '60' }]
+    await f.service.request({ operation: 'read', accountKey: 'test:42', items })
+    expect(f.post.mock.calls[0]![1]).toEqual({ items })
+    for (const args of [{ ids: ['notice-0001'] }, { items, throughSequence: '60' }, { items: [{ id: 'notice-0001', sequence: '0' }] }, { throughSequence: '9223372036854775808' }]) {
+      await expect(f.service.request({ operation: 'read', accountKey: 'test:42', ...args })).rejects.toThrow()
+    }
+    expect(f.post).toHaveBeenCalledOnce()
   })
   it.each([
     { ...page, unread_count: 61 },

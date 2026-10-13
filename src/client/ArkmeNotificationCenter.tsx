@@ -433,7 +433,7 @@ export function ArkmeNotificationCenter() {
     try {
       if (item.kind === 'recording' && item.recording && scope) {
         setRecordingDetail(item.recording.id)
-        if (item.unread) await recordingNotifications.read(scope, [item.recording.id])
+        if (item.unread) await recordingNotifications.read(scope, [item.recording])
         return
       }
       if (item.kind === 'official') { setOfficialDetail(item.id.slice('official:'.length)); return }

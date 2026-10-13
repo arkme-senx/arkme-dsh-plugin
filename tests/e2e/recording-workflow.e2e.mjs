@@ -22,7 +22,7 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
   const root = await mkdtemp(join(tmpdir(), 'recording workflow e2e ')), calls = []
   const id = '0123456789abcdef01234567'
   const dateStamp = Date.parse('2026-10-09T00:00:00-04:00'), endStamp = Date.parse('2026-10-10T00:00:00-04:00')
-  const notice = { id, batch_id: 'batch-e2e-001', time_zone: 'America/New_York', stage: 'analysis', state: 'partial', file_count: 2, completed_count: 2, failed_count: 0, created_at: Date.now(), updated_at: Date.now(), read_at: 0, message: '部分整理完成', days: [{ date: '2026-10-09', date_stamp: dateStamp, end_stamp: endStamp, summary: { state: 'completed', version_id: id }, timeline: { state: 'failed' } }] }
+  const notice = { id, sequence: '1', batch_id: 'batch-e2e-001', time_zone: 'America/New_York', stage: 'analysis', state: 'partial', file_count: 2, completed_count: 2, failed_count: 0, created_at: Date.now(), updated_at: Date.now(), read_at: 0, message: '部分整理完成', days: [{ date: '2026-10-09', date_stamp: dateStamp, end_stamp: endStamp, summary: { state: 'completed', version_id: id }, timeline: { state: 'failed' } }] }
   let scaffold, browser, failVersionRead = false
   const server = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
     const buffers = []; for await (const chunk of req) buffers.push(chunk)
@@ -80,6 +80,9 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
       throw error
     }
     expect(calls.some(call => call.path === '/api/v1/summary/get-by-ids' && call.body.ids?.[0] === id)).toBe(true)
+    expect(calls.some(call => call.path?.endsWith('/notifications/read') && call.body.items?.[0]?.id === id && call.body.items[0].sequence === '1')).toBe(true)
+    const marked = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_notifications_read', arguments: { account_key: 'test:10001', items: [{ id, sequence: '1' }] }, agent, signal: new AbortController().signal })
+    expect(marked.isError).toBe(false)
     if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
   } finally {
     await browser?.close()

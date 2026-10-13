@@ -24,12 +24,12 @@ const read = defineArkmeCoreToolModule({
     description: 'Only after explicit user request, mark selected recording notices read, or all through the observed sequence. Never mark read just because the model queried them. Use accountKey and throughSequence returned by query; newer results remain unread.',
     parameters: {
       account_key: { type: 'string', required: true },
-      ids: { type: 'array', items: { type: 'string' }, description: 'Up to 50 notification IDs; mutually exclusive with through_sequence.' },
-      through_sequence: { type: 'string', description: 'Observed throughSequence; mutually exclusive with ids.' },
+      items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string', required: true }, sequence: { type: 'string', required: true } } }, description: 'Up to 50 observed notification id/sequence pairs from query; mutually exclusive with through_sequence.' },
+      through_sequence: { type: 'string', description: 'Observed throughSequence; mutually exclusive with items.' },
     },
     output: TEXT_OUTPUT,
     execute: async (args, exec) => {
-      await ports.recordingWorkflow({ operation: 'read', accountKey: args.account_key, ...(args.ids === undefined ? {} : { ids: args.ids }), ...(args.through_sequence === undefined ? {} : { throughSequence: args.through_sequence }) }, exec.signal)
+      await ports.recordingWorkflow({ operation: 'read', accountKey: args.account_key, ...(args.items === undefined ? {} : { items: args.items }), ...(args.through_sequence === undefined ? {} : { throughSequence: args.through_sequence }) }, exec.signal)
       return taggedJSON('录音通知已读', { acknowledged: true })
     },
   }),

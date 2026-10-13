@@ -7,7 +7,7 @@ vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: {
   getSnapshot: () => ({ auth: mocks.scope ? { status: 'authenticated', environment: mocks.scope.split(':')[0], userId: Number(mocks.scope.split(':')[1]) } : undefined }),
 } }))
 import { RecordingNotificationStore } from '../src/client/recording-notification-store.js'
-const notice = { id: 'notice-0001', batchId: 'batch-0001', stage: 'processing', state: 'completed', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '', days: [] }
+const notice = { id: 'notice-0001', sequence: '60', batchId: 'batch-0001', stage: 'processing', state: 'completed', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '', days: [] }
 const page = { ...EMPTY_RECORDING_WORKFLOW, supported: true, items: [notice], latest: notice, total: 60, unreadCount: 55, nextCursor: 'next', throughSequence: '60' }
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 let store: RecordingNotificationStore, releases: (() => void)[]
@@ -25,7 +25,7 @@ it('keeps last good notices on outages and does not claim failed read acknowledg
   releases.push(store.acquire('test:42')); await tick()
   mocks.call.mockRejectedValue(new Error('offline')); await store.refresh()
   expect(store.getSnapshot().items).toHaveLength(1)
-  await expect(store.read('test:42', ['notice-0001'])).rejects.toThrow('offline')
+  await expect(store.read('test:42', [{ id: 'notice-0001', sequence: '60' }])).rejects.toThrow('offline')
   expect(store.getSnapshot().items[0]!.readAtMillis).toBe(0)
 })
 it('drops late results even when an account logs out and logs back in as itself', async () => {
@@ -53,4 +53,22 @@ it('backs off unsupported servers and never invents completion events', async ()
   expect(mocks.call).toHaveBeenCalledOnce()
   expect(store.getSnapshot()).toMatchObject({ supported: false, items: [] })
   expect(store.getSnapshot().error).toBeUndefined()
+})
+
+it.each([false, true])('keeps a newer revision of the same notice unread while %s read is in flight', async all => {
+  releases.push(store.acquire('test:42')); await tick()
+  let finish!: () => void
+  const newer = { ...notice, sequence: '61', atMillis: 2000 }
+  let failRefresh = false
+  mocks.call.mockImplementation(async (_op, input) => {
+    if (input.operation === 'read') return new Promise<void>(resolve => { finish = resolve })
+    if (failRefresh) throw new Error('offline')
+    return { ...page, items: [newer], latest: newer, throughSequence: '61' }
+  })
+  const reading = store.read('test:42', all ? undefined : [{ id: notice.id, sequence: notice.sequence }])
+  await tick(); await store.refresh()
+  failRefresh = true; finish(); await reading
+  expect(store.getSnapshot().items[0]).toMatchObject({ sequence: '61', readAtMillis: 0 })
+  expect(mocks.call.mock.calls.find(call => call[1].operation === 'read')?.[1]).toMatchObject(all
+    ? { throughSequence: '60' } : { items: [{ id: notice.id, sequence: '60' }] })
 })

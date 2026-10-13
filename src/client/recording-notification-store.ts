@@ -76,19 +76,19 @@ export class RecordingNotificationStore {
     this.inflight = operation
     try { await operation } finally { unsubscribe(); if (this.inflight === operation) this.inflight = undefined }
   }
-  async read(scope: string, ids?: string[]) {
+  async read(scope: string, targets?: Array<{ id: string; sequence: string }>) {
     if (scope !== this.snapshot.scope || scope !== currentScope()) return
     const throughSequence = this.snapshot.throughSequence
-    const readIds = new Set(ids ?? this.snapshot.items.map(item => item.id))
-    if (!ids && !throughSequence) return
+    const readItems = new Map((targets ?? this.snapshot.items).map(item => [item.id, item.sequence]))
+    if (!targets && !throughSequence) return
     const controller = new AbortController()
     const unsubscribe = arkmeAuthStore.subscribe(() => { if (scope !== currentScope()) controller.abort() })
     try {
-      await callArkme('recordings.workflow', { operation: 'read', accountKey: scope, ...(ids ? { ids } : { throughSequence }) }, controller.signal)
+      await callArkme('recordings.workflow', { operation: 'read', accountKey: scope, ...(targets ? { items: targets.map(({ id, sequence }) => ({ id, sequence })) } : { throughSequence }) }, controller.signal)
       if (controller.signal.aborted || scope !== this.snapshot.scope || scope !== currentScope()) return
       // Retain the event timestamp so reading a notice never changes chat ordering.
       this.controller?.abort(); this.inflight = undefined
-      const items = this.snapshot.items.map(item => readIds.has(item.id) ? { ...item, readAtMillis: Date.now() } : item)
+      const items = this.snapshot.items.map(item => readItems.get(item.id) === item.sequence ? { ...item, readAtMillis: Date.now() } : item)
       this.publish({ ...this.snapshot, items })
       await this.refresh()
     } finally { unsubscribe() }

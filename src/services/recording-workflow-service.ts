@@ -5,6 +5,7 @@ import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js
 
 function invalid(): never { throw new ArkmePluginError('recording-workflow-invalid', '录音通知数据不完整，请重试', true, 502) }
 function text(value: unknown): string { if (typeof value !== 'string') invalid(); return value }
+function sequence(value: unknown): string { const result = text(value); if (!/^[1-9][0-9]{0,18}$/.test(result) || BigInt(result) > 9223372036854775807n) invalid(); return result }
 function count(value: unknown): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) invalid(); return value }
 function id(value: unknown): string { const result = text(value); if (!/^[a-zA-Z0-9_-]{8,80}$/.test(result)) invalid(); return result }
 function state(value: unknown): RecordingWorkflowState {
@@ -31,7 +32,7 @@ export function recordingWorkflowNotice(value: unknown): RecordingWorkflowNotice
   })
   if (new Set(days.map(day => day.date)).size !== days.length) invalid()
   const result: RecordingWorkflowNotice = {
-    id: id(raw.id), batchId: id(raw.batch_id), timeZone: text(raw.time_zone), stage: raw.stage, state: state(raw.state),
+    id: id(raw.id), sequence: sequence(raw.sequence), batchId: id(raw.batch_id), timeZone: text(raw.time_zone), stage: raw.stage, state: state(raw.state),
     fileCount: count(raw.file_count), completedCount: count(raw.completed_count), failedCount: count(raw.failed_count),
     atMillis: count(raw.updated_at ?? raw.created_at), readAtMillis: count(raw.read_at), message: text(raw.message), days,
   }
@@ -93,11 +94,11 @@ export class RecordingWorkflowService {
       if (input.accountKey !== scope) throw new ArkmePluginError('recording-workflow-account-changed', '账号已变化，请重试', false, 409)
       suffix = 'notifications/read'
       if (input.throughSequence !== undefined) {
-        if (input.ids !== undefined || !text(input.throughSequence) || text(input.throughSequence).length > 2048) invalid()
-        body = { through_sequence: input.throughSequence }
+        if (input.items !== undefined || input.ids !== undefined) invalid()
+        body = { through_sequence: sequence(input.throughSequence) }
       } else {
-        if (!Array.isArray(input.ids) || input.ids.length < 1 || input.ids.length > 50) invalid()
-        body = { ids: input.ids.map(id) }
+        if (input.ids !== undefined || !Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) invalid()
+        body = { items: input.items.map(value => { const item = objectValue(value); return { id: id(item.id), sequence: sequence(item.sequence) } }) }
       }
     } else invalid()
     try {

@@ -89,6 +89,9 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     expect(page!.items).toHaveLength(2)
     expect(page!.items.map(n => n.stage).sort()).toEqual(['analysis', 'processing'])
     expect((await nativeFetch(`${fixture.url}/api/v1/audio/import-batches/notifications/query`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(403)
+    const firstNotice = page!.items[0]!
+    await sdk.readRecordingNotifications({ accountKey: page!.accountKey!, items: [{ id: firstNotice.id, sequence: firstNotice.sequence }] })
+    expect((await sdk.recordingNotifications()).unreadCount).toBe(1)
     await sdk.readRecordingNotifications({ accountKey: page!.accountKey!, throughSequence: page!.throughSequence })
     expect((await sdk.recordingNotifications()).unreadCount).toBe(0)
     const analysis = page!.items.find(n => n.stage === 'analysis')!

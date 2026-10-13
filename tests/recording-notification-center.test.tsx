@@ -16,7 +16,7 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 it('includes recording events in the total notification conversation with server unread count, then opens the real detail', async () => {
-  const notice = { id: 'notice-0001', batchId: 'batch-0001', stage: 'processing', state: 'completed', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '', days: [{ date: '2026-10-09', summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
+  const notice = { id: 'notice-0001', sequence: '60', batchId: 'batch-0001', stage: 'processing', state: 'completed', fileCount: 2, completedCount: 2, failedCount: 0, atMillis: 1000, readAtMillis: 0, message: '', days: [{ date: '2026-10-09', summary: { state: 'pending' }, timeline: { state: 'pending' } }] }
   let read = false
   mocks.call.mockImplementation(async (operation, input) => {
     if (operation === 'recordings.workflow') {
@@ -35,7 +35,7 @@ it('includes recording events in the total notification conversation with server
   await act(async () => { renderer!.root.findByProps({ 'aria-label': '录音：录音处理完成' }).props.onClick(); await tick() })
   expect(renderer!.root.findAllByType('button').some(button => button.children.includes('查看录音'))).toBe(true)
   expect(summary).toMatchObject({ unreadCount: 54, atMillis: 1000 })
-  expect(mocks.call.mock.calls.find(call => call[1]?.operation === 'read')?.[1]).toEqual({ operation: 'read', accountKey: 'test:742', ids: ['notice-0001'] })
+  expect(mocks.call.mock.calls.find(call => call[1]?.operation === 'read')?.[1]).toEqual({ operation: 'read', accountKey: 'test:742', items: [{ id: 'notice-0001', sequence: '60' }] })
 })
 
 it('shows loading instead of a false empty recording filter while its first query is pending', async () => {
