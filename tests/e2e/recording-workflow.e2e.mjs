@@ -30,8 +30,8 @@ it('runs recording notifications through the packed Host, SDK, real Tool session
     let data = { items: [], users: [], has_more: false }
     if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: 'isolated-access', refresh_token: 'isolated-refresh' }
     else if (req.url === '/api/v1/auth/get-user-info') data = { user_id: 10001, nick_name: '录音测试', phone: '13800000000' }
-    else if (req.url?.endsWith('/import-batches/capabilities')) data = { supported: true }
-    else if (req.url?.endsWith('/notifications/query') && req.url.includes('import-batches')) data = { supported: true, items: [notice], latest: notice, total: 1, unread_count: notice.read_at ? 0 : 1, through_sequence: '1', next_cursor: '' }
+    else if (req.url?.endsWith('/import-batches/capabilities')) data = { supported: true, contract_version: 1 }
+    else if (req.url?.endsWith('/notifications/query') && req.url.includes('import-batches')) data = { supported: true, contract_version: 1, items: [notice], latest: notice, total: 1, unread_count: notice.read_at ? 0 : 1, through_sequence: '1', next_cursor: '' }
     else if (req.url?.endsWith('/notifications/read') && req.url.includes('import-batches')) { notice.read_at = Date.now(); data = { acknowledged: true } }
     else if (req.url === '/api/v1/summary/get-by-ids' && failVersionRead) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 500, message: '临时读取失败', data: {} })); return }
     else if (req.url === '/api/v1/summary/get-by-ids') data = { audio_summary_ls: [{ id, kind: 2, status: 2, answer: '跨时区的精确版本正文', date_stamp: dateStamp }] }

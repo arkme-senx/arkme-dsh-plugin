@@ -107,7 +107,7 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     }
     expect(uploadBodies).toHaveLength(1)
     expect(uploadBodies[0]).toMatchObject({ import_batch: { item_count: 1, item_index: 0, ownership: 'self', time_zone: 'Asia/Shanghai' } })
-    expect(calls).toEqual(expect.arrayContaining(['/api/v1/audio/new-session', '/api/v1/audio/new-child', '/api/v1/audio/child-upload-finish', '/api/v1/audio/finish-session']))
+    expect(calls).toEqual(expect.arrayContaining(['/api/v1/audio/import-batches/new-session', '/api/v1/audio/new-child', '/api/v1/audio/child-upload-finish', '/api/v1/audio/finish-session']))
     const version = await sdk.recordingNotificationVersion(analysis.days[0]!.summary.versionId!, 'summary')
     expect(version.version?.content).toContain('本地链路验收')
     const [{ ArkmeRecordingNotificationDetail }, { ArkmeRecordingSurface }] = await Promise.all([import('../../src/client/ArkmeRecordingNotificationDetail.js'), import('../../src/client/ArkmeRecordingSurface.js')])

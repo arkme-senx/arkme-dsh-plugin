@@ -7,7 +7,7 @@
 | Host owner | RecordingWorkflowService + RecordingService | 账号隔离、固定批次重放、UUIDv7 创建、DST 日界、精确版本、原始日界手动生成 |
 | UI | 通知详情、录音总结/时间轴 | 原时区日界随查询/轮询保留；精确 ID 独立于本地日历；缺失结果不回退旧成功版本；空日历不遮挡有效历史结果 |
 | SDK | recordingWorkflowCapabilities / recordingNotifications / readRecordingNotifications / recordingNotificationVersion | 类型与运行测试，仓外带空格目录 Consumer 从 tgz 安装包导入 |
-| Tools | arkme_recording_notifications / arkme_recording_notifications_read | 正式注册、参数与写授权合同，共用 Host owner；官方未修改 DSH 中运行 |
+| Tools | arkme_recording_import_notifications / arkme_recording_import_notifications_read | 正式注册、参数与写授权合同，共用 Host owner；官方未修改 DSH 中运行 |
 | Audio | 批次接纳、通知事务、日生成协调、summary worker | 九个相关 package race 测试；真实隔离 Mongo/Redis/RabbitMQ；独占认领和重复投递不调用模型 |
 
 业务结果由 Host 服务解释；浏览器和模型不持有 Audio 凭据。缺少后端能力时沿用旧上传，不增加灰度配置。

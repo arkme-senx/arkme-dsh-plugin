@@ -1196,5 +1196,16 @@ it('replays new batch creation without a filename scan after an unknown result',
   await gateway.ensureSession(input); await gateway.ensureSession(input)
   expect(posts).toHaveLength(2)
   expect(posts[0]).toEqual(posts[1])
-  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { file_sha256: input.sha256, file_size: input.fileSize } })
+  expect(posts[0]!.path).toBe('/api/v1/audio/import-batches/new-session')
+  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { contract_version: 1, file_sha256: input.sha256, file_size: input.fileSize } })
+})
+
+it('never retries a batch admission as an ordinary upload when the backend route disappears', async () => {
+  const unavailable = new Error('404 batch admission route unavailable')
+  const post = vi.fn().mockRejectedValue(unavailable)
+  const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedAudioPost: post } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: 'batch-0001', itemIndex: 0, itemCount: 1, timeZone: 'Asia/Shanghai' } })
+  await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toBe(unavailable)
+  expect(post).toHaveBeenCalledOnce()
+  expect(post.mock.calls[0]![0]).toBe('/api/v1/audio/import-batches/new-session')
 })

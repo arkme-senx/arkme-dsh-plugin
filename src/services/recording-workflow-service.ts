@@ -1,6 +1,6 @@
 import { projectRecordingVersions } from '../recording-presentation.js'
 import type { ArkmeRecordingVersion } from '../types.js'
-import { EMPTY_RECORDING_WORKFLOW, type RecordingWorkflowNotice, type RecordingWorkflowPage, type RecordingWorkflowState } from '../recording-workflow-contract.js'
+import { RECORDING_IMPORT_CONTRACT_VERSION, EMPTY_RECORDING_WORKFLOW, type RecordingWorkflowNotice, type RecordingWorkflowPage, type RecordingWorkflowState } from '../recording-workflow-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 
 function invalid(): never { throw new ArkmePluginError('recording-workflow-invalid', '录音通知数据不完整，请重试', true, 502) }
@@ -46,7 +46,7 @@ export function recordingWorkflowNotice(value: unknown): RecordingWorkflowNotice
 }
 export function recordingWorkflowPage(value: unknown): RecordingWorkflowPage {
   const raw = objectValue(value)
-  if (raw.supported === false) return { ...EMPTY_RECORDING_WORKFLOW }
+  if (raw.supported === false || (raw.supported === true && raw.contract_version !== RECORDING_IMPORT_CONTRACT_VERSION)) return { ...EMPTY_RECORDING_WORKFLOW }
   if (raw.supported !== true || !Array.isArray(raw.items) || raw.items.length > 50) invalid()
   const result: RecordingWorkflowPage = {
     supported: true, items: raw.items.map(recordingWorkflowNotice), total: count(raw.total), unreadCount: count(raw.unread_count),
@@ -102,13 +102,13 @@ export class RecordingWorkflowService {
       }
     } else invalid()
     try {
-      const raw = await this.runtime.authenticatedAudioPost<unknown>(`/api/v1/audio/import-batches/${suffix}`, body, session, signal,
+      const raw = await this.runtime.authenticatedAudioPost<unknown>(`/api/v1/audio/import-batches/${suffix}`, { ...body, contract_version: RECORDING_IMPORT_CONTRACT_VERSION }, session, signal,
         { lane: operation === 'read' ? 'write' : 'interactive-read', bypassCache: true })
       await current()
       if (operation === 'capabilities') {
         const value = objectValue(raw)
         if (typeof value.supported !== 'boolean') invalid()
-        return { supported: value.supported }
+        return { supported: value.supported && value.contract_version === RECORDING_IMPORT_CONTRACT_VERSION }
       }
       if (operation === 'query') {
         const result = recordingWorkflowPage(raw)

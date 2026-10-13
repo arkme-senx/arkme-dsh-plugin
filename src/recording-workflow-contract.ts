@@ -1,3 +1,5 @@
+export const RECORDING_IMPORT_CONTRACT_VERSION = 1
+
 /** Audio recording-import contract. Enable only after the server advertises support. */
 export interface RecordingImportBatch {
   batchId: string

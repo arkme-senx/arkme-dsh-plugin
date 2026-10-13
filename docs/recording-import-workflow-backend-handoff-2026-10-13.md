@@ -12,12 +12,13 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 
 ## 创建与固定身份
 
-`POST /api/v1/audio/new-session` 保持旧字段和响应，手动批次新增：
+普通上传保留 `POST /api/v1/audio/new-session`。已协商的批次使用 `POST /api/v1/audio/import-batches/new-session`，共用创建领域实现，但强制要求批次字段。独立路由使后端回退后返回明确错误，避免旧端忽略未知字段而静默创建普通 Session。批次请求除既有录音字段外包含：
 
 ```json
 {
   "create_request_uid": "019a0000-0000-7000-8000-000000000001",
   "import_batch": {
+    "contract_version": 1,
     "batch_id": "batch-example-001",
     "item_index": 0,
     "item_count": 12,
@@ -42,12 +43,12 @@ Audio 独占处理事实、版本与协调。插件负责上传身份、通知�
 
 | 后缀 | 请求 | 用途 |
 | --- | --- | --- |
-| capabilities | `{}` | 返回 `supported:true`；启动已验证事务与必要索引，部署时须完整提供 API/cron/worker |
-| notifications/query | `{"cursor":"","limit":50}` | 账号级通知页和统计 |
-| notifications/read | `{"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
-| notifications/read | `{"through_sequence":"60"}` | 只标记已观察序号及之前的通知 |
+| capabilities | `{"contract_version":1}` | 返回 `supported` 与服务端 `contract_version:1`；仅版本相等才支持 |
+| notifications/query | `{"contract_version":1,"cursor":"","limit":50}` | 账号级通知页和统计 |
+| notifications/read | `{"contract_version":1,"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
+| notifications/read | `{"contract_version":1,"through_sequence":"60"}` | 只标记已观察序号及之前的通知 |
 
-query data 包含 `supported,items,total,unread_count,latest,through_sequence,next_cursor`。序号是服务端十进制整数字符串，分页 cursor 为不透明编码。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 through_sequence 互斥。列表/统计/水位在一致快照中读取。
+query data 包含 `contract_version,supported,items,total,unread_count,latest,through_sequence,next_cursor`。序号是服务端十进制整数字符串，分页 cursor 为不透明编码。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 through_sequence 互斥。列表/统计/水位在一致快照中读取。
 
 notice 字段：`id,sequence,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped。时间戳均毫秒，未读 read_at=0。
 
@@ -69,10 +70,10 @@ Host `RecordingWorkflowService` 是 UI、SDK 与 Tools 的统一 owner。SDK 提
 
 通知携带原时区/日界。详情按既有 `/api/v1/summary/get-by-ids` 的 `ids` 数组查询精确版本，不依赖浏览器本地日期列表；版本缺失明确显示不可用。日查询、轮询及手动再生成保持通知原日界。手动 `/api/v1/summary/create` 随通知传 `time_zone` 与 `day_end_stamp`，Audio 校验完整自然日、由该时区推导 offset，并为时间轴冻结同一窗口的 system 证据；未携带这两个字段的原手动入口保持已有合同。零时间戳附近的日界允许因时区为负数，不改变历史录音起点下限。原通知存储的账号切换保护、分页和轮询继续使用。
 
-旧服务明确不支持时仍可普通上传；不存在本地伪造的完成通知，也没有新增灰度配置。通知轮询不是秒级推送。
+能力与查询双向校验 `contract_version:1`：缺失/不同版本或接口 404/501 均不启用新批次，查询显示不支持；鉴权错误和服务故障仍报错。后端对批次接纳和已读写入也独立验证版本，版本不符不写入。已进入批次的任务在专用创建接口不可用时保留失败/重试语义，绝不降级普通创建；版本判定不是用户配置。旧服务明确不支持时仍可普通上传；不存在本地伪造的完成通知，也没有新增灰度配置。通知轮询不是秒级推送。
 
 ## 存储与发布
 
-仅新增 `recording_import_batch` 和 `recording_notification` 两个集合，分别承载固定成员/恢复锚点与独立的收件箱结果。五个显式索引覆盖批次唯一性/到期扫描、阶段唯一性/序号唯一性/未读扫描；audio_summary 增加自动 identity 的 partial unique 索引。没有历史回填，没有 Session 新索引，没有独立结果表或 counter 集合。
+仅新增 `recording_import_batch` 和 `recording_import_notification` 两个集合，分别承载固定成员/恢复锚点与录音导入结果通知。后者按批次阶段唯一，保存通知未读状态和版本引用，既不承载 IM 消息，也不是通用通知平台。集合名称由尚未上线草案的 `recording_notification` 收窄而来，不增加第三个集合，不为未上线草案加入迁移或双写。五个显式索引覆盖批次唯一性/到期扫描、阶段唯一性/序号唯一性/未读扫描；audio_summary 增加自动 identity 的 partial unique 索引。没有历史回填，没有 Session 新索引，没有独立结果表或 counter 集合。
 
-发布前核对目标 Mongo 副本集事务、预建索引成本和共享资源容量，再完整部署 API、cron、summary worker 和匹配插件。回滚保留新增数据与历史版本；旧服务不会继续推进新批次。生产发布与真实付费模型验收尚未执行。
+发布前核对目标 Mongo 副本集事务、预建索引成本和共享资源容量，再完整部署 API、cron、summary worker；插件是否匹配由代码自动协商，发布人员无需手工判断字段版本。回滚保留新增数据与历史版本；旧服务不会继续推进新批次。生产发布与真实付费模型验收尚未执行。
