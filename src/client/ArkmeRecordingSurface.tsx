@@ -1191,11 +1191,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const analysisKind = activeTab === 'summary' || activeTab === 'timeline' ? activeTab : undefined
   const analysisSection = analysisKind === undefined ? undefined : day?.[analysisKind]
   const analysisVersion = analysisKind === 'summary' ? selectedSummary : analysisKind === 'timeline' ? selectedTimeline : undefined
-  const analysisFooter = !tour.sample && !dayLoading && dayError === '' && !emptyDay
+  const analysisFooter = !tour.sample && !dayLoading && dayError === '' && (!emptyDay || notificationWindow !== undefined)
     && analysisKind !== undefined && analysisSection !== undefined && analysisVersion !== undefined
     ? <VersionPicker
       kind={analysisKind}
-      versions={analysisSection.items}
+      versions={analysisSection.items.some(item => item.id === analysisVersion.id) ? analysisSection.items : [analysisVersion, ...analysisSection.items]}
       selectedId={analysisVersion.id}
       generating={generatingKinds[analysisKind] || analysisSection.state === 'processing'}
       regenerateAvailable={modelConfig.state !== 'loading'}

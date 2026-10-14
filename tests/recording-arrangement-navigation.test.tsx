@@ -95,6 +95,7 @@ it('keeps an exact notification result visible when the local calendar has no re
   const window = { date: '2026-10-09', timeZone: 'America/New_York', dateStamp: Date.parse('2026-10-09T00:00:00-04:00'), endStamp: Date.parse('2026-10-10T00:00:00-04:00') }
   await act(async () => { arkmeUi.showRecordingSummaryTarget(window.dateStamp, id, window); renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
   expect(JSON.stringify(renderer!.toJSON())).toContain('保留的历史总结')
+  expect(version()).toBe(id)
 })
 
 const notificationVersionId = '0123456789abcdef01234567'
