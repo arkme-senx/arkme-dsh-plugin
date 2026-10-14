@@ -174,6 +174,12 @@ AI识别中…|AI recognition in progress…
 未设置通知时间|No notification time set
 通知|Notifications
 通知类型|Notification types
+通知消息|Notification messages
+新的通知会显示在这里|New notifications will appear here
+展开全文|Show full message
+查看互动|View interaction
+安排暂时无法加载|This arrangement is temporarily unavailable
+新消息|New messages
 全部已读|Mark all as read
 暂时没有通知|No notifications yet
 切换其他类型查看通知|Switch to another type to view notifications

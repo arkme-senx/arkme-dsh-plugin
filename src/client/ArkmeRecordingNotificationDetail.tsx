@@ -18,13 +18,13 @@ export function recordingNoticePreview(item: RecordingWorkflowNotice) {
 function stateLabel(state: RecordingWorkflowState | 'pending') {
   return state === 'expired' ? tr('自动整理已到期') : state === 'pending' ? tr('等待处理') : state === 'completed' ? tr('已更新') : state === 'partial' ? tr('部分完成') : state === 'skipped' ? tr('无可用内容') : tr('生成失败')
 }
-export function ArkmeRecordingNotificationDetail({ notice, onClose }: { notice: RecordingWorkflowNotice; onClose(): void }) {
+export function ArkmeRecordingNotificationDetail({ notice, onClose, embedded = false }: { notice: RecordingWorkflowNotice; onClose?(): void; embedded?: boolean }) {
   const button = { border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, padding: '6px 10px', background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 12 }
-  return <section aria-label={recordingNoticeTitle(notice)} style={{ padding: 20, overflowY: 'auto' }}>
-    <button type="button" style={button} onClick={onClose}>{tr('返回通知')}</button>
-    <h3>{recordingNoticeTitle(notice)}</h3>
-    <p>{recordingNoticePreview(notice)}</p>
-    {notice.message && <p style={{ color: arkmeTheme.secondary, whiteSpace: 'pre-wrap' }}>{notice.message}</p>}
+  return <section aria-label={recordingNoticeTitle(notice)} style={embedded ? {} : { padding: 20, overflowY: 'auto' }}>
+    {!embedded && <><button type="button" style={button} onClick={onClose}>{tr('返回通知')}</button>
+    <h3>{recordingNoticeTitle(notice)}</h3></>}
+    <p style={embedded ? { margin: '8px 0' } : {}}>{recordingNoticePreview(notice)}</p>
+    {notice.message && notice.message !== recordingNoticeTitle(notice) && notice.message !== recordingNoticePreview(notice) && <p style={{ color: arkmeTheme.secondary, whiteSpace: 'pre-wrap' }}>{notice.message}</p>}
     {notice.stage === 'processing' && notice.state === 'completed' && <p style={{ color: arkmeTheme.secondary }}>{tr('本批录音已完成处理，自动整理结果请查看后续通知。')}</p>}
     {notice.days.map(day => {
       const dateStamp = day.dateStamp
