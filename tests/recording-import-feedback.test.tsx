@@ -46,6 +46,7 @@ describe('recording import button feedback', () => {
     items = []
     dialog.open = false
     mocks.callArkme.mockReset().mockImplementation(async operation => {
+      if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.list') return { items, owner: { state: 'available' } }
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.import.retry') { items = [job('uploading')]; return {} }
@@ -260,6 +261,7 @@ describe('recording import button feedback', () => {
     expect(label()).toBe('导入失败，查看')
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.cancel') { items = []; return {} }
+      if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.list') return { items, owner: { state: 'available' } }
       throw new Error(String(operation))
     })

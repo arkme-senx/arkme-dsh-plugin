@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeService } from '../src/arkme-service.js'
+import { ArrangementSourceService } from '../src/services/arrangement-source-service.js'
 
 function fixture(evidence: Record<string, unknown>) {
   const session = { userId: 11, refreshToken: 'account-session' }
@@ -14,11 +15,20 @@ function fixture(evidence: Record<string, unknown>) {
     record: { personalRecordDetail: vi.fn(async () => ({ text: 'original' })) },
     callHistory: { arrangementCallDetail: vi.fn(async () => ({ startedAtMillis: 1791800000000, transcriptSegments: [] })) },
   }
-  const open = () => ArkmeService.prototype.arrangementSourceOpen.call(host as unknown as ArkmeService, 'opaque-arrangement', 'evidence-id')
+  const open = () => ArrangementSourceService.prototype.arrangementSourceOpen.call(host as unknown as ArrangementSourceService, 'opaque-arrangement', 'evidence-id')
   return { host, open }
 }
 
 describe('arrangement source access boundary', () => {
+  it('forwards the facade request and cancellation signal to the source owner', async () => {
+    const target = { kind: 'document', title: '来源指令', text: 'original' }
+    const arrangementSource = { arrangementSourceOpen: vi.fn(async () => target) }
+    const signal = new AbortController().signal
+    expect(await ArkmeService.prototype.arrangementSourceOpen.call(
+      { arrangementSource } as unknown as ArkmeService, 'opaque-arrangement', 'evidence-id', signal,
+    )).toBe(target)
+    expect(arrangementSource.arrangementSourceOpen).toHaveBeenCalledWith('opaque-arrangement', 'evidence-id', signal)
+  })
   it('rechecks summary ownership and exact version rather than choosing another version', async () => {
     const {host,open} = fixture({kind:'audio_summary',summary_id:'summary-a',date_stamp:1791734400000,tz_offset:28800000})
     expect(await open()).toMatchObject({kind:'audio_summary',summaryId:'summary-a'})
