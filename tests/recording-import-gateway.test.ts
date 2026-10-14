@@ -1,3 +1,5 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
+const testBatchID = recordingImportBatchID()
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingImportContractError, type RecordingImportJob } from '../src/recording-import-contract.js'
 import { AudioRecordingImportGateway } from '../src/services/recording-import-gateway.js'
@@ -846,8 +848,8 @@ describe('AudioRecordingImportGateway', () => {
       },
     } as unknown as ServiceRuntime
 
-    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ batch: { batchId: 'batch-0001', itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' } }))).resolves.toBe('session-1')
-    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ import_batch: { batch_id: 'batch-0001', item_index: 1, item_count: 2, time_zone: 'Asia/Shanghai' } })
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ batch: { batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' } }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ import_batch: { batch_id: testBatchID, item_index: 1, item_count: 2, time_zone: 'Asia/Shanghai' } })
   })
 
   it('rejects names returned by the owner using the conservative local conflict key', async () => {
@@ -1180,4 +1182,32 @@ describe('AudioRecordingImportGateway', () => {
     await expect(uploading).rejects.toMatchObject({ code: 'recording-import-cancelled' })
     expect(cancel).toHaveBeenCalledTimes(1)
   })
+})
+it('replays new batch creation without a filename scan after an unknown result', async () => {
+  const posts: Array<{path: string; body: Record<string, unknown>}> = []
+  const runtime = {
+    async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      posts.push({ path, body })
+      if (path.endsWith('/new-session')) return { session_id: 'session-1' }
+      throw new Error(`unexpected request ${path}`)
+    },
+  } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
+  const gateway = new AudioRecordingImportGateway(runtime)
+  await gateway.ensureSession(input); await gateway.ensureSession(input)
+  expect(posts).toHaveLength(2)
+  expect(posts[0]).toEqual(posts[1])
+  expect(posts[0]!.path).toBe('/api/v1/audio/import-batches/new-session')
+  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
+})
+
+it('never retries a batch admission as an ordinary upload when the backend route disappears', async () => {
+  const unavailable = new Error('404 batch admission route unavailable')
+  const post = vi.fn().mockRejectedValue(unavailable)
+  const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedAudioPost: post } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'Asia/Shanghai' } })
+  await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toBe(unavailable)
+  expect(post).toHaveBeenCalledOnce()
+  expect(post.mock.calls[0]![0]).toBe('/api/v1/audio/import-batches/new-session')
 })

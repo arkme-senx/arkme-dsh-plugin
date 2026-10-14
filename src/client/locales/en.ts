@@ -35,6 +35,10 @@ AI 自动分析|Automatic AI analysis
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
 持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
+团队搜索结果|Team search result
+申请已提交，等待审批|Request submitted, awaiting approval
+申请加入团队|Apply to join team
+
 模型请求失败，请稍后重试或选择其他模型。|The model request failed. Try again later or choose another model.
 模型生成超时，请重试或选择其他模型。|Generation timed out. Try again or choose another model.
 模型生成已中断，请重试。|Generation was interrupted. Try again.

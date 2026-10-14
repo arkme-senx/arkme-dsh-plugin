@@ -40,7 +40,7 @@ const expectedPublicMethods = [
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
   'resolveLinkMetadata', 'resolveSharePreview',
-  'searchContact', 'addContact',
+  'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
