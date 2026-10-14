@@ -45,7 +45,7 @@ export class ReactionService {
       return await measureReaction('target-resolve', {}, () => this.resolve(target))
     }
     switch (input.action) {
-      case 'notifications': path = 'notifications/query'; body = { after_id: input.after_id ?? '', limit: input.limit }; break
+      case 'notifications': path = 'notifications/query'; body = { after_id: input.after_id ?? '', limit: input.limit, ...(input.include_read === undefined ? {} : { include_read: boolean(input.include_read) }) }; break
       case 'notifications-read':
         if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) return invalid()
         path = 'notifications/read'; body = { items: input.items.map(item => ({ id: key(item.id), revision: integer(item.revision, 1) })) }; break
@@ -102,7 +102,7 @@ export class ReactionService {
       const items = await Promise.all(array(result.items, 50).map(async raw => {
         const item = objectValue(raw), target = objectValue(item.target)
         if (typeof target.chat_session_uid !== 'string' || !target.chat_session_uid || typeof item.record_uid !== 'string' || !item.record_uid) return invalid()
-        return { id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1),
+        return { ...(input.include_read ? { unread: boolean(item.unread) } : {}), id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1),
           sourceKey: await this.chatSourceKey!(session.userId, target.chat_session_uid), itemUid: item.record_uid,
           recordOwnerUserId: integer(item.record_owner_user_id, 1), sendAtMillis: integer(item.attach_at), text: typeof item.text === 'string' ? item.text.slice(0, 320) : '',
           selections: array(item.selections, 56).map(raw => { const selected = objectValue(raw); return { key: key(selected.key), expression: expression(selected.expression), at: integer(selected.at) } }) }
