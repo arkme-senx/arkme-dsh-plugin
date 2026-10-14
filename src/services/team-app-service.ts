@@ -67,6 +67,17 @@ export class TeamAppService {
     const v = obj(raw), url = str(v.avatar_url)
     return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
+  async searchContactTeam(jotmoId: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<import('../types.js').ArkmeContactTeamSearchResult | undefined> {
+    const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/discovery/search', { jotmo_id: jotmoId }, session, signal, true))
+    if (data.team === null) return undefined
+    const v = obj(data.team), avatar = obj(v.avatar)
+    if (!str(v.name) || !str(v.jotmo_id) || typeof v.requires_approval !== 'boolean' || !['none', 'joined', 'pending', 'rejected', 'not_member'].includes(str(v.state))) throw invalid()
+    const key = await this.key(`avatar:${str(avatar.key)}`, session.userId)
+    return { name: str(v.name), jotmoId: str(v.jotmo_id), state: str(v.state), requiresApproval: v.requires_approval === true,
+      avatar: { mode: avatar.mode === 'custom' ? 'custom' : 'default', key: avatar.mode === 'custom' ? `team_avatar_asset://${key}` : key,
+        ...(avatar.mode === 'custom' ? { imageRef: await this.ref('profile-image', { jotmo_id: v.jotmo_id, key: avatar.key }, session.userId) } : {}) } }
+  }
+
   private async team(raw: unknown, actor: number): Promise<ArkmeTeam> {
     const v = obj(raw)
     if (!recordOwnerId(v.team_id)) throw invalid()
@@ -291,8 +302,20 @@ export class TeamAppService {
         try { return { state: 'joined', team: await this.team((await post('join-by-jotmo-id', { jotmo_id: str(p.jotmoId) })).team, actor) } }
         catch (error) {
           if (!(error instanceof ArkmeUpstreamResponseError) || obj(error.responseData).reason !== 'approval_required') throw error
-          const result = await post('join-requests/create', { jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })
-          return { state: str(result.state) }
+          try {
+            const result = await post('join-requests/create', { jotmo_id: str(p.jotmoId), request_uid: str(p.requestUid) })
+            if (result.state === 'pending' || result.state === 'rejected') return { state: result.state }
+            // A retry may replay an old approved application after the member left.
+            // Resolve current membership; approval history alone never means joined.
+            if (result.state === 'approved') {
+              const status = await post('join-requests/status', { jotmo_id: str(p.jotmoId) }, true)
+              if (['joined', 'not_member'].includes(str(status.state))) return { state: str(status.state) }
+            }
+            throw invalid()
+          } catch (applyError) {
+            if (applyError instanceof ArkmeUpstreamResponseError && obj(applyError.responseData).reason === 'already_member') return { state: 'joined' }
+            throw applyError
+          }
         }
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
@@ -413,8 +436,8 @@ export class TeamAppService {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
       const ref=await this.open('profile-image',p.imageRef,session.userId)
       const result=obj(await this.runtime.authenticatedTeamPost(
-        ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
-        ref.public_ref?{public_ref:ref.public_ref}:{team_id:ref.team_id},session,signal,true))
+        ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
+        ref.jotmo_id ? {jotmo_id:ref.jotmo_id} : ref.public_ref?{public_ref:ref.public_ref}:{team_id:ref.team_id},session,signal,true))
       const avatar=obj((ref.public_ref?result:obj(result.team)).avatar)
       if(avatar.mode!=='custom'||str(avatar.key)!==str(ref.key))throw invalid()
       const cacheKey=`team_avatar_asset://${await this.key(`avatar:${str(ref.key)}`,session.userId)}`
