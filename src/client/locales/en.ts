@@ -241,6 +241,10 @@ AI识别中…|AI recognition in progress…
 安排提醒|Arrangement reminder
 表态|Reactions
 收到表态|Received a reaction
+收到{name}的表态|Received a reaction from {name}
+会话暂不可用|Conversation temporarily unavailable
+私聊|Direct chat
+群聊|Group chat
 新通知|New notification
 点击查看原消息|Click to view the original message
 世界互动暂时无法加载|World interactions are temporarily unavailable

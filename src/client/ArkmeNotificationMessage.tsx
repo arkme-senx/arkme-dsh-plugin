@@ -69,8 +69,9 @@ export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onO
       <div className="arkme-notification-message-content">
         <div className="arkme-notification-bubble">
           <h3><ArkmeRichText text={item.title} /></h3>
+          {item.sourceLabel && <div className="arkme-notification-source">{item.sourceLabel}</div>}
           {item.recording ? <ArkmeRecordingNotificationDetail notice={item.recording} embedded /> : <>
-            {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
+            {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${item.kind === 'reaction' ? ' arkme-notification-original' : ''}${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
             {item.kind === 'official' && expanded && <ArkmeOfficialNotificationDetail id={item.id.slice('official:'.length)} scope={scope} embedded />}
             {item.arrangement && expanded && <ArrangementNoticeContent arrangementRef={item.arrangement.arrangementRef} />}
             {canExpand && <button type="button" className="arkme-notification-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? tr('收起') : item.kind === 'arrangement' ? tr('查看安排') : tr('展开全文')}</button>}
