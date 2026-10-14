@@ -186,7 +186,7 @@ describe('notification directory stability', () => {
     await act(async () => { renderer = create(<><ArkmeProductNavigation compact /><Workspace /></>) })
     await act(async () => { notificationRows()[0]!.props.onClick() })
     const before = notificationRows()[0]!
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '世界：回复者 回复了你的世界' }).props.onClick() })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '世界：回复者 回复了你的世界' }).findByType('button').props.onClick() })
     expect(arkmeUi.getSnapshot().mode).toBe('world')
     expect(arkmeUi.getSnapshot().worldInteractionRef).toBe('world-reply')
     expect(mocks.callArkme.mock.calls.some(call => call[0] === 'world.interactions.mark-viewed')).toBe(false)
@@ -338,7 +338,7 @@ describe('notification directory stability', () => {
 })
 
 it.each(['missing conversation', 'missing message', 'network error', 'success'])(
- 'reaction notification: %s preserves history and only acknowledges a valid target', async outcome => {
+ 'reaction notification: %s preserves history and validates the navigation target independently of reading', async outcome => {
   const reaction = { id: 'a'.repeat(64), revision: 1, actorUserId: 2, sourceKey: outcome === 'missing conversation' ? 'missing' : sources[0]!.sourceKey,
     itemUid: 'target-message', recordOwnerUserId: 7001, sendAtMillis: timestamp, text: 'original message',
     selections: [{ key: 'b'.repeat(64), expression: { text: '赞' }, at: timestamp }], unread: true }
@@ -358,20 +358,20 @@ it.each(['missing conversation', 'missing message', 'network error', 'success'])
   await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
   const row = () => renderer!.root.findAll(node => node.props.role === 'listitem' && String(node.props['aria-label']).startsWith('表态：'))[0]!
   expect(row()).toBeDefined()
-  await act(async () => { row().props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+  await act(async () => { row().findByType('button').props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
   const acks = mocks.callArkme.mock.calls.filter(([operation, input]) => operation === 'reactions' && input.action === 'notifications-read')
-  expect(acks).toHaveLength(outcome === 'success' ? 1 : 0)
+  expect(acks).toHaveLength(0)
   expect(open).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0)
   expect(row()).toBeDefined()
-  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(outcome === 'success' ? 0 : 1)
+  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(0)
   if (outcome !== 'success') expect(renderer!.root.findAll(node => node.props.role === 'alert').length).toBeGreaterThan(0)
   await act(async () => { renderer!.unmount(); renderer = undefined })
   await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
   expect(row()).toBeDefined()
-  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(outcome === 'success' ? 0 : 1)
+  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(0)
  })
 
-it('all-read batches the complete reaction history and retains every row', async () => {
+it('keeps reaction history without a manual all-read action or background acknowledgements', async () => {
  const rows = Array.from({ length: 101 }, (_, i) => ({ id: i.toString(16).padStart(64, '0'), revision: 1,
   actorUserId: 2, sourceKey: sources[0]!.sourceKey, itemUid: `message-${i}`, recordOwnerUserId: 7001,
   sendAtMillis: timestamp, text: 'original', selections: [{ key: 'b'.repeat(64), expression: { text: '赞' }, at: timestamp }], unread: true }))
@@ -388,12 +388,9 @@ it('all-read batches the complete reaction history and retains every row', async
  await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
  const reactionRows = () => renderer!.root.findAll(node => node.props.role === 'listitem' && String(node.props['aria-label']).startsWith('表态：'))
  expect(reactionRows()).toHaveLength(101)
- await act(async () => {
-  renderer!.root.findAllByType('button').find(button => button.children.includes('全部已读'))!.props.onClick()
-  await new Promise(resolve => setTimeout(resolve, 0))
- })
+ expect(renderer!.root.findAllByType('button').some(button => button.children.includes('全部已读'))).toBe(false)
  const batches = mocks.callArkme.mock.calls.filter(([operation, input]) => operation === 'reactions' && input.action === 'notifications-read')
- expect(batches.map(([, input]) => input.items.length)).toEqual([50, 50, 1])
+ expect(batches).toHaveLength(0)
  expect(reactionRows()).toHaveLength(101)
  expect(reactionRows().every(row => row.findAll(node => node.props['aria-label'] === '未读').length === 0)).toBe(true)
 })
