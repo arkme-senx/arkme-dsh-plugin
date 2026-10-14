@@ -1,3 +1,4 @@
+import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import { tr } from '../../locale.js'
 import type { ArkmeBotSummary, ArkmeDirectoryItem } from '../../../types.js'
 import { groupContactDirectoryItems } from '../../../contact-directory-presentation.js'
@@ -28,23 +29,6 @@ export function ArkmeDirectoryBotGlyph({ size = 38 }: { size?: number }) {
     <circle cx="10" cy="11" r="0.85" fill="currentColor" />
     <circle cx="14" cy="11" r="0.85" fill="currentColor" />
     <line x1="10" y1="14.25" x2="14" y2="14.25" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-  </svg>
-}
-
-function ArkmeDirectoryTeamGlyph() {
-  return <svg
-    width={38 * .68}
-    height={38 * .68}
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    aria-hidden
-  >
-    <g opacity="0.68">
-      <circle cx="15.6" cy="8.1" r="2.45" />
-      <path d="M11.8 15.35c.45-2.95 1.72-4.42 3.8-4.42s3.35 1.47 3.8 4.42h-7.6Z" />
-    </g>
-    <circle cx="9.3" cy="10.1" r="3" />
-    <path d="M4.2 19c.55-4.1 2.25-6.15 5.1-6.15s4.55 2.05 5.1 6.15H4.2Z" />
   </svg>
 }
 
@@ -89,9 +73,7 @@ function rowContent(item: ArkmeDirectoryItem) {
             </span>
         : item.kind === 'team'
           ? <span className="arkme-contact-directory-avatar is-team" role="img" aria-label={tr("{v0}的团队头像", { v0: item.displayName })}>
-              <ArkmeDefaultAvatarFrame>
-                <ArkmeDirectoryTeamGlyph />
-              </ArkmeDefaultAvatarFrame>
+              <ArkmeTeamAvatar avatar={item.avatar} name={item.displayName} size={38}/>
             </span>
           : <span className="arkme-contact-directory-avatar">
               <ArkmeUserAvatar

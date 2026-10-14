@@ -1,3 +1,6 @@
+import { assertRecordingImportBatchActive } from '../recording-import-contract.js'
+import { RECORDING_IMPORT_CONTRACT_VERSION } from '../recording-workflow-contract.js'
+import { recordingBatchOffset } from '../recording-import-identity.js'
 import OSS from 'ali-oss'
 import {
   isRetryableRecordingUploadError,
@@ -516,21 +519,24 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
   }
 
   async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
-    const recovered = await this.recoverSession(job, signal)
+    assertRecordingImportBatchActive(job.batch)
+    const recovered = job.createRequestUID && !job.sessionId ? undefined : await this.recoverSession(job, signal)
     if (recovered !== undefined) return recovered.sessionId
 
-    const existingNames = await this.findExistingFileNames({
+    const existingNames = job.createRequestUID ? [] : await this.findExistingFileNames({
       viewerUserId: job.userId, fileNames: [job.fileName], ...(signal === undefined ? {} : { signal }),
     })
     if (existingNames.length > 0) {
       throw new RecordingImportContractError('recording-import-duplicate', '已存在同名录音，请更名后重试')
     }
-    const timezoneOffsetMillis = -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
+    const timezoneOffsetMillis = job.batch ? recordingBatchOffset(job.startAtMillis, job.batch.timeZone) : -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
     const session = await this.requireJobSession(job)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/new-session',
+      job.batch ? '/api/v1/audio/import-batches/new-session' : '/api/v1/audio/new-session',
       {
         source: 2,
+        ...(job.createRequestUID ? { create_request_uid: job.createRequestUID } : {}),
+        ...(job.batch ? { import_batch: { contract_version: RECORDING_IMPORT_CONTRACT_VERSION, batch_id: job.batch.batchId, item_index: job.batch.itemIndex, item_count: job.batch.itemCount, time_zone: job.batch.timeZone, file_sha256: job.sha256, file_size: job.fileSize, ownership: job.belongUserId === job.userId ? 'self' : 'other' } } : {}),
         recording_kind: job.recordingKind,
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,

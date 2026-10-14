@@ -29,6 +29,8 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../ex
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
@@ -1427,6 +1429,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
   const uploadedAssetsRef = useRef<{ mutationId: string; assets: ArkmeUploadedAsset[] }>()
+  const requestRef = useRef<AbortController>()
+  useEffect(() => () => requestRef.current?.abort(), [])
   const resetMutationId = () => {
     mutationIdRef.current = uuid()
     uploadedAssetsRef.current = undefined
@@ -1450,10 +1454,17 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
     if (files.some(file => !file.type.startsWith('image/'))) { setMessage('只能上传图片'); return }
     if (files.some(file => file.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) { setMessage('单张图片不能超过 20MB'); return }
     const controller = new AbortController()
+    requestRef.current = controller
+    const owner = arkmeAuthStore.getSnapshot().auth
+    const stopAccount = arkmeAuthStore.subscribe(() => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      if (current?.status !== owner?.status || current?.environment !== owner?.environment || current?.userId !== owner?.userId) controller.abort()
+    })
     sendingRef.current = true
     setSending(true)
     setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
     try {
+      await requirePhoneForSocialAction('发布到世界', controller.signal)
       const cachedUploads = uploadedAssetsRef.current
       let assets: ArkmeUploadedAsset[] = []
       if (files.length > 0) {
@@ -1469,6 +1480,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
           uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }
         }
       }
+      controller.signal.throwIfAborted()
       setMessage('正在发布…')
       const result = await withTimeout<ArkmeWorldPublishResult>(files.length > 0
         ? worldSdk.publishWorldFileAssets({
@@ -1487,6 +1499,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
             textContent,
           }, controller.signal),
       90_000, '发布等待太久，请刷新世界后确认是否已发布', () => { controller.abort() })
+      controller.signal.throwIfAborted()
       if (!result.worldPublished) {
         throw new Error(result.error ?? (result.recordSaved ? '内容已保存，但发到世界失败，请重试' : '发布失败，请稍后重试'))
       }
@@ -1494,7 +1507,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
       onPublished(result)
       onClose()
     } catch (error) { setMessage(messageOf(error, '发布失败，请稍后重试')) }
-    finally { controller.abort(); sendingRef.current = false; setSending(false) }
+    finally { stopAccount(); controller.abort(); sendingRef.current = false; setSending(false) }
   }
   return <div role="dialog" aria-modal="true" aria-label={tr("发世界")} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
     <section style={{ ...styles.modal, ...styles.publishModal }} data-world-publish-dialog="spacious">

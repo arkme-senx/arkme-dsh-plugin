@@ -918,6 +918,7 @@ describe('record re-edit attachment UI', () => {
     arkmeUi.selectSource(source)
     mocks.callArkme.mockReset()
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: 42, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'source.record-reedit.detail') return { ...snapshot, itemUid: params?.itemUid }
       if (operation === 'source.record-reedit.draft.put') return { saved: true, draftRevision: Number(params?.expectedDraftRevision ?? 0) + 1 }
       if (operation === 'source.record-reedit.submit') return { submissionId: 'submission', state: 'pending', itemUid: params?.itemUid, title: '', textContent: params?.newText, attachments: [] }

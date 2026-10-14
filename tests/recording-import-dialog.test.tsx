@@ -81,6 +81,35 @@ describe('recording import dialog behavior', () => {
     })
   }
 
+  it('assigns manually submitted files one batch only after capability confirmation', async () => {
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' }), new File(['b'], 'B.m4a', { type: 'audio/mp4' })])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    const batches = mocks.uploadArkmeRecording.mock.calls.map(call => call[4].batch)
+    expect(batches).toHaveLength(2)
+    expect(batches[0]).toMatchObject({ itemIndex: 0, itemCount: 2 })
+    expect(batches[1]).toMatchObject({ batchId: batches[0].batchId, itemIndex: 1, itemCount: 2 })
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'recordings.generate')).toBe(false)
+  })
+
+  it('keeps an ordinary upload when Host reports the workflow contract unsupported', async () => {
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
+      throw new Error('unexpected')
+    })
+    await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![4].batch).toBeUndefined()
+  })
+
   it('matches the desktop modal chrome with the upload-dialog close control', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '关闭上传文件' })).toHaveLength(1)
     expect(renderer.root.findByType('dialog').props.style).toMatchObject({ border: 0, outline: 'none' })
@@ -948,6 +977,72 @@ describe('recording import dialog behavior', () => {
 
     expect(renderer.root.findByProps({ 'aria-label': '确认删除录音' })).toBeDefined()
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'recordings.import.cancel')).toBe(false)
+  })
+
+  it.each(['completed', 'owner', 'local'] as const)('notifies the calendar immediately after deleting a %s file even if list reload fails', async kind => {
+    const onAccepted = vi.fn()
+    let deleted = false
+    const common = {
+      ownership: 'self', fileName: '需删除.wav', fileSize: 100, durationMillis: 60000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
+      progress: 1, statusDetail: '', createdAtMillis: 1, updatedAtMillis: 2,
+    }
+    const file = kind === 'local'
+      ? { ...common, kind: 'local', importRef: 'pending', revision: 3, phase: 'failed', status: 'failed' }
+      : { ...common, kind: 'owner', taskKey: 'owner-delete', sessionRef: 'owner-ref', parsedSize: 100, status: kind === 'completed' ? 'completed' : 'transcribing' }
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') {
+        if (deleted) throw new Error('文件列表刷新失败')
+        return currentSnapshot(kind === 'completed' ? [] : [file])
+      }
+      if (operation === 'recordings.import.history') {
+        if (deleted) throw new Error('历史列表刷新失败')
+        return { items: [file], total: 1, offset: 0, hasMore: false }
+      }
+      if (operation === 'recordings.import.session.delete' || operation === 'recordings.import.cancel') {
+        deleted = true
+        return undefined
+      }
+      throw new Error(`unexpected operation: ${String(operation)}`)
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+        defaultStartAtMillis={common.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
+      await tick()
+    })
+    if (kind === 'completed') await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '删除 需删除.wav' }).props.onClick(); await tick() })
+    expect(onAccepted).not.toHaveBeenCalled()
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(deleted).toBe(true)
+    expect(onAccepted).toHaveBeenCalledOnce()
+    expect(renderedText(renderer.root)).not.toContain('需删除.wav')
+  })
+
+  it('does not invalidate calendar data when an owner deletion fails', async () => {
+    const onAccepted = vi.fn()
+    const file = {
+      kind: 'owner', taskKey: 'owner-fail', sessionRef: 'owner-ref', ownership: 'self',
+      fileName: '删除失败.wav', fileSize: 100, parsedSize: 100, durationMillis: 60000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
+      progress: 1, status: 'transcribing', statusDetail: '', createdAtMillis: 1, updatedAtMillis: 2,
+    }
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot([file])
+      throw new Error('删除未成功')
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+        defaultStartAtMillis={file.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
+      await tick()
+    })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '删除 删除失败.wav' }).props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('删除失败.wav')
+    expect(renderedText(renderer.root)).toContain('删除未成功')
   })
 
   it('asks for confirmation before changing the desktop data ownership selection', async () => {

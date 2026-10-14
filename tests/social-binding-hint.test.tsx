@@ -11,7 +11,7 @@ it('opens the existing account settings and closes the originating menu', () => 
   try {
     const button = renderer.root.findByType('button')
     expect(button.props['aria-label']).toBe('去绑定')
-    expect(renderer.root.findByProps({ id: button.props['aria-describedby'] }).children.join('')).toBe('绑定手机号后即可使用社交功能')
+    expect(renderer.root.findByProps({ id: button.props['aria-describedby'] }).children.join('')).toBe('可自由浏览，发布内容或参与互动需绑定手机号')
     act(() => renderer.root.findByType('button').props.onClick())
     expect(close).toHaveBeenCalledOnce()
     expect(open).toHaveBeenCalledExactlyOnceWith('arkme-account')

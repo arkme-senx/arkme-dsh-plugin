@@ -1,3 +1,5 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
+const testBatchID = recordingImportBatchID()
 import { createServer, request, type Server } from 'node:http'
 import { mkdtemp, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -61,12 +63,14 @@ describe('recording import route', () => {
         'x-arkme-start-at': '1725000000000',
         'x-arkme-belong-user': '42',
         'x-arkme-recording-kind': '1',
+        'x-arkme-import-batch': encodeURIComponent(JSON.stringify({ batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' })),
       },
       body: Buffer.from('recording-bytes'),
     })
     expect(response.status).toBe(202)
     await expect(response.json()).resolves.toMatchObject({ ok: true, value: { importRef: 'opaque' } })
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.stringMatching(/\.upload$/), expect.objectContaining({
+      batch: { batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' },
       fileName: '会议.wav', mimeType: 'audio/wav', fileSize: 15,
       startAtMillis: 1_725_000_000_000, recordingKind: 1, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), 42)

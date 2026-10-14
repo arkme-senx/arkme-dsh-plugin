@@ -132,6 +132,7 @@ export interface ArkmeServiceConfig {
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
+  baiduMapBrowserAk?: string
   relatedRecordingsEnabled?: boolean
   interwovenMomentsEnabled: boolean
   /** Explicit rollback only; never fall back automatically after a view-query error. */

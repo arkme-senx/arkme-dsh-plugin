@@ -230,6 +230,14 @@ describe('account settings Host API dispatch', () => {
 })
 
 describe('user-ban Host API dispatch', () => {
+  it('shares and withdraws only through signed recording and conversation references', async () => {
+    const service = { shareRelatedRecording: vi.fn(), withdrawRelatedRecording: vi.fn() }
+    const params = { sourceRef: 'current-chat', actionRef: 'signed-recording', counterpartUserId: 999, transcript: 'forged', rel_uid: 'other-relation' }
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.share', params)
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.withdraw', params)
+    expect(service.shareRelatedRecording).toHaveBeenCalledWith('current-chat', 'signed-recording')
+    expect(service.withdrawRelatedRecording).toHaveBeenCalledWith('current-chat', 'signed-recording')
+  })
   it('preserves cancellation through both related-recording routes', async () => {
     const controller = new AbortController()
     const service = { relatedRecordingEligibility: vi.fn(), relatedRecordings: vi.fn() }

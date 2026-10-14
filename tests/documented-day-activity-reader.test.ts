@@ -124,10 +124,10 @@ describe('documented multi-source day activity reader', () => {
   })
 
   it('reads only requested sources and preserves an explicit partial-coverage warning', async () => {
-    const read = vi.fn<typeof callArkme>(async () => ({ items: [], has_more: false, coverage: { status: 'partial', uncovered_sources: ['legacy'] } }))
+    const read = vi.fn<typeof callArkme>(async (_op, params) => ({ items: [], has_more: false, ...(params.source === 'audio' ? { coverage: { status: 'partial', uncovered_sources: ['legacy'] } } : {}) }))
     const filtered = { ...query, kind: 'recording' as const }
     const page = await createDocumentedDayActivityReader(query.accountScope, read).loadDay(filtered, options())
-    expect(read.mock.calls.map(([, params]) => (params as any).source)).toEqual(['audio'])
+    expect(read.mock.calls.map(([, params]) => (params as any).source)).toEqual(['record', 'audio'])
     expect(page.completeness).toBe('partial')
     expect(page.missingKinds).toEqual(['recording'])
   })
@@ -136,6 +136,7 @@ describe('documented multi-source day activity reader', () => {
     const recording_id = '0123456789abcdef01234567'
     const read = vi.fn<typeof callArkme>(async (_op, params) => {
       const { mode, body } = params as any
+      if (params.source === 'record') return { items: [], has_more: false }
       if (mode === 'transcripts') return { items: [{ entry_id: 'speech', occurred_at: start, text: '转写正文', speaker: { label: '张三' } }], has_more: false }
       return { items: [{ recording_id, start_at: start + (body.cursor ? 60_000 : 0), end_at: start + (body.cursor ? 120_000 : 60_000) }], has_more: !body.cursor, ...(!body.cursor ? { next_cursor: 'next' } : {}) }
     })
@@ -143,7 +144,7 @@ describe('documented multi-source day activity reader', () => {
     const first = await reader.loadDay(filtered, options())
     const second = await reader.loadDay(filtered, { ...options(), snapshotId: first.snapshotId, cursor: first.nextCursor! })
     expect(second.coverage?.intervals).toHaveLength(2)
-    expect(read).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenCalledTimes(3)
     const detail = await reader.loadDetail(filtered, first.items[0]!.id, { ...options(), snapshotId: first.snapshotId })
     expect((read.mock.calls.at(-1)?.[1] as any).body.recording_id).toBe(recording_id)
     expect(detail.items[0]).toMatchObject({ text: '转写正文', author: { name: '张三' } })

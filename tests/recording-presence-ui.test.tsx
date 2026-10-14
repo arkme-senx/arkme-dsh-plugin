@@ -17,6 +17,32 @@ beforeEach(() => { mock.local = { accountKey: 'test:42', phase: 'idle' }; vi.use
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); mock.listeners.clear(); vi.useRealTimers() })
 const local = async (update: Partial<typeof mock.local>) => { await act(async () => { mock.local = { ...mock.local, ...update }; mock.listeners.forEach(listener => listener()) }) }
 describe('device recording list', () => {
+  it('renders nothing while loading or empty, but keeps polling and appears when a device starts', async () => {
+    let resolve!: (value: unknown) => void
+    call.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await mount()
+    expect(renderer.toJSON()).toBeNull()
+    await act(async () => { resolve({ ...snapshot, items: [] }) })
+    expect(renderer.toJSON()).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(text()).toContain('我的手机')
+    call.mockResolvedValue({ ...snapshot, items: [{ ...item, state: 'stopped' }] })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(renderer.toJSON()).toBeNull()
+  })
+  it('hides an initial sync failure and automatically recovers without an empty error card', async () => {
+    call.mockRejectedValueOnce(new Error('offline'))
+    await mount()
+    expect(renderer.toJSON()).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(text()).toContain('我的手机')
+  })
+  it.each([['paused', '已暂停'], ['interrupted', '已中断'], ['error', '录音异常']])('keeps actionable %s device states visible', async (state, label) => {
+    call.mockResolvedValue({ ...snapshot, items: [{ ...item, state }] })
+    await mount()
+    expect(text()).toContain('我的手机')
+    expect(text()).toContain(label)
+  })
   it('polls and ticks, retains rows on failure, freezes stale time and expires visibility', async () => {
     await mount()
     expect(text()).toContain('我的手机')
@@ -30,8 +56,7 @@ describe('device recording list', () => {
     expect(text()).toContain('状态待确认')
     expect(text()).toContain('01:00')
     await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
-    expect(text()).not.toContain('我的手机')
-    expect(text()).not.toContain('暂无设备上报录音状态')
+    expect(renderer.toJSON()).toBeNull()
   })
   it('pauses while hidden and immediately refreshes on visibility recovery', async () => {
     await mount()
@@ -49,28 +74,26 @@ describe('device recording list', () => {
     call.mockResolvedValue({ ...snapshot, items: [] })
     await act(async () => { renderer.update(<ArkmeRecordingPresence accountKey="prod:43" active />) })
     await act(async () => { resolveOld(snapshot) })
-    expect(text()).not.toContain('我的手机')
-    expect(text()).toContain('暂无设备上报录音状态')
+    expect(renderer.toJSON()).toBeNull()
   })
-  it('distinguishes disabled capability from an empty list and supports retry', async () => {
+  it('hides disabled capability, avoids repeated polls, and retries when focus returns', async () => {
     call.mockRejectedValue({ body: { code: 'arkme-code-1201' } })
     await mount()
-    expect(text()).toContain('设备录音状态暂未启用')
-    expect(text()).not.toContain('暂无设备上报录音状态')
+    expect(renderer.toJSON()).toBeNull()
     await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
     expect(call).toHaveBeenCalledTimes(1)
     call.mockResolvedValue(snapshot)
-    await act(async () => renderer.root.findAllByType('button').find(button => button.props.children === '重试')!.props.onClick())
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
     expect(text()).toContain('我的手机')
   })
-  it('shows the current local recording once and suppresses stopped IDs across stale polls and remounts', async () => {
+  it('omits the current local capture and suppresses stopped IDs across stale polls and remounts', async () => {
     const sameDevice = { ...item, deviceName: '这台电脑', deviceId: '42', clientType: 'desktop', recordingMode: 'manual' }
-    call.mockResolvedValue({ ...snapshot, items: [sameDevice, { ...sameDevice, recordingId: 'r2' }] })
+    call.mockResolvedValue({ ...snapshot, items: [sameDevice, { ...item, recordingId: 'r2', deviceId: '43' }] })
     await local({ phase: 'recording', recordingId: 'r1', elapsedMillis: 65000 })
     await mount()
-    expect(renderer.root.findAllByType('li')).toHaveLength(2)
-    expect(text()).toContain('01:05')
-    expect(text()).toContain('这台电脑')
+    expect(renderer.root.findAllByType('li')).toHaveLength(1)
+    expect(text()).not.toContain('这台电脑')
+    expect(text()).toContain('我的手机')
     await local({ phase: 'saving', stoppedRecordingIds: ['r1'] })
     expect(renderer.root.findAllByType('li')).toHaveLength(1)
     await local({ phase: 'idle', recordingId: undefined })
@@ -80,6 +103,11 @@ describe('device recording list', () => {
     await act(async () => renderer.unmount())
     await mount()
     expect(renderer.root.findAllByType('li')).toHaveLength(1)
+  })
+  it('leaves no card when only the current local capture remains', async () => {
+    await local({ phase: 'recording', recordingId: 'r1', elapsedMillis: 65000 })
+    await mount()
+    expect(renderer.toJSON()).toBeNull()
   })
   it('never filters a remote row using another account local recording', async () => {
     await local({ accountKey: 'test:43', phase: 'recording', recordingId: 'r1', stoppedRecordingIds: ['r1'] })
@@ -105,7 +133,7 @@ describe('device recording list', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(20000) })
     expect(call).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
-    expect(text()).toContain('同步暂时失败')
+    expect(renderer.toJSON()).toBeNull()
     call.mockResolvedValue({ ...snapshot, items: [] })
     await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
     expect(call).toHaveBeenCalledTimes(2)
@@ -116,8 +144,7 @@ describe('device recording list', () => {
     await mount()
     call.mockReturnValue(new Promise(() => {}))
     await act(async () => renderer.update(<ArkmeRecordingPresence accountKey="prod:43" active />))
-    expect(text()).not.toContain('我的手机')
-    expect(text()).toContain('正在同步')
+    expect(renderer.toJSON()).toBeNull()
   })
   it('does not query while inactive and refreshes on return', async () => {
     await act(async () => { renderer = create(<ArkmeRecordingPresence accountKey="test:42" active={false} />) })

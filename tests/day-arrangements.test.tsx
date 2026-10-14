@@ -6,6 +6,33 @@ import { ArkmeDayArrangements } from '../src/client/ArkmeDayArrangements.js'
 let view: ReactTestRenderer | undefined
 afterEach(() => { act(() => view?.unmount()); mocks.call.mockReset() })
 const row = (ref: string, status = 'identified', created = '2026-09-24T00:00:00Z', due?: string) => ({ arrangementRef:ref,title:ref,status,createdAtMillis:Date.parse(created),...(due?{dueAtMillis:Date.parse(due)}:{}),remindAtMillis:Date.parse('2026-09-24T00:00:00Z') })
+it('keeps the daily list and expanded card during automatic updates', async () => {
+ const item=row('meeting','following',undefined,'2026-09-24T04:00:00Z')
+ mocks.call.mockResolvedValueOnce({items:[item],hasMore:false})
+ const render=(version:number)=><ArkmeDayArrangements scheduledOnly refreshVersion={version} accountScope="a" bucketDate="2026-09-24" timezone="Asia/Shanghai" />
+ await act(async()=>{view=create(render(0))})
+ const summary=()=>view!.root.findByProps({className:'arkme-day-arrangement-summary'})
+ act(()=>summary().props.onClick())
+ let finish!:(value:unknown)=>void
+ mocks.call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
+ await act(async()=>view!.update(render(1)))
+ expect(summary().props['aria-expanded']).toBe(true)
+ expect(JSON.stringify(view!.toJSON())).not.toContain('正在加载当天安排')
+ await act(async()=>finish({items:[{...item,status:'completed'}],hasMore:false}))
+ expect(summary().props['aria-expanded']).toBe(true)
+ expect(JSON.stringify(view!.toJSON())).toContain('已完成')
+})
+it('loads future appointments with a bounded due-date query and merges a confirmed creation immediately', async () => {
+ mocks.call.mockResolvedValue({items:[],hasMore:false,total:0})
+ const recent={...row('saved','following','2026-10-13T00:00:00Z','2026-10-20T01:00:00Z'),description:'',updatedAtMillis:1,reminderEnabled:false,reminderState:''}
+ await act(async()=>{view=create(<ArkmeDayArrangements scheduledOnly accountScope="a" bucketDate="2026-10-20" timezone="Asia/Shanghai" />)})
+ expect(mocks.call).toHaveBeenCalledTimes(1)
+ expect(mocks.call.mock.calls[0]?.[1]).toEqual({status:'all',limit:50,offset:0,dueStartAtMillis:Date.parse('2026-10-19T16:00:00Z'),dueEndAtMillis:Date.parse('2026-10-20T16:00:00Z')-1})
+ expect(JSON.stringify(view!.toJSON())).toContain('当天暂无安排')
+ await act(async()=>view!.update(<ArkmeDayArrangements scheduledOnly recentItems={[recent]} accountScope="a" bucketDate="2026-10-20" timezone="Asia/Shanghai" />))
+ expect(view!.root.findAllByType('article').map(n=>n.props['data-arrangement-ref'])).toEqual(['saved'])
+ expect(view!.root.findAll(node=>!!node.props['data-day-arrangements'])).toHaveLength(1)
+})
 it('uses selected timezone day, creation time and due time, including later pages', async () => {
  mocks.call.mockImplementation(async (_op,p) => p.status === 'identified' ? {items:p.offset?[row('later')]:[row('created'),row('yesterday','identified','2026-09-23T15:59:59Z'),row('next-day','identified','2026-09-24T16:00:00Z')],hasMore:!p.offset,nextOffset:50,board:{supported:true,version:'v1'}} : {items:[row('due','following','2026-09-20T00:00:00Z','2026-09-24T03:00:00Z'),row('reminder-only','following')],hasMore:false})
  await act(async () => {view=create(<ArkmeDayArrangements accountScope="a" bucketDate="2026-09-24" timezone="Asia/Shanghai" />)})

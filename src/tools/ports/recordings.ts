@@ -4,6 +4,7 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 
 /** Local recording import commands; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort {
+  recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]>
   recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence>
   recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers>

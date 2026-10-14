@@ -3,7 +3,6 @@ import type { ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { isSocialSource, useSocialAccess } from './social-access-store.js'
 
 export interface ForwardTargetDirectorySnapshot {
   chats: readonly ArkmeSourceItem[]
@@ -58,7 +57,6 @@ export const forwardTargetDirectory: ForwardTargetDirectoryPort = {
 const EMPTY: ForwardTargetDirectorySnapshot = { chats: [], self: undefined, loading: false, error: '' }
 
 export function useForwardTargetDirectory(account: string | undefined, enabled: boolean) {
-  const socialAllowed = useSocialAccess(enabled)
   const [state, setState] = useState<{ account: string; snapshot: ForwardTargetDirectorySnapshot }>()
   useEffect(() => {
     if (!enabled || account === undefined) { setState(undefined); return }
@@ -66,5 +64,5 @@ export function useForwardTargetDirectory(account: string | undefined, enabled: 
   }, [account, enabled])
   if (!enabled || account === undefined) return EMPTY
   const snapshot = state?.account === account ? state.snapshot : forwardTargetDirectory.snapshot(account)
-  return socialAllowed ? snapshot : { ...snapshot, chats: snapshot.chats.filter(source => !isSocialSource(source)) }
+  return snapshot
 }

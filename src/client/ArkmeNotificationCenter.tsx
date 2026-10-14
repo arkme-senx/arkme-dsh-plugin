@@ -1,3 +1,6 @@
+import { recordingNotifications, useRecordingNotifications } from './recording-notification-store.js'
+import { ArkmeRecordingNotificationDetail, recordingNoticeTitle, recordingNoticePreview } from './ArkmeRecordingNotificationDetail.js'
+import type { RecordingWorkflowNotice } from '../recording-workflow-contract.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
@@ -22,7 +25,7 @@ import { reactionNotifications } from './reaction-notifications.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 import { arkmeTheme } from './arkme-theme.js'
 
-export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai'
+export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai' | 'recording'
 
 export interface ArkmeNotificationItem {
   id: string
@@ -33,6 +36,7 @@ export interface ArkmeNotificationItem {
   unread: boolean
   arrangement?: ArkmeArrangementReminderEvent
   reaction?: ReactionNotification
+  recording?: RecordingWorkflowNotice
   aiLetter?: ArkmeAiLetterItem
   worldInteractionRef?: string
 }
@@ -299,12 +303,14 @@ function useNotificationItems(): {
   scope: string | undefined
   snapshot: NotificationSnapshot
   official: OfficialNotificationSnapshot
+  recording: ReturnType<typeof useRecordingNotifications>
   reactionItems: ReactionNotification[]
   items: ArkmeNotificationItem[]
 } {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
   const official = useOfficialNotifications(scope)
+  const recording = useRecordingNotifications(scope)
   const storedSnapshot = useSyncExternalStore(arkmeNotificationStore.subscribe, arkmeNotificationStore.getSnapshot, arkmeNotificationStore.getSnapshot)
   const snapshot = storedSnapshot.scope === scope ? storedSnapshot : EMPTY_SNAPSHOT
   const reactionRevision = useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
@@ -318,12 +324,13 @@ function useNotificationItems(): {
   const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forAccount(scope), [reactionRevision, scope])
   const items = useMemo(() => [
     ...official.items.map(item => ({ id: `official:${item.id}`, kind: 'official' as const, title: item.title, preview: item.summary, atMillis: item.publishedAtMillis, unread: item.readAtMillis === 0 })),
+    ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
     ...snapshot.arrangementItems.map(arrangementItem),
     ...snapshot.worldItems,
     ...snapshot.aiItems,
     ...reactionItems.map(reactionItem),
-  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, reactionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
-  return { scope, snapshot, official, reactionItems, items }
+  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
+  return { scope, snapshot, official, recording, reactionItems, items }
 }
 
 function NotificationBell({ size = 22 }: { size?: number }) {
@@ -334,14 +341,15 @@ function NotificationBell({ size = 22 }: { size?: number }) {
 }
 
 export function useArkmeNotificationSummary(): { ready: boolean; hasNotifications: boolean; unreadCount: number; preview: string; atMillis: number } {
-  const { items, snapshot, official } = useNotificationItems()
-  const unread = items.filter(item => item.kind !== 'official' && item.unread)
+  const { items, snapshot, official, recording } = useNotificationItems()
+  const unread = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.unread)
   const officialLatest = official.summary.latest
-  const latest = officialLatest !== undefined && officialLatest.publishedAtMillis > (items[0]?.atMillis ?? 0) ? { title: officialLatest.title, preview: officialLatest.summary, atMillis: officialLatest.publishedAtMillis } : items[0]
+  let latest = officialLatest !== undefined && officialLatest.publishedAtMillis > (items[0]?.atMillis ?? 0) ? { title: officialLatest.title, preview: officialLatest.summary, atMillis: officialLatest.publishedAtMillis } : items[0]
+  if (recording.latest && recording.latest.atMillis > (latest?.atMillis ?? 0)) latest = { title: recordingNoticeTitle(recording.latest), preview: recordingNoticePreview(recording.latest), atMillis: recording.latest.atMillis }
   return {
-    ready: snapshot.scope !== undefined && (snapshot.ready || official.ready),
-    hasNotifications: official.summary.total > 0 || items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
-    unreadCount: official.summary.unreadCount + unread.length + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
+    ready: snapshot.scope !== undefined && (snapshot.ready || official.ready || recording.ready),
+    hasNotifications: recording.total > 0 || official.summary.total > 0 || items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
+    unreadCount: recording.unreadCount + official.summary.unreadCount + unread.length + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
     preview: latest === undefined ? tr('官方、安排和互动通知') : `${latest.title}：${latest.preview}`,
     atMillis: latest?.atMillis ?? 0,
   }
@@ -371,6 +379,7 @@ const styles: Record<string, CSSProperties> = {
 
 function notificationKindLabel(kind: ArkmeNotificationKind): string {
   switch (kind) {
+    case 'recording': return tr('录音')
     case 'official': return tr('官方')
     case 'arrangement': return tr('安排')
     case 'reaction': return tr('表态')
@@ -380,7 +389,7 @@ function notificationKindLabel(kind: ArkmeNotificationKind): string {
 }
 
 const notificationFilterKinds: readonly (ArkmeNotificationKind | 'all')[] = [
-  'all', 'official', 'arrangement', 'reaction', 'world', 'ai',
+  'all', 'official', 'arrangement', 'reaction', 'world', 'ai', 'recording',
 ]
 
 function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
@@ -388,32 +397,45 @@ function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
 }
 
 export function ArkmeNotificationCenter() {
-  const { scope, snapshot, official, items } = useNotificationItems()
+  const { scope, snapshot, official, recording, items } = useNotificationItems()
   const [officialDetail, setOfficialDetail] = useState<string>()
+  const [recordingDetail, setRecordingDetail] = useState<string>()
+  const detail = recording.items.find(item => item.id === recordingDetail)
   const [actionError, setActionError] = useState('')
   const [allBusy, setAllBusy] = useState(false)
-  useEffect(() => { setOfficialDetail(undefined); setActionError('') }, [scope])
+  useEffect(() => { setOfficialDetail(undefined); setRecordingDetail(undefined); setActionError('') }, [scope])
   const [busyId, setBusyId] = useState<string | undefined>()
   const [activeKind, setActiveKind] = useState<ArkmeNotificationKind | 'all'>('all')
-  const unreadCount = items.filter(item => item.kind !== 'official' && item.unread).length + official.summary.unreadCount + snapshot.worldUnreadCount + snapshot.aiUnreadCount
+  const unreadCount = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.unread).length + recording.unreadCount + official.summary.unreadCount + snapshot.worldUnreadCount + snapshot.aiUnreadCount
   const itemCounts = useMemo(() => {
     const counts: Record<ArkmeNotificationKind | 'all', number> = {
       all: items.length,
       official: 0,
+      recording: 0,
       arrangement: 0,
       reaction: 0,
       world: 0,
       ai: 0,
     }
     for (const item of items) counts[item.kind] += 1
+    counts.all += recording.total - counts.recording
+    counts.recording = recording.total
     counts.all += official.summary.total - counts.official
     counts.official = official.summary.total
     return counts
-  }, [items, official.summary.total])
+  }, [items, official.summary.total, recording.total])
   const filteredItems = activeKind === 'all' ? items : items.filter(item => item.kind === activeKind)
+  const filterLoading = activeKind === 'recording'
+    ? recording.loading && !recording.ready
+    : snapshot.loading || official.loading || (recording.loading && !recording.ready)
   const openItem = useCallback(async (item: ArkmeNotificationItem) => {
     setBusyId(item.id)
     try {
+      if (item.kind === 'recording' && item.recording && scope) {
+        setRecordingDetail(item.recording.id)
+        if (item.unread) await recordingNotifications.read(scope, [item.recording])
+        return
+      }
       if (item.kind === 'official') { setOfficialDetail(item.id.slice('official:'.length)); return }
       if (item.kind === 'arrangement' && item.arrangement !== undefined) {
         await arkmeNotificationStore.markArrangementRead(item.arrangement.eventRef)
@@ -426,6 +448,8 @@ export function ArkmeNotificationCenter() {
         const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === item.reaction?.sourceKey)
         if (source !== undefined) arkmeUi.showConversationTarget(source, item.reaction.itemUid, item.reaction.sendAtMillis, item.reaction.recordOwnerUserId, undefined, true)
       }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : tr('通知操作失败，请重试'))
     } finally {
       setBusyId(undefined)
     }
@@ -437,6 +461,8 @@ export function ArkmeNotificationCenter() {
     try {
     setActionError('')
     if (scope && official.summary.unreadCount > 0) { try { await officialNotifications.read(scope) } catch { setActionError(tr('部分官方通知未能标记已读，请重试')) } }
+    if (!isCurrent()) return
+    if (scope && recording.unreadCount > 0) { try { await recordingNotifications.read(scope) } catch { setActionError(tr('部分录音通知未能标记已读，请重试')) } }
     if (!isCurrent()) return
     await arkmeNotificationStore.markAllArrangementRead().catch(() => undefined)
     if (!isCurrent()) return
@@ -450,7 +476,7 @@ export function ArkmeNotificationCenter() {
       await reactionNotifications.seen(scope, reactions)
     }
     } finally { setAllBusy(false) }
-  }, [scope, unreadCount, allBusy, official.summary.unreadCount, snapshot.aiItems, snapshot.aiLatestUnread])
+  }, [scope, unreadCount, allBusy, recording.unreadCount, official.summary.unreadCount, snapshot.aiItems, snapshot.aiLatestUnread])
   return <section style={styles.shell} aria-label={tr('通知')}>
     <header style={styles.header}>
       <span style={{ color: arkmeTheme.accent }}><NotificationBell size={21} /></span>
@@ -458,7 +484,7 @@ export function ArkmeNotificationCenter() {
       <button type="button" style={styles.action} disabled={unreadCount === 0 || allBusy} onClick={() => { void markAll() }}>{tr('全部已读')}</button>
     </header>
     {actionError && <div role="alert" style={styles.status}>{actionError}</div>}
-    {officialDetail && scope ? <ArkmeOfficialNotificationDetail key={`${scope}:${officialDetail}`} id={officialDetail} scope={scope} onClose={() => setOfficialDetail(undefined)} /> : <>
+    {officialDetail && scope ? <ArkmeOfficialNotificationDetail key={`${scope}:${officialDetail}`} id={officialDetail} scope={scope} onClose={() => setOfficialDetail(undefined)} /> : detail ? <ArkmeRecordingNotificationDetail notice={detail} onClose={() => setRecordingDetail(undefined)} /> : <>
     <div role="tablist" aria-label={tr('通知类型')} style={styles.filterBar}>
       {notificationFilterKinds.map(kind => {
         const selected = activeKind === kind
@@ -476,13 +502,14 @@ export function ArkmeNotificationCenter() {
         </button>
       })}
     </div>
+    {recording.error && <div role="status" style={styles.status}>{tr('录音通知暂时不可用')} <button onClick={() => { void recordingNotifications.refresh() }}>{tr('重试录音通知')}</button></div>}
     {official.error && <div role="status" style={styles.status}>{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error !== undefined && <div role="alert" style={styles.status}>{snapshot.error}</div>}
     {snapshot.worldError !== undefined && snapshot.worldItems.length === 0 && <div role="status" style={styles.status}>{tr('世界互动暂时无法加载')}</div>}
     {snapshot.aiError !== undefined && snapshot.aiItems.length === 0 && <div role="status" style={styles.status}>{tr('AI 来信暂时无法加载')}</div>}
-    {(snapshot.loading || official.loading) && items.length === 0 && <div role="status" style={styles.status}>{tr('正在加载通知…')}</div>}
+    {filterLoading && filteredItems.length === 0 && <div role="status" style={styles.status}>{tr('正在加载通知…')}</div>}
     <div style={styles.list} role="list">
-      {filteredItems.length === 0 && !snapshot.loading && !official.loading
+      {filteredItems.length === 0 && !filterLoading
         ? <div style={styles.empty}>{activeKind === 'all' ? tr('暂时没有通知') : `${notificationFilterLabel(activeKind)}${tr('暂时没有通知')}`}<br /><span style={{ fontSize: 12 }}>{activeKind === 'all' ? tr('官方、安排、互动和表态会集中显示在这里') : tr('切换其他类型查看通知')}</span></div>
         : filteredItems.map(item => <button
           key={item.id} type="button" role="listitem" disabled={busyId === item.id}
@@ -497,6 +524,7 @@ export function ArkmeNotificationCenter() {
           </span>
           {item.unread && <span aria-label={tr('未读')} style={{ width: 7, height: 7, flex: 'none', marginTop: 7, borderRadius: 999, background: '#ff5f57' }} />}
         </button>)}
+      {(activeKind === 'recording' || activeKind === 'all') && recording.nextCursor && <button disabled={recording.loading} onClick={() => { void recordingNotifications.refresh(true) }}>{tr('加载更多录音通知')}</button>}
       {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button disabled={official.foregroundLoading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
     </div>
     </>}

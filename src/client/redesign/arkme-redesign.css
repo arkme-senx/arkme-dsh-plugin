@@ -326,6 +326,15 @@ span.arkme-forward-search {
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
+/* Arkme primary navigation replaces the workspace in one layout pass. The
+   host's sidebar animation would otherwise stretch each full-width page out
+   of the previous conversation column. Keep this policy at the shell boundary,
+   including its drag handles; component and drawer motion remains independent. */
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]),
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) > [data-side] {
+  transition: none !important;
+}
+
 /* Keep both Arkme navigation columns visible at every viewport width. DSH may
    report its sidebar as collapsed at 1024px; the plugin still owns its navigation rail
    and at least a 120px directory with search/add controls (plus the 4px divider budget). */
@@ -333,17 +342,13 @@ span.arkme-forward-search {
    overflow its zero-width track; focus/reveal must not pan both Arkme columns. */
 [data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) { overflow: clip; }
 /* Harness 0.1.5 renamed the collapsed third-column marker from details to rightbar. */
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="true"] [data-arkme-directory-mode="conversations"]) {
-  grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
-}
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-web-locked] [data-arkme-directory-mode="web-locked"]) {
+/* Conversations, Contacts and the Web login workspace share the same directory
+   width contract. Routes without a directory retain only the navigation rail. */
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
   grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
 }
 [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
   grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0 !important;
-}
-[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
-  grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
 }
 @media (min-width: 1100px) {
   [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {
@@ -1338,9 +1343,6 @@ body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-c
 body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-composer-resize-highlighted="true"] {
   border-color: var(--dsw-alias-state-success-primary) !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
-  filter: invert(1) hue-rotate(180deg);
-}
 body[data-ds-dark-theme] .arkme-redesign-hero-input {
   border-color: var(--dsw-alias-border-l2) !important;
   background: var(--dsw-specific-input-major) !important;
@@ -1638,11 +1640,19 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
   align-items: center; gap: 18px; margin: 0 auto;
 }
 .arkme-team-detail-glyph {
-  width: 72px; height: 72px; display: grid; place-items: center; border-radius: 20px;
-  background: var(--dsw-alias-state-business-tertiary, #eef0ff); color: var(--dsw-alias-state-business-primary, #4f5fbf);
-  font-size: 20px; line-height: 1; font-weight: 700;
+  --arkme-team-detail-avatar-size: 72px;
+  width: var(--arkme-team-detail-avatar-size); height: var(--arkme-team-detail-avatar-size);
+  display: grid; place-items: center; border-radius: 50%; overflow: hidden;
 }
+.arkme-team-detail-glyph > span, .arkme-team-detail-glyph .arkme-team-name-avatar { width: 100% !important; height: 100% !important; }
+.arkme-team-detail-glyph .arkme-team-name-avatar { font-size: calc(var(--arkme-team-detail-avatar-size) * .32) !important; }
 .arkme-team-detail-summary { min-width: 0; display: grid; gap: 7px; }
+.arkme-team-detail-title-row { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.arkme-team-detail-title-row h1 { min-width: 0; }
+.arkme-team-profile-entry { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: var(--dsw-alias-label-secondary, #717780); cursor: pointer; }
+.arkme-team-profile-entry:hover { background: var(--dsw-alias-bg-layer-2, #f2f3f5); color: var(--dsw-alias-label-primary, #292929); }
+.arkme-team-profile-entry:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #4f5fbf); outline-offset: 2px; }
+.arkme-team-profile-entry:disabled { opacity: .5; cursor: default; }
 .arkme-team-detail-header h1 {
   margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; line-height: 28px;
   font-weight: 650; letter-spacing: -.02em;
@@ -2062,7 +2072,7 @@ body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-
   .arkme-contact-profile-avatar > span { width: 56px !important; height: 56px !important; }
   .arkme-team-detail-header { padding: 26px 20px; }
   .arkme-team-detail-header-main { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
-  .arkme-team-detail-glyph { width: 56px; height: 56px; border-radius: 16px; font-size: 18px; }
+  .arkme-team-detail-glyph { --arkme-team-detail-avatar-size: 56px; }
   .arkme-team-detail-count { grid-column: 2; min-width: 0; display: flex; justify-items: initial; align-items: baseline; gap: 4px; }
   .arkme-team-detail-count strong { font-size: 14px; line-height: 18px; }
   .arkme-team-detail-count span { font-size: 11px; }

@@ -1,3 +1,4 @@
+import { requireDirectMessageSendAllowed } from '../direct-message-admission.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { arkmeSourceAllowsUserWrite } from '../../topic-policy.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -125,10 +126,15 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
     busy.current = true; setSending(true)
     const request = new AbortController(); controller.current = request
     try {
-      const message = await attempt.send([...selected.values()], comment, request.signal, (key, result) => {
+      const targets = [...selected.values()]
+      for (const target of targets) if (!attempt.hasSent(targetKey(target))) await requireDirectMessageSendAllowed(target, request.signal)
+      request.signal.throwIfAborted()
+      const message = await attempt.send(targets, comment, request.signal, (key, result) => {
         setResults(previous => new Map(previous).set(key, result))
       })
       if (!request.signal.aborted && message !== undefined) onComplete(message)
+    } catch (error) {
+      if (!request.signal.aborted) setSelectionError(error instanceof Error ? error.message : tr("操作失败，请稍后重试"))
     } finally {
       busy.current = false
       if (!closed.current) setSending(false)

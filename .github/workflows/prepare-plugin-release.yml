@@ -23,13 +23,22 @@ permissions:
   pull-requests: write
 
 jobs:
+  tests:
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      ref: ${{ github.sha }}
+
   prepare:
+    needs: tests
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -46,7 +55,6 @@ jobs:
           pnpm install --frozen-lockfile
       - name: 验证发版内容
         run: |
-          pnpm test
           pnpm run typecheck
           pnpm run build
       - name: 创建发版拉取请求

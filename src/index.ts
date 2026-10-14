@@ -128,6 +128,8 @@ export interface Config {
   toolProfile: ArkmeToolProfile
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
+  /** Public browser AK; enable JavaScript API and restrict allowed web origins in Baidu. */
+  baiduMapBrowserAk?: string
   interwovenMomentsEnabled: boolean
   selfCalendarViewsEnabled: boolean
   recordingWorkbenchEnabled: boolean
@@ -183,6 +185,7 @@ export const Config: Schema<Config> = Schema.object({
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
   toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
   relatedRecordingsEnabled: Schema.boolean().default(true),
+  baiduMapBrowserAk: Schema.string().default(''),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
   selfCalendarViewsEnabled: Schema.boolean().default(true),

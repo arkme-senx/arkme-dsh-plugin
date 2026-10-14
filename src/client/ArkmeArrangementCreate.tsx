@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeArrangementItem } from '../types.js'
+import type { ArkmeArrangementDateContext, ArkmeArrangementItem } from '../types.js'
 import { callArkme } from './api.js'
 import { tr } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
@@ -50,10 +50,17 @@ export function useCreatedArrangements() {
   return { items, merge, notice, retry: () => setRevision(value => value + 1) }
 }
 
-export function ArkmeArrangementCreate({ accountScope, open, onClose, onSaved }: {
-  accountScope: string; open: boolean; onClose(): void; onSaved(items: ArkmeArrangementItem[]): void
-}) {
-  const key = `arkme:arrangement-create:${accountScope}`
+type CreateProps = {
+  accountScope: string; open: boolean; dateContext?: ArkmeArrangementDateContext; onClose(): void; onSaved(items: ArkmeArrangementItem[]): void
+}
+
+export function ArkmeArrangementCreate(props: CreateProps) {
+  return <ArrangementCreate key={JSON.stringify([props.accountScope, props.dateContext?.defaultDate, props.dateContext?.timezone])} {...props} />
+}
+
+/** Both calendar and board use this entire composer and submission lifecycle. */
+function ArrangementCreate({ accountScope, open, dateContext, onClose, onSaved }: CreateProps) {
+  const key = `arkme:arrangement-create:${accountScope}${dateContext ? `:date:${dateContext.defaultDate}:${dateContext.timezone}` : ''}`
   const [draft, setDraft] = useState(() => readDraft(key))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -92,7 +99,7 @@ export function ArkmeArrangementCreate({ accountScope, open, onClose, onSaved }:
     if (inFlight.current || !accountScope) return
     const texts = [...draft.texts, ...(draft.input.trim() ? [draft.input.trim()] : [])]
     if (!texts.length || validation(texts)) { setError(tr('最多输入10条，每条500字，总计2000字')); return }
-    const fingerprint = JSON.stringify(texts)
+    const fingerprint = JSON.stringify(dateContext ? { texts, dateContext } : texts)
     const requestId = draft.fingerprint === fingerprint && draft.requestId ? draft.requestId : crypto.randomUUID()
     const submission = {...draft,requestId,fingerprint}
     setDraft(submission)
@@ -101,14 +108,18 @@ export function ArkmeArrangementCreate({ accountScope, open, onClose, onSaved }:
     const signal = lifetime.current!.signal
     inFlight.current = true; setSaving(true); setError('')
     try {
-      const result = await withArkmeReadDeadline(requestSignal => callArkme<{items: ArkmeArrangementItem[]}>('arrangements.create', { requestId, texts }, requestSignal), signal)
+      const result = await withArkmeReadDeadline(requestSignal => callArkme<{items: ArkmeArrangementItem[]}>('arrangements.create', { requestId, texts,
+        ...(dateContext ? { dateContext } : {}),
+      }, requestSignal), signal)
       if (signal.aborted) return
       if (!result.items.length) throw Error('Missing saved arrangement')
       onSaved(result.items)
       setDraft(empty()); try { sessionStorage.removeItem(key) } catch {}
       onClose()
-    } catch {
-      if (!signal.aborted) setError(tr('未能确认创建结果，输入已保留；重试不会重复创建。'))
+    } catch (error) {
+      if (!signal.aborted) setError(tr((error as { body?: { code?: string } } | null)?.body?.code === 'arrangement-date-context-unavailable'
+        ? '当前服务暂不支持日历默认日期，尚未提交安排；输入已保留。'
+        : '未能确认创建结果，输入已保留；重试不会重复创建。'))
     } finally {
       if (!signal.aborted) { inFlight.current = false; setSaving(false) }
     }
@@ -125,6 +136,10 @@ export function ArkmeArrangementCreate({ accountScope, open, onClose, onSaved }:
       }
     }}>
       <header><h2>{tr('添加安排')}</h2><button type="button" aria-label={tr('关闭')} disabled={saving} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      {dateContext && <div className="arkme-arrangement-default-date" role="note">
+        <span>{tr('默认日期：{date}', { date: dateContext.defaultDate })}</span>
+        <small>{tr('未写日期时使用此日期，内容中的明确日期优先。')}</small>
+      </div>}
       <div ref={messages} className="arkme-arrangement-create-messages" aria-label={tr('待创建的安排内容')}>
         {!draft.texts.length && <p>{tr('输入想做的事，完成后先保存，再由AI识别安排。')}</p>}
         {draft.texts.map((text,index) => <div className="arkme-arrangement-create-message" key={index}><span>{text}</span><button type="button" aria-label={tr('移除此条内容')} disabled={saving} onClick={() => setDraft({...draft,texts:draft.texts.filter((_,i)=>i!==index)})}><X size={14} aria-hidden /></button></div>)}
@@ -138,4 +153,14 @@ export function ArkmeArrangementCreate({ accountScope, open, onClose, onSaved }:
       </footer>
     </aside>
   </div>
+}
+
+export function ArkmeArrangementCreationStatus({ created }: { created: ReturnType<typeof useCreatedArrangements> }) {
+  const pending = created.items.some(item => item.recognitionState === 'recognizing')
+  const incomplete = created.items.some(item => ['failed', 'no_result', 'cancelled'].includes(item.recognitionState ?? ''))
+  if (!created.notice && !pending && !incomplete) return null
+  return <p role="status" className="arkme-arrangement-message">
+    {created.notice || tr(pending ? '安排已保存，正在识别内容和日期…' : '安排已保存，未完成AI识别，可在安排模块查看原始内容。')}
+    {created.notice && <button type="button" onClick={created.retry}>{tr('更新识别结果')}</button>}
+  </p>
 }

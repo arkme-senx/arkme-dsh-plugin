@@ -41,6 +41,7 @@ describe('ArkmeUiController', () => {
       ['world', controller => controller.showWorld('mine')],
       ['contacts', controller => controller.showContacts()],
       ['recordings', controller => controller.showRecordings()],
+      ['arrangements', controller => controller.showArrangements()],
       ['calls', controller => controller.showCalls()],
       ['calendar', controller => controller.showCalendar()],
       ['extensions', controller => controller.showExtensions()],

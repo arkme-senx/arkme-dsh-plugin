@@ -4,7 +4,7 @@ import { arkmeTheme as theme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { arkmeUi } from './ui-controller.js'
 
-export const socialBindingDescription = '绑定手机号后即可使用社交功能'
+export const socialBindingDescription = '可自由浏览，发布内容或参与互动需绑定手机号'
 
 /** Reuse the account settings flow without adding a login or business guard. */
 export function ArkmeSocialBindingHint({ onOpen }: { onOpen?: () => void }) {

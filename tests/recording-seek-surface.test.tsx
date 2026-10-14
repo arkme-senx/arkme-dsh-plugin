@@ -70,17 +70,51 @@ describe('recording surface selection and real playback controller', () => {
     expect(audios[1]!.currentTime).toBe(7)
   })
 
-  it('routes transcript selection through the same playback owner and keeps paused selection silent', async () => {
+  it('plays double-clicked sentences immediately and marks only the currently playing row', async () => {
     const rows = () => renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
-    await act(async () => { rows()[0]!.props.onSelect() })
-    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
-    await act(async () => { rows()[1]!.props.onSelect(); await tick() })
+    const doubleClick = async (index: number) => act(async () => {
+      rows()[index]!.findByType('li').props.onDoubleClick(); await tick()
+    })
+    await doubleClick(0)
+    expect(audios).toHaveLength(1)
+    expect(audios[0]!.play).toHaveBeenCalledOnce()
+    expect(rows().map(row => row.props.isPlaying)).toEqual([true, false])
+    expect(renderer.root.findAllByProps({ 'aria-label': '正在播放' })).toHaveLength(1)
+    await doubleClick(1)
     expect(audios).toHaveLength(2)
+    expect(audios[0]!.pause).toHaveBeenCalled()
+    expect(rows().map(row => row.props.isPlaying)).toEqual([false, true])
     expect(timeline().props.playheadMillis).toBe(rows()[1]!.props.item.startAtMillis)
     await act(async () => { timeline().props.onTogglePlayback() })
-    await act(async () => { rows()[0]!.props.onSelect(); await tick() })
-    expect(audios).toHaveLength(2)
+    expect(rows().map(row => row.props.isPlaying)).toEqual([false, false])
+    await doubleClick(0)
+    expect(audios).toHaveLength(3)
+    await act(async () => { audios[2]!.currentTime = 12; audios[2]!.dispatchEvent(new Event('timeupdate')); await tick() })
+    // A sentence double-click must stop at its end rather than queueing the next sentence.
+    expect(audios).toHaveLength(3)
     expect(timeline().props.isPlaying).toBe(false)
+    expect(renderer.root.findAllByProps({ 'aria-label': '正在播放' })).toHaveLength(0)
+  })
+
+  it('plays the clicked recording when another recording covers the same timestamp', async () => {
+    const rows = renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
+    rows[1]!.props.item.startAtMillis = rows[0]!.props.item.startAtMillis
+    rows[1]!.props.item.endAtMillis = rows[0]!.props.item.endAtMillis
+    await act(async () => { rows[1]!.findByType('li').props.onDoubleClick(); await tick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.playback.open', { itemRef: 'ref-2' }, expect.any(AbortSignal))
+    expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow).map(row => row.props.isPlaying)).toEqual([false, true])
+  })
+
+  it('does not report a sentence as playing when its audio fails to open', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'recordings.playback.open') throw new Error('录音已过期')
+      return original(operation, ...args)
+    })
+    await act(async () => { renderer.root.findAllByType(ArkmeRecordingTranscriptRow)[0]!.props.onSelect(); await tick() })
+    expect(audios).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'aria-label': '正在播放' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ role: 'alert' }).some(node => node.children.includes('录音已过期'))).toBe(true)
   })
   it('keeps the last visible cursor when playback completes naturally', async () => {
     const last = timeline().props.items[1]
@@ -114,6 +148,31 @@ describe('recording surface selection and real playback controller', () => {
     expect(audios).toHaveLength(0)
     expect(timeline().props.playheadMillis).toBeUndefined()
     expect(timeline().props.playbackLoading).toBe(false)
+  })
+
+  it('removes the header and tabs on an empty date and restores them for pending audio', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let processing = false
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation !== 'recordings.day') return original(operation, params, signal)
+      return { dateStamp: params.dateStamp, totalDurationMillis: 0, coverage: { state: 'ready', intervals: [] },
+        transcript: { state: processing ? 'processing' : 'empty', message: '', items: [], processingCount: processing ? 1 : 0, totalDurationMillis: 0 },
+        summary: { state: 'empty', message: '', items: [] }, timeline: { state: 'empty', message: '', items: [] } }
+    })
+    const selectOtherDay = async () => act(async () => {
+      renderer.root.findAll(node => node.type === 'button' && node.props['aria-pressed'] === false && !node.props.disabled)[0]!.props.onClick()
+      await tick()
+    })
+    await selectOtherDay()
+    const detail = () => renderer.root.findByProps({ 'aria-label': '录音详情' })
+    expect(detail().findAllByType('button')).toHaveLength(0)
+    expect(detail().findAllByProps({ 'aria-label': '当天暂无录音' })).toHaveLength(1)
+    expect(detail().findAllByType(ArkmeRecordingTimeline)).toHaveLength(0)
+    processing = true
+    await selectOtherDay()
+    expect(detail().findAllByProps({ 'aria-label': '当天暂无录音' })).toHaveLength(0)
+    expect(detail().findAllByProps({ 'aria-label': '录音内容' })).toHaveLength(1)
+    expect(detail().findAllByType(ArkmeRecordingTimeline)).toHaveLength(1)
   })
 
 })

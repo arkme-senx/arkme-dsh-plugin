@@ -118,6 +118,7 @@ interface DraftCaptureState {
   failureLatched: boolean
   generation: number
   starting: boolean
+  finalizingSubmission: boolean
   startPromise: Promise<void> | undefined
   startTimer: CaptureTimer | undefined
   captureLimitTimer: CaptureTimer | undefined
@@ -1129,20 +1130,21 @@ export class ArkmeRecordInputCaptureOwner {
     // generation first; otherwise a valid granted draft silently loses its
     // supplemental background sound and is sent as plain text.
     const shouldFinalizePendingStart = this.shouldRecord(state) && this.recordingSession !== state
+    // Freeze ownership before any await: take() clears this stable draft key,
+    // and the user may already be typing the next message during recorder startup.
+    state.finalizingSubmission = shouldFinalizePendingStart
+    state.isActive = false
+    if (this.activeDraftKey === draftKey) this.activeDraftKey = undefined
+    this.detachSession(state)
     this.cancelStartTimer(state)
     if (shouldFinalizePendingStart) {
       await this.bounded(state.startPromise ?? this.startRecording(state)).catch(() => undefined)
     }
-    state.isActive = false
+    state.finalizingSubmission = false
     state.generation += 1
-    if (this.activeDraftKey === draftKey) this.activeDraftKey = undefined
     this.cancelStartTimer(state)
     this.cancelCaptureLimitTimer(state)
     this.publishWaveform(state)
-    // The composer reuses its stable draftKey immediately after take(). Detach
-    // this exact generation before the first await so new input gets a new
-    // session and late stop/context completion cannot delete or mutate it.
-    this.detachSession(state)
     const preserveBackgroundSound = this.captureGateOpen()
     await this.stopOrCancel(state, preserveBackgroundSound)
     const enabled = this.readEnabled()
@@ -1276,6 +1278,7 @@ export class ArkmeRecordInputCaptureOwner {
       failureLatched: false,
       generation: 0,
       starting: false,
+      finalizingSubmission: false,
       startPromise: undefined,
       startTimer: undefined,
       captureLimitTimer: undefined,
@@ -1345,7 +1348,7 @@ export class ArkmeRecordInputCaptureOwner {
   }
 
   private shouldRecord(state: DraftCaptureState): boolean {
-    return !this.disposed && state.isActive && this.activeDraftKey === state.draftKey
+    return !this.disposed && (state.finalizingSubmission || (state.isActive && this.activeDraftKey === state.draftKey))
       && state.hasUserContent && this.readEnabled() && this.readMicrophoneReady()
   }
 

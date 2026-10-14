@@ -1,3 +1,4 @@
+import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
@@ -81,22 +82,17 @@ const styles: Record<string, CSSProperties> = {
     transform: 'rotate(45deg)', background: arkmeTheme.menu,
     borderBottom: `1px solid ${colors.border}`, borderLeft: `1px solid ${colors.border}`,
   },
-  header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: {
     width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary,
     cursor: 'pointer', font: 'inherit', lineHeight: 1,
   },
-  navDisabled: { opacity: .32, cursor: 'default' },
-  caretLeft: { transform: 'rotate(180deg)' },
   monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
     width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
     borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer',
     font: 'inherit', fontSize: 11, fontWeight: 400,
   },
-  todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
   week: {
     height: 32, marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
     alignItems: 'center',
@@ -226,7 +222,7 @@ function sameMonth(left: Date, right: Date): boolean {
 }
 
 export function ArkmeCalendarMonthView({
-  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates,
+  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates, allowFuture = false,
 }: {
   visibleMonth: Date
   selectedDate: Date
@@ -237,11 +233,10 @@ export function ArkmeCalendarMonthView({
   onVisibleMonthChange(month: Date): void
   onSelectDate(date: Date): void
   recordingDates?: ReadonlySet<string>
+  allowFuture?: boolean
 }) {
   useArkmeLocale()
   const calendarByDay = useMemo(() => new Map(days.map(day => [day.bucketDate, day])), [days])
-  const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
-  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
   const chooseDate = (date: Date) => {
     const normalized = startOfLocalDay(date)
     onSelectDate(normalized)
@@ -249,29 +244,14 @@ export function ArkmeCalendarMonthView({
   }
 
   return <>
-    <header style={styles.header}>
-      <div style={styles.navCluster}>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("上个月")} title={tr("上个月")} style={styles.iconButton}
-          onClick={() => onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>
-          <CaretRight size={16} style={styles.caretLeft} aria-hidden />
-        </button>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("下个月")} title={tr("下个月")} disabled={!canGoNext}
-          style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }}
-          onClick={() => { if (canGoNext) onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1)) }}>
-          <CaretRight size={16} aria-hidden />
-        </button>
-      </div>
-      <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-      <button data-arkme-feedback="neutral" type="button" disabled={!canJumpToday}
-        style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }}
-        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>{tr("回到今日")}</button>
-    </header>
+    <ArkmeCalendarMonthHeader visibleMonth={visibleMonth} selectedDate={selectedDate} today={today} allowFuture={allowFuture}
+      onVisibleMonthChange={onVisibleMonthChange} onToday={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }} />
     <div style={styles.week}>{calendarWeekdays().map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
     <div style={{ ...styles.days, opacity: loading && days.length === 0 ? .55 : 1 }}>
       {calendarCells(visibleMonth).map((date, index) => {
         if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
         const key = dateKey(date)
-        const disabled = date > today
+        const disabled = !allowFuture && date > today
         const meta = calendarByDay.get(key)
         return <ArkmeCalendarCell
           key={key}

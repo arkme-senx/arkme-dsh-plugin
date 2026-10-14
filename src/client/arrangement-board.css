@@ -1,10 +1,11 @@
+.arkme-arrangement-surface { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.arkme-arrangement-surface > .arkme-arrangement-board { flex: 1; height: auto; min-height: 0; }
+.arkme-arrangement-surface > .arkme-arrangement-message { flex: none; margin: 0; padding: 0 24px 16px; }
 .arkme-arrangement-board { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; padding: 24px; gap: 20px; color: var(--dsw-alias-label-primary, #17191c); }
 .arkme-arrangement-header { display: flex; align-items: center; gap: 12px; flex: none; }
 .arkme-arrangement-header h2 { margin: 0; font-size: 20px; }
-.arkme-arrangement-board button, .arkme-arrangement-entry { border: 1px solid var(--dsw-alias-border-l2, #ddd); border-radius: 8px; background: var(--dsw-alias-bg-base, #fff); color: inherit; padding: 8px 12px; cursor: pointer; font: inherit; }
+.arkme-arrangement-board button { border: 1px solid var(--dsw-alias-border-l2, #ddd); border-radius: 8px; background: var(--dsw-alias-bg-base, #fff); color: inherit; padding: 8px 12px; cursor: pointer; font: inherit; }
 .arkme-arrangement-header button { display: grid; place-items: center; padding: 8px; border: 0; }
-.arkme-arrangement-entry { display: block; width: 100%; margin-top: 16px; text-align: left; }
-.arkme-arrangement-entry[aria-pressed=true] { font-weight: 600; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
 .arkme-arrangement-columns { display: flex; flex: 1; min-height: 0; overflow-x: auto; gap: 16px; padding-bottom: 4px; }
 .arkme-arrangement-column { flex: 1 0 260px; min-width: 260px; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l1, #e8ecf1); border-radius: 16px; background: #f5f6f8; transition: border-color 120ms ease, box-shadow 120ms ease; }
 /* Compact semantic icons distinguish the arrangement states. */
@@ -70,9 +71,6 @@ body[data-ds-dark-theme] .arkme-arrangement-column[data-arrangement-column=follo
 @media (prefers-reduced-motion: reduce) { .arkme-arrangement-card { transition: none !important; } }
 .arkme-arrangement-origin-placeholder { box-sizing: border-box; margin-bottom: 12px; border: 1px dashed rgba(var(--arrangement-status-rgb), .3); border-radius: 12px; background: rgba(var(--arrangement-status-rgb), .04); }
 
-.arkme-arrangement-entry, .arkme-arrangement-entry[aria-pressed=true] { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; background: var(--dsw-alias-button-primary-fill, #17191c); border-color: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); font-weight: 600; }
-.arkme-arrangement-entry:hover { background: color-mix(in srgb, var(--dsw-alias-button-primary-fill, #17191c) 88%, var(--dsw-alias-label-primary-inverted, #fff)); border-color: transparent; color: var(--dsw-alias-label-primary-inverted, #fff); opacity: 1; }
-.arkme-arrangement-entry:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }
 .arkme-day-arrangements { overflow-y: auto; min-height: 0; padding: 0 4px 16px; }
 .arkme-day-arrangements section + section { margin-top: 24px; }
 .arkme-day-arrangements h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
@@ -134,3 +132,20 @@ body[data-ds-dark-theme] .arkme-arrangement-create-input { background: #252525; 
 body[data-ds-dark-theme] .arkme-day-arrangement-status { background: #393d44; }
 body[data-ds-dark-theme] .arkme-day-arrangement-status[data-arrangement-status=following] { background: #4d401e; color: #f3d36b; }
 body[data-ds-dark-theme] .arkme-day-arrangement-status[data-arrangement-status=completed] { background: #203f2c; color: #85d9a0; }
+
+.arkme-recording-arrangement-entry { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
+.arkme-recording-arrangement-entry:hover { color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-arrangement-recording-source, .arkme-arrangement-recording-unavailable { margin: 4px 0 8px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; line-height: 20px; }
+.arkme-arrangement-recording-source { padding: 0; border: 0; background: transparent; font-family: inherit; cursor: pointer; text-align: left; }
+.arkme-arrangement-recording-source:hover { text-decoration: underline; }
+.arkme-recording-arrangements { width: min(460px, 100%); }
+.arkme-recording-arrangements-body { flex: 1; min-height: 0; padding: 16px 20px; overflow-y: auto; overscroll-behavior: contain; font-size: 13px; }
+.arkme-recording-arrangements-body > p { color: var(--dsw-alias-label-secondary, #68707c); line-height: 1.6; }
+.arkme-recording-arrangements-body .arkme-recording-arrangements-date { margin-top: 0; color: inherit; font-weight: 500; }
+.arkme-recording-arrangements .arkme-day-arrangements .arkme-day-arrangement-summary { padding: 0; background: transparent; }
+.arkme-recording-arrangements .arkme-arrangement-recording-source { padding: 0; background: transparent; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; }
+.arkme-recording-arrangements footer { display: flex; justify-content: space-between; }
+
+.arkme-arrangement-default-date { display: flex; flex-direction: column; gap: 5px; padding: 12px 20px; border-bottom: 1px solid var(--dsw-alias-border-l2, #eee); font-size: 13px; }
+.arkme-arrangement-default-date small { color: var(--dsw-alias-label-secondary, #727780); font-size: 12px; line-height: 1.5; }
+.arkme-personal-day-body > .arkme-arrangement-message { padding: 0 24px 20px; }

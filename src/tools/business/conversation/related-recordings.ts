@@ -47,7 +47,7 @@ export const relatedRecordingsToolModule = defineArkmeCoreToolModule({
         cursor: { type: 'string', description: 'Opaque next_cursor from the previous related-recordings page.' },
         month: { type: 'string', description: 'Optional YYYY-MM month key returned by monthBuckets.' },
         timezone_offset_millis: { type: 'integer', description: 'Client timezone offset from UTC in milliseconds.' },
-        include_transcript: { type: 'boolean', description: 'Set true only when the human explicitly asks to read transcripts.' },
+        include_transcript: { type: 'boolean', description: 'Include bounded text when needed for the human’s requested task. Received shares provide sharedRecordingDetailRef; use arkme_shared_recording_read to read their full text.' },
       },
       output: TEXT_OUTPUT,
       isConcurrencySafe: () => true,

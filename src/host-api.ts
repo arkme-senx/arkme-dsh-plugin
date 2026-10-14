@@ -1,3 +1,6 @@
+import type { ArkmeRecordingWindow } from './types.js'
+import { objectValue } from './services/service.js'
+import type {ArkmeTeamProfileUpdate} from './team-profile-contract.js'
 import type { AppMigrationManager } from './app-migration.js'
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { TeamAppOperation } from './team-app-contract.js'
@@ -69,6 +72,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
   if (operation === 'remote.session.native') return MAX_NATIVE_REQUEST_BYTES
   if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
   if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward' || operation === 'native-chat.forward' || operation === 'native-chat.copy-link') {
@@ -1153,6 +1157,10 @@ export async function dispatchArkmeHostOperation(
       await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
       return { ok: true }
     }
+    case 'team.profile.get':return await service.getTeamProfile(stringParam(params,'jotmoId'),requestSignal)
+    case 'team.profile.update':return await service.updateTeamProfile(stringParam(params,'profileRef'),params.command as ArkmeTeamProfileUpdate,requestSignal)
+    case 'team.profile.avatar.upload':return await service.uploadTeamAvatar(stringParam(params,'profileRef'),stringParam(params,'contentBase64'),stringParam(params,'uploadUid'),requestSignal)
+    case 'team.profile.avatar.abort':return await service.abortTeamAvatar(stringParam(params,'uploadRef'),requestSignal)
     case 'team.list': {
       const limit = optionalNumberParam(params, 'limit')
       const pageCursor = optionalTeamStringParam(params, 'pageCursor')
@@ -1449,9 +1457,14 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
     )
-    case 'recordings.day': return await service.recordingDay(
-      numberParam(params, 'dateStamp', Number.NaN),
-      requestSignal,
+    case 'recordings.day': return params.window === undefined ? await service.recordingDay(numberParam(params, 'dateStamp', Number.NaN), requestSignal) : await service.recordingDay(
+      numberParam(params, 'dateStamp', Number.NaN), requestSignal,
+      params.window === undefined ? undefined : {
+        dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
+        endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
+        timeZone: stringParam(objectValue(params.window), 'timeZone'),
+        date: stringParam(objectValue(params.window), 'date'),
+      },
     )
     case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
@@ -1481,7 +1494,9 @@ export async function dispatchArkmeHostOperation(
       recordingProjectionKindParam(params),
       recordingSummaryModelRouteParam(params, false),
       requestSignal,
+      ...(params.window === undefined ? [] : [params.window as ArkmeRecordingWindow]),
     )
+    case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
     )
@@ -1601,6 +1616,7 @@ export async function dispatchArkmeHostOperation(
       limit: numberParam(params, 'limit', 20),
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
     })
+    case 'search.locations': return await service.searchLocations(params as unknown as import('./location-search.js').LocationQuery, requestSignal)
     case 'search.scene': {
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
       const limit = numberParam(params, 'limit', 20)
@@ -1768,7 +1784,10 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.create': {
       if (!Array.isArray(params.texts) || params.texts.some(text => typeof text !== 'string')) throw new ArkmePluginError('arrangement-create-invalid', '安排输入无效', false, 400)
-      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[] })
+      if (params.dueAtMillis !== undefined || (params.dateContext !== undefined && (!params.dateContext || typeof params.dateContext !== 'object' || Array.isArray(params.dateContext)))) throw new ArkmePluginError('arrangement-create-invalid', '安排日期参数无效，请刷新后重试', false, 400)
+      const context = params.dateContext === undefined ? undefined : params.dateContext as Record<string, unknown>
+      return service.createArrangement({ requestId: stringParam(params, 'requestId'), texts: params.texts as string[],
+        ...(context ? { dateContext: { defaultDate: stringParam(context, 'defaultDate'), timezone: stringParam(context, 'timezone') } } : {}) }, requestSignal)
     }
     case 'arrangements.recognition': {
       if (!Array.isArray(params.arrangementRefs) || params.arrangementRefs.some(ref => typeof ref !== 'string')) throw new ArkmePluginError('arrangement-read-invalid', '安排引用无效', false, 400)
@@ -1776,10 +1795,18 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.list': return await service.listArrangements({
       status: arrangementListStatusParam(params),
+      ...(params.dueStartAtMillis === undefined ? {} : { dueStartAtMillis: numberParam(params, 'dueStartAtMillis', 0) }),
+      ...(params.dueEndAtMillis === undefined ? {} : { dueEndAtMillis: numberParam(params, 'dueEndAtMillis', 0) }),
       ...(params.order === 'board' ? { order: 'board' as const, ...(stringParam(params, 'boardVersion') ? { boardVersion: stringParam(params, 'boardVersion') } : {}) } : {}),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.recording-day': return await service.recordingDayArrangements({
+      dateStamp: numberParam(params, 'dateStamp', 0), tzOffsetMillis: numberParam(params, 'tzOffsetMillis', Number.NaN),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      ...(stringParam(params, 'snapshotVersion') ? { snapshotVersion: stringParam(params, 'snapshotVersion') } : {}),
+    }, requestSignal)
     case 'arrangements.reorder': {
       const status = arrangementListStatusParam(params)
       if (status === 'all') throw new ArkmePluginError('arrangement-order-invalid', '安排排序状态无效', false, 400)
@@ -2250,6 +2277,12 @@ export async function dispatchArkmeHostOperation(
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
       requestSignal,
+    )
+    case 'related-recordings.share': return await service.shareRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
+    )
+    case 'related-recordings.withdraw': return await service.withdrawRelatedRecording(
+      stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'),
     )
     case 'related-recordings.page': return await service.relatedRecordings(
       stringParam(params, 'sourceRef'),

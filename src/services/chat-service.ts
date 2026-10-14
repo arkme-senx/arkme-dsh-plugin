@@ -5828,6 +5828,33 @@ export class ChatService {
     return result
   }
 
+  async calendarSharedRecordingPreview(raw: unknown, session: ArkmeSessionCredentials): Promise<ArkmeSharedRecordingPreview | undefined> {
+    // Record stores a strict text envelope without Chat's relation-only render_kind.
+    // Recognize that documented shape explicitly instead of requiring a chat card DTO.
+    const payload = this.media.recordContentPayload(raw)
+    const snapshot = objectValue(payload.shared_recording)
+    const canonical = integerLikeValue(payload.payload_kind) === 1 && integerLikeValue(payload.schema_version) === 1
+      && integerLikeValue(payload.text_state) === 1 && integerLikeValue(snapshot.schema_version) === 1
+      && integerLikeValue(snapshot.shared_by_user_id) > 0
+      ? this.sharedRecordingPreviewFromPayload({ ...snapshot, render_kind: 'shared_recording_memory' }) : undefined
+    const recording = canonical ?? this.chatSharedRecordingPreview(raw)
+    if (!recording) return undefined
+    const item = objectValue(raw), core = objectValue(item.record_core), chat = objectValue(item.chat_core)
+    // The detail endpoint checks the live Chat relation, even for a calendar-visible Record.
+    const { transcript: _transcript, ...summary } = recording
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已变化，请重新打开日历', false, 409)
+    return this.withSharedRecordingDetailRef(summary, {
+      viewerUserId: session.userId,
+      chatSessionUid: stringValue(chat.chat_session_uid || core.origin_container_ref),
+      recordUid: stringValue(item.record_uid ?? core.record_uid),
+      recordOwnerUserId: recordOwnerId(core.owner_user_id ?? item.owner_user_id),
+      senderUserId: recordOwnerId(core.creator_user_id ?? item.creator_user_id),
+      relationUid: '', sequence: 0,
+      signingKey,
+    })
+  }
+
   async sharedRecordingDetail(
     detailRef: string,
     options: { signal?: AbortSignal } = {},
@@ -5848,9 +5875,12 @@ export class ChatService {
       {
         lane: 'interactive-read',
         key: `shared-recording-detail:${reference.chatSessionUid}:${reference.recordUid}:${String(reference.sequence)}`,
+        cacheMs: 0,
         failureCooldownMs: 2_000,
       },
     )
+    options.signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已变化，请重新读取共享录音', false, 409)
     const projection = this.chatSharedRecordingPreview(objectValue(data.item)) ?? this.chatSharedRecordingPreview(data)
     if (projection === undefined) {
       throw new ArkmePluginError('shared-recording-detail-unavailable', '共享录音详情暂时无法读取，请稍后重试', true, 502)

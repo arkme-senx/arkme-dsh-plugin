@@ -1,11 +1,10 @@
-import { arkmeBadgeUnreadCount } from '../chat-attention.js'
-import { useSocialAccess, socialAccessStore } from './social-access-store.js'
-import { ArkmeSocialBindingHint } from './ArkmeSocialBindingHint.js'
+import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
+import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -17,6 +16,7 @@ import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import pluginManifest from '../../package.json' with { type: 'json' }
+import { useArkmeBrand } from './product-brand.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { ArkmeMembershipDialog } from './ArkmeMembershipDialog.js'
@@ -34,6 +34,7 @@ import { arkmeTheme as theme } from './arkme-theme.js'
 import { directRecordingStore } from './recordings/direct-recording-store.js'
 import { ArkmeRecordingNavigationHint } from './recordings/ArkmeRecordingNavigationHint.js'
 import { useRecordingBreathStyle } from './recordings/recording-breath.js'
+import { useArkmeNavigationTooltip } from './ArkmeNavigationTooltip.js'
 
 export interface ArkmeProductNavigationProps {
   compact: boolean
@@ -45,7 +46,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
@@ -56,6 +57,7 @@ const items: NavigationItem[] = [
   { id: 'calls', get label() { return tr("通话") }, icon: PhoneCall },
   { id: 'recordings', get label() { return tr("录音") }, icon: Waveform },
   { id: 'calendar', get label() { return tr("日历") }, icon: CalendarBlank },
+  { id: 'arrangements', get label() { return tr("安排") }, icon: ListChecks },
   { id: 'world', get label() { return tr("世界") }, icon: GlobeHemisphereWest },
   { id: 'extensions', get label() { return tr("市集") }, icon: PuzzlePiece },
 ]
@@ -103,13 +105,14 @@ const styles: Record<string, CSSProperties> = {
   },
   button: {
     position: 'relative',
-    minHeight: 57,
+    minHeight: 44,
+    height: 44,
+    flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    padding: '7px 4px',
+    padding: '0 4px',
     border: 0,
     borderRadius: 15,
     background: 'transparent',
@@ -119,7 +122,7 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: 'none',
   },
   compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
-  hostedButton: { minHeight: 52, padding: '6px 2px', borderRadius: 13 },
+  hostedButton: { padding: '0 2px', borderRadius: 13 },
   activeButton: { background: theme.active, color: theme.text },
   activeMarker: { left: -8 },
   compactMarker: { left: '50%', top: 'auto', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
@@ -140,7 +143,8 @@ export function ArkmeProductNavigation({
   compact, hosted = false, taskExpanded = false, hidden = false, locked = false, currentSessionId,
 }: ArkmeProductNavigationProps) {
   useArkmeLocale()
-  const socialAllowed = useSocialAccess()
+  const brand = useArkmeBrand()
+  usePhoneBindingStatus()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const directory = useSyncExternalStore(
@@ -149,6 +153,7 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
   const memberScope = authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${memberUserId}` : undefined
@@ -200,6 +205,7 @@ export function ArkmeProductNavigation({
   const activeId = locked ? 'conversations'
     : ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
+    : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calls' ? 'calls'
@@ -213,10 +219,13 @@ export function ArkmeProductNavigation({
     : !hidden && !locked && activeId === 'extensions' ? 'marketplace' : 'fallback'
   const conversationUnreadCount = authState.auth?.status === 'authenticated'
     && directory.accountScope === `${authState.auth.environment}:${String(authState.auth.userId)}`
-    ? socialAllowed ? directory.badgeCount : directory.bots.reduce((total, bot) => total + arkmeBadgeUnreadCount(bot), 0)
+    ? directory.badgeCount
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items.map(item => ({ ...item, label: tr(item.label) }))
+  const productVersion = formatProductVersion(pluginManifest.version, currentClientVersionCode())
+  const profileHint = `${tr("个人资料")} · ${membershipLabel(membership.state)}\n${membershipDescription(membership.state)}`
+  useEffect(() => { navigationHint.hide() }, [navigationHint.hide, memberScope, activeId, isRecording, profileOpen, locked])
 
   const activate = (id: NavigationItem['id']) => {
     if (locked) {
@@ -233,13 +242,14 @@ export function ArkmeProductNavigation({
     else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
+    else if (id === 'arrangements') arkmeUi.showArrangements()
     else arkmeUi.showConversations()
   }
 
   return <nav
       data-arkme-owned="product-navigation"
       data-arkme-window-drag-mode={windowDragMode}
-      aria-label={tr("Arkme 功能导航")}
+      aria-label={tr("Arkme 功能导航").replace('Arkme', brand.name)}
       aria-hidden={hidden ? true : undefined}
       style={{
         ...styles.rail,
@@ -249,21 +259,27 @@ export function ArkmeProductNavigation({
         ...(hidden ? { display: 'none' } : {}),
       }}
     >
-      {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>
+      {!compact && <div data-arkme-owned="product-brand"
+        style={styles.brand} tabIndex={0} aria-label={`${brand.name} ${productVersion}`}
+        aria-describedby={navigationHint.describedBy('brand')}
+        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
+        onMouseLeave={navigationHint.hide}
+        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`, true) }}
+        onBlur={navigationHint.hide}>
         <ArkmeJiwoBrandMark />
-        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
-          {formatProductVersion(pluginManifest.version, currentClientVersionCode())}
-        </span>
+        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>{productVersion}</span>
       </div>}
       <div style={{ ...styles.primary,
         ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
           : hosted ? { margin: '-3px -4px', padding: '3px 4px' } : {}),
       }} data-arkme-home-tour-scroll-container="navigation">
-      {navigationItems.filter(item => socialAllowed || !['contacts', 'world', 'calls'].includes(item.id)).map(item => {
+      {navigationItems.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         const showsRecording = item.id === 'recordings' && isRecording
+        const hint = item.id === 'conversations' && !locked
+          ? `${item.label}\n${tr("双击定位下一个未读对话")}（Shift+Enter）` : item.label
         return <button data-arkme-feedback="neutral"
           key={item.id}
           ref={item.id === 'recordings' ? recordingButtonRef : undefined}
@@ -271,8 +287,8 @@ export function ArkmeProductNavigation({
           data-arkme-hover="button"
           type="button"
           aria-current={active ? 'page' : undefined}
-          aria-label={showsRecording ? tr("录音，本机正在录音，点击查看") : showsUnread ? tr("{v0}，{v1} 条未读", { v0: item.label, v1: String(conversationUnreadCount) }) : undefined}
-          aria-describedby={showsRecording && recordingHintOpen ? recordingHintId : undefined}
+          aria-label={showsRecording ? tr("录音，本机正在录音，点击查看") : showsUnread ? tr("{v0}，{v1} 条未读", { v0: item.label, v1: String(conversationUnreadCount) }) : item.label}
+          aria-describedby={showsRecording && recordingHintOpen ? recordingHintId : navigationHint.describedBy(item.id)}
           {...(showsRecording ? { 'data-arkme-navigation-recording': 'local' } : {})}
           {...(showsUnread ? { 'data-arkme-conversation-unread': conversationUnreadCount } : {})}
           style={{
@@ -282,13 +298,19 @@ export function ArkmeProductNavigation({
             ...(active ? styles.activeButton : {}),
             ...(showsRecording ? recordingBreathStyle : {}),
           }}
-          onClick={() => { void socialAccessStore.refresh(); setRecordingHintOpen(false); activate(item.id) }}
-          onMouseEnter={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
-          onMouseLeave={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
-          onFocus={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
-          onBlur={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
+          onClick={() => { void socialAccessStore.refresh(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
+          onMouseEnter={event => {
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            else navigationHint.show(event.currentTarget, item.id, hint)
+          }}
+          onMouseLeave={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
+          onFocus={event => {
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            else navigationHint.show(event.currentTarget, item.id, hint, true)
+          }}
+          onBlur={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
           onDoubleClick={item.id === 'conversations' && !locked ? () => { arkmeUi.locateNextUnreadConversation() } : undefined}
-          title={item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
+          title={compact && item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
           aria-keyshortcuts={item.id === 'conversations' && !locked ? 'Shift+Enter' : undefined}
           onKeyDown={event => {
             if (item.id === 'recordings' && event.key === 'Escape') setRecordingHintOpen(false)
@@ -316,10 +338,11 @@ export function ArkmeProductNavigation({
               style={styles.unreadIndicator}
             >{conversationUnreadLabel}</span>}
           </span>
-          <span style={styles.label}>{showsRecording ? tr("录音中") : item.label}</span>
+          {compact && <span style={styles.label}>{showsRecording ? tr("录音中") : item.label}</span>}
         </button>
       })}
       </div>
+      {navigationHint.tooltip}
       {isRecording && recordingHintOpen && <ArkmeRecordingNavigationHint anchor={recordingButtonRef} elapsedMillis={recording.elapsedMillis} startedAt={recording.startedAt} id={recordingHintId} />}
       {ui.calendarOpen === true && typeof document !== 'undefined' && createPortal(<ArkmePersonalDayCalendar
         accountScope={authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${authState.auth.userId}` : undefined}
@@ -339,9 +362,8 @@ export function ArkmeProductNavigation({
               <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label={tr("当前用户头像")} />
               <span className="arkme-profile-identity-copy"><strong><span>{profile?.displayName || profile?.nickname || tr("Arkme 用户")}</span><CaretRight size={14} aria-hidden /></strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : tr('Arkme 账号')}</small></span>
             </button>
-            {socialAllowed && <button type="button" className="arkme-profile-world-entry" onClick={() => { setProfileOpen(false); arkmeUi.showWorld('mine') }}>{tr("我的世界")}<CaretRight size={13} aria-hidden /></button>}
+            <button type="button" className="arkme-profile-world-entry" onClick={() => { setProfileOpen(false); arkmeUi.showWorld('mine') }}>{tr("我的世界")}<CaretRight size={13} aria-hidden /></button>
           </div>
-          {!socialAllowed && <ArkmeSocialBindingHint onOpen={() => { setProfileOpen(false) }} />}
           <button type="button" className="arkme-member-entry" aria-label={tr("查看会员权益")} onClick={() => { setProfileOpen(false); setMembershipOpenScope(memberScope) }}>
             <span><strong>{membershipLabel(membership.state)}</strong><small>{membershipDescription(membership.state)}</small></span>
             <span>{tr(membership.state.status === 'ready' && membership.state.value.memberType === 0 ? '升级会员' : '查看权益')} ›</span>
@@ -352,7 +374,13 @@ export function ArkmeProductNavigation({
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
-        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")} title={`${membershipLabel(membership.state)} · ${membershipDescription(membership.state)}`} onClick={() => { setProfileOpen(value => !value) }}>
+        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")}
+          aria-describedby={navigationHint.describedBy('profile')}
+          onMouseEnter={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
+          onMouseLeave={navigationHint.hide}
+          onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
+          onBlur={navigationHint.hide}
+          onClick={() => { navigationHint.hide(); setProfileOpen(value => !value) }}>
           <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label={tr("当前用户头像")} />
         </button>

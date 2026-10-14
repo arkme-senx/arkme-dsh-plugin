@@ -1,7 +1,7 @@
 import { ArkmeScanGuide } from './ArkmeScanGuide.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
+import { useArkmeBrand } from './product-brand.js'
 import type { ChangeEvent } from 'react'
-import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
 } from './arkme-login-locales.js'
@@ -420,10 +420,10 @@ const loginStyles = `
     background: var(--arkme-login-subtle);
   }
   .dsh-arkme-login-wordmark { width: 106px; height: 27px; display: block; object-fit: contain; object-position: left center; }
-  body[data-ds-dark-theme] .dsh-arkme-login-wordmark { filter: invert(1) hue-rotate(180deg); }
-  /* The translated block is a stacking context: inherit its surface so the
-     original white-backed light mark can blend without a white rectangle. */
-  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); background: inherit; }
+
+  /* Keep the offset mark in the story's stacking context so its white-backed
+     light asset blends with the surface, including its negative left margin. */
+  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; position: relative; top: -18px; background: inherit; }
   .dsh-arkme-login-definition h1 { margin: 0; color: var(--arkme-login-text); font-size: 47px; line-height: 1.16; font-weight: 600; letter-spacing: -.045em; }
   .dsh-arkme-login-description { margin: 24px 0 0; color: var(--arkme-login-secondary); font-size: 14px; line-height: 24px; font-weight: 400; }
   .dsh-arkme-login-card {
@@ -554,7 +554,7 @@ const loginStyles = `
   }
   body[data-ds-dark-theme] .dsh-arkme-login-page::after { background: var(--arkme-login-border); }
   body[data-ds-dark-theme] .dsh-arkme-login-story { background: var(--dsw-alias-bg-layer-1); }
-  body[data-ds-dark-theme] .dsh-arkme-login-wordmark { filter: invert(1) hue-rotate(180deg); }
+
   body[data-ds-dark-theme] .dsh-arkme-login-definition h1 { color: var(--arkme-login-text); }
   body[data-ds-dark-theme] .dsh-arkme-login-description,
   body[data-ds-dark-theme] .dsh-arkme-login-brand > p,
@@ -621,7 +621,7 @@ const loginStyles = `
   }
   @media (max-height: 690px) and (min-width: 921px) {
     .dsh-arkme-login-story { padding-top: 48px; padding-bottom: 36px; }
-    .dsh-arkme-login-definition { transform: none; }
+    .dsh-arkme-login-definition { top: 0; }
     .dsh-arkme-login-definition h1 { font-size: 40px; }
     .dsh-arkme-login-card { max-height: calc(100vh - 48px); overflow-y: auto; padding: 8px 4px; }
   }
@@ -674,6 +674,7 @@ const loginStyles = `
 `
 
 export function ArkmeLogin(props: ArkmeLoginProps) {
+  const brand = useArkmeBrand()
   const t = props.t ?? defaultArkmeLoginTranslate
   const effectiveMode = props.phoneBindingRequired === true
     ? 'phone'
@@ -710,11 +711,11 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     <span className="dsh-arkme-login-glow-top" aria-hidden />
     <span className="dsh-arkme-login-glow-bottom" aria-hidden />
     <section className="dsh-arkme-login-story" aria-label={t('story.aria')}>
-      <img className="dsh-arkme-login-wordmark" src={ARKME_WORDMARK_DATA_URL} alt={t('brand.alt')} />
+      <ArkmeJiwoBrandMark className="dsh-arkme-login-wordmark" wordmarkHeight={27} />
       <div className="dsh-arkme-login-definition">
         <h1>
           <ArkmeJiwoBrandMark label={t('brand.alt')} className="dsh-arkme-login-story-mark"
-            style={{ width: '2.5em', height: '1.16em', marginLeft: '-.25em', marginBottom: '.14em' }} />
+            style={{ width: '2.5em', height: '1.16em', marginLeft: brand.name === '即我' ? '-.25em' : 0, marginBottom: '.14em' }} />
           {t('story.title.second')}
         </h1>
         <p className="dsh-arkme-login-description">{t('story.description')}</p>
