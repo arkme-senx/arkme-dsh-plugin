@@ -81,7 +81,8 @@ export class ReactionService {
     }
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal)))
+    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal,
+      input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     if (input.action === 'query') {

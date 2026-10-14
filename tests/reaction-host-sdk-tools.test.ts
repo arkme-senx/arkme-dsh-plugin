@@ -6,6 +6,14 @@ const target = { id: 'message', sourceRef: 'opaque-source', messageActionRef: 'o
 const wire = { chat_session_uid: 'internal-chat', rel_uid: 'internal-message' }
 const key = 'a'.repeat(64)
 describe('reaction Host, SDK and Tool contracts', () => {
+ it('keeps passive preview reads behind foreground bodies and explicit reaction reads', async () => {
+  const post = vi.fn(async () => ({ items: [] }))
+  const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, async () => wire)
+  await service.request({ action: 'query', accountKey: 'test:7', targets: [target], actorPresentation: 'deferred' })
+  expect(post.mock.calls[0]?.[4]).toEqual({ lane: 'background-read' })
+  await service.request({ action: 'query', accountKey: 'test:7', targets: [target] })
+  expect(post.mock.calls[1]?.[4]).toBeUndefined()
+ })
  it('hydrates only readable history in one batch and strips internal target and sender IDs', async () => {
   const row={event_uid:key,target:wire,expression:{text:'收到'},active:true,at:10,restricted:false,source_kind:'group_chat',sender_user_id:9,text:'[图片]'}
   const context=vi.fn(async()=>[{sourceName:'项目群',authorName:'张三'}])

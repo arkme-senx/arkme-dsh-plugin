@@ -1255,7 +1255,7 @@ export class SourceService {
 
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; background?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
@@ -1479,7 +1479,7 @@ export class SourceService {
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; isCurrent?: () => boolean },
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; background?: boolean; isCurrent?: () => boolean },
     limit: number,
     sessionKind?: number,
   ): Promise<ArkmeSourceList> {
@@ -1694,7 +1694,7 @@ export class SourceService {
       session,
       options.signal,
       {
-        lane: 'interactive-read',
+        lane: options.background === true ? 'background-read' : 'interactive-read',
         key: `directory:root:${sessionKind === undefined ? 'all' : String(sessionKind)}:${String(limit)}:${options.cursor?.trim() ?? ''}`,
         failureCooldownMs: 2_000,
         bypassCache: options.refresh === true,

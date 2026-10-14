@@ -36,6 +36,7 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
+import { measureConversationRead } from './conversation-read-diagnostics.js'
 import {
   arkmeExtensionShareRefFromLink,
   arkmeIsGenericLinkMetadataTitle,
@@ -974,7 +975,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         } finally { if (res.headersSent) res.end() }
         return
       }
-      const value = await dispatchArkmeHostOperation(
+      const value = await measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
         service,
         request.operation,
         params,
@@ -991,7 +992,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      )
+      ))
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
@@ -1305,6 +1306,7 @@ export async function dispatchArkmeHostOperation(
       const cursor = stringParam(params, 'cursor').trim()
       const expectedVersion = stringParam(params, 'expectedVersion').trim()
       return await service.privateInteractionDirectory({
+        ...(params?.background === true ? { background: true } : {}),
         limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 100)))),
         ...(cursor === '' ? {} : { cursor }),
         ...(expectedVersion === '' ? {} : { expectedVersion }),
@@ -1530,6 +1532,7 @@ export async function dispatchArkmeHostOperation(
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'calendar.chat-statistics': return await service.calendarChatStatistics({
+      ...(params?.background === true ? { background: true } : {}),
       sourceRef: stringParam(params, 'sourceRef'),
       timezone: stringParam(params, 'timezone'),
       timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
@@ -1982,6 +1985,7 @@ export async function dispatchArkmeHostOperation(
       return await service.readSource(
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
+          ...(params?.background === true ? { background: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }
@@ -2444,6 +2448,8 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'conversation.viewport.read': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), undefined, requestSignal)
+    case 'conversation.viewport.write': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), params.entries ?? [], requestSignal)
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)

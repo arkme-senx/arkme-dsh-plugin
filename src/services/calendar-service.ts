@@ -303,7 +303,7 @@ export class CalendarService {
 
   /** Same service-owned daily index used by Flutter private/group chat calendars. */
   async chatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
@@ -326,7 +326,7 @@ export class CalendarService {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/session/statistics',
         { chat_session_uid: source.ownerRef, tz_offset_millis: offset }, session, signal,
-        { lane: 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true },
+        { lane: options.background === true ? 'background-read' : 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true },
       )
       if (!Array.isArray(data.daily_data)) {
         throw new ArkmePluginError('calendar-statistics-invalid', '会话日历数据不完整，请重试', true, 502)

@@ -21,6 +21,23 @@ function disk() {
 }
 
 describe('shared calendar month cache', () => {
+  it('coalesces 100 soft invalidations behind one read and settles the newest counts', async () => {
+    const first = deferred<ArkmeCalendarBucketPage>()
+    const load = vi.fn(async (q: CalendarMonthQuery, _signal: AbortSignal) => page(q, 100))
+    load.mockImplementationOnce(() => first.promise)
+    const cache = new CalendarMonthCache(load, () => undefined)
+    const release = cache.subscribe('a', query(), () => {})
+    const pending = cache.ensure('a', query())
+    await Promise.resolve()
+    for (let i = 0; i < 100; i++) cache.invalidate({ hard: false })
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(load.mock.calls[0]?.[1].aborted).toBe(false)
+    first.resolve(page(query(), 1)); await pending
+    await cache.ensure('a', query())
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(cache.get('a', query()).value?.days[0]?.count).toBe(100)
+    release()
+  })
   it.each(['calendar-view-invalid', 'arkme-code-40001', 'arkme-code-50001'])('drops unsafe stale summaries and anchors after %s', async code => {
     let now = 100_000
     const { storage } = disk()

@@ -34,7 +34,7 @@ import type {
   ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeSourceDirectoryPinResult,
 } from '../types.js'
-import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
+import { arkmeBadgeUnreadCount } from '../chat-attention.js'
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
 import { createSelfTopic } from './create-self-topic.js'
@@ -1726,12 +1726,9 @@ export function ArkmeNavigation({
   }
   const selectSource = (source: ArkmeSourceItem) => {
     activateNativeEntry()
-    const optimisticRead = (source.kind === 'private_chat' || source.kind === 'group_chat')
-      && source.unreadCount > 0
-      && arkmeChatDirectory.markReadOptimistic(source, source.sourceKey, source.latestSequence ?? 0, directory === 'root' ? sources : [])
-    arkmeUi.selectSource(optimisticRead
-      ? { ...source, ...projectArkmeChatAttentionFromMuted(0, source.isMuted === true) }
-      : source)
+    // Selection can restore history. Only the conversation viewport knows when
+    // it follows latest; its reading-intent owner controls optimistic badges/ACK.
+    arkmeUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }

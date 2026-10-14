@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
@@ -30,6 +31,8 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  readConversationViewports?(accountKey: string, surface: string): Promise<import('../conversation-viewport-state.js').ConversationViewportEntries>
+  writeConversationViewports?(accountKey: string, surface: string, entries: import('../conversation-viewport-state.js').ConversationViewportEntries): Promise<void>
   arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>
   readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
   writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
@@ -157,6 +160,8 @@ interface ArkmeEnvelope<T> {
 type ArkmePostBody = Record<string, unknown> | FormData
 
 export interface ArkmeRemoteRequestOptions {
+  /** Reserved for realtime message projection; only exact read routes are eligible. */
+  traffic?: 'message-sync'
   lane?: ArkmeRequestLane
   service?: ArkmeRequestService
   scope?: string
@@ -303,6 +308,13 @@ export class ServiceRuntime {
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
   readonly requestCoordinator = new ArkmeRequestCoordinator()
+  // One bounded pool for message bodies and their awaited projection reads.
+  // Background member rosters and other UI reads never inherit this context.
+  private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
+    maxConcurrent: 4, maxQueued: 128,
+    defaultRouteLimit: { maxConcurrent: 4, ratePerSecond: 8, burst: 8 },
+  })
+  private readonly messageSyncLane = new AsyncLocalStorage<'interactive-read' | 'background-read'>()
   private readonly refreshInFlightByUserId = new Map<number, { refreshToken: string; promise: Promise<ArkmeSessionCredentials> }>()
   private readonly accountSessions: ArkmeAccountSessionOwner
   private pendingBindingSession: ArkmeSessionCredentials | undefined
@@ -351,7 +363,13 @@ export class ServiceRuntime {
   }
 
   requestStats(): Record<string, ArkmeRequestStats> {
-    return this.requestCoordinator.snapshotStats()
+    const totals = this.requestCoordinator.snapshotStats()
+    for (const [key, stats] of Object.entries(this.messageSyncCoordinator.snapshotStats())) {
+      const previous = totals[key]
+      if (!previous) totals[key] = stats
+      else for (const metric of Object.keys(stats) as Array<keyof ArkmeRequestStats>) previous[metric] += stats[metric]
+    }
+    return totals
   }
 
   requestScope(userId: number | undefined): string {
@@ -388,6 +406,7 @@ export class ServiceRuntime {
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateKey(scope, 'calendar:')
     this.requestCoordinator.invalidateKey(scope, 'owner-read:')
+    this.messageSyncCoordinator.invalidateKey(scope, 'owner-read:')
   }
 
   async withOwnerReadInvalidation<T>(route: string, operation: () => Promise<T>): Promise<T> {
@@ -397,6 +416,7 @@ export class ServiceRuntime {
       return await operation()
     } finally {
       this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
+      this.messageSyncCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
     }
   }
 
@@ -405,11 +425,11 @@ export class ServiceRuntime {
   }
 
   /** Only for composites whose child requests already pass through transport admission. */
-  async runCompositeOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
-    return await this.ownerRead(route, parameters, operation, signal, 'route-only')
+  async runCompositeOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, lane: 'interactive-read' | 'background-read' = 'interactive-read'): Promise<T> {
+    return await this.ownerRead(route, parameters, operation, signal, 'route-only', lane)
   }
 
-  private async ownerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal: AbortSignal | undefined, admission: 'transport' | 'route-only'): Promise<T> {
+  private async ownerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal: AbortSignal | undefined, admission: 'transport' | 'route-only', lane: 'interactive-read' | 'background-read' = 'interactive-read'): Promise<T> {
     const session = await this.requireSession()
     const assertCurrentAccount = async (operationSignal: AbortSignal): Promise<void> => {
       operationSignal.throwIfAborted()
@@ -420,14 +440,15 @@ export class ServiceRuntime {
         throw new ArkmePluginError('read-account-changed', '登录账号或凭据已变化，请重新读取', false, 409)
       }
     }
-    return await this.requestCoordinator.run({
-      scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'extension',
+    const messageSync = admission === 'route-only' && route === 'chat.timeline.window'
+    return await (messageSync ? this.messageSyncCoordinator : this.requestCoordinator).run({
+      scope: this.requestScope(session.userId), lane, service: 'extension',
       admission,
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
       ...(signal === undefined ? {} : { signal }),
       operation: async operationSignal => {
         await assertCurrentAccount(operationSignal)
-        const result = await operation(operationSignal)
+        const result = await (messageSync ? this.messageSyncLane.run(lane, () => operation(operationSignal)) : operation(operationSignal))
         await assertCurrentAccount(operationSignal)
         return result
       },
@@ -441,6 +462,7 @@ export class ServiceRuntime {
     calendar.epoch++; calendar.dates.clear()
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
+    this.messageSyncCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
@@ -450,14 +472,17 @@ export class ServiceRuntime {
     }
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateKey(scope, key)
+    this.messageSyncCoordinator.invalidateKey(scope, key)
     // 既有业务 owner 的写后失效同样作用于统一原始读取；旧调用者仍可结束，新读不加入旧 flight。
     this.requestCoordinator.invalidateKey(scope, 'owner-read:')
+    this.messageSyncCoordinator.invalidateKey(scope, 'owner-read:')
   }
 
   dispose(): void {
     this.refreshInFlightByUserId.clear()
     this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
+    this.messageSyncCoordinator.dispose()
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
@@ -622,10 +647,31 @@ export class ServiceRuntime {
   ): Promise<T> {
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
-    const onQueue = reactionQueueObserver(path)
-    return await measureReaction('upstream-total', { route: path }, () => this.requestCoordinator.run<T>({
+    const projectionLane = this.messageSyncLane.getStore()
+    // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
+    const messageSync = baseUrl === this.config.chatBaseUrl
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail'].includes(path)
+      || (projectionLane !== undefined || options.traffic === 'message-sync') && (
+        baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
+        || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)
+        || baseUrl === this.config.botBaseUrl && ['/api/v1/bot/list', '/api/v1/bot/group/list'].includes(path))
+    const coordinator = messageSync ? this.messageSyncCoordinator : this.requestCoordinator
+    const lane = messageSync ? projectionLane ?? options.lane ?? 'interactive-read' : options.lane ?? 'write'
+    const reactionQueue = reactionQueueObserver(path)
+    const timelineDiagnostic = process.env.ARKME_CHAT_NOTIFICATION_DIAGNOSTICS === '1' && baseUrl === this.config.chatBaseUrl
+    if (timelineDiagnostic && path === '/api/v1/chats/display-snapshots') {
+      const trace = new Error().stack ?? ''
+      console.info('dsh-arkme: timeline_transport_owner', { atMillis: Date.now(),
+        owner: options.key?.startsWith('projection:display:') ? 'realtime'
+          : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
+    }
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic ? reactionQueue : (event, detail) => {
+      reactionQueue?.(event, detail)
+      console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
+    }
+    return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
-      lane: options.lane ?? 'write',
+      lane,
       service: options.service ?? this.requestService(baseUrl),
       ...(options.key === undefined ? {} : { key: options.key }),
       ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
@@ -634,7 +680,7 @@ export class ServiceRuntime {
       ...(options.cancelWhenUnobserved === undefined ? {} : { cancelWhenUnobserved: options.cancelWhenUnobserved }),
       ...(signal === undefined ? {} : { signal }),
       ...(read ? {
-        lane: options.lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
+        lane: lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
         route,
         key: `owner-read:${route}:${stableReadParameters(body)}`,
         cacheMs: 0,
@@ -647,10 +693,19 @@ export class ServiceRuntime {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       ...(onQueue ? { onQueue } : {}),
-      operation: bindReactionTrace(async coordinatedSignal => await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
-        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-        preserveHttpError, preserveForbiddenError,
-      ))),
+      operation: bindReactionTrace(async coordinatedSignal => {
+        const started = timelineDiagnostic ? Date.now() : 0
+        let errorCode: string | undefined
+        try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
+          baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
+          preserveHttpError, preserveForbiddenError,
+        )) } catch (error) {
+          if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
+          throw error
+        } finally {
+          if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_http', { atMillis: Date.now(), path, millis: Date.now() - started, ...(errorCode ? { errorCode } : {}) })
+        }
+      }),
     })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })

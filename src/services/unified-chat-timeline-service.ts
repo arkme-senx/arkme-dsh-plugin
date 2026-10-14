@@ -109,16 +109,19 @@ export class UnifiedChatTimelineService {
     await this.invalidating
   }
 
-  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
+  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const operation = (shared: AbortSignal) => this.readOwned(sourceRef, query,
-      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]))
-    return this.runtime.runCompositeOwnerRead
-      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query }, operation, signal)
+      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background)
+    // SQLite has its own bounded Worker admission and epoch/commit fences. It must
+    // never wait behind an unrelated conversation's network/recovery deadline.
+    return !query.cacheOnly && this.runtime.runCompositeOwnerRead
+      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query }, operation, signal,
+        background || query.mode === 'refresh' ? 'background-read' : 'interactive-read')
       : await operation(signal ?? new AbortController().signal)
   }
 
-  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal): Promise<ArkmeTimelinePage> {
+  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
     const session = await this.runtime.requireSession()
@@ -166,7 +169,8 @@ export class UnifiedChatTimelineService {
     const cache = this.storage()
     const assertCurrent = async () => {
       signal.throwIfAborted()
-      if (this.disposed || this.epoch !== epoch || state.revision !== revision || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
+      const currentSession = await this.runtime.requireSession()
+      if (this.disposed || this.epoch !== epoch || state.revision !== revision || currentSession.userId !== session.userId || currentSession.refreshToken !== session.refreshToken) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
     }
     if (query.cacheOnly) {
       let cached: ArkmeTimelinePage | undefined
@@ -190,7 +194,7 @@ export class UnifiedChatTimelineService {
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {
-        lane: 'interactive-read', key: `unified-timeline:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
+        lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read', key: `unified-timeline:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
       })
     } catch (error) {
       if (error instanceof ArkmeUpstreamResponseError && error.code === 'arkme-code-2002'

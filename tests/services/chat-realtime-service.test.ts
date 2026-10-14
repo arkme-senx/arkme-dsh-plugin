@@ -8,7 +8,7 @@ import {
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
-import type { ArkmeTimelineItem } from '../../src/types.js'
+import type { ArkmeChatClientEvent, ArkmeTimelineItem } from '../../src/types.js'
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
@@ -948,4 +948,320 @@ it('deduplicates local cursor echoes across response ordering and recovers uncer
     expect((service as any).localReadCursors.size).toBe(0)
     expect(schedule).not.toHaveBeenCalled()
   } finally { service.dispose() }
+})
+
+function projectionScheduler() {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = new ServiceRuntime(config, { read: async () => session } as ArkmeSessionStore, {} as StateStore)
+  const service = new ChatRealtimeService(runtime, {} as SourceService, { chatTimelineItems: async () => [] })
+  const batch = vi.spyOn(service, 'refreshChatSessionProjectionBatch')
+  return { service, batch, close: () => { service.dispose(); runtime.dispose() } }
+}
+
+it('continues preferred chat arrivals while another chat projection is blocked, without overlapping the same chat', async () => {
+  vi.useFakeTimers()
+  const { service, batch, close } = projectionScheduler()
+  let releaseBackground!: (value: []) => void
+  let releasePreferred!: (value: []) => void
+  batch.mockImplementation(async pending => pending[0]![0] === 'background'
+    ? await new Promise<[]>(resolve => { releaseBackground = resolve })
+    : await new Promise<[]>(resolve => { releasePreferred = resolve }))
+  try {
+    service.preferChatProjection(10001, 'current')
+    service.scheduleChatSessionProjection('background', 1)
+    await vi.advanceTimersByTimeAsync(1)
+    service.scheduleChatSessionProjection('current', 1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batch.mock.calls.map(([items]) => items.map(([uid]) => uid))).toEqual([['background'], ['current']])
+    for (let sequence = 2; sequence <= 100; sequence++) service.scheduleChatSessionProjection('current', sequence)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batch).toHaveBeenCalledTimes(2)
+    releasePreferred([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batch).toHaveBeenCalledTimes(3)
+    expect(batch.mock.calls[2]![0][0]![1].latestSequence).toBe(100)
+    releasePreferred([])
+    await vi.advanceTimersByTimeAsync(1)
+    service.scheduleChatSessionProjection('current', 101)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batch).toHaveBeenCalledTimes(4)
+    releasePreferred([]); releaseBackground([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { close(); vi.useRealTimers() }
+})
+
+it('isolates failed-chat backoff while retaining retry and letting a fresh hint supersede it', async () => {
+  vi.useFakeTimers()
+  const { service, batch, close } = projectionScheduler()
+  batch.mockImplementation(async pending => pending[0]![0] === 'background' ? pending : [])
+  try {
+    service.preferChatProjection(10001, 'current')
+    service.scheduleChatSessionProjection('background', 1)
+    await vi.advanceTimersByTimeAsync(1)
+    service.scheduleChatSessionProjection('current', 1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batch.mock.calls.map(([items]) => items[0]![0])).toEqual(['background', 'current'])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(batch).toHaveBeenCalledTimes(2)
+    service.scheduleChatSessionProjection('background', 2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batch).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(650)
+    expect(batch).toHaveBeenCalledTimes(4)
+  } finally { close(); vi.useRealTimers() }
+})
+
+it.each(['reset', 'dispose'] as const)('drops a completed stale flight after %s instead of requeuing it', async action => {
+  vi.useFakeTimers()
+  const { service, batch, close } = projectionScheduler()
+  let release!: (value: Array<[string, PendingChatProjection]>) => void
+  batch.mockImplementation(() => new Promise(resolve => { release = resolve }))
+  try {
+    service.preferChatProjection(10001, 'current')
+    service.scheduleChatSessionProjection('current', 1)
+    await vi.advanceTimersByTimeAsync(1)
+    const old = batch.mock.calls[0]![0]
+    if (action === 'reset') service.resetAttentionSummary(); else service.dispose()
+    release(old)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(batch).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { close(); vi.useRealTimers() }
+})
+
+it('expires the single read priority hint and cannot promote a different account', async () => {
+  vi.useFakeTimers()
+  const { service, batch, close } = projectionScheduler()
+  batch.mockResolvedValue([])
+  try {
+    ;(service as unknown as { activateAttentionOwner(userId: number): void }).activateAttentionOwner(10001)
+    service.preferChatProjection(10001, 'current')
+    service.preferChatProjection(99999, 'background')
+    service.scheduleChatSessionProjection('background', 1)
+    service.scheduleChatSessionProjection('current', 1)
+    await vi.advanceTimersByTimeAsync(3)
+    expect(batch.mock.calls.map(([items]) => items.map(([uid]) => uid))).toEqual([['current'], ['background']])
+    batch.mockClear()
+    await vi.advanceTimersByTimeAsync(30_000)
+    service.scheduleChatSessionProjection('background', 2)
+    service.scheduleChatSessionProjection('current', 2)
+    await vi.advanceTimersByTimeAsync(3)
+    expect(batch.mock.calls.map(([items]) => items.map(([uid]) => uid))).toEqual([['background', 'current']])
+  } finally { close(); vi.useRealTimers() }
+})
+
+it('publishes consecutive preferred-chat bodies while another HTTP tail is unresolved, within the existing lane budgets', async () => {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  let releaseBackground!: () => void
+  const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+    if (path.endsWith('display-snapshots')) return { items: (body.chat_session_uids as string[]).map(uid => ({ session: { chat_session_uid: uid, session_kind: 1 } })) }
+    if (body.chat_session_uid === 'background') await new Promise<void>(resolve => { releaseBackground = resolve })
+    return { items: [] }
+  })
+  const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+    requestScope: () => 'scope', invalidateCalendarDates() {}, sessionStore: { read: async () => session } }
+  const source = { cachedChatSourceByKey: () => undefined, chatSourceFromBundle: async (bundle: { session: { chat_session_uid: string } }) => ({
+    sourceRef: bundle.session.chat_session_uid, sourceKey: bundle.session.chat_session_uid,
+    kind: 'private_chat', displayName: '同事', activeAtMillis: 1, unreadCount: 0,
+  }), setChatSourceByKey() {}, invalidateSourceListCache() {} }
+  const service = new ChatRealtimeService(runtime as never, source as never, { chatTimelineItems: async () => [] })
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  const updates: string[] = []
+  service.subscribeChatRealtime(event => { if (event.type === 'sessions-delta') updates.push(...event.updates.map(update => update.sourceKey)) })
+  const arrive = (uid: string, sequence: number) => service.scheduleChatSessionProjection(uid, sequence, {
+    hint: { eventUid: `${uid}-${sequence}`, chatSessionUid: uid, relationUid: `rel-${sequence}`, latestSequence: sequence,
+      senderUserId: 20002, eventAtMillis: Date.now() }, connectionGeneration: 1, attempts: 0,
+    baselinePassed: true, accountUserId: 10001, accountOwnerGeneration: 0,
+  })
+  try {
+    service.preferChatProjection(10001, 'current')
+    arrive('background', 1)
+    await vi.waitFor(() => expect(releaseBackground).toBeTypeOf('function'))
+    arrive('current', 1)
+    await vi.waitFor(() => expect(updates).toEqual(['current']))
+    arrive('current', 2)
+    await vi.waitFor(() => expect(updates).toEqual(['current', 'current']))
+    const calls = post.mock.calls as unknown as Array<[string, Record<string, unknown>, unknown, unknown, { lane: string }]>
+    for (const [, body, , , options] of calls) {
+      const uid = body.chat_session_uid ?? (body.chat_session_uids as string[])[0]
+      expect(options.lane).toBe(uid === 'current' ? 'interactive-read' : 'background-read')
+    }
+    releaseBackground()
+    await vi.waitFor(() => expect(updates).toEqual(['current', 'current', 'background']))
+  } finally { service.dispose() }
+})
+
+it.each(['current', 'reset'] as const)('does not hold confirmed human-direct bodies behind a blocked directory response: %s', async scenario => {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const row = { sourceRef: 'dynamic', conversationRef: 'stable', sourceKey: 'chat-key', kind: 'private_chat',
+    directMessageAdmissionApplicable: true, displayName: '同事', activeAtMillis: 1, unreadCount: 0 }
+  let releaseDisplay!: (value: unknown) => void
+  let releaseBody!: (value: ArkmeTimelineItem[]) => void
+  const runtime = { config, requireSession: async () => session,
+    authenticatedChatPost: vi.fn(async (path: string) => path.endsWith('display-snapshots')
+      ? await new Promise(resolve => { releaseDisplay = resolve }) : { items: [] }),
+    requestScope: () => 'scope', invalidateCalendarDates() {}, sessionStore: { read: async () => session } }
+  const source = { cachedChatSourceByKey: () => row, chatSourceFromBundle: async () => row,
+    setChatSourceByKey() {}, invalidateSourceListCache() {} }
+  const reader = { chatTimelineItems: vi.fn(() => new Promise<ArkmeTimelineItem[]>(resolve => { releaseBody = resolve })) }
+  const service = new ChatRealtimeService(runtime as never, source as never, reader)
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  const events: ArkmeChatClientEvent[] = []
+  service.subscribeChatRealtime(event => {
+    if (event.type === 'timeline-items' || event.type === 'sessions-delta') events.push(event)
+  })
+  try {
+    service.preferChatProjection(10001, 'chat')
+    const work = service.refreshChatSessionProjectionBatch([['chat', { latestSequence: 1, notificationHints: [] }]])
+    await vi.waitFor(() => expect(releaseBody).toBeTypeOf('function'))
+    if (scenario === 'reset') service.resetAttentionSummary()
+    const items = [{ itemUid: 'message-1', sequence: 1, senderName: '同事', isMe: false, sendAtMillis: 1, textContent: '正文', status: 1 }]
+    releaseBody(items)
+    if (scenario === 'current') await vi.waitFor(() => expect(events).toEqual([{
+      type: 'timeline-items', revision: 1, source: { sourceRef: 'stable', sourceKey: 'chat-key', latestSequence: 1 }, items,
+    }]))
+    else { await Promise.resolve(); expect(events).toEqual([]) }
+    releaseDisplay({ items: [{ session: { chat_session_uid: 'chat', session_kind: 1 } }] })
+    await work
+    expect(reader.chatTimelineItems).toHaveBeenCalledOnce()
+    if (scenario === 'current') expect(events.map(event => event.type)).toEqual(['timeline-items', 'sessions-delta'])
+    else expect(events).toEqual([])
+  } finally { service.dispose() }
+})
+
+it.each(['current', 'reset', 'bounded'] as const)('keeps receiving bodies while the same conversation display retries: %s', async scenario => {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const row = { sourceRef: 'ref', sourceKey: 'chat-key', kind: 'private_chat', directMessageAdmissionApplicable: true,
+    displayName: '同事', activeAtMillis: 1, unreadCount: 0 }
+  let release!: () => void
+  const display = new Promise<void>(resolve => { release = resolve })
+  const tailSequences: number[] = []
+  const runtime = { config, requireSession: async () => session, requestScope: () => 'scope',
+    invalidateCalendarDates() {}, sessionStore: { read: async () => session },
+    authenticatedChatPost: vi.fn(async (path: string, body: { after_seq: number }) => {
+      if (path.endsWith('display-snapshots')) { await display; return { items: [{ session: { chat_session_uid: 'chat', session_kind: 1 } }] } }
+      const sequence = body.after_seq + 1
+      tailSequences.push(sequence)
+      return { items: [{ relation: { rel_uid: `rel-${sequence}`, record_uid: `message-${sequence}`, seq: sequence, sender_user_id: 20002 } }] }
+    }) }
+  const source = { cachedChatSourceByKey: () => row, chatSourceFromBundle: async () => row,
+    setChatSourceByKey() {}, invalidateSourceListCache() {} }
+  const reader = { chatTimelineItems: async (data: Record<string, unknown>) => (data.items as Array<{ relation: { seq: number } }>).map(item => ({
+    itemUid: `message-${item.relation.seq}`, sequence: item.relation.seq, senderName: '同事', isMe: false,
+    sendAtMillis: 1, textContent: '正文', status: 1,
+  })) }
+  const service = new ChatRealtimeService(runtime as never, source as never, reader)
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  const events: ArkmeChatClientEvent[] = []
+  service.subscribeChatRealtime(event => { events.push(event) })
+  try {
+    service.preferChatProjection(10001, 'chat')
+    const count = scenario === 'bounded' ? 51 : 3
+    for (let sequence = 1; sequence <= count; sequence++) {
+      service.scheduleChatSessionProjection('chat', sequence, { attempts: 0, connectionGeneration: 1,
+        accountUserId: 10001, accountOwnerGeneration: 0, baselinePassed: true,
+        hint: { eventUid: `event-${sequence}`, chatSessionUid: 'chat', relationUid: `rel-${sequence}`, latestSequence: sequence,
+          senderUserId: 20002, eventAtMillis: Date.now() } })
+      if (sequence <= 50) await vi.waitFor(() => expect(events.filter(event => event.type === 'timeline-items')).toHaveLength(sequence))
+    }
+    expect(events.every(event => event.type === 'timeline-items')).toBe(true)
+    expect(tailSequences).toEqual(Array.from({ length: Math.min(count, 50) }, (_, index) => index + 1))
+    if (scenario === 'reset') service.resetAttentionSummary()
+    release()
+    if (scenario !== 'reset') {
+      await vi.waitFor(() => expect(events.some(event => event.type === 'sessions-delta')).toBe(true))
+      await vi.waitFor(() => expect(tailSequences).toHaveLength(count))
+    } else {
+      await Promise.resolve(); await Promise.resolve()
+      expect(events.some(event => event.type === 'sessions-delta')).toBe(false)
+    }
+    expect(tailSequences).toEqual(Array.from({ length: count }, (_, index) => index + 1))
+  } finally { release(); service.dispose() }
+})
+
+it.each(['held', 'reset', 'dispose', 'stop', 'multiple-sessions'] as const)('keeps body flights independent of bounded native notification delivery: %s', async scenario => {
+  const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const row = { sourceRef: 'ref', sourceKey: 'chat-key', kind: 'private_chat', directMessageAdmissionApplicable: true,
+    displayName: '同事', activeAtMillis: 1, unreadCount: 0, notificationAllowed: true }
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  const tailKeys: string[] = []
+  const nativeKeys: string[] = []
+  let active = 0
+  let peak = 0
+  const runtime = { config, requireSession: async () => session, requestScope: () => 'scope',
+    invalidateCalendarDates() {}, sessionStore: { read: async () => session },
+    authenticatedChatPost: vi.fn(async (path: string, body: { chat_session_uids: string[]; chat_session_uid: string; after_seq: number }) => {
+      if (path.endsWith('display-snapshots')) return { items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid, session_kind: 1 } })) }
+      const sequence = body.after_seq + 1
+      const id = `${body.chat_session_uid}-${sequence}`
+      tailKeys.push(id)
+      return { items: [{ relation: { rel_uid: id, record_uid: id, seq: sequence, sender_user_id: 20002 } }] }
+    }) }
+  const source = { cachedChatSourceByKey: () => row, chatSourceFromBundle: async () => row,
+    setChatSourceByKey() {}, invalidateSourceListCache() {} }
+  const reader = { chatTimelineItems: async (data: Record<string, unknown>) => (data.items as Array<{ relation: { seq: number; record_uid: string } }>).map(item => ({
+    itemUid: item.relation.record_uid, sequence: item.relation.seq, senderName: '同事', isMe: false,
+    sendAtMillis: Date.now(), textContent: '正文', status: 1,
+  })) }
+  const service = new ChatRealtimeService(runtime as never, source as never, reader, {
+    applyBadgeSummary: async () => true,
+    showNotification: async payload => {
+      nativeKeys.push(payload.idempotencyKey)
+      peak = Math.max(peak, ++active)
+      await hold
+      active--
+      return { outcome: 'unsupported' as const, fallbackToBrowser: true }
+    },
+  })
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  let stop: (() => void) | undefined
+  if (scenario === 'stop') {
+    const realtime = (service as unknown as { chatRealtime: { start(): () => void; subscribe(listener: unknown): () => void } }).chatRealtime
+    vi.spyOn(realtime, 'start').mockReturnValue(() => {})
+    vi.spyOn(realtime, 'subscribe').mockReturnValue(() => {})
+    stop = service.startChatRealtime()
+  }
+  const bodies: string[] = []
+  const browser: string[] = []
+  service.subscribeChatRealtime(event => {
+    if (event.type === 'sessions-delta') bodies.push(...event.updates.flatMap(update => update.timelineItems ?? []).map(item => item.itemUid))
+    if (event.type === 'message-notification') browser.push(event.notification.eventUid)
+  })
+  const multiple = scenario === 'multiple-sessions'
+  const expected = Array.from({ length: 12 }, (_, index) => `${multiple ? `chat-${index % 4}` : 'chat'}-${multiple ? Math.floor(index / 4) + 1 : index + 1}`)
+  try {
+    service.preferChatProjection(10001, 'chat')
+    for (let index = 0; index < expected.length; index++) {
+      const uid = multiple ? `chat-${index % 4}` : 'chat'
+      const sequence = multiple ? Math.floor(index / 4) + 1 : index + 1
+      service.scheduleChatSessionProjection(uid, sequence, { attempts: 0, connectionGeneration: 1,
+        accountUserId: 10001, accountOwnerGeneration: 0, baselinePassed: true,
+        hint: { eventUid: expected[index]!, chatSessionUid: uid, relationUid: expected[index]!, latestSequence: sequence,
+          senderUserId: 20002, eventAtMillis: Date.now() } })
+      await vi.waitFor(() => expect(bodies).toHaveLength(index + 1))
+    }
+    expect(bodies).toEqual(expected)
+    expect(tailKeys).toEqual(expected)
+    expect(peak).toBe(multiple ? 3 : 1)
+    expect(nativeKeys).toHaveLength(multiple ? 3 : 1)
+    const internals = service as unknown as { projectionTimer: unknown; nativeNotificationFlights: Map<string, unknown> }
+    await vi.waitFor(() => expect(internals.projectionTimer).toBeUndefined())
+    if (scenario === 'reset') service.resetAttentionSummary()
+    if (scenario === 'dispose') service.dispose()
+    if (scenario === 'stop') stop?.()
+    release()
+    if (scenario === 'held' || multiple) {
+      await vi.waitFor(() => expect(browser).toHaveLength(12))
+      expect(new Set(nativeKeys).size).toBe(12)
+      expect(tailKeys).toEqual(expected)
+      if (!multiple) expect(nativeKeys).toEqual(expected)
+    } else {
+      await vi.waitFor(() => expect(active).toBe(0))
+      expect(browser).toEqual([])
+      expect(nativeKeys).toHaveLength(1)
+    }
+    await vi.waitFor(() => expect(internals.nativeNotificationFlights.size).toBe(0))
+  } finally { release(); service.dispose() }
 })

@@ -135,7 +135,7 @@ import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { bindSentFileTaskLocals, fileTaskShowsInlineStatus, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
-import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
+import { isArkmeRequestAbort, isArkmeTransientReadFailure, retryArkmeRead } from './read-retry.js'
 import { arkmeAwaitVisibleReadIntent, arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -2902,6 +2902,8 @@ export function ArkmeSurface({
   const conversationTargetLocatedRevisionRef = useRef(0)
   const conversationTargetAbortRef = useRef<AbortController>()
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
+  const [timelineError, setTimelineError] = useState('')
+  const conversationError = error || timelineError
   const createLongArticle = async () => {
     if (!source) return
     try {
@@ -2922,9 +2924,8 @@ export function ArkmeSurface({
   const conversationMembers = conversationMemberSnapshot.items
   const conversationJoinEvents = conversationMemberSnapshot.joinEvents
   const groupSelfRole = conversationMemberSnapshot.selfRole
-  useEffect(() => {
-    if (conversationMemberSnapshot.error !== undefined) setError(conversationMemberSnapshot.error)
-  }, [conversationMemberSnapshot.error])
+  // Member reads own their feedback in the member panel; they must not insert
+  // an unrelated banner into the message viewport or overwrite send failures.
   const [groupMentionBots, setGroupMentionBots] = useState<ArkmeGroupBotCandidateList>()
   const [privateMentionBots, setPrivateMentionBots] = useState<ArkmeBotList>()
   const [mentionTrigger, setMentionTrigger] = useState<ArkmeComposerMentionTrigger>()
@@ -3213,7 +3214,10 @@ export function ArkmeSurface({
   const qrFlowRevisionRef = useRef(0)
   const currentJiwoAttemptRef = useRef<string>()
   const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
-  const [viewportPersistence] = useState(() => new ConversationViewportPersistence())
+  const [viewportPersistence] = useState(() => new ConversationViewportPersistence(undefined, {
+    read: (accountKey, surface, signal) => callArkme('conversation.viewport.read', { accountKey, surface }, signal),
+    write: (accountKey, surface, entries) => callArkme('conversation.viewport.write', { accountKey, surface, entries }, AbortSignal.timeout(5000)),
+  }))
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache(20, viewportPersistence))
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
@@ -3761,7 +3765,8 @@ export function ArkmeSurface({
     if (source === undefined || nextItems.length === 0
       || (source.kind !== 'private_chat' && source.kind !== 'group_chat')) return
     if (conversationCacheRef.current.getTimeline(arkmeSourceIdentityKey(source))?.mode === 'around'
-      || bodyRef.current !== null && !arkmeConversationViewport(bodyRef.current).stickToBottom) return
+      || bodyRef.current !== null && (!arkmeConversationViewport(bodyRef.current).stickToBottom
+        || bodyRef.current.scrollHeight - bodyRef.current.clientHeight - bodyRef.current.scrollTop > 2)) return
     const visibleLatest = nextItems.reduce((latest, item) => Math.max(latest, item.sequence ?? 0), 0)
     const readSequence = visibleLatest
     const readAckKey = `${source.sourceRef}:${String(readSequence)}`
@@ -3774,7 +3779,8 @@ export function ArkmeSurface({
     const generation = timelineGenerationRef.current
     if (!await arkmeAwaitVisibleReadIntent()) return
     if (!activeConversationRef.current || generation !== timelineGenerationRef.current) return
-    if (bodyRef.current !== null && !arkmeConversationViewport(bodyRef.current).stickToBottom) return
+    if (bodyRef.current !== null && (!arkmeConversationViewport(bodyRef.current).stickToBottom
+      || bodyRef.current.scrollHeight - bodyRef.current.clientHeight - bodyRef.current.scrollTop > 2)) return
     if (lastReadAckRef.current === readAckKey) return
     lastReadAckRef.current = readAckKey
     arkmeChatDirectory.confirmDisplayedRead(arkmeSourceIdentityKey(source), readSequence)
@@ -3842,7 +3848,7 @@ export function ArkmeSurface({
     cursor?: ArkmeTimelineCursor,
     preserve = false,
     limit = 40,
-    intent: 'latest' | 'return-to-latest' | 'background' | 'pagination' | 'history' | 'refresh' = cursor === undefined ? 'latest' : 'pagination',
+    intent: 'latest' | 'return-to-latest' | 'foreground' | 'background' | 'pagination' | 'history' | 'refresh' = cursor === undefined ? 'latest' : 'pagination',
     catchupPass = 0,
   ): Promise<void> => {
     if (source === undefined) return
@@ -3852,15 +3858,15 @@ export function ArkmeSurface({
     const invalidationRevision = arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).revision
     const liveReadRevision = liveTimelineTail.readRevision
     const interwovenRevision = arkmeInterwovenInvalidation.getSnapshotForSource(sourceKey).revision
-    let refreshWindow = intent === 'refresh' || intent === 'background'
+    let refreshWindow = intent === 'refresh' || intent === 'background' || intent === 'foreground'
       ? conversationCacheRef.current.getTimeline(sourceKey) : undefined
-    if ((intent === 'refresh' || intent === 'background') && conversationTargetAbortRef.current !== undefined
+    if ((intent === 'refresh' || intent === 'background' || intent === 'foreground') && conversationTargetAbortRef.current !== undefined
       && !conversationTargetAbortRef.current.signal.aborted) {
       timelineRefreshScheduler.request()
       return
     }
-    if (intent === 'background' && conversationCacheRef.current.getTimeline(sourceKey)?.mode === 'around') return
-    if ((intent === 'refresh' || intent === 'background')
+    if ((intent === 'background' || intent === 'foreground') && conversationCacheRef.current.getTimeline(sourceKey)?.mode === 'around') return
+    if ((intent === 'refresh' || intent === 'background' || intent === 'foreground')
       && [...timelineRequestsRef.current.values()].some(request => !request.controller.signal.aborted)) {
       const covered = [...timelineRequestsRef.current.entries()].some(([direction, request]) =>
         !request.controller.signal.aborted && (direction === 'initial' || direction === 'refresh')
@@ -3908,6 +3914,8 @@ export function ArkmeSurface({
     try {
       if (sourceIsChat && !hadCachedTimeline && cursor === undefined && intent !== 'return-to-latest') {
         try {
+          await withArkmeReadDeadline(signal => viewportPersistence.hydrate(signal), controller.signal)
+          if (controller.signal.aborted || generation !== timelineGenerationRef.current || windowRevision !== timelineWindowRevisionRef.current) return
           const savedViewport = conversationCacheRef.current.getViewport(sourceKey)
           const anchorId = !savedViewport?.stickToBottom ? savedViewport?.anchorId : undefined
           const local = await withArkmeReadDeadline(signal => callArkme<ArkmeTimelinePage>('source.timeline', { sourceRef, limit,
@@ -3940,6 +3948,7 @@ export function ArkmeSurface({
           .map(item => [item.itemUid, item]))
         const result = await callArkme<ArkmeTimelinePage>('source.timeline', {
           sourceRef, limit: refreshWindow === undefined || refreshWindow.unified && pageCursor === undefined ? limit : 100,
+          ...(sourceIsChat && (restoredLocalTimeline || intent === 'refresh' || intent === 'background') ? { background: true } : {}),
           ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
         }, signal)
         for (const item of result.items) readStartDeltas.set(item.itemUid, start.get(item.itemUid))
@@ -3968,7 +3977,22 @@ export function ArkmeSurface({
       }
       // Mounted reaction rows load their own state without delaying the message body.
     } catch (caught) {
-      if (isArkmeRequestAbort(caught, controller.signal)) return
+      if (isArkmeRequestAbort(caught, controller.signal) || generation !== timelineGenerationRef.current
+        || windowRevision !== timelineWindowRevisionRef.current) return
+      // A failed background checkpoint cannot invalidate already confirmed rows.
+      // Keep freshness honest without inserting banners into the reading geometry.
+      // Host owns transport recovery; only a new hint/focus triggers another read.
+      const cached = conversationCacheRef.current.getTimeline(sourceKey)
+      if ((intent === 'refresh' || intent === 'background') && cached !== undefined
+        && isArkmeTransientReadFailure(caught)
+        && !(caught instanceof ArkmeClientError && caught.body.code === 'chat-timeline-stale')) {
+        if (cached.cache !== undefined && !cached.cache.stale) {
+          const cache = { ...cached.cache, stale: true }
+          conversationCacheRef.current.storeTimeline(sourceKey, { ...cached, cache })
+          setTimelineView(current => current.sourceKey === sourceKey ? { ...current, cache } : current)
+        }
+        return
+      }
       if (generation === timelineGenerationRef.current && windowRevision === timelineWindowRevisionRef.current
         && caught instanceof ArkmeClientError && caught.body.code === 'chat-timeline-stale'
         && timelineRefreshScheduler.retry(`${sourceKey}:${invalidationRevision}:${interwovenRevision}`)) return
@@ -3981,6 +4005,7 @@ export function ArkmeSurface({
     }
     if (controller.signal.aborted || generation !== timelineGenerationRef.current
       || windowRevision !== timelineWindowRevisionRef.current) return
+    setTimelineError('')
     if (page.unified) {
       const continuation = direction === 'newer' ? page.unified.newerCursor : page.unified.olderCursor
       const more = direction === 'newer' ? page.unified.newerHasMore : page.unified.olderHasMore
@@ -4025,7 +4050,7 @@ export function ArkmeSurface({
           followLatest: intent === 'refresh' || intent === 'background',
           ...(newerPageStartAnchorId ? { newerPageStartAnchorId } : {}), viewport: intent === 'return-to-latest'
           ? { scrollTop: 0, stickToBottom: true } : !hadCachedTimeline && !restoredLocalTimeline && !preserve ? undefined
-            : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history') }
+            : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history', intent === 'refresh' || intent === 'background') }
         setTimelineView({ ...snapshot, sourceKey, mode, aroundSequenceRange: undefined,
           aiPolishSettings: snapshot.aiPolishSettings, nextCursor: snapshot.nextCursor,
           newerCursor: snapshot.newerCursor, newerHasMore: snapshot.newerHasMore ?? false })
@@ -4118,7 +4143,7 @@ export function ArkmeSurface({
       pendingViewportRestoreRef.current = {
         sourceKey,
         viewport: intent === 'return-to-latest' ? { scrollTop: 0, stickToBottom: true } : preserve || hadCachedTimeline
-          ? body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history')
+          ? body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history', intent === 'refresh' || intent === 'background')
           : undefined,
         ...(newerPageStartItemUid === undefined
           ? {}
@@ -4154,7 +4179,7 @@ export function ArkmeSurface({
       && arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).invalidationRevision > invalidationRevision) {
       const refresh = loadTimeline(undefined, true, 40, 'refresh')
       if (intent === 'return-to-latest') void refresh.catch(caught => {
-        if (generation === timelineGenerationRef.current && windowRevision === timelineWindowRevisionRef.current) setError(errorMessage(caught))
+        if (generation === timelineGenerationRef.current && windowRevision === timelineWindowRevisionRef.current) setTimelineError(errorMessage(caught))
       })
       else await refresh
     }
@@ -4164,7 +4189,7 @@ export function ArkmeSurface({
       if (!activeConversation || !authenticated) return
       const generation = timelineGenerationRef.current
       void loadTimeline(undefined, true, 40, 'refresh').catch(caught => {
-        if (generation === timelineGenerationRef.current) setError(errorMessage(caught))
+        if (generation === timelineGenerationRef.current) setTimelineError(errorMessage(caught))
       })
     }
   }, [activeConversation, authenticated, loadTimeline])
@@ -4187,7 +4212,7 @@ export function ArkmeSurface({
       if (isArkmeSelfWorkspaceSource(source)) arkmeUi.recordChanged()
       else arkmeUi.chatChanged()
       if (warningText !== '') setError(warningText)
-      void loadTimeline().catch(caught => setError(errorMessage(caught)))
+      void loadTimeline().catch(caught => setTimelineError(errorMessage(caught)))
     }
     // Recover the acceptance boundary after a page refresh without producing a second send.
     const current = arkmeComposerDraftStore.get(composerDraftKey)
@@ -4364,7 +4389,7 @@ export function ArkmeSurface({
         })
         if ((page.unified ? arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).revision : arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).invalidationRevision)
           > (appliedTimelineInvalidationsRef.current.get(conversationKey) ?? 0)) {
-          void loadTimeline(undefined, true, 40, 'refresh').catch(caught => { setError(errorMessage(caught)) })
+          void loadTimeline(undefined, true, 40, 'refresh').catch(caught => { setTimelineError(errorMessage(caught)) })
         }
       }).catch(caught => {
         if (isArkmeRequestAbort(caught, controller.signal)) return
@@ -4407,7 +4432,7 @@ export function ArkmeSurface({
     void loadTimeline(nextCursor, true, 100)
       .catch(caught => {
         if (arkmeUi.getSnapshot().conversationTarget?.revision !== target.revision) return
-        if (!finishCalendarNavigation(target.revision, errorMessage(caught))) setError(errorMessage(caught))
+        if (!finishCalendarNavigation(target.revision, errorMessage(caught))) setTimelineError(errorMessage(caught))
         arkmeUi.consumeConversationTarget(target.revision)
       })
       .finally(() => {
@@ -4482,6 +4507,7 @@ export function ArkmeSurface({
       pendingExtensionParentDetailRef.current = undefined
     }
     setDraftPreview(undefined)
+    setTimelineError('')
     if (authenticated) setError('')
     setLongArticleCreating(false); setAddMenuOpen(false)
     setArticlePickerScope(undefined)
@@ -4590,7 +4616,7 @@ export function ArkmeSurface({
     const snapshot = { ...cached, unified, items: nextItems,
       latestSequence: Math.max(cached.latestSequence ?? 0, ...nextItems.map(item => item.sequence ?? 0)),
       cache: { origin: 'network' as const, persistence: 'deferred' as const, stale: true } }
-    const viewport = bodyRef.current === null ? undefined : arkmeConversationViewport(bodyRef.current)
+    const viewport = bodyRef.current === null ? undefined : arkmeConversationViewport(bodyRef.current, false, true)
     pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport, followLatest: true }
     conversationCacheRef.current.storeTimeline(conversationKey, snapshot)
     appliedTimelineInvalidationsRef.current.set(conversationKey, chatDelta.revision)
@@ -4621,11 +4647,11 @@ export function ArkmeSurface({
         if (timelineRequestsRef.current.get('initial')?.returnToLatest) return
         void loadTimeline(undefined, false, 40, 'return-to-latest').catch(caught => {
           arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
-          if (generation === timelineGenerationRef.current) setError(errorMessage(caught))
+          if (generation === timelineGenerationRef.current) setTimelineError(errorMessage(caught))
         })
         return
       }
-      if (foregroundChanged && cachedTimeline.unified) void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setError(errorMessage(caught)))
+      if (foregroundChanged && cachedTimeline.unified) void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setTimelineError(errorMessage(caught)))
       setTimelineLoadingKey(current => current === conversationKey ? '' : current)
       setTimelineSkeletonKey(current => current === conversationKey ? '' : current)
       return
@@ -4649,12 +4675,12 @@ export function ArkmeSurface({
       timelineRefreshScheduler.request(1000)
       return
     }
-    void loadTimeline(undefined, false, 40, 'background').catch(caught => {
+    void loadTimeline(undefined, false, 40, hasCachedTimeline ? 'background' : 'foreground').catch(caught => {
       arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
       if (generation === timelineGenerationRef.current) {
         setTimelineLoadingKey(current => current === conversationKey ? '' : current)
         setTimelineSkeletonKey(current => current === conversationKey ? '' : current)
-        if (!hasCachedTimeline) setError(errorMessage(caught))
+        if (!hasCachedTimeline) setTimelineError(errorMessage(caught))
       }
     })
   }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler])
@@ -4683,7 +4709,7 @@ export function ArkmeSurface({
     // same notification and continuously clear mounted receipt state.
     consumedInterwovenRefreshRevisionRef.current = interwovenRefreshRevision
     if (liveTimelineTail.hasPending) { timelineRefreshScheduler.request(1000); return }
-    void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setError(errorMessage(caught)))
+    void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setTimelineError(errorMessage(caught)))
   }, [activeConversation, authenticated, conversationKey, sourceIsChat, interwovenRefreshRevision, unifiedWindow, loadTimeline, liveTimelineTail, timelineRefreshScheduler])
   const appliedInterwovenInvalidationsRef = useRef(new Map<string, number>())
   useEffect(() => {
@@ -4746,7 +4772,7 @@ export function ArkmeSurface({
     if (!activeConversation || !authenticated || source === undefined || timelineChangeRevision <= 0) return
     const applied = appliedTimelineInvalidationsRef.current.get(conversationKey) ?? 0
     if (timelineChangeRevision <= applied) return
-    void loadTimeline(undefined, true, 40, 'refresh').catch(caught => { setError(errorMessage(caught)) })
+    void loadTimeline(undefined, true, 40, 'refresh').catch(caught => { setTimelineError(errorMessage(caught)) })
   }, [activeConversation, authenticated, timelineChangeRevision, conversationKey, loadTimeline, source])
 
   useEffect(() => {
@@ -4859,7 +4885,7 @@ export function ArkmeSurface({
       if (!newerSentinelArmedRef.current || loadingNewer) return
       newerSentinelArmedRef.current = false
       setLoadingNewer(true)
-      void loadTimeline(newerCursor, true).catch(caught => { setError(errorMessage(caught)) }).finally(() => { setLoadingNewer(false) })
+      void loadTimeline(newerCursor, true).catch(caught => { setTimelineError(errorMessage(caught)) }).finally(() => { setLoadingNewer(false) })
     }, { root, rootMargin: '0px 0px 120px' })
     observer.observe(sentinel); return () => { observer.disconnect() }
   }, [authenticated, loadTimeline, loadingNewer, newerCursor, newerHasMore])
@@ -7691,7 +7717,9 @@ export function ArkmeSurface({
     if (rememberConversationViewport()?.stickToBottom) setNewMessageCount(0)
     arkmeChatDirectory.refreshReadingIntent()
     bottomVisibility.measure()
-  }, [bottomVisibility.measure, rememberConversationViewport])
+    const body = bodyRef.current
+    if (body !== null && body.scrollHeight - body.clientHeight - body.scrollTop <= 2) void acknowledgeRead(items)
+  }, [acknowledgeRead, items, bottomVisibility.measure, rememberConversationViewport])
   const returnToLatest = useCallback(async () => {
     setCalendarMomentWindow(undefined)
     const body = bodyRef.current
@@ -8824,19 +8852,14 @@ export function ArkmeSurface({
             ...styles.body,
             ...(displayRows.length === 0 && interwovenWindow.prelude.length === 0 ? { display: 'flex', flexDirection: 'column' as const } : {}),
           }} onScroll={handleConversationScroll}>
-            {error !== '' && <div style={styles.error}>{error}</div>}
-            {timelineCache?.origin === 'local' && <div role="status" style={styles.notice}>当前显示本地消息</div>}
-            {timelineCache?.origin === 'network' && timelineCache.persistence === 'unavailable' && <div role="status" style={styles.notice}>消息已加载，本地缓存暂不可用</div>}
+            {conversationError !== '' && <div role="alert" style={styles.error}>{conversationError}</div>}
             {unifiedWindow && !unifiedWindow.complete && <div role="status" style={styles.notice}>
               部分时间线内容暂未加载，已确认内容仍可阅读。
-              <button type="button" style={styles.retry} onClick={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setError(errorMessage(caught))) }}>重试</button>
+              <button type="button" style={styles.retry} onClick={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setTimelineError(errorMessage(caught))) }}>重试</button>
             </div>}
-            {error !== '' && unifiedWindow && displayRows.length > 0 && <div role="alert" style={styles.notice}>{error}
-              <button type="button" style={styles.retry} onClick={() => { setError(''); void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setError(errorMessage(caught))) }}>重试</button>
-            </div>}
-            {error !== '' && displayRows.length === 0 && timelineLoadingKey !== conversationKey && <button data-arkme-feedback="neutral"
+            {timelineError !== '' && displayRows.length === 0 && timelineLoadingKey !== conversationKey && <button data-arkme-feedback="neutral"
               type="button" style={styles.retry} onClick={() => {
-                setError('')
+                setTimelineError('')
                 setTimelineLoadingKey(conversationKey)
                 setForegroundReadRevision(value => value + 1)
               }}>{tr("重新加载")}</button>}
@@ -8885,7 +8908,7 @@ export function ArkmeSurface({
               <button type="button" disabled={loadingNewer} onClick={() => {
                 if (loadingNewer || newerCursor === undefined) return
                 setLoadingNewer(true)
-                void loadTimeline(newerCursor, true).catch(caught => setError(errorMessage(caught))).finally(() => setLoadingNewer(false))
+                void loadTimeline(newerCursor, true).catch(caught => setTimelineError(errorMessage(caught))).finally(() => setLoadingNewer(false))
               }}>{loadingNewer ? tr('正在加载…') : tr('继续加载更新内容')}</button>
             </div>}
             <div ref={endAccessoryRef} data-arkme-conversation-end-accessory aria-hidden={activeSelectMode !== undefined || undefined}

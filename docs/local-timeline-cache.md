@@ -24,7 +24,7 @@
 | `newerCursor` | 仅用于 reconcile，将尾部追赶纳入同次提交 |
 | `limit` | 远端每页 1–100 条，完整本地/校准结果最多 2,000 条 |
 
-返回 `cache.origin` 区分 `local/network`，`cache.persistence` 区分 `committed/unavailable/deferred`；`revision` 是本地提交顺序，`stale` 表示窗口晚于提交发生失效。它们均不是服务端 seq、已读 ACK 或多来源同步 checkpoint。普通单页 refresh 返回 `deferred`，不会被记为完整校准。存储失败时网络读取仍可返回 `unavailable`，UI 会提示；Worker 故障后本次 Host 生命周期保持此降级，重启可恢复缓存。
+返回 `cache.origin` 区分 `local/network`，`cache.persistence` 区分 `committed/unavailable/deferred`；`revision` 是本地提交顺序，`stale` 表示窗口晚于提交发生失效。它们均不是服务端 seq、已读 ACK 或多来源同步 checkpoint。普通单页 refresh 返回 `deferred`，不会被记为完整校准。存储失败时网络读取仍可返回 `unavailable`，不会虚报已持久化；UI 不为缓存来源或降级插入技术状态条。Worker 故障后本次 Host 生命周期保持此降级，重启可恢复缓存。
 
 ## 阅读位置与展示
 
@@ -33,6 +33,7 @@
 - 显式定位优先于缓存锚点。历史 token 失效时，只有具备可信 record owner 的消息才通过 around 重定位；不能定位时保留阅读状态并提示，不擅自跳到最新。
 - 统一聊天按 40 条分块，最多 5 个可见块加 1 个恢复目标块；离屏媒体与反应子树卸载，动态高度由 ResizeObserver 记录。选择文本时暂缓替换可见块，选择结束主动恢复更新。原非聊天列表保持原结构。
 - 主列表与预览共用 Host 和窗口组件；预览不触发会话激活或已读确认。
+- 没有新增用户操作入口；缓存和后台校准保持透明。移除重复超时/重试提示，初次读取失败、权限错误及不完整时间线仍沿用必要的恢复入口。
 
 ## 性能与生命周期上限
 

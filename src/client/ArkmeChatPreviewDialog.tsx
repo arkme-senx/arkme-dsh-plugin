@@ -119,8 +119,6 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
         {timeline.loading && timeline.page === undefined && <div role="status" style={status}>{tr("正在加载消息…")}</div>}
         {!timeline.loading && timeline.error === '' && timeline.page !== undefined && rows.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
         {timeline.page?.unified && !timeline.page.unified.complete && <div role="status" style={status}>{tr('部分时间线内容暂未加载')}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr('重试')}</button></div>}
-        {timeline.page?.cache?.origin === 'local' && <div role="status" style={status}>当前显示本地消息</div>}
-        {timeline.page?.cache?.persistence === 'unavailable' && <div role="status" style={status}>消息已加载，本地缓存暂不可用</div>}
         <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           <WindowedTimelineRows scrollport={body} rowIds={rowIds} anchorId={viewport.current?.anchorId}>
             {renderedRows.map((node, index) => <li key={rowIds[index]!.id} style={{ listStyle: 'none' }}>{node}</li>)}

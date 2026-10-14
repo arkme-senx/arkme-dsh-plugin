@@ -10,6 +10,10 @@ export const MAX_CACHED_WINDOWS = 256
 export const MAX_TIMELINE_WINDOW_EVENTS = 2000
 export const MAX_TIMELINE_WINDOW_BYTES = 4 * 1024 * 1024
 const MAX_CACHE_BYTES = 64 * 1024 * 1024
+// Coverage is also stored in entries and its indexes. Payload bytes alone do
+// not bound SQLite size. Leave 32 MiB below the 128 MiB file cap for one bounded
+// window, its indexes and transaction work; every committed write restores it.
+const MAX_OCCUPIED_BYTES = 96 * 1024 * 1024
 export interface TimelineCacheCommit { ticket?: number; latest?: boolean; refreshTokens?: string[] }
 type PageRow = { request: string; metadata: string; ticket: number }
 
@@ -52,6 +56,11 @@ export class UnifiedTimelineCache {
       CREATE TRIGGER IF NOT EXISTS content_removed AFTER DELETE ON contents BEGIN UPDATE cache_stats SET bytes=bytes-length(CAST(OLD.payload AS BLOB)) WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS page_added AFTER INSERT ON pages BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.metadata AS BLOB)) WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS page_removed AFTER DELETE ON pages BEGIN UPDATE cache_stats SET bytes=bytes-length(CAST(OLD.metadata AS BLOB)) WHERE id=1; END;`)
+    // Older caches can already be at the file cap. Reclaim their least-recent
+    // windows before the first write; no VACUUM or loss of authority fences.
+    this.db.exec('BEGIN IMMEDIATE')
+    try { this.trimPhysicalPages(); this.db.exec('COMMIT') }
+    catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error }
   }
   private prepare(sql: string): StatementSync {
     let statement = this.statements.get(sql)
@@ -173,6 +182,7 @@ export class UnifiedTimelineCache {
         const row = this.prepare('SELECT scope,request FROM pages ORDER BY touched LIMIT 1').get()!
         this.remove(String(row.scope), String(row.request)); this.collect(String(row.scope))
       }
+      this.trimPhysicalPages(scope, request)
       this.prepare('DELETE FROM sources WHERE NOT EXISTS (SELECT 1 FROM pages WHERE pages.scope=sources.scope)').run()
       this.prepare('DELETE FROM scopes WHERE scope IN (SELECT scope FROM scopes ORDER BY fence DESC LIMIT -1 OFFSET 1024)').run()
       this.db.exec('COMMIT')
@@ -209,6 +219,18 @@ export class UnifiedTimelineCache {
   }
   private collect(scope: string): void {
     this.prepare('DELETE FROM contents WHERE scope=? AND refs=0').run(scope)
+  }
+  private trimPhysicalPages(scope?: string, request?: string): void {
+    const size = Number(this.prepare('PRAGMA page_size').get()!.page_size)
+    const pages = Number(this.prepare('PRAGMA page_count').get()!.page_count)
+    while ((pages - Number(this.prepare('PRAGMA freelist_count').get()!.freelist_count)) * size > MAX_OCCUPIED_BYTES) {
+      const row = scope === undefined
+        ? this.prepare('SELECT scope,request FROM pages ORDER BY touched LIMIT 1').get()
+        : this.prepare('SELECT scope,request FROM pages WHERE scope<>? OR request<>? ORDER BY touched LIMIT 1').get(scope, request!)
+      if (!row) break
+      this.remove(String(row.scope), String(row.request))
+      this.collect(String(row.scope))
+    }
   }
   private remove(scope: string, request: string): void {
     this.prepare('DELETE FROM entries WHERE scope=? AND request=?').run(scope, request)

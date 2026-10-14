@@ -1,3 +1,4 @@
+import { ArkmeReadTimeoutError } from '../src/client/read-deadline.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture.js'
 import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
@@ -190,7 +191,7 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
-  it.each(['stale-bottom', 'offline-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
+  it.each(['stale-bottom', 'offline-history', 'timeout-history', 'browser-timeout-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
     const api = await import('../src/client/api.js')
     const { ArkmeClientError } = api
     const base = mocks.callArkme.getMockImplementation()!
@@ -207,13 +208,13 @@ describe('conversation send directory projection', () => {
       page.unified.newerCursor = 'tail'
       return Promise.resolve(page) as any
     })
-    const body = { scrollTop: mode === 'offline-history' ? 300 : 1400, scrollHeight: 2000, clientHeight: 600,
+    const body = { scrollTop: mode.endsWith('history') ? 300 : 1400, scrollHeight: 2000, clientHeight: 600,
       getBoundingClientRect: () => ({top:0,bottom:600}),querySelectorAll:()=>[],scrollTo:vi.fn() }
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
     expect(reads).toBe(1)
-    if (mode === 'offline-history') act(() => {
+    if (mode.endsWith('history')) act(() => {
       // Initial entry intentionally aligns latest. Establish real reading intent
       // afterwards, rather than relying on the node mock's pre-mount scrollTop.
       body.scrollTop = 300
@@ -225,15 +226,68 @@ describe('conversation send directory projection', () => {
     expect(reads).toBe(2)
     const readingTop = body.scrollTop
     await act(async () => {
-      if (mode === 'success-bottom') refresh.resolve(unifiedFixture(target, [old]))
-      else refresh.reject(new ArkmeClientError({ code: mode === 'stale-bottom' ? 'chat-timeline-stale' : 'arkme-network-error', message:'读取暂时失效',retryable:true,recovery:{owner:'host'} } as never))
+      if (mode === 'browser-timeout-history') refresh.reject(new ArkmeReadTimeoutError())
+      else if (mode === 'success-bottom') refresh.resolve(unifiedFixture(target, [old]))
+      else refresh.reject(new ArkmeClientError({ code: mode === 'stale-bottom' ? 'chat-timeline-stale' : mode === 'timeout-history' ? 'arkme-timeout' : 'arkme-network-error', message:'读取暂时失效',retryable:true,recovery:{owner:'host'} } as never))
     })
     await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
     expect(reads).toBe(3)
+    expect(renderedText(renderer!.toJSON())).not.toContain('读取暂时失效')
+    expect(renderedText(renderer!.toJSON())).not.toContain('读取超时')
     expect(renderer!.root.findAllByProps({'data-arkme-message-item-uid':'diag-new'})).toHaveLength(1)
-    expect(body.scrollTop).toBe(mode === 'offline-history' ? readingTop : body.scrollHeight - body.clientHeight)
+    expect(body.scrollTop).toBe(mode.endsWith('history') ? readingTop : body.scrollHeight - body.clientHeight)
     await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
     expect(reads).toBe(3)
+  })
+
+  it.each([true, false])('shows an actionable read failure only once (cached: %s)', async cached => {
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    let reads = 0
+    const old = { itemUid: 'read-old', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, textContent: 'cached message', status: 1 }
+    const failure = cached ? '此会话已无法访问' : 'Arkme 服务请求超时'
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'empty', retryable: false }))
+      reads++
+      if (reads === (cached ? 2 : 1)) return Promise.reject(new ArkmeClientError({ code: cached ? 'source-forbidden' : 'arkme-timeout', message: failure, retryable: !cached, recovery: { owner: 'host' } } as never))
+      return Promise.resolve(unifiedFixture(target, [old])) as any
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    if (cached) await act(async () => { arkmeChatTimelineDelta.applyTimelineChange({ sourceKey: target.sourceKey!, timelineItemKey: 'changed', changeKind: 'reedited', changeVersion: 1, relationTerminal: false, throughSequence: 8 }) })
+    expect(renderedText(renderer!.toJSON()).split(failure)).toHaveLength(2)
+    if (!cached) {
+      const retry = renderer!.root.findAllByType('button').find(node => renderedText(node.props.children) === '重新加载')!
+      await act(async () => { retry.props.onClick() })
+      expect(renderedText(renderer!.toJSON())).not.toContain(failure)
+      expect(renderedText(renderer!.toJSON())).toContain('cached message')
+    }
+  })
+
+  it('keeps a background member failure in the member owner instead of the message body', async () => {
+    const api = await import('../src/client/api.js')
+    const base = api.callArkme
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.members.page') return Promise.reject(new ArkmeClientError({ code: 'arkme-timeout', message: 'Arkme 服务请求超时', retryable: true, recovery: { owner: 'host' } } as never))
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(arkmeConversationMembers.get('test:42', target).error).toBe('Arkme 服务请求超时')
+    expect(renderedText(renderer!.toJSON())).not.toContain('Arkme 服务请求超时')
+  })
+
+  it('does not erase a send failure when a background timeline read succeeds', async () => {
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.send-text') throw new Error('发送结果待确认，不能重复发送')
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('测试失败') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认，不能重复发送')
+    await act(async () => { arkmeChatTimelineDelta.applyTimelineChange({ sourceKey: target.sourceKey!, timelineItemKey: 'changed', changeKind: 'reedited', changeVersion: 1, relationTerminal: false, throughSequence: 8 }) })
+    expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认，不能重复发送')
   })
 
   it('renders continuous confirmed unified arrivals before refresh completion with stable row identities', async () => {
@@ -305,6 +359,9 @@ describe('conversation send directory projection', () => {
     expect(renderedText(renderer!.toJSON())).toContain(text)
     expect(renderedText(renderer!.toJSON())).not.toContain('统一来源初始正文')
     expect(modes).toContain('refresh')
+    const timelineReads = mocks.callArkme.mock.calls.filter(([op, params]) => op === 'source.timeline' && !params?.cursor?.unified?.cacheOnly)
+    expect(timelineReads[0]?.[1]?.background).not.toBe(true)
+    expect(timelineReads.some(([, params]) => params?.background === true)).toBe(true)
     expect(mocks.callArkme.mock.calls.some(([op]) => ['source.interwoven-moments', 'source.ai-polish.notices', 'source.member-events'].includes(op))).toBe(false)
   })
 
@@ -458,6 +515,49 @@ describe('conversation send directory projection', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readsBefore)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.mark-read')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledWith('source.mark-read', { sourceRef: activeSource.sourceRef, readSequence: incoming.sequence })
+  })
+
+  it('keeps incoming messages unread durably until the follow motion actually reaches the visible edge', async () => {
+    const doc = Object.assign(new EventTarget(), { body: {}, activeElement: null,
+      visibilityState: 'visible', hasFocus: () => true })
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    activeSource = { ...target, unreadCount: 1 }
+    arkmeChatDirectory.publish([activeSource]); arkmeUi.selectSource(activeSource)
+    timeline = [{ itemUid: 'before-motion', sequence: 8, senderName: '同事', isMe: false,
+      sendAtMillis: 1, textContent: '原有正文', status: 1 }]
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, params, signal) => operation === 'source.timeline'
+      ? Promise.resolve(unifiedFixture(activeSource, timeline)) : operation === 'source.mark-read'
+      ? Promise.resolve({ effectiveReadSequence: params.readSequence, unreadCount: 0 }) : base(operation, params, signal))
+    const view = { Event, performance: { now: () => 0 }, requestAnimationFrame: vi.fn(() => 1),
+      cancelAnimationFrame: vi.fn(), matchMedia: () => ({ matches: false }) }
+    const body = { scrollTop: 0, scrollHeight: 1500, clientHeight: 600,
+      style: { getPropertyValue: () => '', getPropertyPriority: () => '', setProperty: vi.fn(), removeProperty: vi.fn() },
+      ownerDocument: { defaultView: view }, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(), getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }), querySelectorAll: () => [] }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    mocks.callArkme.mockClear()
+    const incoming = { ...timeline[0]!, itemUid: 'during-motion', timelineEventId: 'during-motion', timelineOrderTie: '009', sequence: 9, sendAtMillis: 2 }
+    // The viewport is still within the old 80px follow tolerance, but the new
+    // lower edge has not been presented. Intent may suppress a badge, not ACK it.
+    body.scrollHeight += 60
+    await act(async () => {
+      arkmeChatDirectory.publish([{ ...activeSource, unreadCount: 1, latestSequence: 9 }])
+      arkmeChatTimelineDelta.publish([{ source: { ...activeSource, latestSequence: 9 }, items: [incoming] }])
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.mark-read')).toHaveLength(0)
+    await act(async () => {
+      body.scrollTop = 960
+      renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
+    })
+    // The durable owner coalesces ACKs within one second after the initial read.
+    await act(async () => { await vi.waitFor(() => {
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.mark-read', { sourceRef: target.sourceRef, readSequence: 9 })
+    }, { timeout: 2500 }) })
   })
 
   it.each(['send_to_self', 'default_category', 'topic'] as const)('uses current account avatars in %s when this device has no role binding', async kind => {
@@ -2505,7 +2605,8 @@ describe('conversation send directory projection', () => {
         prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48,
         chatConnectionGeneration: 1, chatRevision: 1 })
     })
-    expect(renderer!.root.findAll(node => node.type === 'div' && node.children.includes('成员刷新失败'))).not.toHaveLength(0)
+    expect(renderedText(renderer!.toJSON())).not.toContain('成员刷新失败')
+    expect(arkmeConversationMembers.get('test:42', arkmeUi.getSnapshot().selectedSource).error).toBe('成员刷新失败')
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(1)
   })
@@ -4908,7 +5009,8 @@ describe('conversation send directory projection', () => {
       placeholder: '发消息到 故障恢复群(9人)',
       disabled: false,
     })
-    expect(renderer!.root.findAll(node => node.type === 'div' && node.children.includes('成员刷新失败'))).not.toHaveLength(0)
+    expect(renderedText(renderer!.toJSON())).not.toContain('成员刷新失败')
+    expect(arkmeConversationMembers.get('test:42', arkmeUi.getSnapshot().selectedSource).error).toBe('成员刷新失败')
   })
 
   it('falls back to the projected group count when the refreshed active count is zero', async () => {
@@ -7005,7 +7107,7 @@ describe('conversation send directory projection', () => {
     expect(scrollTo).toHaveBeenCalledTimes(1)
     expect(scrollTo).toHaveBeenCalledWith({ top: 130, behavior: 'auto' })
 
-    // A normal sidebar click on an unread conversation must leave its saved history window.
+    // An explicit optimistic latest-read request must leave the around-loaded locate window.
     const incoming = { ...latestExtension, itemUid: 'new-unread-message', sequence: 51, sendAtMillis: 51, textContent: '新收到的普通消息', isMe: false }
     timeline = [incoming]
     const unreadSource = { ...target, latestSequence: 51, unreadCount: 1 }
@@ -7268,7 +7370,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
     })
     expect(refreshReads).toEqual([{
-      sourceRef: target.sourceRef, limit: 100,
+      sourceRef: target.sourceRef, limit: 100, background: true,
       ...(navigation === 'around' ? { cursor: { beforeSequence: 13 } } : {}),
     }])
     const visibleItemUids = renderer!.root

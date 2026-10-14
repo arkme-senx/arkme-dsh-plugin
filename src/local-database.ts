@@ -1,4 +1,5 @@
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
+import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
 import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from './emoji-recent.js'
 import { randomUUID } from 'node:crypto'
@@ -148,6 +149,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversation_viewports (
+        account_key TEXT NOT NULL, surface TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, surface)
       );
       CREATE TABLE IF NOT EXISTS conversation_directory (
         user_id INTEGER NOT NULL, identity TEXT NOT NULL, payload TEXT NOT NULL,
@@ -1143,6 +1148,26 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async recentEmojiIds(accountKey: string): Promise<string[]> {
     return this.readRecentEmojiIds(accountKey)
+  }
+
+  async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {
+    const row = this.database.prepare('SELECT payload FROM conversation_viewports WHERE account_key=? AND surface=?')
+      .get(accountKey, surface) as { payload: string } | undefined
+    try { return normalizeConversationViewports(row ? JSON.parse(row.payload) : []) } catch { return [] }
+  }
+
+  async writeConversationViewports(accountKey: string, surface: string, entries: ConversationViewportEntries): Promise<void> {
+    if (accountKey.length > 100 || surface.length > 2048) throw new Error('Invalid viewport scope')
+    this.transaction(() => {
+      // Reinsert to make rowid a recency order, independent of wall-clock ties.
+      this.database.prepare('DELETE FROM conversation_viewports WHERE account_key=? AND surface=?').run(accountKey, surface)
+      this.database.prepare('INSERT INTO conversation_viewports(account_key,surface,payload) VALUES (?,?,?)')
+        .run(accountKey, surface, JSON.stringify(normalizeConversationViewports(entries)))
+      this.database.prepare(`DELETE FROM conversation_viewports WHERE account_key=? AND rowid NOT IN
+        (SELECT rowid FROM conversation_viewports WHERE account_key=? ORDER BY rowid DESC LIMIT 40)`).run(accountKey, accountKey)
+      // Geometry is disposable; cap retained account/window payloads at 5 MiB.
+      this.database.exec('DELETE FROM conversation_viewports WHERE rowid NOT IN (SELECT rowid FROM conversation_viewports ORDER BY rowid DESC LIMIT 80)')
+    })
   }
 
   async recordRecentEmoji(accountKey: string, emojiId: string): Promise<string[]> {

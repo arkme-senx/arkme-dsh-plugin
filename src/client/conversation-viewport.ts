@@ -20,9 +20,9 @@ export interface ArkmeConversationViewportRestore {
   followLatest?: boolean | undefined
 }
 
-export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false): ArkmeConversationViewportSnapshot {
+export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false, captureLatestAnchor = false): ArkmeConversationViewportSnapshot {
   const stickToBottom = !messagesOnly && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
-  if (stickToBottom) return { scrollTop: root.scrollTop, stickToBottom: true }
+  if (stickToBottom && !captureLatestAnchor) return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
   for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
     if (messagesOnly && !row.dataset.arkmeConversationRow?.startsWith('message:')) continue
@@ -32,13 +32,13 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
     if (anchorId !== undefined) {
       return {
         scrollTop: root.scrollTop,
-        stickToBottom: false,
+        stickToBottom,
         anchorId,
         anchorOffset: rowRect.top - rootRect.top,
       }
     }
   }
-  return { scrollTop: root.scrollTop, stickToBottom: false }
+  return { scrollTop: root.scrollTop, stickToBottom }
 }
 
 /** Read actual message/interaction rows only when opening a calendar; never count system notices. */
@@ -126,7 +126,17 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
     const newerPageStartOffset = arkmeConversationAnchorOffset(body, pending.newerPageStartAnchorId)
     const maximumScrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
     if (pending.followLatest && pending.viewport?.stickToBottom && pending.newerPageStartAnchorId === undefined) {
-      followConversationBottom(body)
+      // A checkpoint may trim/prepend rows without changing total height. Keep
+      // a surviving row at its pre-commit position before following the new tail.
+      let rebased = false
+      if (anchorOffset !== undefined && pending.viewport.anchorOffset !== undefined) {
+        const correction = anchorOffset - pending.viewport.anchorOffset
+        if (Math.abs(correction) > 1) {
+          body.scrollTop = Math.max(0, Math.min(maximumScrollTop, body.scrollTop + correction))
+          rebased = true
+        }
+      }
+      followConversationBottom(body, rebased)
     } else {
       cancelConversationFollow(body)
       body.scrollTop = pending.newerPageStartAnchorId === undefined

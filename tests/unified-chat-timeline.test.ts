@@ -13,6 +13,30 @@ function window(events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineW
   return { protocolVersion: 1, events, sources: statuses(), complete: true, windowTokens: ['window'], olderCursor: 'older', newerCursor: 'newer', olderHasMore: true, newerHasMore: false, hasMore: false }
 }
 describe('unified timeline owner contract', () => {
+  it('does not queue a local cache lookup behind a network owner', async () => {
+    const owner = vi.fn(async () => { throw new Error('network admission reached') })
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, runCompositeOwnerRead: owner } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      {} as never, {} as never)
+    try {
+      await expect(service.read('ref', { cacheOnly: true })).rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+      expect(owner).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('revalidates an existing window behind interactive opening and history reads', async () => {
+    const post = vi.fn().mockResolvedValue(response())
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { projectChatTimelineItems: async () => [] } as never, {} as never)
+    const initial = await service.read('ref')
+    await service.read('ref', { mode: 'refresh', windowTokens: initial.unified!.windowTokens })
+    await service.read('ref', {}, undefined, true)
+    expect(post.mock.calls.map(call => call[4].lane)).toEqual(['interactive-read', 'background-read', 'background-read'])
+    expect(post.mock.calls[0]?.[1]).toEqual(post.mock.calls[2]?.[1])
+    service.dispose()
+  })
   it('retains the reverse server total order including same-time source priority and World ties', () => {
     const events = [event('b', 'world_public'), event('a', 'world_public'), event('a'), event('b')].sort(compareUnifiedTimelineEvents)
     expect(events.map(e => `${e.source}:${e.eventId}`)).toEqual(['world_public:b', 'world_public:a', 'messages:a', 'messages:b'])

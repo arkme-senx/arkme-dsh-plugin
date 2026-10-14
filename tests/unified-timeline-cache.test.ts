@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { UnifiedTimelineCache } from '../src/unified-timeline-cache.js'
+import { TIMELINE_CACHE_FILE, UnifiedTimelineCache } from '../src/unified-timeline-cache.js'
 import { TimelineTokenCodec } from '../src/services/timeline-token.js'
 import { CHAT_TIMELINE_SOURCES } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelinePage } from '../src/types.js'
@@ -170,3 +171,64 @@ it('persists arrival freshness separately from revocation fences across restart'
   expect(store.read('scope','initial')?.cache?.stale).toBe(false)
   store.close()
 })
+
+it('bounds SQLite pages including coverage indexes before continuous writes exhaust the file', () => {
+  const path = mkdtempSync(join(tmpdir(), 'arkme coverage capacity ')); directories.push(path)
+  let store = new UnifiedTimelineCache(path)
+  const window = page()
+  const token = 'coverage-'.repeat(100)
+  window.unified!.windowTokens = [token]
+  window.unified!.events = Array.from({ length: 400 }, (_, i) => ({
+    ...window.unified!.events[0]!, eventId: `event-${i}`, windowToken: token,
+  }))
+  try {
+    for (let i = 0; i < 180; i++) {
+      window.unified!.events[0]!.eventId = `anchor-${i}`
+      expect(store.write('scope', `window-${i}`, window, { latest: true })).toBe(true)
+    }
+    expect(store.read('scope', 'window-0')).toBeUndefined()
+    expect(store.read('scope', '', 'anchor-179')?.unified?.events).toHaveLength(400)
+    store.close(); store = new UnifiedTimelineCache(path)
+    expect(store.read('scope', '', undefined, true)?.unified?.events[0]?.eventId).toBe('anchor-179')
+    const db = new DatabaseSync(join(path, TIMELINE_CACHE_FILE), { readOnly: true })
+    try {
+      const pages = Number(db.prepare('PRAGMA page_count').get()!.page_count)
+      const free = Number(db.prepare('PRAGMA freelist_count').get()!.freelist_count)
+      const size = Number(db.prepare('PRAGMA page_size').get()!.page_size)
+      expect((pages - free) * size).toBeLessThanOrEqual(96 * 1024 * 1024)
+      expect(db.prepare('PRAGMA quick_check').get()!.quick_check).toBe('ok')
+    } finally { db.close() }
+  } finally { store.close() }
+}, 30_000)
+
+it('reclaims an existing oversized coverage cache on open and keeps its recent anchor', () => {
+  const path = mkdtempSync(join(tmpdir(), 'arkme legacy capacity ')); directories.push(path)
+  const window = page()
+  const token = 'coverage-'.repeat(100)
+  window.unified!.windowTokens = [token]
+  window.unified!.events = Array.from({ length: 400 }, (_, i) => ({
+    ...window.unified!.events[0]!, eventId: `event-${i}`, windowToken: token,
+  }))
+  const original = new UnifiedTimelineCache(path)
+  original.write('scope', 'seed', window, { latest: true }); original.close()
+  // Valid old-format windows: before physical accounting these repeated indexed
+  // coverage tokens were invisible to the payload-byte budget.
+  const db = new DatabaseSync(join(path, TIMELINE_CACHE_FILE))
+  try {
+    db.exec('PRAGMA max_page_count=32768; BEGIN')
+    for (let i = 0; i < 140; i++) {
+      db.prepare("INSERT INTO pages SELECT scope,?,metadata,?,?,1 FROM pages WHERE request='seed'").run(`legacy-${i}`, i + 2, i + 2)
+      db.prepare("INSERT INTO entries SELECT scope,?,ordinal,event_id,token FROM entries WHERE request='seed'").run(`legacy-${i}`)
+    }
+    db.exec('UPDATE clock SET ticket=200; COMMIT')
+    expect(Number(db.prepare('PRAGMA page_count').get()!.page_count) * 4096).toBeGreaterThan(96 * 1024 * 1024)
+  } finally { db.close() }
+  const store = new UnifiedTimelineCache(path)
+  try {
+    expect(store.read('scope', 'seed')).toBeUndefined()
+    expect(store.read('scope', 'legacy-139')?.unified?.events).toHaveLength(400)
+    expect(store.read('scope', '', 'event-0')?.unified?.events).toHaveLength(400)
+    expect(store.write('scope', 'latest', page('new arrival'), { latest: true })).toBe(true)
+    expect(store.read('scope', '', undefined, true)?.unified?.events[0]).toMatchObject({ text: 'new arrival' })
+  } finally { store.close() }
+}, 30_000)

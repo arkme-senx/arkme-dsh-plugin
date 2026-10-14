@@ -314,6 +314,10 @@ export function useArkmeRealtimeClientEvents(
           arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
           return
         }
+        if (update.type === 'timeline-items') {
+          arkmeChatTimelineDelta.publish([{ source: update.source, items: update.items }])
+          return
+        }
         if (update.type === 'timeline-changed') {
           arkmeChatTimelineDelta.applyTimelineChange(update)
           arkmeInterwovenInvalidation.invalidate(update.sourceKey)

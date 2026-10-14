@@ -87,6 +87,21 @@ describe('conversation viewport ownership', () => {
     expect(store.getViewport('A')?.stickToBottom).toBe(true)
   })
 
+  it('preserves the visible row before animating a same-height sliding window', () => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const captured = arkmeConversationViewport(body, false, true)
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callbacks.push(callback); return callbacks.length })
+    pending.current = { sourceKey: 'A', viewport: captured, followLatest: true }
+    render({ first: 1 })
+    const retained = body.querySelector(`[data-arkme-conversation-row="${captured.anchorId}"]`)!
+    expect(retained.getBoundingClientRect().top).toBe(captured.anchorOffset)
+    expect(body.scrollTop).toBe(maximum() - 100)
+    expect(callbacks).toHaveLength(1)
+    expect(store.getViewport('A')?.stickToBottom).toBe(true)
+  })
+
   it.each([0, 12, 40])('preserves history through ten cold/warm switches to %s rows', count => {
     rowCount.B = count
     render(); scroll(730)

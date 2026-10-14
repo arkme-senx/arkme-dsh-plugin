@@ -76,12 +76,17 @@ it.each([
       timelineItems: [{ itemUid: `${kind}-9`, sequence: 9, senderName: '同事', isMe: false,
         sendAtMillis: 9, textContent: '后台收到的正文', status: 1 }],
     }))
-    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 1, updates }) } as MessageEvent<string>) })
+    const upsert = vi.spyOn(arkmeChatDirectory, 'upsertMany')
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'timeline-items', revision: 1,
+      source: updates[0]!.source, items: updates[0]!.timelineItems }) } as MessageEvent<string>) })
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('private_chat').items).toEqual(updates[0]!.timelineItems)
+    expect(upsert).not.toHaveBeenCalled()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 2, updates }) } as MessageEvent<string>) })
     for (const update of updates) {
       expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
       expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
     }
-    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'read-ack', revision: 2,
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'read-ack', revision: 3,
       sourceRef: 'private_chat-ref', sourceKey: 'private_chat', effectiveReadSequence: 9, unreadCount: 2, latestSequence: 11,
     }) } as MessageEvent<string>) })
     expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === 'private_chat'))

@@ -15,6 +15,15 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('admits automatic directory continuation as background without changing explicit reads', async () => {
+    const post = vi.fn(async () => ({ items: [], has_more: false }))
+    const runtime = { config, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    await service.listSources('root', { refresh: true, firstPaint: true, background: true })
+    expect(post.mock.calls[0]?.[4]).toMatchObject({ lane: 'background-read' })
+    await service.listSources('root', { refresh: true, firstPaint: true })
+    expect(post.mock.calls[1]?.[4]).toMatchObject({ lane: 'interactive-read' })
+  })
   it('searches remark and nickname independently of message content, preserving directory pagination and account binding', async () => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const post = vi.fn(async (_path: string, body: { page_cursor?: unknown }) => ({

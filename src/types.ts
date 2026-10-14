@@ -3752,6 +3752,12 @@ export type ArkmeChatClientEvent = {
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
 } | {
+  /** Confirmed bodies only; does not publish directory/unread facts or durable coverage. */
+  type: 'timeline-items'
+  revision: number
+  source: Pick<ArkmeSourceItem, 'sourceRef' | 'sourceKey' | 'latestSequence'>
+  items: ArkmeTimelineItem[]
+} | {
   type: 'timeline-changed'
   revision: number
   sourceKey: string
@@ -4177,6 +4183,8 @@ export type ArkmePluginOperation =
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'emoji.recent.list'
+  | 'conversation.viewport.read'
+  | 'conversation.viewport.write'
   | 'emoji.recent.record'
   | 'topic.candidates'
   | 'source.record-delete'
@@ -4363,6 +4371,8 @@ export interface ArkmePrivateInteractionDirectoryPage extends ArkmePrivateIntera
   nextCursor?: string
 }
 export interface ArkmePrivateInteractionQueryOptions {
+  /** Passive directory revalidation shares the bounded background read lane. */
+  background?: boolean
   sourceRef?: string
   unreadOnly?: boolean
   limit?: number
