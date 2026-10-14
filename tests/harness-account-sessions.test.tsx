@@ -2,7 +2,7 @@
 import { act, createElement, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AccountSessionBrowser, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
+import { AccountSessionBrowser, reconcileAccountSessions, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
 import type { DshAccountSession } from '../src/dsh-remote/account-session-types.js'
 import { openNativeAccountSession } from '../src/client/harness-native-navigation.js'
 import { callArkme } from '../src/sdk/index.js'
@@ -34,7 +34,7 @@ it('publishes one source per container only after complete pagination, without d
   expect(publish).not.toHaveBeenCalled()
   finish({ contractVersion: 1, items: [current], localRuntimeRef: 'mac' })
   await Promise.resolve(); await Promise.resolve()
-  expect(publish).toHaveBeenLastCalledWith([other, current])
+  expect(publish).toHaveBeenLastCalledWith([other, current], 'mac')
   expect(projectAccountWorkspaces(ws, publish.mock.lastCall![0]).items.flatMap(item => item.sessionIds)).not.toContain(accountSessionKey(old))
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [{ ...old }, { ...other }, { ...current }], localRuntimeRef: 'mac' })
   document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
@@ -231,4 +231,22 @@ it('preloads the account catalog before the native menu mounts and retains it ac
   act(() => root.render(null))
   act(() => root.render(element))
   expect(container.textContent).toContain('Windows 对话')
+})
+
+it('uses the same single entry for workspace memberships and a retained selected source', () => {
+ const nativeWindow = window as HarnessNativeWindow, original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
+ nativeWindow.__ARKME_NATIVE_DIRECTORY__ = { publish: () => {}, writable: () => true, select: () => {}, preferredSession: id => id === accountSessionKey(row()) ? 'same' : undefined }
+ cleanups.push(() => { nativeWindow.__ARKME_NATIVE_DIRECTORY__ = original })
+ expect(projectAccountWorkspaces(ws, [row()]).items.flatMap(item => item.sessionIds)).toEqual(['same'])
+ expect(projectAccountSessions(local as never, [row()], row()).current).toBe('same')
+ expect(projectAccountSessions(local as never, [row()], row()).ids).toEqual(['same'])
+})
+
+it('removes expired proof and removed optional revision fields instead of retaining the old cached object', () => {
+ const original = row({ historyRevision: 'h', contentRevision: 'c', coveredLocalHistory: { runtimeRef: 'local', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
+ const withoutProof = row({ historyRevision: 'h', contentRevision: 'c' })
+ const updated = reconcileAccountSessions([original], [withoutProof])
+ expect(updated[0]).toBe(withoutProof); expect(updated[0]?.coveredLocalHistory).toBeUndefined()
+ const legacy = row()
+ expect(reconcileAccountSessions(updated, [legacy])[0]).toBe(legacy)
 })

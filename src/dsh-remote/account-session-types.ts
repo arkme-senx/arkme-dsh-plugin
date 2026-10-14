@@ -5,6 +5,10 @@ export interface DshAccountSession {
   runtimeRef: string
   /** Server-verified retired read addresses for this same session. */
   previousRuntimeRefs?: string[]
+  contentRevision?: string
+  historyRevision?: string
+  /** Host-verified history choice preserving all message and tool occurrences. */
+  coveredLocalHistory?: { runtimeRef: string; updatedAt: number; projectionAsOfSeq: number; source?: 'local' | 'cloud' }
   sessionRef: string
   workspaceRef: string
   workspaceName: string

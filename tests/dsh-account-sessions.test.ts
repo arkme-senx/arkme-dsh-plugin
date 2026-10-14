@@ -1,3 +1,4 @@
+import type { LocalAliasReader } from '../src/dsh-remote/local-history-coverage.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import { ArkmeSdk } from '../src/sdk/index.js'
 import { accountSessionTools } from '../src/dsh-remote/account-session-tools.js'
 import { ArkmePluginError } from '../src/arkme-service.js'
 
-function fixture(online = true, historyCache?: DshNativeHistoryCache) {
+function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader) {
   let receive: Parameters<DshRemoteRealtimeTransport['subscribe']>[0]['onEvent'] | undefined
   const metadata: DshRemoteTrustedEventMetadata = { senderRole: 'host', runtimeRef: 'runtime-remote', acceptedAtMillis: Date.now(), targetHostLeaseGeneration: 8 }
   const transport: DshRemoteRealtimeTransport = {
@@ -39,7 +40,7 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache) {
     throw new Error(path)
   })
   const requireAccount = vi.fn(async () => '3016')
-  const directory = new DshAccountSessions({ request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, runtimeRef: 'runtime-local', hostGeneration: 1, capabilities: [], revision: 1 }) })
+  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, runtimeRef: 'runtime-local', hostGeneration: 1, capabilities: [], revision: 1 }) })
   return { directory, post, transport, requireAccount, emit: (payload: Record<string, unknown>, overrides: Partial<DshRemoteTrustedEventMetadata> = {}) => receive?.(payload, { ...metadata, ...overrides }) }
 }
 
@@ -262,4 +263,33 @@ it('resolves workspace names with at most four concurrent source reads', async (
   expect((await result).items.map(row => row.workspaceName)).toEqual(sources.map(() => 'repo'))
   expect(peak).toBe(4)
   f.directory.close()
+})
+
+
+it('shares verified source selection through Host HTTP, SDK and registered DSH Tool without exposing message hashes', async () => {
+  const hash = 'a'.repeat(64), proof = { version: 1 as const, messages: { [hash]: 1 }, sequence: [hash] }
+  const content = vi.fn(async () => proof)
+  const f = fixture(false, undefined, { summaries: async () => new Map([['same-session', { updatedAt: 42, projectionAsOfSeq: -1, running: false }]]), content })
+  const base = f.post.getMockImplementation()!
+  f.post.mockImplementation(async path => path.endsWith('/sessions/account-list') ? { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', source_updated_at: 1, history_revision: 'h', content_revision: 'c', deduplicated_runtime_refs: ['runtime-local'] }] } as never
+    : path.endsWith('/sessions/metadata') ? { runtime_ref: 'runtime-remote', session_ref: 'same-session', content_revision: 'c', content_proof: proof } as never : base(path))
+  const ctx = new Context(), options = { expectedPort: 0, allowNonLoopback: false, accountSessions: () => f.directory }
+  const server = createServer(createArkmeHostApi({} as never, options)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('no address')
+  options.expectedPort = address.port
+  const sdk = new ArkmeSdk({ fetchImpl: (path, init) => fetch(new URL(String(path), `http://127.0.0.1:${address.port}`), init) })
+  try {
+    await f.directory.list()
+    await vi.waitFor(async () => expect((await f.directory.list()).items[0]?.coveredLocalHistory?.source).toBe('local'))
+    const expected = await sdk.listDshAccountSessions()
+    await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
+    for (const tool of accountSessionTools(f.directory)) ctx.tools.register(tool)
+    const session = ctx.sessions.create()
+    const result = await ctx.tools.execute({ callId: CallId('proof-tool'), name: 'arkme_dsh_sessions', arguments: {}, agent: { id: session.id, session } as never, signal: new AbortController().signal })
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(String(result.value))).toEqual(expected)
+    expect(JSON.stringify(expected)).not.toContain(hash)
+    expect(content).toHaveBeenCalledOnce()
+    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/metadata', expect.objectContaining({ verify_content: true }), expect.any(AbortSignal))
+  } finally { f.directory.close(); await ctx.fiber.dispose(); server.closeAllConnections(); server.close(); await once(server, 'close') }
 })

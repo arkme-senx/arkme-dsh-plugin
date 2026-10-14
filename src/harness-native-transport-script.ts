@@ -1,7 +1,9 @@
 import type { DshAccountSession } from './dsh-remote/account-session-types.js'
 
 export interface HarnessNativeDirectory {
-  publish(rows: readonly DshAccountSession[]): void
+  publish(rows: readonly DshAccountSession[], localRuntimeRef?: string): void
+  canonicalLocal?(sessionId: string): string | undefined
+  preferredSession?(sessionId: string): string | undefined
   writable(sessionId: string): boolean
   select(sessionId: string | undefined): void
 }
@@ -50,13 +52,84 @@ function installNativeTransport(route: string): void {
   const events = new Set<ReturnType<typeof inbox>>(), controls = new Set<ReturnType<typeof inbox>>()
   const emit = (frame: Json) => { for (const queue of events) queue.push(frame) }
   const control = (frame: Json) => { for (const queue of controls) queue.push(frame) }
+  const localRows = new Map<string, Json>(), folded = new Map<string, DshAccountSession>(), hiddenRemote = new Map<string, string>()
+  const aliasCandidates = new Map<string, DshAccountSession[]>()
+  let localRuntimeRef: string | undefined
+  const redirect = (canonical: DshAccountSession) => {
+    selected = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
+    const doc = surface.ownerDocument
+    doc.dispatchEvent(new doc.defaultView!.CustomEvent('arkme:native-session-open', { detail: {
+      runtimeRef: canonical.local ? '' : canonical.runtimeRef, sessionRef: canonical.sessionRef,
+      accountId: surface.getAttribute('data-arkme-account-id') ?? '', accountScope: surface.getAttribute('data-arkme-account-scope') ?? '',
+    } }))
+  }
+  const matching = (local: Json): DshAccountSession | undefined => {
+    const matches = (aliasCandidates.get(local.sessionId) ?? []).filter(row => {
+      const cut = row.coveredLocalHistory
+      return row.sessionRef === local.sessionId && !row.local && !row.archived && row.origin !== 'subagent'
+        && !!localRuntimeRef && row.previousRuntimeRefs?.includes(localRuntimeRef)
+        && cut?.runtimeRef === localRuntimeRef
+        && (cut.source === 'local'
+          ? local.updatedAt >= cut.updatedAt && (local.projections?.asOfSeq ?? -1) >= cut.projectionAsOfSeq
+          : !local.running && local.updatedAt === cut.updatedAt && (local.projections?.asOfSeq ?? -1) === cut.projectionAsOfSeq)
+    })
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const preferred = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? row.sessionRef : identity(row.runtimeRef, row.sessionRef)
+  const hidden = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? identity(row.runtimeRef, row.sessionRef) : row.sessionRef
+  const reconcileLocal = (id: string) => {
+    const local = localRows.get(id), next = local && matching(local), previous = folded.get(id)
+    const oldHidden = previous && hidden(previous), nextHidden = next && hidden(next)
+    if (previous) hiddenRemote.delete(identity(previous.runtimeRef, previous.sessionRef))
+    if (next) {
+      folded.set(id, next)
+      if (next.coveredLocalHistory?.source === 'local') hiddenRemote.set(identity(next.runtimeRef, next.sessionRef), id)
+      if (selected === nextHidden) redirect({ ...next, local: next.coveredLocalHistory?.source === 'local' })
+    } else folded.delete(id)
+    if (oldHidden && oldHidden !== nextHidden) {
+      const oldRow = split(oldHidden) ? rows.get(oldHidden) : undefined
+      const restored = oldRow ? summary(oldRow) : oldHidden === id ? local : undefined
+      if (restored) emit({ type: 'emit', event: 'api-session/added', args: [restored] })
+    }
+    if (nextHidden && oldHidden !== nextHidden) emit({ type: 'emit', event: 'api-session/removed', args: [nextHidden] })
+  }
+  const remember = (local: Json) => {
+    if (typeof local.sessionId !== 'string' || split(local.sessionId)) return
+    if (!localRows.has(local.sessionId) && localRows.size >= 10_000) return
+    // Only bounded list metadata is retained, never history or arbitrary projections.
+    localRows.set(local.sessionId, { sessionId: local.sessionId, updatedAt: local.updatedAt, running: local.running, blank: local.blank,
+      projections: { asOfSeq: local.projections?.asOfSeq, values: { title: local.projections?.values?.title } } })
+    reconcileLocal(local.sessionId)
+  }
+  const localFrame = (frame: Json): boolean => {
+    if (frame.type === 'emit' && String(frame.event).startsWith('api-session/')) {
+      const id = frame.event === 'api-session/added' ? frame.args[0]?.sessionId : frame.args[0]
+      if (frame.event === 'api-session/added') remember(frame.args[0])
+      else if (frame.event === 'api-session/removed') { localRows.delete(id); reconcileLocal(id) }
+      else {
+        const local = localRows.get(id)
+        if (local && frame.event === 'api-session/activity') local.updatedAt = frame.args[1]
+        if (local && frame.event === 'api-session/status') local.running = frame.args[1]
+        reconcileLocal(id)
+      }
+      if (folded.get(id)?.coveredLocalHistory?.source !== 'local' && folded.has(id)) return false
+    }
+    if (frame.type === 'projection' && localRows.has(frame.sessionId)) {
+      const local = localRows.get(frame.sessionId)!
+      local.projections.asOfSeq = Math.max(local.projections.asOfSeq ?? -1, frame.seq)
+      reconcileLocal(frame.sessionId)
+    }
+    return true
+  }
   Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: {
-    publish(incoming: readonly DshAccountSession[]) {
+    publish(incoming: readonly DshAccountSession[], runtimeRef?: string) {
+      localRuntimeRef = runtimeRef
       const next = new Map(incoming.filter(row => !row.local && !row.archived && row.origin !== 'subagent').map(row => [identity(row.runtimeRef, row.sessionRef), row]))
       for (const id of rows.keys()) if (!next.has(id)) emit({ type: 'emit', event: 'api-session/removed', args: [id] })
       for (const [id, row] of next) {
         writable.set(row.runtimeRef, row.presence === 'online' && row.capabilities.includes('session.native'))
         const old = rows.get(id)
+        if (hiddenRemote.has(id)) continue // Reconciliation below restores a source only if its proof expires.
         if (!old || old.title !== row.title || old.blank !== row.blank || old.projectionAsOfSeq !== row.projectionAsOfSeq) emit({ type: 'emit', event: 'api-session/added', args: [summary(row)] })
         if (old && old.updatedAt !== row.updatedAt) emit({ type: 'emit', event: 'api-session/activity', args: [id, row.updatedAt] })
         // Native additions seed new sessions; only status updates an existing session's running bit.
@@ -68,18 +141,19 @@ function installNativeTransport(route: string): void {
       // Redirect a retained old selection through the existing native owner.
       const retired = split(selected)
       const canonical = retired && incoming.find(row => row.sessionRef === retired.id && row.previousRuntimeRefs?.includes(retired.runtime))
-      if (canonical) {
-        selected = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
-        const doc = surface.ownerDocument
-        doc.dispatchEvent(new doc.defaultView!.CustomEvent('arkme:native-session-open', { detail: {
-          runtimeRef: canonical.local ? '' : canonical.runtimeRef, sessionRef: canonical.sessionRef,
-          accountId: surface.getAttribute('data-arkme-account-id') ?? '', accountScope: surface.getAttribute('data-arkme-account-scope') ?? '',
-        } }))
+      if (canonical) redirect(canonical)
+      aliasCandidates.clear()
+      for (const row of next.values()) if (row.coveredLocalHistory) {
+        const candidates = aliasCandidates.get(row.sessionRef) ?? []
+        candidates.push(row); aliasCandidates.set(row.sessionRef, candidates)
       }
+      for (const id of localRows.keys()) reconcileLocal(id)
       availability()
     },
+    canonicalLocal(id: string) { const row = folded.get(id); return row && row.coveredLocalHistory?.source !== 'local' ? preferred(row) : undefined },
+    preferredSession(id: string) { const row = folded.get(id); return row ? preferred(row) : hiddenRemote.get(id) },
     writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
-    select(id: string | undefined) { selected = id; availability() },
+    select(id: string | undefined) { selected = id; if (id && folded.has(id) && preferred(folded.get(id)!) !== id) redirect(folded.get(id)!); else if (id && hiddenRemote.has(id)) redirect({ ...rows.get(id)!, local: true }); availability() },
   } satisfies HarnessNativeDirectory })
   let socket: WebSocket | undefined
   const pending = new Map<string, { frame: string; resolve(value: unknown): void; reject(error: Error): void; stop(): void }>()
@@ -229,6 +303,8 @@ function installNativeTransport(route: string): void {
                 if (!String(frame.event).startsWith('api-session/')) continue
                 const args = [...frame.args]
                 args[0] = frame.event === 'api-session/added' ? encodeSummary(runtime, args[0]) : identity(runtime, args[0])
+                const id = frame.event === 'api-session/added' ? args[0].sessionId : args[0]
+                if (hiddenRemote.has(id)) continue
                 emit({ ...frame, args })
               } else emit({ ...frame, eventId: identity(runtime, frame.eventId), ...(frame.agentId ? { agentId: identity(runtime, frame.agentId) } : {}) })
             } else if (frame.type === 'baseline') {
@@ -275,7 +351,11 @@ function installNativeTransport(route: string): void {
         const response = await fetch(url, init)
         if (message.method !== 'session/list' || !response.ok) return response
         const envelope = await response.json() as Json
-        if (envelope.result?.ok) envelope.result.value.items.push(...[...rows.values()].map(summary))
+        if (envelope.result?.ok) {
+          const items = envelope.result.value.items as Json[]
+          for (const item of items) remember(item)
+          envelope.result.value.items = [...items.filter(item => !folded.has(item.sessionId) || folded.get(item.sessionId)?.coveredLocalHistory?.source === 'local'), ...[...rows.values()].filter(row => !hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))).map(summary)]
+        }
         return Response.json(envelope)
       }
       const endpoint = message.method
@@ -302,11 +382,11 @@ function installNativeTransport(route: string): void {
         const pump = (async () => {
           try {
             for await (const frame of localStream(endpoint, payload, combined)) {
-              queue.push(frame)
+              if (localFrame(frame as Json)) queue.push(frame)
               if (endpoint === 'session/control' && (frame as Json).type === 'baseline') for (const source of sources.values()) for (const cached of source.frames.values()) queue.push(cached.value)
               if (first) {
                 first = false; listeners.add(queue)
-                if (endpoint === '$events') for (const row of rows.values()) queue.push({ type: 'emit', event: 'api-session/added', args: [summary(row)] })
+                if (endpoint === '$events') for (const row of rows.values()) if (!hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))) queue.push({ type: 'emit', event: 'api-session/added', args: [summary(row)] })
               }
             }
             queue.end()
@@ -318,7 +398,7 @@ function installNativeTransport(route: string): void {
     },
   }
   Object.assign(window, { __DSH_TRANSPORT__: hooks })
-  window.addEventListener('pagehide', () => { lifetime.abort(); socket?.close(); localSocket?.close(); for (const source of sources.values()) source.abort.abort(); sources.clear() }, { once: true })
+  window.addEventListener('pagehide', () => { lifetime.abort(); socket?.close(); localSocket?.close(); for (const source of sources.values()) source.abort.abort(); sources.clear(); localRows.clear(); folded.clear(); hiddenRemote.clear() }, { once: true })
 }
 
 export const harnessNativeTransportScript = (route: string): string => `(${installNativeTransport.toString()})(${JSON.stringify(route)});`

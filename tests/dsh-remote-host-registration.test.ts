@@ -1310,3 +1310,23 @@ it('keeps the native carrier usable after the connection attempt completes, dedu
   expect(signal?.aborted).toBe(true)
   expect(close).toHaveBeenCalled()
 })
+
+
+it('uploads fresh sessions beside a rejected retired source without falsely completing the snapshot', async () => {
+ const f = await fixture()
+ vi.spyOn(f.adapter, 'sessions').mockResolvedValue({ items: [
+   { sessionId: 'session-01', title: 'old', updatedAt: 1000, running: false, blank: false, workspaceId: 'workspace-01' },
+   { sessionId: 'fresh', title: 'new', updatedAt: 2000, running: false, blank: false, workspaceId: 'workspace-01' },
+ ] })
+ const send = vi.spyOn(f.controlPlane, 'syncSessions').mockImplementation(async value => {
+   if ((value.items as Array<{session_ref: string}>).some(item => item.session_ref === 'session-01')) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'retired')
+   return {}
+ })
+ const complete = vi.spyOn(f.controlPlane, 'completeProjectionSnapshot')
+ try {
+   await f.host.start(); await (f.host as unknown as { backgroundProjectionFlight: Promise<void> }).backgroundProjectionFlight
+   expect(send).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ session_ref: 'fresh' })] }), expect.any(AbortSignal))
+   expect(complete).not.toHaveBeenCalled()
+   expect(f.diagnostics).toHaveBeenCalledWith('projection_sync_failed', expect.objectContaining({ session_items_acked: 1, server_completed: false, error_code: 'REMOTE_PROJECTION_CONFLICT' }))
+ } finally { await f.host.stop() }
+})

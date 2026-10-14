@@ -1,3 +1,4 @@
+import { ProjectionUpload } from './projection-upload.js'
 import type { DshNativeTransport } from './native-transport.js'
 import { DshLiveEventBatcher, LIVE_BATCH_ITEMS, type LiveEventBatch } from './live-event-batcher.js'
 import { DesktopSessionPresence } from './desktop-session-presence.js'
@@ -280,6 +281,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private liveEventBatcher: { key: string; value: DshLiveEventBatcher } | undefined
   private liveDeliveryStats: Record<string, number> = {}
   private lastDeliveryReportAt = performance.now()
+  private readonly projectionUpload = new ProjectionUpload()
   private projectionSyncTail: Promise<void> = Promise.resolve()
   private backgroundProjectionFlight: Promise<void> | undefined
   private projectionSnapshotPending = false
@@ -954,6 +956,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.backgroundProjectionFlight = undefined
     this.projectionSnapshotPending = false
     this.projectionSyncTail = Promise.resolve()
+    this.projectionUpload.clear()
     this.stopApiProxyEvents()
     this.options.nativeTransport?.close()
     this.connectionController?.abort()
@@ -1766,21 +1769,24 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
             deleted: true,
           })),
       ]
+      let rejectedSessions = 0
       for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
         check()
         diagnostic.page_index = offset / 100
         diagnostic.item_count = Math.min(100, sessionItems.length - offset)
         progress('upload_sessions')
-        await this.options.controlPlane.syncSessions({
+        const uploaded = await this.projectionUpload.page(sessionItems.slice(offset, offset + 100), async items => this.options.controlPlane.syncSessions({
           runtime_ref: runtime.runtimeRef,
           host_generation: runtime.hostGeneration,
           snapshot_ref: snapshotRef,
-          items: sessionItems.slice(offset, offset + 100),
-        }, signal)
-        diagnostic.session_items_acked += diagnostic.item_count
+          items,
+        }, signal), signal)
+        rejectedSessions += uploaded.rejected
+        diagnostic.session_items_acked += uploaded.accepted
         if (sessionItems.length === 0) break
       }
       check()
+      if (rejectedSessions) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', `有 ${rejectedSessions} 个旧来源未获写入许可；其他会话已同步`)
       progress('complete_snapshot')
       await this.options.controlPlane.completeProjectionSnapshot({
         runtime_ref: runtime.runtimeRef,

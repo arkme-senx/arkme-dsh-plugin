@@ -1,3 +1,4 @@
+import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
@@ -604,12 +605,13 @@ export function apply(ctx: Context, config: Config): void {
     const controlPlane = new DshRemoteHttpControlPlane({
       post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
     })
+    const sessionOwnership = new DshRemoteSessionOwnershipStore(stateDirectory, profileRef)
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      sessionOwnership,
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
@@ -656,6 +658,33 @@ export function apply(ctx: Context, config: Config): void {
         const session = await service.accountScope.scopedSession()
         if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
         return String(session.userId)
+      },
+      localAliasReader: {
+        summaries: async (refs, signal) => {
+          const account = await service.accountScope.scopedSession()
+          if (!account || !service.accountScope.ready()) return new Map()
+          const owned = await sessionOwnership.listOwned(String(account.userId), refs)
+          const wanted = new Set(refs.filter(ref => owned.has(ref)))
+          const result = new Map<string, { updatedAt: number; projectionAsOfSeq?: number; running: boolean }>()
+          let cursor: string | undefined
+          for (let page = 0; page < 100 && wanted.size; page++) {
+            signal.throwIfAborted()
+            const value = await apiProxy.sessions({ includeUngrouped: true, limit: 100, ...(cursor ? { cursor } : {}) })
+            for (const row of value.items) if (wanted.delete(row.sessionId)) result.set(row.sessionId, row)
+            if (!value.nextCursor || value.nextCursor === cursor) break
+            cursor = value.nextCursor
+          }
+          signal.throwIfAborted()
+          return result
+        },
+        content: async (sessionId, through, signal) => {
+          signal.throwIfAborted()
+          const account = await service.accountScope.scopedSession()
+          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
+          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
+          signal.throwIfAborted()
+          return proof
+        },
       },
       localStatus: () => host.getStatus(),
       createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
