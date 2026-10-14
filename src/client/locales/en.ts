@@ -1812,6 +1812,8 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 查看录音|View recordings
 查看总结|View summary
 查看时间轴|View timeline
+暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
+表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
 通知操作失败，请重试|Notification action failed. Try again.
 部分录音通知未能标记已读，请重试|Some recording notifications could not be marked as read. Try again.
 录音通知暂时不可用|Recording notifications are currently unavailable

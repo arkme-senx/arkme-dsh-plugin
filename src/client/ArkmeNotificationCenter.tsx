@@ -115,7 +115,7 @@ function reactionItem(item: ReactionNotification): ArkmeNotificationItem {
     title: `${item.actorUserId > 0 ? tr('收到表态') : tr('新通知')} · ${expression}`,
     preview: compactText(item.text || tr('点击查看原消息')),
     atMillis: item.selections.at(-1)?.at || item.sendAtMillis,
-    unread: true,
+    unread: item.unread !== false,
     reaction: item,
   }
 }
@@ -315,13 +315,13 @@ function useNotificationItems(): {
   const snapshot = storedSnapshot.scope === scope ? storedSnapshot : EMPTY_SNAPSHOT
   const reactionRevision = useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   useEffect(() => {
-    const release = scope === undefined ? undefined : reactionNotifications.acquire(scope)
+    const release = scope === undefined ? undefined : reactionNotifications.acquireHistory(scope)
     void arkmeNotificationStore.refresh(scope)
-    const refreshOnFocus = () => { void arkmeNotificationStore.refresh(scope) }
+    const refreshOnFocus = () => { void arkmeNotificationStore.refresh(scope); void reactionNotifications.refreshHistory() }
     window.addEventListener('focus', refreshOnFocus)
     return () => { release?.(); window.removeEventListener('focus', refreshOnFocus) }
   }, [scope])
-  const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forAccount(scope), [reactionRevision, scope])
+  const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forHistory(scope), [reactionRevision, scope])
   const items = useMemo(() => [
     ...official.items.map(item => ({ id: `official:${item.id}`, kind: 'official' as const, title: item.title, preview: item.summary, atMillis: item.publishedAtMillis, unread: item.readAtMillis === 0 })),
     ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
@@ -430,6 +430,7 @@ export function ArkmeNotificationCenter() {
     : snapshot.loading || official.loading || (recording.loading && !recording.ready)
   const openItem = useCallback(async (item: ArkmeNotificationItem) => {
     setBusyId(item.id)
+    setActionError('')
     try {
       if (item.kind === 'recording' && item.recording && scope) {
         setRecordingDetail(item.recording.id)
@@ -444,12 +445,20 @@ export function ArkmeNotificationCenter() {
       } else if (item.kind === 'ai' && item.aiLetter !== undefined) {
         await arkmeNotificationStore.markAiRead([item.aiLetter.letterId])
       } else if (item.kind === 'reaction' && item.reaction !== undefined && scope !== undefined) {
-        await reactionNotifications.seen(scope, [item.reaction])
         const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === item.reaction?.sourceKey)
-        if (source !== undefined) arkmeUi.showConversationTarget(source, item.reaction.itemUid, item.reaction.sendAtMillis, item.reaction.recordOwnerUserId, undefined, true)
+        if (!source) throw new Error('暂时无法打开对应消息，请稍后重试')
+        const page = await callArkme<import('../types.js').ArkmeTimelineAroundPage>('source.timeline-around', {
+          sourceRef: source.sourceRef, itemUid: item.reaction.itemUid,
+          recordOwnerUserId: item.reaction.recordOwnerUserId, beforeLimit: 1, afterLimit: 1,
+        })
+        const auth = arkmeAuthStore.getSnapshot().auth
+        if (auth?.status !== 'authenticated' || `${auth.environment}:${auth.userId}` !== scope) return
+        if (!page.items.some(message => message.itemUid === item.reaction!.itemUid)) throw new Error('暂时无法打开对应消息，请稍后重试')
+        arkmeUi.showConversationTarget(source, item.reaction.itemUid, item.reaction.sendAtMillis, item.reaction.recordOwnerUserId, undefined, true)
+        await reactionNotifications.seen(scope, [item.reaction])
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : tr('通知操作失败，请重试'))
+      setActionError(item.kind === 'reaction' ? tr('暂时无法打开对应消息，请稍后重试') : error instanceof Error ? error.message : tr('通知操作失败，请重试'))
     } finally {
       setBusyId(undefined)
     }
@@ -472,8 +481,8 @@ export function ArkmeNotificationCenter() {
     if (snapshot.aiLatestUnread !== undefined) aiIds.push(snapshot.aiLatestUnread.letterId)
     await arkmeNotificationStore.markAiRead(aiIds).catch(() => undefined)
     if (scope !== undefined && isCurrent()) {
-      const reactions = reactionNotifications.forAccount(scope)
-      await reactionNotifications.seen(scope, reactions)
+      const reactions = reactionNotifications.forHistory(scope).filter(item => item.unread !== false)
+      for (let offset = 0; offset < reactions.length && isCurrent(); offset += 50) await reactionNotifications.seen(scope, reactions.slice(offset, offset + 50))
     }
     } finally { setAllBusy(false) }
   }, [scope, unreadCount, allBusy, recording.unreadCount, official.summary.unreadCount, snapshot.aiItems, snapshot.aiLatestUnread])
@@ -503,6 +512,7 @@ export function ArkmeNotificationCenter() {
       })}
     </div>
     {recording.error && <div role="status" style={styles.status}>{tr('录音通知暂时不可用')} <button onClick={() => { void recordingNotifications.refresh() }}>{tr('重试录音通知')}</button></div>}
+    {reactionNotifications.historyError && <div role="status" style={styles.status}>{tr(reactionNotifications.historyError)} <button onClick={() => { void reactionNotifications.refreshHistory() }}>{tr('重试')}</button></div>}
     {official.error && <div role="status" style={styles.status}>{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error !== undefined && <div role="alert" style={styles.status}>{snapshot.error}</div>}
     {snapshot.worldError !== undefined && snapshot.worldItems.length === 0 && <div role="status" style={styles.status}>{tr('世界互动暂时无法加载')}</div>}
