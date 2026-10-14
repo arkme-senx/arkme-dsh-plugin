@@ -103,7 +103,7 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-directory-compact="true"')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
     expect(markup).toContain('cursor:ew-resize')
-    expect(markup).toContain('width: 1px')
+    expect(markup).toContain('width: 2px')
     expect(markup).toContain('width: 3px')
     expect(markup).toContain('background: #09b83e')
     expect(markup).toContain(':hover::after')

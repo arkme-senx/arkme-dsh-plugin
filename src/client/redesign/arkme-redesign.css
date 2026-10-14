@@ -335,6 +335,12 @@ span.arkme-forward-search {
   transition: none !important;
 }
 
+/* The directory divider already paints its single line. Remove the host's
+   adjacent half-pixel border only while Arkme owns a visible directory. */
+[data-slot="root"] > div > div:has(> [data-slot="sidebar"] > [data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
+  border-right: 0 !important;
+}
+
 /* Keep both Arkme navigation columns visible at every viewport width. DSH may
    report its sidebar as collapsed at 1024px; the plugin still owns its navigation rail
    and at least a 120px directory with search/add controls (plus the 4px divider budget). */
@@ -1058,6 +1064,9 @@ body[data-ds-dark-theme] [data-arkme-workspace] {
 
 /* The permanent DSH seats use inline layout styles, so their light colors
    need explicit theme-scoped overrides without changing the seat geometry. */
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] {
+  --arkme-directory-divider-color: var(--dsw-alias-border-l2);
+}
 body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"],
 body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] {
   background: var(--dsw-specific-sidebar-fill) !important;
