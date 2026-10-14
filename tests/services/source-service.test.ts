@@ -15,6 +15,15 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('admits automatic directory continuation as background without changing explicit reads', async () => {
+    const post = vi.fn(async () => ({ items: [], has_more: false }))
+    const runtime = { config, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    await service.listSources('root', { refresh: true, firstPaint: true, background: true })
+    expect(post.mock.calls[0]?.[4]).toMatchObject({ lane: 'background-read' })
+    await service.listSources('root', { refresh: true, firstPaint: true })
+    expect(post.mock.calls[1]?.[4]).toMatchObject({ lane: 'interactive-read' })
+  })
   it('searches remark and nickname independently of message content, preserving directory pagination and account binding', async () => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const post = vi.fn(async (_path: string, body: { page_cursor?: unknown }) => ({
@@ -97,6 +106,27 @@ describe('SourceService', () => {
       status: 1, sendAtMillis: 1, sequence: 8, conversationPreview: '视频通话 已接听 00:59',
     }])
     expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
+  })
+
+  it('keeps the signed conversation binding stable across activity updates but retains fresh directory evidence', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as never, {} as never)
+    let previous: ArkmeSourceItem | undefined
+    let binding: string | undefined
+    for (let sequence = 1; sequence <= 100; sequence++) {
+      const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: sequence, last_active_at: sequence },
+        private_counterpart: { user_id: 17, display_name_snapshot: '同事' }, unread_snapshot: { unread_count: 1, session_last_seq: sequence } }
+      const current = await service.chatSourceFromBundle(bundle, session, previous, [])
+      binding ??= current.conversationRef
+      expect(current.conversationRef).toBe(binding)
+      if (previous) expect(current.sourceRef).not.toBe(previous.sourceRef)
+      expect(await service.openSourceRef(current.sourceRef, 42)).toMatchObject({ conversationListLatestSequence: sequence })
+      previous = current
+    }
+    expect(await service.openSourceRef(binding!, 42)).toMatchObject({ userId: 42, kind: 'private_chat', ownerRef: 'chat', displayName: '同事' })
+    await expect(service.openSourceRef(binding!, 43)).rejects.toMatchObject({ code: 'source-ref-invalid' })
+    expect(await service.sealSourceRef(42, 'private_chat', 'chat', '新名称')).not.toBe(binding)
   })
 
   it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {

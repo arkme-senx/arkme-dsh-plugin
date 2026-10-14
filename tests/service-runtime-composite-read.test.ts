@@ -231,3 +231,83 @@ describe('composite owner reads with the real runtime', () => {
     expect(directTransport).toHaveBeenCalledOnce()
   })
 })
+
+
+describe('isolated message synchronization admission', () => {
+  it('preserves existing aggregate request statistics across both pools', async () => {
+    const f = fixture(async () => ok({}, 200))
+    await f.runtime.authenticatedChatPost('/api/v1/chats/unread-snapshot', {})
+    await f.runtime.authenticatedChatPost('/api/v1/chat/timeline/tail', {}, undefined, undefined, { lane: 'interactive-read' })
+    expect(f.runtime.requestStats()['interactive-read:chat']?.started).toBe(2)
+    expect(Object.keys(f.runtime.requestStats())).toEqual(['interactive-read:chat'])
+  })
+
+  it('admits timeline transport and its required profile projection while unrelated background reads are held', async () => {
+    vi.useFakeTimers()
+    const held = gate(), starts: string[] = []
+    const f = fixture(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      starts.push(path)
+      if (path.startsWith('/occupied/')) await held.promise
+      init?.signal?.throwIfAborted()
+      return ok({ ready: true }, path.startsWith('/occupied/') ? 0 : 200)
+    })
+    const background = Promise.allSettled([0, 1].map(index => f.runtime.authenticatedPost(`/occupied/${index}`, {}, undefined, undefined, { lane: 'background-read' })))
+    await vi.advanceTimersByTimeAsync(0)
+    let complete = false
+    const read = f.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef: 'first' }, async signal => {
+      await f.runtime.authenticatedChatPost('/api/v1/chat/timeline/unified', {}, undefined, signal, { lane: 'background-read' })
+      await f.runtime.authenticatedAuthPost('/api/v1/auth/get-public-users-by-ids', { user_ids: [3] }, undefined, signal, { lane: 'background-read' })
+      complete = true
+    })
+    try {
+      await vi.advanceTimersByTimeAsync(1)
+      expect(starts).toContain('/api/v1/chat/timeline/unified')
+      expect(starts).toContain('/api/v1/auth/get-public-users-by-ids')
+      expect(complete).toBe(true)
+    } finally { held.resolve(); await vi.advanceTimersByTimeAsync(1000); await Promise.all([read, background]) }
+  })
+
+  it('lets a newly opened conversation complete without waiting for another conversation owner', async () => {
+    vi.useFakeTimers()
+    const held = gate(), f = fixture(async () => ok({}))
+    const first = f.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef: 'slow' }, async () => held.promise)
+    await vi.advanceTimersByTimeAsync(0)
+    const opened = vi.fn(async () => 'new conversation')
+    const next = f.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef: 'new' }, opened)
+    try { await vi.advanceTimersByTimeAsync(1); expect(opened).toHaveBeenCalledOnce() }
+    finally { held.resolve(); await vi.advanceTimersByTimeAsync(300); await Promise.all([first, next]) }
+  })
+
+  it('bounds combined foreground and background message transports at four, and prioritizes foreground waiters', async () => {
+    vi.useFakeTimers()
+    const held = gate(), starts: string[] = []
+    const f = fixture(async (_input, init) => { const id = JSON.parse(String(init?.body)).id; starts.push(id); await held.promise; return ok({ id }, 200) })
+    const read = (id: string, lane: 'interactive-read' | 'background-read') => f.runtime.authenticatedChatPost('/api/v1/chat/timeline/tail', { id }, undefined, undefined, { lane })
+    const active = [read('b1', 'background-read'), read('b2', 'background-read'), read('f1', 'interactive-read'), read('f2', 'interactive-read')]
+    await vi.advanceTimersByTimeAsync(0)
+    const rest = [read('b3', 'background-read'), read('f3', 'interactive-read')]
+    try { await vi.advanceTimersByTimeAsync(1); expect(starts).toHaveLength(4) }
+    finally { held.resolve(); await vi.advanceTimersByTimeAsync(1000); await Promise.all([...active, ...rest]) }
+    expect(starts.indexOf('f3')).toBeLessThan(starts.indexOf('b3'))
+  })
+
+  it('cancels shared message transport only after its final subscriber and invalidates it on account switch', async () => {
+    vi.useFakeTimers()
+    const signals: AbortSignal[] = []
+    const f = fixture(async (_input, init) => { signals.push(init!.signal!); return waitForAbort(init!.signal!) })
+    const a = new AbortController(), b = new AbortController()
+    const read = (signal?: AbortSignal) => f.runtime.authenticatedChatPost('/api/v1/chat/timeline/tail', {}, undefined, signal,
+      { lane: 'interactive-read', key: 'tail:same', cancelWhenUnobserved: true })
+    const results = Promise.allSettled([read(a.signal), read(b.signal)])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(signals).toHaveLength(1)
+    a.abort(); await vi.advanceTimersByTimeAsync(0); expect(signals[0]!.aborted).toBe(false)
+    b.abort(); await results; expect(signals[0]!.aborted).toBe(true)
+    const next = Promise.allSettled([read()])
+    await vi.advanceTimersByTimeAsync(0)
+    f.runtime.invalidateScope('user:42')
+    await next
+    expect(signals[1]!.aborted).toBe(true)
+  })
+})

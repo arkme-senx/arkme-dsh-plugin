@@ -5,6 +5,7 @@ import { createRef } from 'react'
 import { ArkmeWideConversation, conversationRailActive, conversationRailPreviewItems, ConversationRailPreview, preserveConversationReading, readConversationRail } from '../src/client/ArkmeWideConversation.js'
 import { ARKME_WIDE_CONVERSATION_MIN } from '../src/harness-conversation-layout-contract.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
+import { cancelConversationFollow, followConversationBottom } from '../src/client/conversation-bottom-follow.js'
 const doms: JSDOM[] = []
 afterEach(() => { doms.splice(0).forEach(dom => dom.window.close()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -120,5 +121,20 @@ describe('shared wide conversation integration', () => {
     root.scrollTop = height - 400
     preserveConversationReading(root, () => { height += 300 })
     expect(root.scrollTop).toBe(height - 400)
+  })
+  it('keeps the rail on the latest row during follow motion without rescanning historical row geometry', () => {
+    const root = viewport([['a', '', 'a'], ['b', '', 'b'], ['c', '', 'c']])
+    Object.defineProperties(root, { scrollHeight: { value: 1000 }, clientHeight: { value: 400 } })
+    Object.assign(root.ownerDocument.defaultView!, { requestAnimationFrame: vi.fn(() => 1), cancelAnimationFrame: vi.fn() })
+    root.getBoundingClientRect = () => ({ top: 0 } as DOMRect)
+    const anchors = readConversationRail(root, false)
+    const reads = anchors.map((item, index) => vi.spyOn(item.element, 'getBoundingClientRect')
+      .mockImplementation(() => ({ top: index * 300 - root.scrollTop } as DOMRect)))
+    root.scrollTop = 310
+    followConversationBottom(root)
+    expect(conversationRailActive(root, anchors)).toBe(3)
+    expect(reads.every(read => read.mock.calls.length === 0)).toBe(true)
+    cancelConversationFollow(root)
+    expect(conversationRailActive(root, anchors)).toBe(2)
   })
 })

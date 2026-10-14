@@ -1,4 +1,5 @@
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
+import { chatTimelineEventId } from './timeline-event-id.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
 import { encodeMentionMetadata, type ResolvedMentions } from './mention-metadata-codec.js'
@@ -270,6 +271,7 @@ interface ArkmeTopicTimelineRawStream {
 }
 
 export interface ArkmeChatRealtimePort {
+  beginLocalReadCursor(userId: number, sessionUid: string, sequence: number): (confirmedSequence?: number) => void
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
   nextChatClientRevision(): number
   scheduleChatSessionProjection(chatSessionUid: string, latestSequence: number): void
@@ -5212,51 +5214,56 @@ export class ChatService {
       if (!Number.isSafeInteger(readSequence) || readSequence <= 0) {
         throw new ArkmePluginError('source-read-sequence-invalid', '聊天已读游标无效', false)
       }
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/cursor/update',
-        {
-          chat_session_uid: chatSessionUid,
-          read_seq: readSequence,
-          read_at: Date.now(),
-          client_ack_id: randomUUID(),
-          reason: 'arkme_dsh_open_chat',
-        },
-        session,
-        signal,
-      )
-      const responseSessionUid = stringValue(data.chat_session_uid).trim()
-      const responseUserId = numberValue(data.user_id)
-      const effectiveReadSequence = numberValue(data.effective_read_seq)
-      const readAt = numberValue(data.read_at)
-      const sessionLastSequence = numberValue(data.session_last_seq)
-      const unreadCount = numberValue(data.unread_count)
-      if (responseSessionUid !== chatSessionUid || responseUserId !== session.userId
-        || !Number.isSafeInteger(effectiveReadSequence)
-        || effectiveReadSequence < readSequence || !Number.isSafeInteger(readAt) || readAt <= 0
-        || !Number.isSafeInteger(sessionLastSequence) || sessionLastSequence < effectiveReadSequence
-        || !Number.isSafeInteger(unreadCount) || unreadCount < 0) {
-        throw new ArkmePluginError('source-read-ack-invalid', '聊天已读响应不完整', true, 502)
-      }
-      const cacheKey = `${String(session.userId)}:${chatSessionUid}`
-      const cached = this.source.cachedChatSourceByKey(cacheKey)
-      if (cached !== undefined) {
-        this.source.setChatSourceByKey(cacheKey, {
-          ...cached,
+      const finishRead = this.realtime.beginLocalReadCursor(session.userId, chatSessionUid, readSequence)
+      let confirmedSequence: number | undefined
+      try {
+        const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/cursor/update',
+          {
+            chat_session_uid: chatSessionUid,
+            read_seq: readSequence,
+            read_at: Date.now(),
+            client_ack_id: randomUUID(),
+            reason: 'arkme_dsh_open_chat',
+          },
+          session,
+          signal,
+        )
+        const responseSessionUid = stringValue(data.chat_session_uid).trim()
+        const responseUserId = numberValue(data.user_id)
+        const effectiveReadSequence = numberValue(data.effective_read_seq)
+        const readAt = numberValue(data.read_at)
+        const sessionLastSequence = numberValue(data.session_last_seq)
+        const unreadCount = numberValue(data.unread_count)
+        if (responseSessionUid !== chatSessionUid || responseUserId !== session.userId
+          || !Number.isSafeInteger(effectiveReadSequence)
+          || effectiveReadSequence < readSequence || !Number.isSafeInteger(readAt) || readAt <= 0
+          || !Number.isSafeInteger(sessionLastSequence) || sessionLastSequence < effectiveReadSequence
+          || !Number.isSafeInteger(unreadCount) || unreadCount < 0) {
+          throw new ArkmePluginError('source-read-ack-invalid', '聊天已读响应不完整', true, 502)
+        }
+        const cacheKey = `${String(session.userId)}:${chatSessionUid}`
+        const cached = this.source.cachedChatSourceByKey(cacheKey)
+        if (cached !== undefined) {
+          this.source.setChatSourceByKey(cacheKey, {
+            ...cached,
+            unreadCount,
+            ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}),
+          })
+        }
+        this.realtime.emitChatClientEvent({
+          type: 'read-ack',
+          revision: this.realtime.nextChatClientRevision(),
+          sourceRef,
+          sourceKey: await this.source.chatDirectorySourceKey(session.userId, chatSessionUid),
+          effectiveReadSequence,
           unreadCount,
-          ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}),
+          latestSequence: sessionLastSequence,
         })
-      }
-      this.realtime.emitChatClientEvent({
-        type: 'read-ack',
-        revision: this.realtime.nextChatClientRevision(),
-        sourceRef,
-        sourceKey: await this.source.chatDirectorySourceKey(session.userId, chatSessionUid),
-        effectiveReadSequence,
-        unreadCount,
-      })
-      this.realtime.scheduleChatSessionProjection(chatSessionUid, sessionLastSequence)
-      void this.realtime.refreshAttentionSummary()
-      return { sourceRef, effectiveReadSequence, unreadCount }
+        void this.realtime.refreshAttentionSummary()
+        confirmedSequence = effectiveReadSequence
+        return { sourceRef, effectiveReadSequence, unreadCount, latestSequence: sessionLastSequence }
+      } finally { finishRead(confirmedSequence) }
     }
   
   async chatSourceFromBundle(
@@ -5366,6 +5373,9 @@ export class ChatService {
             isMe: senderUserId === session.userId, status: numberValue(payload.status) }, signingKey) : {}),
           itemUid: uid,
           ...(relationUid === '' ? {} : {
+            timelineEventId: chatTimelineEventId(signingKey, session.userId, this.runtime.config.environment, chatSessionUid, `message:${chatSessionUid}:${relationUid}`),
+            timelineOrderTie: relationUid,
+            ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, chatSessionUid, relationUid),
           }),
           ...(sourceKind !== 'group_chat' || relationUid === '' || isMe ? {} : {

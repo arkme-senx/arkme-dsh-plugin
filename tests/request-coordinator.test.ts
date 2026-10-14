@@ -339,3 +339,22 @@ it('reports bounded admission reasons and cancellation without exposing request 
   expect(JSON.stringify(onQueue.mock.calls)).not.toContain('secret-account')
   coordinator.dispose()
 })
+
+
+it('bounds the aggregate queue across services and frees cancelled admission without starting it', async () => {
+  const coordinator = new ArkmeRequestCoordinator({ maxConcurrent: 1, maxQueued: 1 })
+  const held = deferred<string>()
+  const base = { scope: 'u', lane: 'interactive-read' as const, service: 'chat' as const }
+  const first = coordinator.run({ ...base, operation: () => held.promise })
+  const controller = new AbortController(), queuedOperation = vi.fn(async () => 'queued')
+  const queued = coordinator.run({ ...base, service: 'auth', signal: controller.signal, operation: queuedOperation })
+  const cancelled = expect(queued).rejects.toMatchObject({ name: 'AbortError' })
+  try {
+    await expect(coordinator.run({ ...base, service: 'team', operation: async () => 'overflow' })).rejects.toMatchObject({ name: 'ArkmeRequestQueueOverflowError' })
+    controller.abort(); await cancelled
+    const next = coordinator.run({ ...base, service: 'record', operation: async () => 'admitted' })
+    held.resolve('first')
+    await expect(next).resolves.toBe('admitted')
+    expect(queuedOperation).not.toHaveBeenCalled()
+  } finally { held.resolve('first'); await first; coordinator.dispose() }
+})
