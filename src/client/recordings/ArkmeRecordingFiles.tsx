@@ -7,7 +7,13 @@ import { arkmeTheme as theme } from '../arkme-theme.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import type { PublicRecordingImportCurrentSnapshot, PublicRecordingImportHistoryPage } from '../../recording-import-shared.js'
 import { recordingImportEndTimeError, recordingImportLocalInputValue } from './ArkmeRecordingImportDialog.js'
-import { mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile, type RecordingFileDateBasis } from './recording-day-files.js'
+import { mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
+
+export interface RecordingFilesCount {
+  dateStamp: number
+  count: number
+  complete: boolean
+}
 
 interface Props {
   accountKey: string | undefined
@@ -15,7 +21,7 @@ interface Props {
   refreshRevision: number
   active: boolean
   onChanged(): void
-  onImport(): void
+  onCountChange?(value: RecordingFilesCount): void
 }
 type Action = { kind: 'delete' | 'start' | 'ownership'; file: RecordingFile }
 interface FileRead {
@@ -31,16 +37,17 @@ interface FileRead {
 const control: CSSProperties = { minHeight: 32, padding: '5px 10px', border: `1px solid ${theme.border}`, borderRadius: 7, background: theme.base, color: theme.text, font: 'inherit', fontSize: 12 }
 const button: CSSProperties = { ...control, cursor: 'pointer' }
 const note: CSSProperties = { color: theme.secondary, fontSize: 12, lineHeight: '20px' }
-const cell: CSSProperties = { padding: '12px 8px', textAlign: 'left', verticalAlign: 'top', borderBottom: `1px solid ${theme.borderSoft}` }
 const PAGE_SIZE = 50
 const PAGES_PER_BATCH = 10
 
-function instant(value: number) {
-  return value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+function instant(value: number, showDate = true) {
+  return value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
 }
 function duration(value: number) {
   const seconds = Math.floor(Math.max(0, value) / 1000)
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  if (seconds < 60) return tr('{v0}秒', { v0: seconds })
+  const minutes = Math.floor(seconds / 60)
+  return seconds % 60 === 0 ? tr('{v0}分钟', { v0: minutes }) : tr('{v0}分{v1}秒', { v0: minutes, v1: seconds % 60 })
 }
 function size(value: number) {
   return value > 0 ? value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB` : '—'
@@ -51,12 +58,11 @@ export function ArkmeRecordingFiles(props: Props) {
   return props.accountKey ? <RecordingFiles key={props.accountKey} {...props} /> : <p style={note}>{tr('登录后查看音频文件')}</p>
 }
 
-function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImport }: Props) {
-  const [basis, setBasis] = useState<RecordingFileDateBasis>('recorded')
-  const [query, setQuery] = useState('')
+function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
   const [current, setCurrent] = useState<RecordingFile[]>([])
   const [history, setHistory] = useState<RecordingFile[]>([])
   const [currentWarning, setCurrentWarning] = useState('')
+  const [currentReadFailed, setCurrentReadFailed] = useState(false)
   const [historyError, setHistoryError] = useState('')
   const [loading, setLoading] = useState(false)
   const [currentLoading, setCurrentLoading] = useState(true)
@@ -103,7 +109,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
         // A deletion can shift offset pagination while this page is in flight.
         // Discard that page and continue from the adjusted cursor.
         if (deleting.current || readRevision !== context.revision) { context.resume = true; return }
-        if (page.hasMore && page.items.length === 0) throw new Error(tr('文件列表未能继续加载，请刷新重试'))
+        if (page.hasMore && page.items.length === 0) throw new Error(tr('文件列表未能继续加载，请重试'))
         context.offset += page.items.length
         const pageItems = withoutDeleted(page.items)
         context.items = mergeRecordingFiles(context.items, pageItems)
@@ -130,21 +136,21 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
     if (!active) return
     const context: FileRead = { controller: new AbortController(), toMillis: Date.now(), offset: 0, loading: false, resume: false, revision: 0, items: [], seen: new Set() }
     request.current = context
-    setCurrentWarning(''); setCurrentLoading(true); setHasMore(true)
+    setCurrentWarning(''); setCurrentReadFailed(false); setCurrentLoading(true); setHasMore(true)
     void withArkmeReadDeadline(signal => callArkme<PublicRecordingImportCurrentSnapshot>('recordings.import.list', {}, signal), context.controller.signal)
       .then(snapshot => {
         if (context.controller.signal.aborted) return
         setCurrent(withoutDeleted(snapshot.items))
-        setCurrentWarning(snapshot.owner.state === 'unavailable' ? tr('部分未完成文件暂未同步，请稍后刷新')
+        setCurrentReadFailed(snapshot.owner.state === 'unavailable')
+        setCurrentWarning(snapshot.owner.state === 'unavailable' ? tr('部分未完成文件暂未同步，请重试')
           : snapshot.items.length >= 20 ? tr('未完成文件较多，当前仅显示最近任务') : '')
-      }).catch(() => { if (!context.controller.signal.aborted) setCurrentWarning(tr('未完成文件加载失败，请刷新重试')) })
+      }).catch(() => { if (!context.controller.signal.aborted) { setCurrentReadFailed(true); setCurrentWarning(tr('未完成文件加载失败，请重试')) } })
       .finally(() => { if (!context.controller.signal.aborted) setCurrentLoading(false) })
     void loadHistory(context)
     return () => { context.controller.abort() }
   }, [active, revision, refreshRevision])
   useEffect(() => () => { mutation.current?.abort() }, [])
-  useEffect(() => { setMenu(undefined); if (!busy) { setAction(undefined); setMutationError('') } }, [dateStamp, basis])
-  useEffect(() => { setMenu(undefined) }, [query])
+  useEffect(() => { setMenu(undefined); if (!busy) { setAction(undefined); setMutationError('') } }, [dateStamp])
   useEffect(() => {
     if (!action) return
     dialog.current?.showModal()
@@ -172,8 +178,8 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
   // External updates keep existing rows visible. Local deletion only removes
   // its confirmed row and lets the calendar refresh independently.
   const files = useMemo(() => mergeRecordingFiles(history, current)
-    .filter(file => recordingFileMatchesDay(file, dateStamp, basis) && file.fileName.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-    .sort((a, b) => basis === 'recorded' ? a.startAtMillis - b.startAtMillis || recordingFileKey(a).localeCompare(recordingFileKey(b)) : b.createdAtMillis - a.createdAtMillis), [history, current, dateStamp, basis, query])
+    .filter(file => recordingFileMatchesDay(file, dateStamp, 'recorded'))
+    .sort((a, b) => a.startAtMillis - b.startAtMillis || recordingFileKey(a).localeCompare(recordingFileKey(b))), [history, current, dateStamp])
   const openAction = (file: RecordingFile, kind: Action['kind']) => {
     setMenu(undefined)
     setStart(recordingImportLocalInputValue(new Date(file.startAtMillis)))
@@ -210,7 +216,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
       if (controller.signal.aborted) return
       if (kind === 'delete') {
         const key = recordingFileKey(file)
-        const rows = [...(section.current?.querySelectorAll<HTMLTableRowElement>('tbody tr') ?? [])]
+        const rows = [...(section.current?.querySelectorAll<HTMLElement>('[data-recording-file-key]') ?? [])]
         const index = rows.findIndex(row => row.dataset.recordingFileKey === key)
         const focus = index < 0 ? undefined : (rows[index + 1] ?? rows[index - 1])?.querySelector<HTMLButtonElement>('button') ?? undefined
         const scroll: { element: HTMLElement; top: number; left: number }[] = []
@@ -247,41 +253,38 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onImpor
   const { from, to } = recordingFileDayBounds(dateStamp)
   const complete = !loading && !currentLoading && !hasMore && !historyError && !currentWarning
 
+  useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete }) }, [dateStamp, files.length, complete, onCountChange])
+
   return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-      <select aria-label={tr('音频文件日期范围')} value={basis} onChange={event => setBasis(event.target.value as RecordingFileDateBasis)} style={control}>
-        <option value="recorded">{tr('当天录音')}</option><option value="uploaded">{tr('当天上传')}</option><option value="all">{tr('全部文件')}</option>
-      </select>
-      <input type="search" aria-label={tr('搜索音频文件')} placeholder={tr('搜索文件名')} value={query} onChange={event => setQuery(event.target.value)} style={{ ...control, flex: 1, minWidth: 130 }} />
-      <button type="button" style={button} disabled={loading || busy} onClick={() => setRevision(value => value + 1)}>{tr('刷新')}</button>
-      <button type="button" style={button} onClick={onImport}>{tr('上传音频')}</button>
-    </div>
-    <div style={{ ...note, marginBottom: 10 }}>{basis === 'all' ? tr('全部日期') : new Date(dateStamp).toLocaleDateString(arkmeIntlLocale())} · {tr(complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(files.length) })}
-      <span role="status" style={{ marginLeft: 12 }}>{notice}</span>
-      {basis === 'uploaded' && <div>{tr('已上传文件按进入云端的时间筛选，不是上传完成时间；本机待上传文件按添加时间。')}</div>}
-    </div>
-    {currentWarning && <p role="status" style={note}>{currentWarning}</p>}
-    <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
-      <thead><tr>{['文件名称 / 录音时间', '时长 / 大小', '归属', '状态', '操作'].map(label => <th key={label} style={{ ...cell, ...note, fontWeight: 500 }}>{tr(label)}</th>)}</tr></thead>
-      <tbody>{files.map(file => <tr key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)}>
-        <td style={{ ...cell, maxWidth: 300 }}><div style={{ overflowWrap: 'anywhere', marginBottom: 4 }}>{file.fileName}</div><div style={note}>{instant(file.startAtMillis)} — {instant(file.endAtMillis)}</div>
-          {(file.startAtMillis < from || file.endAtMillis > to) && basis === 'recorded' && <small style={note}>{tr('跨日文件，显示完整录音范围')}</small>}
-          {basis === 'uploaded' && <div style={note}>{tr('importRef' in file ? '添加时间' : '进入云端')} {instant(file.createdAtMillis)}</div>}
-        </td>
-        <td style={{ ...cell, whiteSpace: 'nowrap' }}>{duration(file.durationMillis)}<div style={note}>{size(file.fileSize)}</div></td>
-        <td style={cell}>{tr(file.ownership === 'self' ? '我的' : '他人')}</td>
-        <td style={cell}><span title={file.statusDetail}>{tr(recordingFileStatusLabel(file))}</span></td>
-        <td style={cell}><button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: file.fileName })} disabled={busy} style={{ ...button, padding: 2, border: 0 }} onClick={event => {
-          if (menu?.file === file) { setMenu(undefined); return }
-          const anchor = event.currentTarget, rect = anchor.getBoundingClientRect()
-          setMenu({ file, anchor, left: Math.max(8, Math.min(rect.right - 168, window.innerWidth - 176)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 128)) })
-        }}><DotsThree size={24} /></button></td>
-      </tr>)}</tbody>
-    </table></div>
-    {files.length === 0 && <p style={{ ...note, padding: '24px 0', textAlign: 'center' }}>{tr(complete ? query ? '没有匹配的音频文件' : '当前范围没有音频文件' : '暂未找到匹配文件，列表尚未查全')}</p>}
+    {notice && <p role="status" style={note}>{notice}</p>}
+    {currentWarning && <p role="status" style={note}>{currentWarning}{currentReadFailed && <button type="button" style={{ ...button, marginLeft: 8 }} disabled={loading || currentLoading || busy} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</p>}
+    <ul aria-label={tr('音频文件列表')} style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+      {files.map(file => {
+        const crossDay = file.startAtMillis < from || file.endAtMillis >= to
+        const attention = ['partial', 'paused', 'cancelled', 'unavailable'].includes(file.status)
+        const statusColor = file.status === 'failed' ? theme.danger : attention ? theme.warning : theme.accent
+        const statusBackground = file.status === 'failed' ? theme.dangerSoft : attention ? theme.warningSoft : theme.accentSoft
+        return <li key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, minWidth: 0, padding: '12px 0', borderBottom: `1px solid ${theme.borderSoft}` }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div title={file.fileName} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
+            <div style={{ ...note, marginTop: 2, display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
+              <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(file.endAtMillis, crossDay)}</span>
+              <span>· {duration(file.durationMillis)}</span><span>· {size(file.fileSize)}</span><span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
+            </div>
+          </div>
+          {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', marginTop: 2, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
+          <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: file.fileName })} disabled={busy} style={{ ...button, flex: 'none', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
+            if (menu?.file === file) { setMenu(undefined); return }
+            const anchor = event.currentTarget, rect = anchor.getBoundingClientRect()
+            setMenu({ file, anchor, left: Math.max(8, Math.min(rect.right - 168, window.innerWidth - 176)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 128)) })
+          }}><DotsThree size={24} /></button>
+        </li>
+      })}
+    </ul>
+    {files.length === 0 && <p style={{ ...note, padding: '24px 0', textAlign: 'center' }}>{tr(complete ? '当天暂无音频文件' : '暂未找到当天文件，列表尚未查全')}</p>}
     {(loading || currentLoading) && <p role="status" style={note}>{tr('正在查找音频文件…')}</p>}
     {historyError && <p role="alert" style={{ ...note, color: theme.danger }}>{historyError}</p>}
-    {!loading && (hasMore || historyError) && <button type="button" style={button} onClick={() => { if (request.current) void loadHistory(request.current) }}>{tr(historyError ? '重试加载' : '继续查找更早文件')}</button>}
+    {!loading && (hasMore || historyError) && <button type="button" style={{ ...button, marginTop: 12 }} disabled={busy} onClick={() => { if (request.current) void loadHistory(request.current) }}>{tr(historyError ? '重试加载' : '继续查找更早文件')}</button>}
     {menu && createPortal(<div ref={menuRef} role="menu" aria-label={tr('音频文件操作')} style={{ position: 'fixed', left: menu.left, top: menu.top, zIndex: 10000, width: 160, padding: 4, border: `1px solid ${theme.border}`, borderRadius: 8, background: theme.menu, color: theme.text, boxShadow: theme.shadow }} onKeyDown={event => {
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
       event.preventDefault()

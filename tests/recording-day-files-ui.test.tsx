@@ -11,8 +11,8 @@ const day = new Date(2026, 9, 12).getTime()
 const file = (patch: Partial<PublicRecordingImportHistoryItem> = {}): PublicRecordingImportHistoryItem => ({ taskKey: 'one', sessionRef: 'ref1', ownership: 'self', fileName: '会议.m4a', fileSize: 1048576, parsedSize: 100, durationMillis: 60000, startAtMillis: day, endAtMillis: day + 60000, progress: 1, status: 'completed', statusDetail: '', createdAtMillis: day, updatedAtMillis: day, ...patch })
 let root: Root, host: HTMLDivElement
 let completed: PublicRecordingImportHistoryItem[], current: PublicRecordingImportCurrentItem[]
-const changed = vi.fn()
-const props = { accountKey: 'test:42', dateStamp: day, refreshRevision: 0, active: true, onChanged: changed, onImport: vi.fn() }
+const changed = vi.fn(), countChanged = vi.fn()
+const props = { accountKey: 'test:42', dateStamp: day, refreshRevision: 0, active: true, onChanged: changed, onCountChange: countChanged }
 const render = async (patch = {}) => { await act(async () => root.render(<ArkmeRecordingFiles {...props} {...patch} />)) }
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === text)!
 const click = async (text: string) => { await act(async () => button(text).click()) }
@@ -21,7 +21,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
-  changed.mockReset(); completed = [file()]; current = []
+  changed.mockReset(); countChanged.mockReset(); completed = [file()]; current = []
   mock.call.mockReset().mockImplementation(async (operation: string, input: any) => {
     if (operation === 'recordings.import.list') return { items: current, owner: { state: 'available' } }
     if (operation === 'recordings.import.history') return { items: completed.slice(input.offset, input.offset + input.limit), hasMore: completed.length > input.offset + input.limit, offset: input.offset }
@@ -41,15 +41,39 @@ it('continues beyond the first page to find an older day and includes active fil
   expect(mock.call.mock.calls.filter(call => call[0] === 'recordings.import.history').map(call => call[1].offset)).toEqual([0, 50])
 })
 
-it('switches to upload date and keeps files accessible even if they belong to another recording day', async () => {
+it('follows the selected recording day without a separate filter or search', async () => {
   completed = [file({ startAtMillis: day - 86400000, endAtMillis: day - 86340000 })]
   await render()
-  expect(host.textContent).toContain('当前范围没有音频文件')
-  await act(async () => { const select = host.querySelector('select')!; select.value = 'uploaded'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(host.textContent).toContain('当天暂无音频文件')
+  expect(host.querySelector('select, input[type="search"]')).toBeNull()
+  expect(button('刷新')).toBeUndefined()
+  expect(button('上传音频')).toBeUndefined()
+  await render({ dateStamp: day - 86400000 })
   expect(host.textContent).toContain('会议.m4a')
-  expect(host.textContent).toContain('不是上传完成时间')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day - 86400000, count: 1, complete: true })
   await render({ dateStamp: day + 86400000 })
   expect(host.textContent).not.toContain('会议.m4a')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day + 86400000, count: 0, complete: true })
+})
+
+it('only labels unfinished and failed files, with dates reserved for cross-day ranges', async () => {
+  completed = [file(), file({ taskKey: 'overnight', fileName: '跨日.wav', startAtMillis: day - 60000, endAtMillis: day + 60000 })]
+  current = [
+    { ...file({ taskKey: 'active', fileName: '转写.wav', status: 'transcribing' }), kind: 'owner' },
+    { ...file({ taskKey: 'failed', fileName: '失败.wav', status: 'failed', statusDetail: '转写失败' }), kind: 'owner' },
+  ]
+  await render()
+  expect(host.textContent).not.toContain('已完成')
+  expect(host.textContent).toContain('转写中')
+  expect(host.textContent).toContain('失败')
+  const sameDay = host.querySelector('[data-recording-file-key="one"]')!.textContent!
+  expect(sameDay).toContain('00:00–00:01')
+  expect(sameDay).toContain('1分钟')
+  expect(sameDay).not.toContain('10/12')
+  const crossDay = host.querySelector('[data-recording-file-key="overnight"]')!.textContent!
+  expect(crossDay).toContain('10/11')
+  expect(crossDay).toContain('10/12')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 4, complete: true })
 })
 
 it('only deletes after confirmation, and refreshes the parent after success', async () => {
@@ -66,22 +90,20 @@ it('only deletes after confirmation, and refreshes the parent after success', as
   expect(host.textContent).not.toContain('会议.m4a')
 })
 
-it('keeps the remaining rows, filter and scroll position while deleting consecutive files without reloading', async () => {
-  completed = [file(), file({ taskKey: 'two', sessionRef: 'ref2', fileName: '第二份.m4a' }), file({ taskKey: 'three', sessionRef: 'ref3', fileName: '第三份.m4a' })]
+it('keeps the remaining rows, count and scroll position while deleting consecutive files without reloading', async () => {
+  completed = [file(), file({ taskKey: 'two', sessionRef: 'ref2', fileName: '第二份.m4a', startAtMillis: day + 60000, endAtMillis: day + 120000 }), file({ taskKey: 'three', sessionRef: 'ref3', fileName: '第三份.m4a', startAtMillis: day + 120000, endAtMillis: day + 180000 })]
   await render()
-  await act(async () => { const select = host.querySelector('select')!; select.value = 'uploaded'; select.dispatchEvent(new Event('change', { bubbles: true })) })
   const remainingRow = host.querySelector('[data-recording-file-key="three"]')
   host.scrollTop = 120
   const readsBefore = mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.list' || operation === 'recordings.import.history').length
   await openMenu(); await click('删除文件'); await click('确认删除')
   expect(host.querySelector('[data-recording-file-key="three"]')).toBe(remainingRow)
-  expect(host.querySelector('select')?.value).toBe('uploaded')
   expect(host.scrollTop).toBe(120)
-  expect(host.textContent).toContain('共 2 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 2, complete: true })
   expect(document.activeElement?.getAttribute('aria-label')).toBe('管理 第二份.m4a')
   await openMenu('第二份.m4a'); await click('删除文件'); await click('确认删除')
   expect(host.querySelector('[data-recording-file-key="three"]')).toBe(remainingRow)
-  expect(host.textContent).toContain('共 1 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: true })
   expect(host.textContent).not.toContain('正在查找音频文件')
   expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.list' || operation === 'recordings.import.history')).toHaveLength(readsBefore)
   expect(changed).toHaveBeenCalledTimes(2)
@@ -93,7 +115,7 @@ it('does not resurrect a deleted file when an earlier current-task response arri
   await render(); await openMenu(); await click('删除文件'); await click('确认删除')
   await act(async () => finishCurrent({ items: [{ ...file(), kind: 'owner' }], owner: { state: 'available' } }))
   expect(host.textContent).not.toContain('会议.m4a')
-  expect(host.textContent).toContain('共 0 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 0, complete: true })
 })
 
 it('keeps loaded rows usable during an external refresh and filters late deleted records', async () => {
@@ -113,7 +135,7 @@ it('keeps loaded rows usable during an external refresh and filters late deleted
   expect(host.textContent).not.toContain('会议.m4a')
   expect(host.querySelector('[data-recording-file-key="two"]')).toBe(remainingRow)
   await act(async () => finishHistory({ items: [completed[1]], hasMore: false, offset: 0 }))
-  expect(host.textContent).toContain('共 1 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: true })
 })
 
 it('adjusts the continuation offset after deletion without losing an unloaded file', async () => {
@@ -127,7 +149,7 @@ it('adjusts the continuation offset after deletion without losing an unloaded fi
   await click('继续查找更早文件')
   expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history').at(-1)?.[1].offset).toBe(499)
   expect(host.querySelector('[data-recording-file-key="file500"]')).not.toBeNull()
-  expect(host.textContent).toContain('共 500 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 500, complete: true })
 })
 
 it('retries an in-flight page from the adjusted offset after deleting a preceding row', async () => {
@@ -145,7 +167,7 @@ it('retries an in-flight page from the adjusted offset after deleting a precedin
   expect(mock.call.mock.calls.filter(([operation]) => operation === 'recordings.import.history').map(([, input]) => input.offset)).toEqual([0, 50, 49])
   expect(host.querySelector('[data-recording-file-key="file0"]')).toBeNull()
   expect(host.querySelector('[data-recording-file-key="file50"]')).not.toBeNull()
-  expect(host.textContent).toContain('共 50 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 50, complete: true })
 })
 
 it.each(['success', 'failure'] as const)('pauses pagination while deletion is pending and resumes correctly after %s', async outcome => {
@@ -170,10 +192,10 @@ it.each(['success', 'failure'] as const)('pauses pagination while deletion is pe
   expect(host.querySelector('[data-recording-file-key="file50"]')).not.toBeNull()
   if (outcome === 'success') {
     expect(host.querySelector('[data-recording-file-key="file0"]')).toBeNull()
-    expect(host.textContent).toContain('共 50 个文件')
+    expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 50, complete: true })
   } else {
     expect(host.querySelector('[data-recording-file-key="file0"]')).not.toBeNull()
-    expect(host.textContent).toContain('共 51 个文件')
+    expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 51, complete: true })
     expect(changed).not.toHaveBeenCalled()
   }
 })
@@ -203,18 +225,17 @@ it('never reports an empty complete list while current tasks are pending or unav
   let resolve!: (v: unknown) => void
   mock.call.mockImplementationOnce(() => new Promise(done => { resolve = done }))
   await render()
-  expect(host.textContent).not.toContain('当前范围没有音频文件')
+  expect(host.textContent).not.toContain('当天暂无音频文件')
   await act(async () => resolve({ items: [], owner: { state: 'unavailable', message: 'offline' } }))
   expect(host.textContent).toContain('部分未完成文件暂未同步')
-  expect(host.textContent).not.toContain('当前范围没有音频文件')
+  expect(host.textContent).not.toContain('当天暂无音频文件')
 })
 
 it('warns when the active task source may be truncated instead of claiming a complete count', async () => {
   current = Array.from({ length: 20 }, (_, i) => ({ ...file({ taskKey: `active${i}`, sessionRef: `active${i}`, status: 'transcribing' }), kind: 'owner' }))
   await render()
   expect(host.textContent).toContain('当前仅显示最近任务')
-  expect(host.textContent).toContain('已找到 21 个文件')
-  expect(host.textContent).not.toContain('共 21 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 21, complete: false })
 })
 
 it('cancels an unfinished local upload with its revision only after confirmation', async () => {
@@ -239,7 +260,7 @@ it('bounds background history scanning, exposes continuation and never labels pa
   expect(host.textContent).toContain('列表尚未查全')
   await click('继续查找更早文件')
   expect(host.textContent).toContain('会议.m4a')
-  expect(host.textContent).toContain('共 1 个文件')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: true })
 })
 
 it('discards late data and action dialogs on account changes', async () => {
@@ -252,4 +273,14 @@ it('discards late data and action dialogs on account changes', async () => {
   expect(document.querySelector('dialog')).toBeNull()
   expect(host.textContent).not.toContain('会议.m4a')
   expect(mock.call.mock.calls.some(call => call[0].endsWith('.delete'))).toBe(false)
+})
+
+it('can retry failed current-task reads without a permanent refresh toolbar', async () => {
+  mock.call.mockRejectedValueOnce(new Error('offline'))
+  await render()
+  expect(host.textContent).toContain('未完成文件加载失败')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: false })
+  await click('重试')
+  expect(host.textContent).not.toContain('未完成文件加载失败')
+  expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: true })
 })
