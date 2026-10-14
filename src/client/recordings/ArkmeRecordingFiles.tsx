@@ -264,16 +264,16 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
         const attention = ['partial', 'paused', 'cancelled', 'unavailable'].includes(file.status)
         const statusColor = file.status === 'failed' ? theme.danger : attention ? theme.warning : theme.accent
         const statusBackground = file.status === 'failed' ? theme.dangerSoft : attention ? theme.warningSoft : theme.accentSoft
-        return <li key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, minWidth: 0, padding: '12px 0', borderBottom: `1px solid ${theme.borderSoft}` }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div title={file.fileName} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
-            <div style={{ ...note, marginTop: 2, display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
+        return <li key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, padding: '8px 0', borderBottom: `1px solid ${theme.borderSoft}` }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 24, rowGap: 2 }}>
+            <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
+            <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
               <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(file.endAtMillis, crossDay)}</span>
               <span>· {duration(file.durationMillis)}</span><span>· {size(file.fileSize)}</span><span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
-          {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', marginTop: 2, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
-          <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: file.fileName })} disabled={busy} style={{ ...button, flex: 'none', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
+          {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
+          <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: file.fileName })} disabled={busy} style={{ ...button, flex: 'none', alignSelf: 'flex-start', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
             if (menu?.file === file) { setMenu(undefined); return }
             const anchor = event.currentTarget, rect = anchor.getBoundingClientRect()
             setMenu({ file, anchor, left: Math.max(8, Math.min(rect.right - 168, window.innerWidth - 176)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 128)) })
