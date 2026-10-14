@@ -1,5 +1,7 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
+import { ArkmeCallHistorySummary } from './ArkmeCallHistorySummary.js'
+import { ArkmeOverlayScrollArea } from './ArkmeOverlayScrollArea.js'
 import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -231,7 +233,8 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, color: arkmeTheme.tertiary, background: arkmeTheme.input, boxSizing: 'border-box',
   },
   searchInput: { minWidth: 0, flex: 1, border: 0, outline: 0, padding: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 13 },
-  list: { minHeight: 0, flex: 1, overflowY: 'auto', margin: 0, padding: 0, listStyle: 'none' },
+  listViewport: { minHeight: 0, flex: 1, display: 'flex', marginRight: -15 },
+  list: { margin: 0, padding: '0 15px 0 0', listStyle: 'none' },
   callRow: {
     width: '100%', minHeight: 64, display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) auto',
     alignItems: 'center', columnGap: 10, rowGap: 4, padding: '8px 8px', border: 0, borderRadius: 13,
@@ -565,7 +568,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState('')
   const paginationAbortRef = useRef<AbortController>()
-  const listRef = useRef<HTMLUListElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const listAnchorRef = useRef<{ key: string; top: number }>()
   const [selectedRef, setSelectedRef] = useState('')
   const privateChatAbortRef = useRef<AbortController>()
@@ -1161,9 +1164,6 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
 
   const renderCallRow = (item: ArkmeCallHistoryItem, sample: boolean) => {
     const selected = callHistoryIdentity(item) === selectedRef
-    const summary = item.summaryStatus === 'pending' ? '摘要生成中…'
-      : item.summaryStatus === 'failed' ? '摘要生成失败，点击查看详情'
-      : item.summaryStatus === 'done' && item.summaryPreview?.trim() ? tr("AI 摘要：{v0}", { v0: item.summaryPreview.trim() }) : ''
     return <li key={callKey(item)} data-arkme-call-row={callHistoryIdentity(item)}>
       <button data-arkme-feedback="neutral"
         type="button"
@@ -1187,9 +1187,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
           {mediaLabel(item.mediaType)} · {formatDuration(item.durationSeconds)}
         </span>
         <time style={styles.callTime}>{sample ? item.resultLabel : shortTime(item.startedAtMillis)}</time>
-        {summary && <span style={styles.callSummary} data-arkme-call-summary="true">
-          <span style={{ ...styles.callSummaryText, ...(item.summaryStatus === 'done' ? {} : { WebkitLineClamp: 1 }) }}>{summary}</span>
-        </span>}
+        <ArkmeCallHistorySummary item={item} style={styles.callSummary} textStyle={styles.callSummaryText} />
       </button>
     </li>
   }
@@ -1248,25 +1246,29 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
         <p style={styles.sectionLabel}>{tr("最近通话")}</p>
         {historyState === 'loading' ? <div style={styles.status}>{tr("正在读取通话记录...")}</div>
           : historyState === 'error' ? <div style={styles.status}>{historyError || '通话记录暂时不可用'}</div>
-            : <ul ref={listRef} aria-label={tr("通话记录列表")} style={styles.list} onScroll={event => {
-              const list = event.currentTarget
-              if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
-                void loadMoreHistory()
-              }
-            }}>
-              {callRows.map(row => renderCallRow(row.item, row.sample))}
-              {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
-              {loadingMore && <li role="status" style={styles.status}>
-                <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
-                  <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
-                    <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
-                  </circle>
-                </svg>{tr("加载更多…")}</li>}
-              {!loadingMore && loadMoreError && <li style={styles.status}>
-                <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
-              </li>}
-              {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
-            </ul>}
+            : <div style={styles.listViewport}>
+              <ArkmeOverlayScrollArea ref={listRef} aria-label={tr("通话记录列表")} onScroll={event => {
+                const list = event.currentTarget
+                if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
+                  void loadMoreHistory()
+                }
+              }}>
+                <ul style={styles.list}>
+                  {callRows.map(row => renderCallRow(row.item, row.sample))}
+                  {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
+                  {loadingMore && <li role="status" style={styles.status}>
+                    <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
+                      <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
+                        <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
+                      </circle>
+                    </svg>{tr("加载更多…")}</li>}
+                  {!loadingMore && loadMoreError && <li style={styles.status}>
+                    <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
+                  </li>}
+                  {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
+                </ul>
+              </ArkmeOverlayScrollArea>
+            </div>}
       </section>
     </aside>
     {browserResize.handle}

@@ -990,7 +990,26 @@ export type ArkmeRecordingArrangementPage =
   | { state: 'unavailable'; items: []; total: null; hasMore: false }
   | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
 
+export interface ArkmeArrangementEvidence {
+  id: string
+  kind: 'record' | 'audio_summary' | 'call' | 'input' | 'voice_input' | 'agent' | 'manual'
+  role: 'initial' | 'supplement' | 'related'
+  text: string
+  canOpen: boolean
+  sourceDate?: string
+  createdAtMillis?: number
+  unavailableReason?: string
+}
+export type ArkmeArrangementSourceTarget =
+  | { kind: 'document'; title: string; text: string }
+  | { kind: 'record'; item: ArkmeTimelineItem }
+  | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number }
+  | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string }
+  | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
+
 export interface ArkmeArrangementItem {
+  provenance?: ArkmeArrangementEvidence[]
+  sourceType?: number
   recognitionState?: string
 
   creationSource?: ArkmeArrangementCreationSource
@@ -1341,6 +1360,8 @@ export interface ArkmeCallHistoryItem {
   resultLabel: string
   summaryStatus: ArkmeCallSummaryStatus
   summaryPreview?: string
+  /** The aggregate omitted speaker identities; visible rows resolve the detail summary. */
+  summaryNeedsDetail?: boolean
   summaryUpdatedAtMillis?: number
   canOpenDetail: boolean
   canRedial: boolean
@@ -4066,6 +4087,7 @@ export type ArkmePluginOperation =
   | 'arrangements.list'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
+  | 'arrangements.source.open'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'

@@ -1,3 +1,4 @@
+import { ArkmeArrangementSources } from './ArkmeArrangementSources.js'
 import { useEffect, useId, useState } from 'react'
 import type { ArkmeArrangementDetail, ArkmeArrangementItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -29,20 +30,22 @@ export function ArkmeArrangementContent({ item, expanded, onSourceNavigate }: { 
   }, [arrangementRef, expanded, attempt])
   const currentDetail = detail?.arrangementRef === arrangementRef ? detail : undefined
   const source = currentDetail?.creationSource ?? item.creationSource
+  const provenance = currentDetail?.provenance ?? item.provenance
   const hasSource = !!source?.items.length || !!source?.unavailableCount
   return <div className="arkme-arrangement-content" draggable={false}
     onDragStart={event => { event.preventDefault(); event.stopPropagation() }}>
-    <ArkmeArrangementRecordingSource source={currentDetail?.recordingSource ?? item.recordingSource} {...(onSourceNavigate ? { onNavigate: onSourceNavigate } : {})} />
+    {!provenance && <ArkmeArrangementRecordingSource source={currentDetail?.recordingSource ?? item.recordingSource} {...(onSourceNavigate ? { onNavigate: onSourceNavigate } : {})} />}
+    {provenance && <ArkmeArrangementSources arrangementRef={arrangementRef} sources={provenance} expanded={expanded} {...(onSourceNavigate ? {onNavigate:onSourceNavigate} : {})} />}
     {expanded && <div id={regionId} className="arkme-arrangement-content-detail" role="region" aria-label={tr('创建原文')}>
-      <strong>{tr('创建原文')}</strong>
-      {source?.items.map((entry, index) => <div className="arkme-arrangement-source-item" key={index}>
+      {!provenance && <strong>{tr('创建原文')}</strong>}
+      {!provenance && source?.items.map((entry, index) => <div className="arkme-arrangement-source-item" key={index}>
         <div className="arkme-arrangement-content-text">{entry.text}</div>
       </div>)}
-      {!!source?.unavailableCount && <div className="arkme-arrangement-content-empty">{tr('创建原文暂不可查看')} ({source.unavailableCount})</div>}
+      {!provenance && !!source?.unavailableCount && <div className="arkme-arrangement-content-empty">{tr('创建原文暂不可查看')} ({source.unavailableCount})</div>}
       {loading && <div role="status">{tr('加载中…')}</div>}
       {error && <div role="alert">{tr('创建原文加载失败')}<button type="button" data-arrangement-content-retry={arrangementRef}
         onClick={event => { event.stopPropagation(); setAttempt(value => value + 1) }}>{tr('重试')}</button></div>}
-      {!loading && !error && !hasSource && <div className="arkme-arrangement-content-empty">{tr('暂无创建原文')}</div>}
+      {!loading && !error && !hasSource && !provenance && <div className="arkme-arrangement-content-empty">{tr('暂无创建原文')}</div>}
     </div>}
 
   </div>
