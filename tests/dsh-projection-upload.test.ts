@@ -55,3 +55,28 @@ describe('source binding receipts', () => {
     }
   })
 })
+
+it('recovers a restored source once in background and reuses its binding on later heartbeats', async()=>{
+ const upload=new ProjectionUpload(),scope=new AbortController(),items=[{session_ref:'restored'}],binding='b'.repeat(64)
+ const send=vi.fn(async(batch:Array<{session_ref:string,recovery_proof?:unknown}>)=>batch[0]?.recovery_proof ? {accepted_session_refs:['restored'],rejected_session_refs:[],source_bindings:{restored:binding},source_recovery_version:1} : {accepted_session_refs:[],rejected_session_refs:['restored'],source_recovery_version:1})
+ const read=vi.fn(async()=>({version:1 as const,messages:{['a'.repeat(64)]:1},sequence:['a'.repeat(64)]})),recovered=vi.fn(async()=>{}),failed=vi.fn()
+ const recovery={signal:scope.signal,read,recovered,failed}
+ expect(await upload.page(items,send,scope.signal,recovery)).toEqual({accepted:0,rejected:1})
+ await vi.waitFor(()=>expect(recovered).toHaveBeenCalledWith({restored:binding}))
+ expect(send).toHaveBeenCalledTimes(2);expect(read).toHaveBeenCalledOnce();expect(failed).not.toHaveBeenCalled()
+ send.mockImplementation(async()=>({accepted_session_refs:['restored'],rejected_session_refs:[],source_bindings:{restored:binding},source_recovery_version:1}))
+ for(let i=0;i<100;i++)expect((await upload.page(items,send,scope.signal,recovery)).accepted).toBe(1)
+ expect(read).toHaveBeenCalledOnce()
+})
+it('bounds failed recovery for 100 rejected identities and cancels it on account change',async()=>{
+ const upload=new ProjectionUpload(),scope=new AbortController(),items=Array.from({length:100},(_,i)=>({session_ref:String(i)}))
+ let release!:()=>void
+ const read=vi.fn(async()=>{await new Promise<void>(resolve=>{release=resolve});return {version:1 as const,messages:{},sequence:['a'.repeat(64)]}})
+ const recovered=vi.fn(async()=>{}),failed=vi.fn(),send=vi.fn(async()=>({accepted_session_refs:[],rejected_session_refs:items.map(i=>i.session_ref),source_recovery_version:1}))
+ const recovery={signal:scope.signal,read,recovered,failed}
+ await upload.page(items,send,scope.signal,recovery)
+ for(let i=0;i<100;i++)await upload.page(items,send,scope.signal,recovery)
+ expect(read).toHaveBeenCalledOnce();expect(send).toHaveBeenCalledOnce()
+ scope.abort();upload.clear();release();await new Promise(resolve=>setTimeout(resolve,0))
+ expect(recovered).not.toHaveBeenCalled();expect(send).toHaveBeenCalledOnce();expect(failed).not.toHaveBeenCalled()
+})

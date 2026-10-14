@@ -75,15 +75,18 @@ export class DshCloudNativeTransport {
     throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端会话目录分页未完成')
   }
 
-  private async history(runtime: string, session: string, signal: AbortSignal, through?: number, before?: number, turnObjects = false): Promise<NativeHistoryPage> {
+  private async history(runtime: string, session: string, signal: AbortSignal, through?: number, before?: number, turnObjects = false): Promise<{ page: NativeHistoryPage; complete: boolean }> {
     signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
     const identity = { runtime_ref: runtime, session_ref: session }
+    let emptyRawIncomplete = false, rawComplete = false
     const rawPage = async (beforeSeq?: number): Promise<NativeHistoryPage> => {
       signal.throwIfAborted()
       const value = await this.request.post(`${BASE}/session-events/list`, { ...identity, limit: 100, ...(beforeSeq === undefined ? {} : { before_seq: beforeSeq }) }, signal)
       if (!Array.isArray(value.entries) || value.entries.length > 100) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史响应无效')
       const records: NativeHistoryRecord[] = value.entries.map(raw => ({ type: 'event', event: { ...snapshotDshHistoryEntry(object(raw) as { event: unknown }).event } }))
       if (records.some((record, i) => (beforeSeq !== undefined && record.event.seq >= beforeSeq) || (i > 0 && record.event.seq <= records[i - 1]!.event.seq))) throw unavailable()
+      if (beforeSeq === undefined) rawComplete = value.complete === true
+      if (!records.length && value.complete === false) emptyRawIncomplete = true
       return { records, hasMore: value.next_cursor !== undefined }
     }
     const previous = async (beforeSeq?: number): Promise<NativeHistoryPage> => {
@@ -105,7 +108,7 @@ export class DshCloudNativeTransport {
         const selected = fiveTurnPage({ records, hasMore: false })!
         const gap = selected.records.findIndex((record, i) => i > 0 && record.event.seq !== selected.records[i - 1]!.event.seq + 1)
         if (gap === -1) {
-          if (!records.length && (raw.hasMore || (beforeSeq !== undefined && beforeSeq > 0))) throw unavailable()
+          if (!records.length && (emptyRawIncomplete || raw.hasMore || (beforeSeq !== undefined && beforeSeq > 0))) throw unavailable()
           return { records: selected.records.map(nativeHistoryRecord), hasMore: (selected.records[0]?.event.seq ?? 0) > 0 }
         }
         // Turn objects omit between-turn records. Fill only the actual gap from
@@ -123,7 +126,7 @@ export class DshCloudNativeTransport {
     if (Buffer.byteLength(JSON.stringify(page)) > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) {
       throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '本页云端历史超过 64MiB 安全上限')
     }
-    return page
+    return { page, complete: rawComplete }
   }
 
   async call(runtime: string, body: Record<string, unknown>, id: string, signal: AbortSignal, cache?: Cache, refreshing?: Lease, verifiedMetadata?: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -172,9 +175,10 @@ export class DshCloudNativeTransport {
       const through = endpoint === 'session/page' ? Number(request.throughSeq) : undefined
       const before = request.beforeSeq === undefined ? undefined : Number(request.beforeSeq)
       const expectedCursor = Math.max(Number(row.projection_as_of_seq ?? -1), Number(row.last_event_seq ?? -1), Number(row.history_complete_through_seq ?? -1))
-      const cached = key && revision && snapshot?.cloudRevision === revision && Number(snapshot.cursor) >= expectedCursor
+      const cached = key && revision && snapshot?.cloudRevision === revision && Number(snapshot.cursor) >= expectedCursor && (Number(snapshot.cursor) >= 0 || snapshot.cloudVerifiedComplete === true)
         ? cache?.store.page(key, through ?? Number(snapshot.cursor), before) : undefined
-      const page = cached ?? await this.history(runtime, session, signal, through, before, row.history_storage_version === 'oss_turn_v1')
+      const fetched = cached ? undefined : await this.history(runtime, session, signal, through, before, row.history_storage_version === 'oss_turn_v1')
+      const page = cached ?? fetched!.page
       signal.throwIfAborted()
       if (!cached && revision) {
         const current = await this.metadata(runtime, session, signal)
@@ -188,8 +192,13 @@ export class DshCloudNativeTransport {
       }
       const cursor = page.records.at(-1)?.event.seq ?? -1
       if (cursor < expectedCursor) throw unavailable()
+      const complete = row.history_storage_version === 'oss_turn_v1' ? row.turn_projection_complete_through_seq : row.history_complete_through_seq
+      const replacesHistory = cursor < Number(snapshot?.cursor ?? -1) || (!!snapshot && snapshot.cloudGeneration !== cacheGeneration(row))
+      const verifiedComplete = typeof complete === 'number' && Number.isSafeInteger(complete) && complete >= cursor && complete >= -1
+        || complete === undefined && (fetched?.complete === true || !!cached && snapshot?.cloudVerifiedComplete === true)
+      if ((cursor === -1 || replacesHistory) && !verifiedComplete) throw unavailable()
       const displayRevision = metadataRevision(row)
-      frame = { type: 'snapshot', cloudRevision: revision, cloudGeneration: cacheGeneration(row), cloudMetadataRevision: displayRevision,
+      frame = { type: 'snapshot', cloudVerifiedComplete: verifiedComplete, cloudRevision: revision, cloudGeneration: cacheGeneration(row), cloudMetadataRevision: displayRevision,
         header: { version: 3, id: session, createdAt: Number(row.created_at ?? (cached ? object(snapshot?.header).createdAt : undefined) ?? row.source_updated_at), isSeeded: false }, cursor, ...page,
         projections: { asOfSeq: cursor, values: { title: row.title || null } }, assistantStream: { revision: 0 } }
       // A warm open must not replay the event INSERT loop. Metadata-only changes

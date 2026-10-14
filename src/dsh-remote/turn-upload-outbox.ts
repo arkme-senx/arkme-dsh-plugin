@@ -463,6 +463,7 @@ export class DshRemoteTurnUploadOutbox {
     for (let page = 0; page < 50; page++) {
       const value = await list.call(this.options.controlPlane, {
         runtime_ref: runtime.runtimeRef, session_ref: sessionRef, limit: 100,
+        source_state: true, host_generation: runtime.hostGeneration,
         ...(cursor === undefined ? {} : { cursor }),
       }, signal)
       signal.throwIfAborted()
@@ -477,6 +478,7 @@ export class DshRemoteTurnUploadOutbox {
       }
       for (const raw of items) {
         const item = parseTurnObjectIndex(raw)
+        if ((raw as Record<string, unknown>).runtime_ref !== undefined && ((raw as Record<string, unknown>).runtime_ref !== runtime.runtimeRef || (raw as Record<string, unknown>).session_ref !== sessionRef)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端回执不属于当前上传来源')
         if (item.end_seq >= lastStart) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史对象重叠')
         lastStart = item.start_seq
         const id = stableTurnId(this.options.profileRef, sessionRef, item.start_seq)

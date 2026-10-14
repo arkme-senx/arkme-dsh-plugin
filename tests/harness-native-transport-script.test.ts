@@ -197,21 +197,20 @@ it('redirects a selected retired address after a complete canonical directory re
   expect(dispatchEvent).toHaveBeenCalledOnce()
 })
 
-it('folds only an exact Host-verified local cut and restores new local history immediately', async () => {
+it('keeps a single cloud entry while local and cloud metadata advance', async () => {
   const f = fixture(), dispatchEvent = vi.fn()
   f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
   const local = { sessionId: 'same', updatedAt: 42, running: false, blank: false, projections: { asOfSeq: 3, values: { title: 'same' } } }
   f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [local] } } }))
   const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } })
   await f.rpc('session/list', {})
-  f.directory.select('same')
   f.directory.publish([row], 'local-runtime')
   expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
-  expect(dispatchEvent).toHaveBeenCalledOnce()
+  expect(dispatchEvent).not.toHaveBeenCalled()
   expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
   local.updatedAt = 43
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['same', 'arkme:canonical:same'])
-  expect(f.directory.canonicalLocal('same')).toBeUndefined()
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
+  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
 })
 it('never folds unverified, ambiguous, wrong-runtime or running local sources', async () => {
   const f = fixture()
@@ -274,4 +273,18 @@ it('does not re-add a hidden cloud source through another remote session subscri
   await follow.next()
   expect((await events.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:other' }] })
   await follow.return(); await events.return(); abort.abort()
+})
+
+it('keeps an ongoing native selection through completion and hides an archived alias', async()=>{
+ const f=fixture(),dispatchEvent=vi.fn()
+ f.window.frameElement.parentElement.ownerDocument={dispatchEvent,defaultView:{CustomEvent:class{constructor(public type:string,public init:unknown){}}}}
+ const local={sessionId:'same',updatedAt:1,running:true,projections:{asOfSeq:9999}}
+ f.fetch.mockImplementation(async()=>Response.json({result:{ok:true,value:{items:[local]}}}))
+ await f.rpc('session/list',{});f.directory.select('same')
+ const row=f.row('canonical',{previousRuntimeRefs:['local-runtime'],coveredLocalHistory:{runtimeRef:'local-runtime',updatedAt:1,projectionAsOfSeq:9999,source:'cloud'}})
+ for(let i=0;i<100;i++){local.updatedAt++;local.projections.asOfSeq++;f.directory.publish([{...row,contentRevision:String(i)}],'local-runtime');expect((await f.rpc('session/list',{})).result.value.items.map((r:any)=>r.sessionId)).toEqual(['same'])}
+ local.running=false;f.directory.publish([row],'local-runtime')
+ expect(dispatchEvent).not.toHaveBeenCalled()
+ f.directory.publish([{...row,archived:true}],'local-runtime')
+ expect((await f.rpc('session/list',{})).result.value.items).toEqual([])
 })

@@ -225,7 +225,7 @@ it('hydrates a warm native opening from SQLite, serves cached pages without a re
 it('bootstraps an offline account instance, admits an empty history, blocks writes and reconnects to a restored source', async () => {
   const f = fixture(false), post = f.post.getMockImplementation()!
   f.post.mockImplementation(async path => path.endsWith('/sessions/list') ? { items: [{ session_ref: 'same-session', title: '空会话', source_updated_at: 1 }] } as never
-    : path.endsWith('/session-events/list') ? { entries: [] } as never
+    : path.endsWith('/session-events/list') ? { entries: [], complete: true } as never
     : path.endsWith('/session-turn-objects/list') ? { items: [] } as never : post(path))
   const native = (body: object) => f.directory.native({ runtimeRef: 'runtime-remote', requestRef: 'request-test', body })
   const events = { mode: 'pull', streamRef: 'events', endpoint: '$events', payload: { args: {} } }
@@ -267,12 +267,11 @@ it('resolves workspace names with at most four concurrent source reads', async (
 
 
 it('shares verified source selection through Host HTTP, SDK and registered DSH Tool without exposing message hashes', async () => {
-  const hash = 'a'.repeat(64), proof = { version: 1 as const, messages: { [hash]: 1 }, sequence: [hash] }
-  const content = vi.fn(async () => proof)
-  const f = fixture(false, undefined, { summaries: async () => new Map([['same-session', { updatedAt: 42, projectionAsOfSeq: -1, running: false }]]), content })
+  const hash = 'a'.repeat(64)
+  const f = fixture(false, undefined, { summaries: async () => new Map([['same-session', { updatedAt: 42, projectionAsOfSeq: -1, running: false }]]) })
   const base = f.post.getMockImplementation()!
-  f.post.mockImplementation(async path => path.endsWith('/sessions/account-list') ? { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', source_updated_at: 1, history_revision: 'h', content_revision: 'c', deduplicated_runtime_refs: ['runtime-local'] }] } as never
-    : path.endsWith('/sessions/metadata') ? { runtime_ref: 'runtime-remote', session_ref: 'same-session', content_revision: 'c', content_proof: proof } as never : base(path))
+  f.post.mockImplementation(async path => path.endsWith('/sessions/account-list') ? { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', source_updated_at: 1, history_revision: 'h', content_revision: 'c', deduplicated_runtime_refs: ['runtime-local'], readable_runtime_refs: ['runtime-local'], canonical_identity: true }] } as never
+    : base(path))
   const ctx = new Context(), options = { expectedPort: 0, allowNonLoopback: false, accountSessions: () => f.directory }
   const server = createServer(createArkmeHostApi({} as never, options)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('no address')
@@ -289,7 +288,6 @@ it('shares verified source selection through Host HTTP, SDK and registered DSH T
     expect(result.isError).toBe(false)
     expect(JSON.parse(String(result.value))).toEqual(expected)
     expect(JSON.stringify(expected)).not.toContain(hash)
-    expect(content).toHaveBeenCalledOnce()
-    expect(f.post).toHaveBeenCalledWith('/api/v1/dsh-remote/sessions/metadata', expect.objectContaining({ verify_content: true }), expect.any(AbortSignal))
+    expect(f.post.mock.calls.some(([path]) => path.includes('/sessions/metadata') || path.includes('session-events') || path.includes('session-turn'))).toBe(false)
   } finally { f.directory.close(); await ctx.fiber.dispose(); server.closeAllConnections(); server.close(); await once(server, 'close') }
 })

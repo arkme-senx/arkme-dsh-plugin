@@ -28,11 +28,12 @@ function fixture() {
     CREATE TRIGGER count_insert AFTER INSERT ON events BEGIN UPDATE mutations SET count=count+1 WHERE kind='insert'; END;
     CREATE TRIGGER count_update AFTER UPDATE ON events BEGIN UPDATE mutations SET count=count+1 WHERE kind='update'; END;
     CREATE TRIGGER count_delete AFTER DELETE ON events BEGIN UPDATE mutations SET count=count+1 WHERE kind='delete'; END;`)
-  const state = { records: turns(10), generation: 'generation-1', title: 'original', updated: 1, owned: true }
+  const state = { records: turns(10), generation: 'generation-1', title: 'original', updated: 1, owned: true, complete: true }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/sessions/metadata')) return {
       runtime_ref: 'canonical', session_ref: state.owned ? 'session' : 'foreign', deduplicated_runtime_refs: ['retired'],
       history_revision: state.generation, title: state.title, created_at: 1, source_updated_at: state.updated,
+      history_complete_through_seq: state.complete ? state.records.length - 1 : -2,
       last_event_seq: state.records.length - 1, projection_as_of_seq: state.records.length - 1,
     }
     if (path.endsWith('/session-events/list')) {
@@ -124,4 +125,17 @@ it('warm cache never bypasses account ownership validation', async () => {
   const f = fixture(); await f.open('active'); f.state.owned = false; f.reset()
   await expect(f.poll('active')).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
   expect(f.counts()).toEqual({ insert: 0, update: 0, delete: 0 })
+})
+
+it('preserves all cached pages during incomplete new-generation and empty alias responses', async()=>{
+ const f=fixture();await f.open('active');f.store.write(f.key,f.state.records)
+ const before=f.persisted(),snapshot=f.store.snapshot(f.key)
+ for(const generation of ['generation-1','incomplete-alias']){
+  f.reset();f.state.generation=generation;f.state.records=[];f.state.complete=false
+  await expect(f.poll('active')).rejects.toThrow()
+  expect(f.persisted()).toEqual(before);expect(f.store.snapshot(f.key)).toEqual(snapshot)
+  expect(f.counts()).toEqual({insert:0,update:0,delete:0})
+ }
+ f.state.records=turns(11);f.state.complete=true;await f.poll('active')
+ expect(f.store.snapshot(f.key)?.cursor).toBe(65)
 })

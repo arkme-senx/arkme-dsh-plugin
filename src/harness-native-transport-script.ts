@@ -66,14 +66,14 @@ function installNativeTransport(route: string): void {
   const matching = (local: Json): DshAccountSession | undefined => {
     const matches = (aliasCandidates.get(local.sessionId) ?? []).filter(row => {
       const cut = row.coveredLocalHistory
-      return row.sessionRef === local.sessionId && !row.local && !row.archived && row.origin !== 'subagent'
-        && !!localRuntimeRef && row.previousRuntimeRefs?.includes(localRuntimeRef)
+      return row.sessionRef === local.sessionId && !row.local && row.origin !== 'subagent'
+        && !!localRuntimeRef && (row.canonicalIdentity || row.previousRuntimeRefs?.includes(localRuntimeRef))
         && cut?.runtimeRef === localRuntimeRef
-        && (cut.source === 'local'
-          ? local.updatedAt >= cut.updatedAt && (local.projections?.asOfSeq ?? -1) >= cut.projectionAsOfSeq
-          : !local.running && local.updatedAt === cut.updatedAt && (local.projections?.asOfSeq ?? -1) === cut.projectionAsOfSeq)
     })
-    return matches.length === 1 ? matches[0] : undefined
+    const row = matches.length === 1 ? matches[0] : undefined
+    // Do not move an active/selected local conversation when an upload completes.
+    return row && !row.archived && (local.running || selected === local.sessionId)
+      ? { ...row, coveredLocalHistory: { ...row.coveredLocalHistory!, source: 'local' } } : row
   }
   const preferred = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? row.sessionRef : identity(row.runtimeRef, row.sessionRef)
   const hidden = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? identity(row.runtimeRef, row.sessionRef) : row.sessionRef
@@ -143,7 +143,7 @@ function installNativeTransport(route: string): void {
       const canonical = retired && incoming.find(row => row.sessionRef === retired.id && row.previousRuntimeRefs?.includes(retired.runtime))
       if (canonical) redirect(canonical)
       aliasCandidates.clear()
-      for (const row of next.values()) if (row.coveredLocalHistory) {
+      for (const row of incoming) if (row.coveredLocalHistory) {
         const candidates = aliasCandidates.get(row.sessionRef) ?? []
         candidates.push(row); aliasCandidates.set(row.sessionRef, candidates)
       }

@@ -1,4 +1,3 @@
-import { parseContentProof } from './history-content-proof.js'
 import { LocalHistoryCoverage, type LocalAliasReader } from './local-history-coverage.js'
 import { DshCloudNativeTransport } from './cloud-native-transport.js'
 import { DshNativeHistoryCache } from './native-history-cache.js'
@@ -55,25 +54,7 @@ export class DshAccountSessions {
     clientRef: string
   }) {
     this.cloud = new DshCloudNativeTransport(options.request)
-    if (options.localAliasReader) this.coverage = new LocalHistoryCoverage(options.localAliasReader, async (row, signal) => {
-      const metadata = await options.request.post(`${BASE}/sessions/metadata`, { runtime_ref: row.runtimeRef, session_ref: row.sessionRef, verify_content: true }, signal)
-      if (metadata.runtime_ref !== row.runtimeRef || metadata.session_ref !== row.sessionRef || metadata.content_revision !== row.contentRevision) throw new Error('历史版本已变化')
-      return parseContentProof(metadata.content_proof)
-    }, async (row, signal) => {
-      let before: number | undefined
-      for (let page = 0; page < 1000; page++) {
-        const metadata = await options.request.post(`${BASE}/sessions/metadata`, { runtime_ref: row.runtimeRef, session_ref: row.sessionRef }, signal)
-        if (metadata.content_revision !== row.contentRevision) return false
-        const result = await this.cloud.call(row.runtimeRef, { mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: row.sessionRef }, throughSeq: row.projectionAsOfSeq, ...(before === undefined ? {} : { beforeSeq: before }) } } } }, randomUUID(), signal)
-        const value = result.value as NativeHistoryPage
-        if (!result.ok || !value.records.length) return false
-        if (!value.hasMore) return true
-        const next = value.records[0]!.event.seq
-        if (before !== undefined && next >= before) return false
-        before = next
-      }
-      return false
-    })
+    if (options.localAliasReader) this.coverage = new LocalHistoryCoverage(options.localAliasReader)
   }
 
   close(): void {
@@ -125,7 +106,9 @@ export class DshAccountSessions {
       const row = object(raw), runtimeRef = ref(row.runtime_ref), runtime = runtimes.get(runtimeRef)
       if (!runtime) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '会话目录发生变化，请刷新', true)
       return {
+        canonicalIdentity: row.canonical_identity === true,
         runtimeRef, ...(Array.isArray(row.deduplicated_runtime_refs) ? { previousRuntimeRefs: row.deduplicated_runtime_refs.map(ref) } : {}), sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
+        ...(Array.isArray(row.readable_runtime_refs) ? { readableRuntimeRefs: row.readable_runtime_refs.map(ref) } : {}),
         ...(typeof row.content_revision === 'string' ? { contentRevision: row.content_revision } : {}),
         ...(typeof row.history_revision === 'string' ? { historyRevision: row.history_revision } : {}),
         capabilities: runtime.capabilities, title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,

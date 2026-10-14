@@ -54,7 +54,7 @@ try {
     reset()
     const post = async (path, body) => {
       await delay(2)
-      if (path.endsWith('/sessions/metadata')) { counts.metadata++; return { runtime_ref: 'runtime', session_ref: 'session', history_revision: generation, created_at: 1, title, source_updated_at: updated, projection_as_of_seq: records.length - 1, last_event_seq: records.length - 1 } }
+      if (path.endsWith('/sessions/metadata')) { counts.metadata++; return { runtime_ref: 'runtime', session_ref: 'session', history_revision: generation, created_at: 1, title, source_updated_at: updated, projection_as_of_seq: records.length - 1, last_event_seq: records.length - 1, history_complete_through_seq: records.length - 1 } }
       if (path.endsWith('/session-events/list')) {
         const end = Math.min(Number(body.before_seq ?? records.length), records.length), start = Math.max(0, end - 100)
         const value = { entries: records.slice(start, end).map(({ event }) => ({ event })), ...(start ? { next_cursor: start } : {}) }

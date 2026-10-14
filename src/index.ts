@@ -1,4 +1,3 @@
-import { LocalSummaryCache } from './dsh-remote/local-summary-cache.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
@@ -616,6 +615,14 @@ export function apply(ctx: Context, config: Config): void {
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
+      readRecoveryProof: async (sessionId, through, signal) => {
+          signal.throwIfAborted()
+          const account = await service.accountScope.scopedSession()
+          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
+          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
+          signal.throwIfAborted()
+          return proof
+        },
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
       readSession: async () => {
@@ -651,10 +658,6 @@ export function apply(ctx: Context, config: Config): void {
     let historyCache: DshNativeHistoryCache | undefined
     try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
     catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
-    const localSummaries = new LocalSummaryCache(() => apiProxy.localHistorySummaries())
-    const stopSummaryEvents = apiProxy.subscribeProjectionEvents(event => {
-      if (event.kind !== 'interactions') localSummaries.invalidate()
-    })
     const directory = new DshAccountSessions({
       ...(historyCache ? { historyCache } : {}),
       onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
@@ -669,19 +672,12 @@ export function apply(ctx: Context, config: Config): void {
           const account = await service.accountScope.scopedSession()
           if (!account || !service.accountScope.ready()) return new Map()
           const owned = await sessionOwnership.listOwned(String(account.userId), refs)
-          const wanted = new Set(refs.filter(ref => owned.has(ref)))
-          const snapshot = await localSummaries.get(signal)
-          const result = new Map([...snapshot].filter(([id]) => wanted.has(id)))
-          return result
-        },
-        content: async (sessionId, through, signal) => {
           signal.throwIfAborted()
-          const account = await service.accountScope.scopedSession()
-          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
-          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
-          signal.throwIfAborted()
-          return proof
+          // Native transport already owns live list metadata. Directory folding
+          // needs only account ownership, never a second all-session scan.
+          return new Map(refs.filter(ref => owned.has(ref)).map(ref => [ref, { updatedAt: 0, projectionAsOfSeq: -1, running: false }]))
         },
+
       },
       localStatus: () => host.getStatus(),
       createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
@@ -701,7 +697,6 @@ export function apply(ctx: Context, config: Config): void {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
         directory.close()
-        localSummaries.clear()
         if (!service.accountScope.ready()) host.cancelPendingConnection()
         lifecycleTail = lifecycleTail.then(
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
@@ -713,8 +708,6 @@ export function apply(ctx: Context, config: Config): void {
       await lifecycleTail
       return async () => {
         unsubscribe()
-        stopSummaryEvents()
-        localSummaries.clear()
         await lifecycleTail
         directory.close()
         historyCache?.close()

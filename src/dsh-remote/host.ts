@@ -1,3 +1,4 @@
+import type { ContentProof } from './history-content-proof.js'
 import { ProjectionUpload } from './projection-upload.js'
 import type { DshNativeTransport } from './native-transport.js'
 import { DshLiveEventBatcher, LIVE_BATCH_ITEMS, type LiveEventBatch } from './live-event-batcher.js'
@@ -148,6 +149,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
     maxObjectBytes: number,
     callbacks: { onError: (error: unknown, sessionRef?: string) => void; onFinalized: (sessionRef: string) => void },
   ) => DshRemoteTurnUploadOutbox
+  readRecoveryProof?: (session: string, through: number, signal: AbortSignal) => Promise<ContentProof>
   sessionPersistence?: DshRemoteSessionPersistenceLike
   now?: () => number
   yieldToEventLoop?: () => Promise<void>
@@ -1626,11 +1628,29 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     await next
   }
 
+  private async reconcileSourceBindings(bindings: Record<string, string> | undefined, accountId: string, runtime: DshRemoteRuntimeProjection): Promise<void> {
+    const outbox = this.turnUpload
+    if (outbox !== undefined && bindings !== undefined) {
+      await outbox.reconcileSourceBindings(bindings, async () => {
+        if (!this.historyOwnerMatches(accountId, runtime)) return
+        this.historyObjectBackfillController?.abort()
+        if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
+        this.historyObjectBackfillTimer = undefined
+        await this.historyObjectBackfillFlight?.catch(() => undefined)
+      }).then(changed => {
+        if (changed && this.historyOwnerMatches(accountId, runtime)) this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS)
+      }).catch(error => {
+        if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() }
+      })
+    }
+  }
+
   private async performProjectionSnapshot(force = false, generation = this.accountGeneration): Promise<void> {
     const runtime = this.runtime
     const accountId = this.accountId
     if (runtime === undefined || accountId === undefined) return
-    const signal = AbortSignal.any([this.projectionController.signal, AbortSignal.timeout(30_000)])
+    const ownerSignal = this.projectionController.signal
+    const signal = AbortSignal.any([ownerSignal, AbortSignal.timeout(30_000)])
     const check = () => {
       signal.throwIfAborted()
       if (generation !== this.accountGeneration) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '账号作用域已切换')
@@ -1778,27 +1798,19 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         diagnostic.page_index = offset / 100
         diagnostic.item_count = Math.min(100, sessionItems.length - offset)
         progress('upload_sessions')
-        const uploaded = await this.projectionUpload.page(sessionItems.slice(offset, offset + 100), async items => this.options.controlPlane.syncSessions({
+        const uploaded = await this.projectionUpload.page(sessionItems.slice(offset, offset + 100), async (items, requestSignal) => this.options.controlPlane.syncSessions({
           report_conflicts: true,
           runtime_ref: runtime.runtimeRef,
           host_generation: runtime.hostGeneration,
           snapshot_ref: snapshotRef,
           items,
-        }, signal), signal)
-        const outbox = this.turnUpload
-        if (outbox !== undefined && uploaded.sourceBindings !== undefined) {
-          void outbox.reconcileSourceBindings(uploaded.sourceBindings, async () => {
-            if (!this.historyOwnerMatches(accountId, runtime)) return
-            this.historyObjectBackfillController?.abort()
-            if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
-            this.historyObjectBackfillTimer = undefined
-            await this.historyObjectBackfillFlight?.catch(() => undefined)
-          }).then(changed => {
-            if (changed && this.historyOwnerMatches(accountId, runtime)) this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS)
-          }).catch(error => {
-            if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() }
-          })
-        }
+        }, requestSignal), signal, this.options.readRecoveryProof ? {
+          signal: ownerSignal,
+          read: (item, scoped) => this.options.readRecoveryProof!(item.session_ref, 'projection_as_of_seq' in item ? Number(item.projection_as_of_seq ?? -1) : -1, scoped),
+          recovered: bindings => this.reconcileSourceBindings(bindings, accountId, runtime),
+          failed: error => { if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() } },
+        } : undefined)
+        void this.reconcileSourceBindings(uploaded.sourceBindings, accountId, runtime)
         rejectedSessions += uploaded.rejected
         diagnostic.session_items_acked += uploaded.accepted
         if (sessionItems.length === 0) break
