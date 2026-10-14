@@ -1,4 +1,5 @@
 import type { ArkmeTimelineItem } from './types.js'
+import { callSummaryParticipantRoles } from './call-summary-speakers.js'
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
@@ -23,15 +24,28 @@ export function callSummaryUserIds(source: Record<string, unknown>): number[] {
   return [...ids]
 }
 
-/** Flutter-compatible summary templates, resolved on the host before projection. */
+/** Rows without speaker identities must use the detail template instead of legacy prose. */
+export function callSummaryNeedsDetail(source: Record<string, unknown>): boolean {
+  const template = String(first(source, ['smt', 'call_summary_template', 'callSummaryTemplate', 'summary_template', 'summaryTemplate']) ?? '')
+  const users = object(first(source, ['ssu', 'summary_speaker_user_ids', 'call_summary_speaker_user_ids']))
+  const labels = object(first(source, ['ssl', 'summary_speaker_labels', 'call_summary_speaker_labels']))
+  return [...template.matchAll(/\{\{speaker:([^{}]+)\}\}/g)].some(([token, key]) => {
+    if (Number(users[token] ?? users[key!]) > 0) return false
+    const label = labels[token] ?? labels[key!]
+    return typeof label !== 'string' || !label.trim() || /方说话人(?:[A-Z]|\d+|\?)$/.test(label.trim())
+  })
+}
+
+/** Viewer-specific summary templates, resolved on the host before projection. */
 export function renderCallRecordSummary(source: Record<string, unknown>, viewerUserId: number, displayNames: ReadonlyMap<number, string> = new Map()): string {
   const fallback = String(first(source, ['sm', 'call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']) ?? '').trim()
   const template = String(first(source, ['smt', 'call_summary_template', 'callSummaryTemplate', 'summary_template', 'summaryTemplate']) ?? '').trim()
   const labels = object(first(source, ['ssl', 'summary_speaker_labels', 'call_summary_speaker_labels']))
   const users = object(first(source, ['ssu', 'summary_speaker_user_ids', 'call_summary_speaker_user_ids']))
+  const participantRoles = callSummaryParticipantRoles(source, template, labels, users)
   const rendered = template.replace(/\{\{(user|speaker):([^{}]+)\}\}/g, (token: string, kind: string, key: string) => {
-    const userId = Number(kind === 'user' ? key : users[token] ?? users[key])
-    if (userId > 0 && userId === viewerUserId) return '我'
+    const userId = Number(kind === 'user' ? key : users[token] ?? users[key] ?? participantRoles.get(token))
+    if (userId > 0 && userId === viewerUserId) return '你'
     const name = displayNames.get(userId)
     if (name?.trim()) return name.trim()
     const label = kind === 'speaker' ? labels[token] ?? labels[key] : undefined
