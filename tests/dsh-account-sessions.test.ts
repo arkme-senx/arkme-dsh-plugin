@@ -1,3 +1,4 @@
+import type { LocalAliasReader } from '../src/dsh-remote/local-history-coverage.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import { ArkmeSdk } from '../src/sdk/index.js'
 import { accountSessionTools } from '../src/dsh-remote/account-session-tools.js'
 import { ArkmePluginError } from '../src/arkme-service.js'
 
-function fixture(online = true, historyCache?: DshNativeHistoryCache) {
+function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader, registering = false) {
   let receive: Parameters<DshRemoteRealtimeTransport['subscribe']>[0]['onEvent'] | undefined
   const metadata: DshRemoteTrustedEventMetadata = { senderRole: 'host', runtimeRef: 'runtime-remote', acceptedAtMillis: Date.now(), targetHostLeaseGeneration: 8 }
   const transport: DshRemoteRealtimeTransport = {
@@ -33,12 +34,13 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache) {
   }
   const post = vi.fn(async (path: string) => {
     if (path.endsWith('/desktops/list')) return { desktops: [{ desktop: { desktop_ref: 'desktop-remote', display_name: '旧电脑' }, runtimes: [{ runtime: { runtime_ref: 'runtime-remote', profile_ref: 'default', host_client_ref: 'secret-routing-client', host_generation: 3, capabilities: ['session.native', 'session.native.history'] }, presence: { presence: online ? 'online' : 'offline', lease_generation: online ? 8 : 0 } }] }] }
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime-remote', session_ref: 'same-session', title: '云端会话', source_updated_at: 1, projection_as_of_seq: -1 }
     if (path.endsWith('/sessions/account-list')) return { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', workspace_ref: '', title: '云端会话', source_updated_at: 1 }], next_cursor: { updated_at: 1, session_ref: 'same-session', runtime_ref: 'runtime-remote' } }
     if (path.endsWith('/session-turns/list')) return { items: [{ nodes: [{ node_ref: 'message:1', kind: 'user', anchor_seq: 1, ordinal: 0, data: { content: [{ type: 'text', text: '历史正文' }] } }] }], complete: true }
     throw new Error(path)
   })
   const requireAccount = vi.fn(async () => '3016')
-  const directory = new DshAccountSessions({ request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, runtimeRef: 'runtime-local', hostGeneration: 1, capabilities: [], revision: 1 }) })
+  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, ...(!registering ? { runtimeRef: 'runtime-local' } : {}), hostGeneration: 1, capabilities: [], revision: 1 }) })
   return { directory, post, transport, requireAccount, emit: (payload: Record<string, unknown>, overrides: Partial<DshRemoteTrustedEventMetadata> = {}) => receive?.(payload, { ...metadata, ...overrides }) }
 }
 
@@ -223,7 +225,7 @@ it('hydrates a warm native opening from SQLite, serves cached pages without a re
 it('bootstraps an offline account instance, admits an empty history, blocks writes and reconnects to a restored source', async () => {
   const f = fixture(false), post = f.post.getMockImplementation()!
   f.post.mockImplementation(async path => path.endsWith('/sessions/list') ? { items: [{ session_ref: 'same-session', title: '空会话', source_updated_at: 1 }] } as never
-    : path.endsWith('/session-events/list') ? { entries: [] } as never
+    : path.endsWith('/session-events/list') ? { entries: [], complete: true } as never
     : path.endsWith('/session-turn-objects/list') ? { items: [] } as never : post(path))
   const native = (body: object) => f.directory.native({ runtimeRef: 'runtime-remote', requestRef: 'request-test', body })
   const events = { mode: 'pull', streamRef: 'events', endpoint: '$events', payload: { args: {} } }
@@ -260,5 +262,49 @@ it('resolves workspace names with at most four concurrent source reads', async (
   pending.splice(0).forEach(resolve => resolve())
   expect((await result).items.map(row => row.workspaceName)).toEqual(sources.map(() => 'repo'))
   expect(peak).toBe(4)
+  f.directory.close()
+})
+
+
+it('shares verified source selection through Host HTTP, SDK and registered DSH Tool without exposing message hashes', async () => {
+  const hash = 'a'.repeat(64)
+  const f = fixture(false, undefined, { summaries: async () => new Map([['same-session', { updatedAt: 42, projectionAsOfSeq: -1, running: false }]]) })
+  const base = f.post.getMockImplementation()!
+  f.post.mockImplementation(async path => path.endsWith('/sessions/account-list') ? { items: [{ runtime_ref: 'runtime-remote', session_ref: 'same-session', source_updated_at: 1, history_revision: 'h', content_revision: 'c', deduplicated_runtime_refs: ['runtime-local'], readable_runtime_refs: ['runtime-local'], canonical_identity: true }] } as never
+    : base(path))
+  const ctx = new Context(), options = { expectedPort: 0, allowNonLoopback: false, accountSessions: () => f.directory }
+  const server = createServer(createArkmeHostApi({} as never, options)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('no address')
+  options.expectedPort = address.port
+  const sdk = new ArkmeSdk({ fetchImpl: (path, init) => fetch(new URL(String(path), `http://127.0.0.1:${address.port}`), init) })
+  try {
+    await f.directory.list()
+    await vi.waitFor(async () => expect((await f.directory.list()).items[0]?.coveredLocalHistory?.source).toBe('local'))
+    const expected = await sdk.listDshAccountSessions()
+    await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
+    for (const tool of accountSessionTools(f.directory)) ctx.tools.register(tool)
+    const session = ctx.sessions.create()
+    const result = await ctx.tools.execute({ callId: CallId('proof-tool'), name: 'arkme_dsh_sessions', arguments: {}, agent: { id: session.id, session } as never, signal: new AbortController().signal })
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(String(result.value))).toEqual(expected)
+    expect(JSON.stringify(expected)).not.toContain(hash)
+    expect(f.post.mock.calls.some(([path]) => path.includes('/sessions/metadata') || path.includes('session-events') || path.includes('session-turn'))).toBe(false)
+  } finally { f.directory.close(); await ctx.fiber.dispose(); server.closeAllConnections(); server.close(); await once(server, 'close') }
+})
+
+
+it('annotates owned canonical identities while local Host registration is pending', async () => {
+  const summaries = vi.fn(async () => new Map([['same-session', { updatedAt: 1, running: false }]]))
+  const f = fixture(false, undefined, { summaries }, true)
+  const original = f.post.getMockImplementation()!
+  f.post.mockImplementation(async (...args) => {
+    const result = await original(...args)
+    return args[0].endsWith('/sessions/account-list') ? { ...result, items: (result.items as Array<Record<string, unknown>>).map(row => ({ ...row, canonical_identity: true })) } : result
+  })
+  const page = await f.directory.list()
+  expect(page.localRuntimeRef).toBeUndefined()
+  expect(page.items[0]?.coveredLocalHistory).toEqual({ updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' })
+  expect(summaries).toHaveBeenCalledOnce()
+  expect(f.transport.connect).not.toHaveBeenCalled()
   f.directory.close()
 })

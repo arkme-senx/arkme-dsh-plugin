@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeWideConversation, WIDE_CONVERSATION_WIDTH_KEY } from '../src/client/ArkmeWideConversation.js'
 import { loadHarnessConversationLayout } from '../src/client/harness-conversation-layout.js'
+import { followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
 
 vi.mock('../src/client/harness-conversation-layout.js', () => ({ loadHarnessConversationLayout: vi.fn() }))
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear() })
@@ -26,7 +27,7 @@ describe('wide conversation responsive lifecycle', () => {
         const width = props.onStart() - 100
         props.onDrag(width); props.onCommit(width); props.onEnd()
       }} />,
-      TurnNavigator: () => null,
+      TurnNavigator: props => <button data-test-rail onClick={() => props.onNavigate(props.items[0]!)} />,
     })
     const host = document.createElement('div'); document.body.append(host)
     const root = createRoot(host)
@@ -43,6 +44,12 @@ describe('wide conversation responsive lifecycle', () => {
       expect(shell.style.zIndex).toBe('0')
       expect(host.querySelector<HTMLElement>('[data-arkme-native-turn-rail]')?.style.zIndex).toBe('9')
       expect(host.querySelectorAll('[data-width-handle]')).toHaveLength(2)
+      ref.current!.scrollTo = vi.fn()
+      followConversationBottom(ref.current!)
+      expect(isConversationFollowing(ref.current!)).toBe(true)
+      await act(async () => (host.querySelector('[data-test-rail]') as HTMLElement).click())
+      expect(isConversationFollowing(ref.current!)).toBe(false)
+      expect(ref.current!.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'instant' }))
       await act(async () => (host.querySelector('[data-width-handle]') as HTMLElement).click())
       expect(localStorage.getItem(WIDE_CONVERSATION_WIDTH_KEY)).toBe('668')
       expect(shell.style.getPropertyValue('--dsh-chat-user-width')).toBe('668px')

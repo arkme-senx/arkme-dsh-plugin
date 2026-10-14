@@ -28,5 +28,7 @@ describe('private interaction Host operations', () => {
       limit: 199, cursor: ' cursor ', expectedVersion: 'b'.repeat(64), unreadOnly: true, userId: 999,
     }, undefined, undefined, undefined, undefined, signal)
     expect(service.privateInteractionDirectory).toHaveBeenCalledWith({ limit: 100, cursor: 'cursor', expectedVersion: 'b'.repeat(64), signal })
+    await dispatchArkmeHostOperation(service, 'private-interaction.directory', { background: true })
+    expect(service.privateInteractionDirectory).toHaveBeenLastCalledWith({ limit: 100, background: true })
   })
 })

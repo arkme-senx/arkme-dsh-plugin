@@ -9,6 +9,13 @@ export class ReactionNotifications {
  private controller = new AbortController()
  private listeners = new Set<() => void>()
  private rows: ReactionNotification[] = []
+ private historyRows: ReactionNotification[] = []
+ private historyInflight: Promise<void> | undefined
+ private historyUsers = 0
+ private ackGeneration = 0
+ private historyRefreshAgain = false
+ private historyRefreshedAt = 0
+ historyError = ''
  private version = 0
  private inflight: Promise<void> | undefined
  private highlightRevision = 0
@@ -28,6 +35,49 @@ export class ReactionNotifications {
  private publish() { this.version++; for (const fn of this.listeners) fn() }
  forSource(scope: string | undefined, sourceKey: string | undefined) { return scope === this.scope && sourceKey ? this.rows.filter(row => row.sourceKey === sourceKey) : [] }
  forAccount(scope: string | undefined) { return scope === this.scope ? [...this.rows] : [] }
+ forHistory(scope: string | undefined) { return scope === this.scope ? [...this.historyRows] : [] }
+ acquireHistory(scope: string) {
+  const release = this.acquire(scope)
+  this.historyUsers++
+  void this.refreshHistory()
+  return () => { if (scope === this.scope) this.historyUsers--; release() }
+ }
+ async refreshHistory(): Promise<void> {
+  if (this.historyInflight) { this.historyRefreshAgain = true; return this.historyInflight }
+  if (!this.scope || this.controller.signal.aborted) return
+  const scope = this.scope, signal = this.controller.signal, generation = this.ackGeneration
+  this.historyRefreshAgain = false
+  this.historyRefreshedAt = Date.now()
+  const operation = (async () => {
+   try {
+    const rows: ReactionNotification[] = [], cursors = new Set([''])
+    let cursor = ''
+    do {
+     const page = await this.transport({ action: 'notifications', accountKey: scope, after_id: cursor, limit: 50, include_read: true }, signal) as ReactionNotificationPage
+     if (signal.aborted) return
+     rows.push(...page.items)
+     if (!page.has_more) break
+     if (!page.after_id || cursors.has(page.after_id)) throw new Error('表态通知加载不完整')
+     cursors.add(page.after_id)
+     cursor = page.after_id
+    } while (true)
+    if (signal.aborted) return
+    if (generation !== this.ackGeneration) { this.historyRefreshAgain = true; return }
+    // ACKs completed during a read must not restore the old unread marker.
+    this.historyRows = rows.map(row => (this.acknowledged.get(row.id) ?? 0) >= row.revision ? { ...row, unread: false } : row)
+    this.historyError = ''; this.publish()
+   } catch {
+    if (!signal.aborted) { this.historyError = '表态通知暂时无法加载，请重试'; this.publish() }
+   }
+  })()
+  this.historyInflight = operation
+  try { await operation } finally {
+   if (!signal.aborted) {
+    this.historyInflight = undefined
+    if (this.historyRefreshAgain) await this.refreshHistory()
+   }
+  }
+ }
  beginViewing(sourceKey: string, itemUid: string) {
   clearTimeout(this.highlightTimer); this.highlightTimer = undefined
   this.highlight = { revision: ++this.highlightRevision, sourceKey, itemUid, rows: this.rows.filter(row => row.sourceKey === sourceKey && row.itemUid === itemUid), active: false }
@@ -60,13 +110,13 @@ export class ReactionNotifications {
   return scope === this.scope && this.viewing.get(item.id) === item.revision
  }
  acquire(scope: string) {
-  if (this.scope !== scope || this.controller.signal.aborted) { this.stop(); this.scope = scope; this.controller = new AbortController(); this.rows = []; this.reading.clear(); this.viewing.clear(); this.acknowledged.clear(); this.error = ''; this.publish() }
+  if (this.scope !== scope || this.controller.signal.aborted) { this.stop(); this.scope = scope; this.controller = new AbortController(); this.rows = []; this.historyRows = []; this.historyRefreshedAt = 0; this.historyError = ''; this.reading.clear(); this.viewing.clear(); this.acknowledged.clear(); this.error = ''; this.publish() }
   this.users++
   if (this.users === 1 && typeof document !== 'undefined') { document.addEventListener('visibilitychange', this.visibility); this.visibility() }
   return () => { if (this.scope === scope && --this.users === 0) this.stop() }
  }
- private stop() { clearTimeout(this.highlightTimer); this.highlight = undefined; this.viewing.clear(); clearTimeout(this.timer); this.controller.abort(); this.inflight = undefined; this.users = 0; if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.visibility) }
- private visibility = () => { clearTimeout(this.timer); if (document.hidden) return; void this.refresh() }
+ private stop() { clearTimeout(this.highlightTimer); this.highlight = undefined; this.viewing.clear(); clearTimeout(this.timer); this.controller.abort(); this.inflight = undefined; this.historyInflight = undefined; this.historyRefreshAgain = false; this.historyUsers = 0; this.users = 0; if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.visibility) }
+ private visibility = () => { clearTimeout(this.timer); if (document.hidden) return; void this.refresh(); if (this.historyUsers) void this.refreshHistory() }
  async refresh(): Promise<void> {
   if (this.inflight) return this.inflight
   if (!this.scope || this.controller.signal.aborted) return
@@ -95,14 +145,14 @@ export class ReactionNotifications {
     if (signal.aborted) return
     next = next.filter(row => (this.acknowledged.get(row.id) ?? 0) < row.revision)
     const changed = this.error !== '' || this.hasMore !== hasMore || JSON.stringify(this.rows) !== JSON.stringify(next)
-    this.rows = next; this.hasMore = hasMore; this.error = ''; this.retryMillis = 2_000; if (changed) this.publish()
+    this.rows = next; this.hasMore = hasMore; this.error = ''; this.retryMillis = 2_000; if (changed) { this.publish(); if (this.historyUsers) void this.refreshHistory() }
    } catch (error) {
     if (!signal.aborted) { this.rows = []; this.error = error instanceof Error ? error.message : '表态提醒暂时无法加载'; this.retryMillis = Math.min(120_000, this.retryMillis * 2); this.publish() }
    }
   })()
   this.inflight = operation
   try { await operation } finally {
-   if (!signal.aborted) { this.inflight = undefined; if (this.users && typeof document !== 'undefined' && !document.hidden) this.timer = setTimeout(() => { void this.refresh() }, this.retryMillis) }
+   if (!signal.aborted) { this.inflight = undefined; if (this.users && typeof document !== 'undefined' && !document.hidden) this.timer = setTimeout(() => { void this.refresh(); if (this.historyUsers && Date.now() - this.historyRefreshedAt >= 30_000) void this.refreshHistory() }, this.retryMillis) }
   }
  }
  async seen(scope: string, items: readonly ReactionNotification[]) {
@@ -114,7 +164,9 @@ export class ReactionNotifications {
   try {
    await this.transport({ action: 'notifications-read', accountKey: scope, items: batch.map(({ id, revision }) => ({ id, revision })) }, signal)
    if (signal.aborted) return
-   for (const item of batch) { if (this.viewing.get(item.id) === item.revision) this.viewing.delete(item.id); this.acknowledged.set(item.id, item.revision); if (this.acknowledged.size > 200) this.acknowledged.delete(this.acknowledged.keys().next().value!) }
+   this.ackGeneration++
+   for (const item of batch) { if (this.viewing.get(item.id) === item.revision) this.viewing.delete(item.id); this.acknowledged.set(item.id, Math.max(this.acknowledged.get(item.id) ?? 0, item.revision)); if (this.acknowledged.size > 200) this.acknowledged.delete(this.acknowledged.keys().next().value!) }
+   this.historyRows = this.historyRows.map(row => batch.some(read => read.id === row.id && read.revision >= row.revision) ? { ...row, unread: false } : row)
    this.rows = this.rows.filter(row => !batch.some(read => read.id === row.id && read.revision >= row.revision)); this.publish()
   } catch { /* Keep unread on failure. The next foreground poll permits another visible acknowledgement. */ }
   finally { if (!signal.aborted) for (const item of batch) this.reading.delete(item.id) }

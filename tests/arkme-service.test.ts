@@ -211,6 +211,23 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('routes directory refreshes separately from authoritative timeline invalidations', () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), vi.fn())
+    const internal = service as any
+    vi.spyOn(internal.directory, 'accept').mockResolvedValue(undefined)
+    const arrival = vi.spyOn(internal.unifiedTimeline, 'refreshHint').mockResolvedValue(undefined)
+    const revoke = vi.spyOn(internal.unifiedTimeline, 'invalidate').mockResolvedValue(undefined)
+    try {
+      internal.realtime.emitChatClientEvent({type:'sessions-delta',revision:1,updates:[{sourceKey:'chat',source:{},timelineItems:[]}]})
+      expect(arrival).toHaveBeenCalledExactlyOnceWith('chat')
+      expect(revoke).not.toHaveBeenCalled()
+      internal.realtime.emitChatClientEvent({type:'timeline-changed',revision:2,sourceKey:'chat',timelineItemKey:'relation',changeKind:'deleted',relationTerminal:true})
+      expect(revoke).toHaveBeenCalledWith('chat','relation',true)
+      internal.realtime.emitChatClientEvent({type:'members-invalidated',revision:3,sourceKey:'chat'})
+      expect(revoke).toHaveBeenCalledWith('chat')
+    } finally { service.dispose() }
+  })
+
   it('reads revision snapshots through signed chat references and rejects mismatched account/source before HTTP', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -3068,7 +3085,7 @@ describe('ArkmeService', () => {
     const clientEvents: unknown[] = []
     service.subscribeChatRealtime(event => { clientEvents.push(event) })
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
-      effectiveReadSequence: 8, unreadCount: 0,
+      effectiveReadSequence: 8, unreadCount: 0, latestSequence: 8,
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
       .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
@@ -3078,6 +3095,7 @@ describe('ArkmeService', () => {
       sourceKey: privateSourceKey,
       effectiveReadSequence: 8,
       unreadCount: 0,
+      latestSequence: 8,
     })
     const groupRef = sources.items[1]!.sourceRef
     await expect(service.listGroupBots(groupRef)).resolves.toMatchObject({ displayName: '项目群', items: [] })

@@ -431,7 +431,7 @@ describe('ArkmeCallSurface interactions', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => {
-      renderer = create(<ArkmeCallSurface />, { createNodeMock: element => element.type === 'ul'
+      renderer = create(<ArkmeCallSurface />, { createNodeMock: element => element.props['aria-label'] === '通话记录列表'
         ? { scrollHeight: 100, clientHeight: 300 } : null })
       await tick()
       await tick()

@@ -21,7 +21,7 @@ import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
 import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
 import { TeamAppService } from './services/team-app-service.js'
 import type { TeamAppOperation } from './team-app-contract.js'
-import { stringValue } from './services/service.js'
+import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
@@ -35,6 +35,7 @@ import type { RecordOwnerId } from './record-owner-id.js'
 import { RecordDeletionService } from './services/record-deletion-service.js'
 import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
 import { isRecentEmojiId } from './emoji-recent.js'
+import { normalizeConversationViewports } from './conversation-viewport-state.js'
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import { LocalRecordingDirectorySource } from './recording-directory-source.js'
@@ -593,6 +594,13 @@ export class ArkmeService {
       this.callHistory,
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.realtime.subscribeChatRealtime(event => {
+      if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
+      else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
+      else if (event.type === 'sessions-delta') for (const update of event.updates) {
+        if (update.sourceKey) void this.unifiedTimeline.refreshHint(update.sourceKey)
+      }
+    })
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
     this.botConversation = new BotConversationService(
@@ -972,6 +980,7 @@ export class ArkmeService {
         recordingWorkflowV2: true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
+        durableChatTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
@@ -1495,7 +1504,7 @@ export class ArkmeService {
     return await this.interwoven.queryPrivateInteractions(options)
   }
   /** @internal Built-in conversation directory; never creates a private chat. */
-  async privateInteractionDirectory(options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal'> = {}) {
+  async privateInteractionDirectory(options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal' | 'background'> = {}) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.interwoven.privateInteractionDirectory(options)
     const visibility = await this.conversationDirectoryVisibility.query(page.items.map(item => item.sourceRef), [], options.signal)
@@ -1973,14 +1982,15 @@ export class ArkmeService {
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> {
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
+      this.realtime.preferChatProjection(session.userId, source.ownerRef)
       return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal), session.userId)
+      }, options.signal, options.background === true), session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
@@ -2113,6 +2123,21 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  async conversationViewports(accountKey: string, surface: string, entries?: unknown, signal?: AbortSignal): Promise<import('./conversation-viewport-state.js').ConversationViewportEntries> {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (accountKey !== `${this.config.environment}:${userId}`) throw new ArkmePluginError('viewport-account-changed', '账号已变化，请重新打开对话', false, 409)
+    if (!surface || surface.length > 2048) throw new ArkmePluginError('viewport-scope-invalid', '阅读位置窗口无效', false, 400)
+    if (!this.stateStore.readConversationViewports || !this.stateStore.writeConversationViewports) throw new ArkmePluginError('viewport-storage-unavailable', '本地阅读位置存储暂不可用', true, 503)
+    if (entries !== undefined) {
+      signal?.throwIfAborted()
+      await this.stateStore.writeConversationViewports(accountKey, surface, normalizeConversationViewports(entries))
+      return []
+    }
+    return await this.stateStore.readConversationViewports(accountKey, surface)
+  }
+
   private async requireRecentEmojiAccount(accountKey: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()
@@ -2632,7 +2657,7 @@ export class ArkmeService {
   }
 
   async calendarChatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     return await this.calendar.chatStatistics(options)
   }
@@ -2683,6 +2708,36 @@ export class ArkmeService {
 
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
     return await this.arrangement.reorderArrangement(input, signal)
+  }
+
+  async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceTarget> {
+    const session = await this.runtime.requireSession()
+    const e = await this.arrangement.sourceEvidence(arrangementRef, evidenceId, signal)
+    let result: import('./types.js').ArkmeArrangementSourceTarget
+    if (e.kind === 'audio_summary' && typeof e.summary_id === 'string' && typeof e.date_stamp === 'number' && typeof e.tz_offset === 'number') {
+      // Re-read the owned day before opening a historical version.
+      const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/list-timeline-by-range', { from_stamp:e.date_stamp, to_stamp:e.date_stamp+86400000, date_stamp:e.date_stamp, kind:2 }, session, signal, { lane:'interactive-read', bypassCache:true })
+      if (!Array.isArray(data.audio_summary_ls) || !data.audio_summary_ls.some(s => objectValue(s).id === e.summary_id)) throw new ArkmePluginError('arrangement-source-deleted', '原录音总结已删除或当前无权查看', false, 404)
+      result = { kind:'audio_summary', dateStamp:e.date_stamp, tzOffsetMillis:e.tz_offset, summaryId:e.summary_id }
+    } else if (e.kind === 'call' && typeof e.room_id === 'string') {
+      const detail = await this.callHistory.arrangementCallDetail(e.room_id, signal, {quote:e.text,...(typeof e.start_ms === 'number'?{startMillis:e.start_ms}:{})})
+      result = { kind:'call', detail, quote:e.text, ...(typeof e.start_ms === 'number' ? {startMillis:e.start_ms>=100_000_000_000?Math.max(0,e.start_ms-detail.startedAtMillis):e.start_ms}: {}) }
+    } else if (e.kind === 'agent') {
+      result={kind:'document',title:'来源指令',text:await this.arrangement.sourceDocument(arrangementRef,evidenceId,signal)}
+    } else if (e.kind === 'record' && typeof e.record_uid === 'string') {
+      const raw = await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail', {record_uid:e.record_uid},session,signal,{lane:'interactive-read',bypassCache:true})
+      const core = objectValue(raw.record_core)
+      if (core.record_uid !== e.record_uid || Number(core.content_access_state ?? raw.content_access_state) !== 1 || Number(core.status) !== 1 || (await this.privacy.lockedRecordUids(session,signal)).has(e.record_uid)) throw new ArkmePluginError('arrangement-source-restricted','原文已删除或当前无权查看',false,403)
+      const origin = Number(core.origin_kind)
+      if ([3,4].includes(origin)) {
+        const source = await this.source.searchTargetSource(3,stringValue(core.origin_container_ref),'',signal)
+        if (!source) throw new ArkmePluginError('arrangement-source-missing','当前无法打开原会话',false,404)
+        result = {kind:'conversation',source,itemUid:e.record_uid,sendAtMillis:Number(core.send_at)||0}
+      } else result = {kind:'record',item:await this.record.personalRecordDetail(e.record_uid,signal)}
+    } else throw new ArkmePluginError('arrangement-source-unavailable','历史记录未保存可用的定位信息',false,404)
+    const current=await this.runtime.requireSession()
+    if(current.userId!==session.userId || current.refreshToken!==session.refreshToken) throw new ArkmePluginError('arrangement-source-account-changed','账号已变化，请重新打开',false,409)
+    return result
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {

@@ -21,9 +21,10 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, del
   let queued = false
   let queuedPriority: ReadPriority = 'background'
   let retryBudget = 1
+  let waitForQuiet = false
   const schedule = () => {
     if (disposed || active !== undefined || timer !== undefined) return
-    timer = setTimeout(() => { timer = undefined; void run(queuedPriority) }, delay)
+    timer = setTimeout(() => { timer = undefined; void run(queuedPriority) }, waitForQuiet ? Math.max(delay, 5000) : delay)
   }
   const invalidate = () => {
     if (disposed) return
@@ -31,6 +32,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, del
     queued = true
     if (active?.priority === 'foreground') queuedPriority = 'foreground'
     retryBudget = 1
+    if (waitForQuiet && timer !== undefined) { clearTimeout(timer); timer = undefined }
     schedule()
   }
   const run = async (priority: ReadPriority) => {
@@ -39,6 +41,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, del
     const { signal } = request.controller
     queued = false
     queuedPriority = 'background'
+    waitForQuiet = false
     const requestRevision = revision
     const current = () => !disposed && !signal.aborted && active === request && requestRevision === revision
     const rows = new Map<string, ArkmeSourceItem>()
@@ -60,8 +63,19 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, del
         visited.add(cursor)
       }
     } catch (error) {
-      if (!current()) return
+      if (disposed || signal.aborted || active !== request) return
       const message = error instanceof Error ? error.message : ''
+      if (/version|状态已变化/iu.test(message) && requestRevision !== revision) {
+        // The server could not produce a stable snapshot while read state changed.
+        // Retain one dirty intent and one trailing timer, instead of retrying an
+        // expensive query throughout the same burst. Read acknowledgements can
+        // arrive seconds apart, so allow 5s quiet. Explicit retry bypasses this.
+        waitForQuiet = true
+        queued = true; queuedPriority = priority
+        publish([], '群互动同步暂未完成，点击重试')
+        return
+      }
+      if (!current()) return
       if (/version|状态已变化/iu.test(message)) {
         if (retryBudget-- > 0) { queued = true; queuedPriority = priority }
         else if (rows.size > 0) {
@@ -92,6 +106,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, del
       if (disposed || active?.priority === 'foreground') return
       revision++
       retryBudget = 1
+      waitForQuiet = false
       if (timer !== undefined) { clearTimeout(timer); timer = undefined }
       active?.controller.abort()
       void run('foreground')
@@ -116,6 +131,7 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
     setSnapshot({ accountKey, rows: [] })
     const watcher = watchPrivateInteractionDirectory({
       read: async (cursor, version, signal, priority) => await callArkme<ArkmePrivateInteractionDirectoryPage>('private-interaction.directory', {
+        ...(priority === 'background' ? { background: true } : {}),
         limit: 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
       }, signal, priority === 'background' ? { priority } : undefined),
       subscribe: listener => arkmeInterwovenInvalidation.subscribe(listener),
