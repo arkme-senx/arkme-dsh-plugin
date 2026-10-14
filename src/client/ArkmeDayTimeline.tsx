@@ -9,6 +9,7 @@ import { ArkmeDayRecap, DayRecordingReview } from './ArkmeDayRecap.js'
 import type { DayRecapGenerator } from './day-recap-input.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { Info } from '@phosphor-icons/react/dist/icons/Info'
 import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
 import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -142,14 +143,22 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
 
   return <section ref={root} className="arkme-day-timeline" aria-label={tr("我的一天")}>
     <header className="arkme-day-heading">
-      <div><h2>{tr("我的一天")}</h2><p>{query.bucketDate}<ArkmeCalendarLunarDate date={query.bucketDate} /> · {query.timezone}</p></div>
+      <div className="arkme-day-heading-label">
+        <div className="arkme-day-heading-title"><h2>{tr("我的一天")}</h2>
+          {!arrangementsActive && data.page && <DayActivityScopeInfo incomplete={incomplete}>
+            {reader?.capabilities && <p>{reader.capabilities.notice}</p>}
+            {data.page.notice && <p>{data.page.notice}</p>}
+            {incomplete && <p>{tr("当前仅显示部分来源。")}{missing.length > 0
+              ? tr('{v0}尚未完整覆盖；有更多页面时可继续加载。', { v0: missing.map(kind => tr(dayActivityLabels[kind])).join('、') })
+              : tr('部分数据尚未完整同步。')}</p>}
+            <p>{tr("概览只统计当前筛选下已加载、可查看的内容，不是全天总量。")}</p>
+          </DayActivityScopeInfo>}
+        </div>
+        <p>{query.bucketDate}<ArkmeCalendarLunarDate date={query.bucketDate} /> · {query.timezone}</p>
+      </div>
       <div className="arkme-day-heading-actions">
         {onAddArrangement && <button type="button" className="arkme-day-source" onClick={onAddArrangement}><Plus size={15} aria-hidden /> {tr('添加安排')}</button>}
         {onOpenLocations && <button type="button" className="arkme-day-source" onClick={() => onOpenLocations()}><MapPin size={15} aria-hidden /> {tr("当天位置")}</button>}
-        {!arrangementsActive && (!reader?.capabilities || reader.capabilities.modes.length > 1) && <div className="arkme-day-modes" aria-label={tr("显示方式")}>
-          <button type="button" aria-pressed={query.mode === 'activities'} onClick={() => change({ mode: 'activities' })}>{tr("活动片段")}</button>
-          <button type="button" aria-pressed={query.mode === 'records'} onClick={() => change({ mode: 'records', includeBackground: true })}>{tr("原始明细")}</button>
-        </div>}
       </div>
     </header>
 
@@ -158,12 +167,6 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
     {!arrangementsActive && reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
     {!arrangementsActive && data.page && <>
       <p className="arkme-day-overview">{!arrangementsActive && reactionData.busy && !items.length && !visibleReactions.length ? '正在加载当天活动…' : dayActivityOverview(items, query.mode, visibleReactions.length)}</p>
-      <details className="arkme-day-scope-details"><summary>{incomplete ? '部分来源已加载' : '当前来源已加载'} <span>{tr("查看范围")}</span></summary>
-        {reader?.capabilities && <p>{reader.capabilities.notice}</p>}
-        {data.page.notice && <p>{data.page.notice}</p>}
-        {incomplete && <p>{tr("当前仅显示部分来源。")}{missing.length > 0 ? `${missing.map(kind => dayActivityLabels[kind]).join('、')}尚未完整覆盖；有更多页面时可继续加载。` : '部分数据尚未完整同步。'}</p>}
-        <p>{tr("概览只统计当前筛选下已加载、可查看的内容，不是全天总量。")}</p>
-      </details>
       <RecordingCoverage page={data.page} />
     </>}
 
@@ -210,14 +213,14 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
                   onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(current => current === `reaction:${entry.index}` ? undefined : `reaction:${entry.index}`) }}>
                   <div className="arkme-day-entry-title">
                     <span className="arkme-day-identity-icon" aria-hidden><DayActivityAvatar item={{ kind: entry.event.sourceKind === 'group_chat' || entry.event.sourceKind === 'private_chat' ? entry.event.sourceKind : 'note', access: 'available', ...(entry.event.avatar ? { avatar: entry.event.avatar } : {}) }} /></span>
-                    <strong>{entry.event.sourceName || entry.event.source}</strong><span className="arkme-day-kind">表态</span></div>
+                    <strong>{entry.event.sourceName || entry.event.source}</strong><span className="arkme-day-kind">表态</span>
+                    <span className="arkme-day-entry-meta arkme-day-entry-heading-meta">
+                      <span className="arkme-day-expand">{selectedId === `reaction:${entry.index}` ? tr('收起') : tr('展开')}<CaretRight size={12} aria-hidden /></span>
+                    </span>
+                  </div>
                   <div className="arkme-day-excerpts"><p><span className="arkme-day-excerpt-author">我：</span><ReactionAction added={entry.event.added} label={entry.event.label} /></p>
                     <p><span className="arkme-day-excerpt-author">{entry.event.authorName || '原消息'}：</span><ArkmeRichText text={entry.event.text || (entry.event.restricted ? '原消息已不可访问' : '暂无文字内容')} presentation="preview" /></p>
                     </div>
-                  <div className="arkme-day-entry-meta">
-                    <span>{dayActivityTime(entry.at, query.timezone)}</span>
-                    <span className="arkme-day-expand">{selectedId === `reaction:${entry.index}` ? tr('收起') : tr('展开')}<CaretRight size={12} aria-hidden /></span>
-                  </div>
                 </button>
               </div>
             </article>
@@ -233,14 +236,12 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
             <div className="arkme-day-entry-title">
               <span className="arkme-day-identity-icon" aria-hidden><DayActivityAvatar item={item} /></span>
               <strong>{dayActivityTitle(item)}</strong><span className="arkme-day-kind">{tr(dayActivityLabels[item.kind])}</span>
-            </div>
-            {item.access === 'available' && <>
-              <DayActivityPreview item={item} />
-              <div className="arkme-day-entry-meta">
+              {item.access === 'available' && <span className="arkme-day-entry-meta arkme-day-entry-heading-meta">
                 <span>{dayActivityMetadata(item, query.timezone, data.page!.dayStartMillis, data.page!.dayEndMillis)}</span>
                 <span className="arkme-day-expand">{selected?.id === item.id ? tr('收起') : tr('展开')}<CaretRight size={12} aria-hidden /></span>
-              </div>
-            </>}
+              </span>}
+            </div>
+            {item.access === 'available' && <DayActivityPreview item={item} />}
           </button>
           {item.access === 'available' && hasLocationHint(item) && !(selected?.id === item.id && location.error) && <button type="button"
             className="arkme-day-location-tag" aria-label={tr("查看地点：{v0}", { v0: knownLocation(item)?.label || item.locationSummary?.label || '设备采集位置' })}
@@ -308,6 +309,28 @@ function ReactionAction({ added, label }: { added: boolean; label: string }) {
   return added ? <>表态「<ReactionLabel label={label} />」</> : <>取消表态<del className="arkme-reaction-cancelled">「<ReactionLabel label={label} />」</del></>
 }
 
+function DayActivityScopeInfo({ incomplete, children }: { incomplete: boolean; children: ReactNode }) {
+  const root = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const element = root.current
+    if (!element) return
+    const closeOutside = (event: PointerEvent) => {
+      if (element.open && event.target instanceof Node && !element.contains(event.target)) element.open = false
+    }
+    element.ownerDocument.addEventListener('pointerdown', closeOutside)
+    return () => element.ownerDocument.removeEventListener('pointerdown', closeOutside)
+  }, [])
+  const status = incomplete ? tr('部分来源已加载') : tr('当前来源已加载')
+  return <details ref={root} className="arkme-day-scope-info" onKeyDown={event => {
+    if (event.key !== 'Escape' || !root.current?.open) return
+    event.preventDefault(); event.stopPropagation(); root.current.open = false
+    root.current.querySelector('summary')?.focus({ preventScroll: true })
+  }}>
+    <summary aria-label={tr('查看范围')} title={`${status} · ${tr('查看范围')}`}><Info size={17} aria-hidden /></summary>
+    <div className="arkme-day-scope-panel"><strong>{status}</strong>{children}</div>
+  </details>
+}
+
 function DayActivityTimestamp({ at, timezone }: { at: number; timezone: string }) {
   return <time dateTime={new Date(at).toISOString()}>{dayActivityTime(at, timezone)}</time>
 }
@@ -373,7 +396,6 @@ function RecordingCoverage({ page }: { page: DayActivityPage }) {
       {speech.map((style, index) => <span key={index} className="arkme-day-speech" style={style} />)}
     </div>
     <div className="arkme-day-ticks"><span>{tr("当天开始")}</span><span>{tr("当天结束")}</span></div>
-    <div className="arkme-day-legend"><span><i />{coverage.state === 'partial' ? '范围待确认' : '无已知录音'}</span><span><i className="arkme-day-recorded" />{tr("已有录音")}</span><span><i className="arkme-day-speech" />{tr("已识别人声")}</span></div>
     {coverage.state === 'partial' && <p className="arkme-day-coverage-status">{tr("录音覆盖数据不完整，未覆盖区间不能断言为无录音。")}</p>}
     {known.length > 0 && speech.length === 0 && <p className="arkme-day-coverage-status">{tr("已有录音，暂无已识别人声信息；不代表静音。")}</p>}
   </section>

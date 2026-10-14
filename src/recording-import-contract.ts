@@ -1,4 +1,4 @@
-import type { RecordingImportBatch } from './recording-workflow-contract.js'
+import { recordingImportDeadline, RECORDING_IMPORT_RECOVERY_MILLIS, type RecordingImportBatch } from './recording-workflow-contract.js'
 import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
@@ -149,6 +149,7 @@ export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
+  createRequestUID?: string
   batch?: RecordingImportBatch
   jobId: string
   userId: number
@@ -343,4 +344,14 @@ export function toPublicRecordingImportJob(
     ...(job.errorMessage === undefined ? {} : { errorMessage: job.errorMessage }),
     ...(job.retryable === undefined ? {} : { retryable: job.retryable }),
   }
+}
+
+/** Applied before a new transfer/recovery attempt; already-uploaded finalization remains safe. */
+export function assertRecordingImportBatchActive(batch: RecordingImportBatch | undefined, now = Date.now()): void {
+  if (!batch) return
+  const deadline = recordingImportDeadline(batch.batchId)
+  if (deadline === undefined || deadline - RECORDING_IMPORT_RECOVERY_MILLIS > now + 300_000) {
+    throw new RecordingImportContractError('recording-import-batch-invalid', '导入批次无效，请检查设备时间后重新导入')
+  }
+  if (now >= deadline) throw new RecordingImportContractError('recording-import-expired', '本批次的 30 天续传期限已到；已有录音仍保留，请只重新导入未上传的文件')
 }

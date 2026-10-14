@@ -142,11 +142,10 @@ describe('day timeline integration boundary', () => {
     act(() => { button('前往原始来源').props.onClick() })
     expect(navigate).toHaveBeenCalledExactlyOnceWith('opaque-source')
   })
-  it('passes mode/filter choices to the adapter query instead of pretending loaded records are the whole day', async () => {
+  it('keeps the activity view and passes filter choices to the adapter query', async () => {
     const change = vi.fn(); const source = reader()
     await mount(source, query, vi.fn(), change)
-    act(() => { button('原始明细').props.onClick() })
-    expect(change).toHaveBeenLastCalledWith({ ...query, mode: 'records', includeBackground: true })
+    expect(button('原始明细')).toBeUndefined()
     act(() => { button('录音').props.onClick() })
     expect(change).toHaveBeenLastCalledWith({ ...query, kind: 'recording' })
     act(() => { button('对话').props.onClick() })

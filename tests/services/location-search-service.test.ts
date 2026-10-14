@@ -11,6 +11,14 @@ function setup(data: unknown, locked: string[] = []) {
   return { post, service: new SearchService(runtime, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set(locked) } as never) }
 }
 describe('location search mobile API contract', () => {
+  it('requests only one readable anchor when initializing an empty global map', async () => {
+    const { post, service } = setup({ items: [projection('anchor')], has_more: false })
+    const result = await service.searchLocations({ mode: 'list', limit: 1 }) as LocationRecords
+    expect(post.mock.calls[0]).toContainEqual({ limit: 1 })
+    expect(result.items).toHaveLength(1)
+    await expect(service.searchLocations({ mode: 'list', limit: 0 })).rejects.toThrow('位置查询范围无效')
+    await expect(service.searchLocations({ mode: 'list', limit: 21 })).rejects.toThrow('位置查询范围无效')
+  })
   it('hydrates thin owner projections and resolves a matching capture address without exposing protected records', async () => {
     const { post, service } = setup({})
     post.mockImplementation(async (path: string, body: any) => {
@@ -55,6 +63,8 @@ describe('location search mobile API contract', () => {
     expect(post.mock.calls[0]?.[0]).toBe('/api/v1/records/location/clusters/records/query')
     expect(post.mock.calls[0]).toContainEqual({bounds:{sw_lat:-85,sw_lon:-180,ne_lat:85,ne_lon:180},zoom:3,cluster_keys:['server-key'],offset:50,limit:20})
     expect(result.items[0]?.record).toMatchObject({sourceKind:3,sourceUid:'chat-uid',recordOwnerUserId:'6690025278483443577'})
+    await service.searchLocations({mode:'cluster',...worldLocationViewport,clusterKeys:['server-key'],limit:6})
+    expect(post.mock.calls.at(-1)).toContainEqual({bounds:{sw_lat:-85,sw_lon:-180,ne_lat:85,ne_lon:180},zoom:3,cluster_keys:['server-key'],offset:0,limit:6})
   })
   it.each([undefined, {mode:'other'}, {mode:'viewport'}, {mode:'viewport',...worldLocationViewport,zoom:NaN}, {mode:'cluster',...worldLocationViewport,clusterKeys:[]}, {mode:'list',bounds:{swLat:40,neLat:20,swLon:0,neLon:10}}])('rejects malformed requests before contacting the server: %j', async input => {
     const { post, service } = setup({})

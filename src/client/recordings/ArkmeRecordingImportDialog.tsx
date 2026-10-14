@@ -1,3 +1,4 @@
+import { recordingImportBatchID } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
@@ -642,7 +643,7 @@ export type RecordingImportButtonStatus = 'idle' | 'uploading' | 'finalizing' | 
 export function ArkmeRecordingImportTrigger({ onClick, status = 'idle', fullWidth = false }: { onClick(): void; status?: RecordingImportButtonStatus; fullWidth?: boolean }) {
   const busy = status === 'uploading' || status === 'finalizing'
   const label = status === 'uploading' ? '音频上传中' : status === 'finalizing' ? '正在完成导入' : status === 'failed' ? '导入失败，查看' : '导入历史音频'
-  return <button data-arkme-feedback="danger" type="button" data-arkme-recording-tour-target="import" data-arkme-recording-import-status={status} aria-live="polite"
+  return <button data-arkme-feedback={status === 'failed' ? 'danger' : 'neutral'} type="button" data-arkme-recording-tour-target="import" data-arkme-recording-import-status={status} aria-live="polite"
     title={status === 'idle' ? tr("导入历史音频") : tr("{v0}，点击查看导入任务", { v0: label })}
     style={{ ...styles.trigger, ...(fullWidth ? { width: '100%', gridColumn: '1 / -1' } : {}), outlineColor: desktop.secondary, ...(status === 'failed' ? { color: arkmeTheme.danger } : {}) }}
     onClick={onClick}>{busy ? <CircleNotch size={16} style={{ flexShrink: 0 }} className="arkme-icon-spin" aria-hidden /> : status === 'failed' ? <WarningCircle size={16} style={{ flexShrink: 0 }} aria-hidden /> : <UploadSimple size={16} style={{ flexShrink: 0 }} aria-hidden />}{label}</button>
@@ -986,10 +987,10 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     let batchId: string | undefined
     try {
       const capability = await callArkme<{ supported: boolean }>('recordings.workflow', { operation: 'capabilities' }, controller.signal)
-      if (capability?.supported === true) batchId = crypto.randomUUID()
+      if (capability?.supported === true) batchId = recordingImportBatchID()
     } catch { /* Upload remains usable when automatic follow-up is unavailable. */ }
     if (controller.signal.aborted) { finishSubmission(); return }
-    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
+    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。批次续传与自动整理期限为 30 天，通知保留 90 天；已有录音和整理结果不受影响。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
     const succeeded = new Set<string>()
     for (const [itemIndex, { row, start }] of prepared.entries()) {
       if (controller.signal.aborted) break

@@ -192,7 +192,8 @@ describe('Arkme redesign dark theme', () => {
   it('keeps the task start brand and control hierarchy readable in dark mode', () => {
     const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
 
-    expect(darkCss).toMatch(/\.arkme-redesign-task-greeting img \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/)
+    // Brand theme variants are owned by ArkmeJiwoBrandMark; do not invert Chinese dark assets twice.
+    expect(darkCss).not.toMatch(/\.arkme-redesign-task-greeting img \{[^}]*filter:/)
     expect(darkCss).toMatch(/\.arkme-redesign-hero-input \{[^}]*background: var\(--dsw-specific-input-major\) !important/)
     expect(darkCss).toMatch(/\.arkme-redesign-hero-input textarea \{[^}]*background: transparent !important/)
     for (const selector of [

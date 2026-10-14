@@ -1277,7 +1277,9 @@ export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentit
   speaker?: { speakerId: string; userId?: number; label: string; avatarRef?: string; colorIndex?: number }
 }
 
+export interface ArkmeRecordingWindow { dateStamp: number; endStamp: number; timeZone: string; date: string }
 export interface ArkmeRecordingTarget {
+  window?: ArkmeRecordingWindow
   revision?: number
   dateStamp: number
   startAtMillis: number
@@ -1457,6 +1459,7 @@ export interface ArkmeProviderCapabilities {
     remoteRecordSearch?: true
     contactDirectoryReads?: true
     speakerPresence?: true
+    recordingWorkflowV2?: true
     unifiedChatTimeline?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
@@ -3887,6 +3890,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.workflow'
   | 'recordings.speaker.options'
   | 'speaker-directory.summary'
   | 'speaker-directory.list'
@@ -4262,7 +4266,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
-  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.history'

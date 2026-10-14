@@ -16,6 +16,7 @@ import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import pluginManifest from '../../package.json' with { type: 'json' }
+import { useArkmeBrand } from './product-brand.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { ArkmeMembershipDialog } from './ArkmeMembershipDialog.js'
@@ -142,6 +143,7 @@ export function ArkmeProductNavigation({
   compact, hosted = false, taskExpanded = false, hidden = false, locked = false, currentSessionId,
 }: ArkmeProductNavigationProps) {
   useArkmeLocale()
+  const brand = useArkmeBrand()
   usePhoneBindingStatus()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -247,7 +249,7 @@ export function ArkmeProductNavigation({
   return <nav
       data-arkme-owned="product-navigation"
       data-arkme-window-drag-mode={windowDragMode}
-      aria-label={tr("Arkme 功能导航")}
+      aria-label={tr("Arkme 功能导航").replace('Arkme', brand.name)}
       aria-hidden={hidden ? true : undefined}
       style={{
         ...styles.rail,
@@ -258,11 +260,11 @@ export function ArkmeProductNavigation({
       }}
     >
       {!compact && <div data-arkme-owned="product-brand"
-        style={styles.brand} tabIndex={0} aria-label={`Arkme ${productVersion}`}
+        style={styles.brand} tabIndex={0} aria-label={`${brand.name} ${productVersion}`}
         aria-describedby={navigationHint.describedBy('brand')}
-        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`) }}
+        onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
         onMouseLeave={navigationHint.hide}
-        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `Arkme ${productVersion}`, true) }}
+        onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`, true) }}
         onBlur={navigationHint.hide}>
         <ArkmeJiwoBrandMark />
         <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>{productVersion}</span>
