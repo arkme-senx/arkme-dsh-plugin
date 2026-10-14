@@ -45,6 +45,7 @@ describe('recording import dialog behavior', () => {
     mocks.callArkme.mockReset().mockImplementation(async operation => {
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     mocks.uploadArkmeRecording.mockReset().mockResolvedValue({
@@ -109,6 +110,41 @@ describe('recording import dialog behavior', () => {
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
     expect(mocks.uploadArkmeRecording.mock.calls[0]![4].batch).toBeUndefined()
   })
+
+  it.each(['网络连接失败', '登录已过期，请重新登录', '服务暂时不可用'])(
+    'keeps selected files without uploading when capability discovery fails: %s', async message => {
+      let capabilityError = true
+      mocks.callArkme.mockImplementation(async operation => {
+        if (operation === 'recordings.import.list') return currentSnapshot()
+        if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+        if (operation === 'recordings.workflow') {
+          if (capabilityError) throw new Error(message)
+          return { supported: true }
+        }
+        throw new Error('unexpected')
+      })
+      const files = [new File(['a'], 'A.m4a', { type: 'audio/mp4' }), new File(['b'], 'B.m4a', { type: 'audio/mp4' })]
+      await choose(files)
+      await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+
+      expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+      expect(renderedText(renderer.root.findByProps({ role: 'alert' }))).toContain(message)
+      expect(renderedText(renderer.root.findByProps({ 'aria-label': '待导入录音' }))).toContain('A.m4a')
+      expect(renderedText(renderer.root.findByProps({ 'aria-label': '待导入录音' }))).toContain('B.m4a')
+      expect(button(renderer, '导入').props.disabled).toBeFalsy()
+      expect(renderedText(renderer.root)).not.toContain('录音仍可导入；完成通知与自动整理暂不可用。')
+
+      capabilityError = false
+      await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+
+      expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+      const uploads = mocks.uploadArkmeRecording.mock.calls
+      expect(uploads.map(call => call[1])).toEqual(files)
+      expect(uploads[0]![4].batch).toMatchObject({ batchId: expect.any(String), itemIndex: 0, itemCount: 2 })
+      expect(uploads[1]![4].batch).toMatchObject({ batchId: uploads[0]![4].batch.batchId, itemIndex: 1, itemCount: 2 })
+      expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    },
+  )
 
   it('matches the desktop modal chrome with the upload-dialog close control', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '关闭上传文件' })).toHaveLength(1)
@@ -314,6 +350,7 @@ describe('recording import dialog behavior', () => {
     let preflightCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.preflight') {
         preflightCalls += 1
         return { duplicateFileNames: preflightCalls === 1 ? ['A.m4a'] : [] }
@@ -1261,6 +1298,7 @@ describe('recording import dialog behavior', () => {
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
@@ -1367,6 +1405,7 @@ describe('recording import dialog behavior', () => {
     let listCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.list') {
         listCalls += 1
         if (listCalls === 1) return currentSnapshot()
