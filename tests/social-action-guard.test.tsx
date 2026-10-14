@@ -44,7 +44,7 @@ describe('browse without binding; prompt only on social writes', () => {
     expect(provider.call).toHaveBeenCalledExactlyOnceWith(operation, operation.startsWith('team.app.') ? { expectedAccountKey: 'test:42' } : undefined, undefined)
     expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
   })
-  it.each(['world.publish-text', 'world.publish-file-assets', 'world.interactions.create-text', 'contacts.add', 'group.create', 'calls.outgoing.prepare', 'team.app.send.enqueue'] as const)('blocks unbound %s before the provider write', async operation => {
+  it.each(['world.publish-text', 'world.publish-file-assets', 'world.interactions.create-text', 'contacts.add', 'group.create', 'calls.outgoing.prepare', 'team.app.send.enqueue', 'team.app.join', 'team.app.create'] as const)('blocks unbound %s before the provider write', async operation => {
     await expect(callArkme(operation, { textContent: '保留草稿' })).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
     expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['user.profile.refresh'])
     expect(socialBindingPrompt.getSnapshot()?.accountKey).toBe('test:42')

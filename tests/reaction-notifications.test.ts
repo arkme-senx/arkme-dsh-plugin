@@ -166,3 +166,67 @@ it('retains the clicked highlight after acknowledgement, expires it after 2.3 se
   expect(store.highlights('test:1', item.sourceKey, item.itemUid)).toBeUndefined()
  } finally { release(); vi.useRealTimers() }
 })
+
+it('retains read notifications through refresh, recreation and later additions', async () => {
+ let current = { ...item, unread: true }
+ const transport = vi.fn(async (request: any) => {
+  if (request.action === 'notifications') return page(request.include_read || current.unread ? [current] : [])
+  if (request.items[0].revision >= current.revision) current = { ...current, unread: false }
+  return { ok: true }
+ })
+ const store = new ReactionNotifications(transport), release = store.acquireHistory('test:1')
+ try {
+  await store.refreshHistory(); await store.refresh()
+  await store.seen('test:1', [current])
+  expect(store.forHistory('test:1')).toEqual([{ ...item, unread: false }])
+  expect(store.forSource('test:1', 'chat')).toEqual([])
+  await store.refreshHistory()
+  expect(store.forHistory('test:1')[0]?.unread).toBe(false)
+  const reopened = new ReactionNotifications(transport), close = reopened.acquireHistory('test:1')
+  try { await reopened.refreshHistory(); expect(reopened.forHistory('test:1')[0]?.unread).toBe(false) } finally { close() }
+  current = { ...current, revision: 2, unread: true }
+  await store.refreshHistory(); await store.seen('test:1', [item])
+  expect(store.forHistory('test:1')[0]).toMatchObject({ revision: 2, unread: true })
+ } finally { release() }
+})
+
+it('retains notification history on query failure and rejects cyclic cursors', async () => {
+ let fail = false, cycle = false
+ const store = new ReactionNotifications(async request => {
+  if (fail) throw Error('offline')
+  return cycle ? { ...page([item]), has_more: true, after_id: 'loop' } : page([item])
+ })
+ const release = store.acquireHistory('test:1')
+ try {
+  await store.refreshHistory(); fail = true; await store.refreshHistory()
+  expect(store.forHistory('test:1')).toEqual([item]); expect(store.historyError).not.toBe('')
+  fail = false; cycle = true; await store.refreshHistory()
+  expect(store.forHistory('test:1')).toEqual([item]); expect(store.historyError).not.toBe('')
+ } finally { release() }
+})
+
+it('does not resurrect read markers from an in-flight history scan after more than 200 acknowledgements', async () => {
+ const rows = Array.from({ length: 251 }, (_, i) => ({ ...item, id: i.toString(16).padStart(64, '0'), unread: true }))
+ let hold = false, resume!: () => void, started!: () => void
+ const entered = new Promise<void>(resolve => { started = resolve })
+ const gate = new Promise<void>(resolve => { resume = resolve })
+ const transport = async (request: any) => {
+  if (request.action === 'notifications-read') {
+   for (const ack of request.items) { const row = rows.find(row => row.id === ack.id)!; row.unread = false }
+   return { ok: true }
+  }
+  const offset = request.after_id ? rows.findIndex(row => row.id === request.after_id) + 1 : 0
+  const selected = rows.slice(offset, offset + 50).map(row => ({ ...row }))
+  if (hold && request.include_read && !request.after_id) { hold = false; started(); await gate }
+  return { items: selected, has_more: offset + 50 < rows.length, after_id: offset + 50 < rows.length ? selected.at(-1)!.id : '' }
+ }
+ const store = new ReactionNotifications(transport), release = store.acquire('test:1')
+ try {
+  await store.refreshHistory(); hold = true
+  const pending = store.refreshHistory(); await entered
+  for (let offset = 0; offset < rows.length; offset += 50) await store.seen('test:1', rows.slice(offset, offset + 50))
+  resume(); await pending
+  expect(store.forHistory('test:1')).toHaveLength(251)
+  expect(store.forHistory('test:1').every(row => row.unread === false)).toBe(true)
+ } finally { resume?.(); release() }
+})

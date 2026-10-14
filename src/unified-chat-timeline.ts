@@ -5,6 +5,12 @@ export type ArkmeTimelineSource = typeof CHAT_TIMELINE_SOURCES[number]
 export type ArkmeTimelineMode = 'initial' | 'older' | 'newer' | 'around' | 'refresh'
 export interface ArkmeUnifiedTimelineQuery {
   cacheOnly?: boolean
+  /** Read a committed window containing this opaque event/row identity; cacheOnly only. */
+  anchorId?: string
+  /** Host completes all refresh pages before committing. Bounded by 2000 events / 4 MiB. */
+  reconcile?: boolean
+  /** Optional tail catch-up in the same reconcile transaction; never used for history reading. */
+  newerCursor?: string
   mode?: ArkmeTimelineMode
   cursor?: string
   windowTokens?: string[]

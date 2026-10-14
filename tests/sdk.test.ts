@@ -9,6 +9,20 @@ import type {
 } from '../src/index.js'
 import type { ArkmeProviderState } from '../src/types.js'
 
+it('passes passive read scheduling without changing timeline cursors or calendar identity', async () => {
+  const calls: unknown[] = []
+  const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+    calls.push(JSON.parse(String(init?.body)))
+    return success({ items: [] })
+  } })
+  await sdk.readSource('chat', { limit: 40, background: true })
+  await sdk.calendarChatStatistics({ sourceRef: 'chat', timezone: 'UTC', timezoneOffsetMillis: 0, background: true })
+  expect(calls).toEqual([
+    { operation: 'source.timeline', params: { sourceRef: 'chat', limit: 40, background: true } },
+    { operation: 'calendar.chat-statistics', params: { sourceRef: 'chat', timezone: 'UTC', timezoneOffsetMillis: 0, background: true } },
+  ])
+})
+
 function success(value: unknown): Response {
   return new Response(JSON.stringify({ ok: true, value }), {
     status: 200,

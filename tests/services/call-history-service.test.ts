@@ -53,6 +53,93 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
 }
 
 describe('CallHistoryService', () => {
+  it('includes an arrangement source beyond the first 200 call segments', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url=String(input)
+      if(url.endsWith('/api/v1/trtc/call-detail')) return envelope({room_id:'long-room',start_time:1791800000000,room_transcript_segments:Array.from({length:350},(_,i)=>({text:`原文${i}`,start_ms:i*1000,end_ms:(i+1)*1000}))})
+      if(url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({items:[]})
+      if(url.endsWith('/api/v1/chats/contacts/list') || url.endsWith('/api/v1/chats/list')) return envelope({items:[],has_more:false})
+      throw new Error(`unexpected ${url}`)
+    })
+    const detail=await service(fetchImpl).arrangementCallDetail('long-room',undefined,{startMillis:1791800300000,quote:'原文300'})
+    expect(detail.transcriptSegments.some(segment=>segment.text==='原文300')).toBe(true)
+    expect(detail.transcriptSegments[0]?.text).toBe('原文295')
+    expect(detail.transcriptSegments.length).toBeLessThanOrEqual(200)
+  })
+  it.each([true, false])('prefers recent-contact remarks by user ID even without avatars (aggregate contacts: %s)', async aggregateContacts => {
+    const ids = [88, 77, 99]
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [], has_more: false,
+        ...(aggregateContacts ? { recent_contacts: ids.map(user_id => ({ user_id })) } : {}) })
+      if (url.endsWith('/api/v1/trtc/recent-call-contacts')) return envelope({ contact_user_ids: ids })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [
+        { user_id: 77, nick_name: '同名昵称' }, { user_id: 88, nick_name: '同名昵称' },
+      ] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [
+        { user_id: 77, remark: '  万宇  ' }, { user_id: 88, remark: '   ' },
+      ], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory()
+    expect(page.recentContacts).toEqual([
+      { userId: 88, displayName: '同名昵称' }, { userId: 77, displayName: '万宇' }, { userId: 99, displayName: 'Arkme 用户 99' },
+    ])
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('recent-call-contacts'))).toBe(!aggregateContacts)
+  })
+
+  it.each(['profiles', 'remarks'])('preserves recent contacts if the %s lookup fails', async failedLookup => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [], has_more: false,
+        recent_contacts: [{ user_id: 77, display_name: '聚合昵称' }, { user_id: 88, display_name: '保留名称' }] })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        if (failedLookup === 'profiles') throw new Error('profile unavailable')
+        return envelope({ items: [{ user_id: 77, nick_name: '公开昵称' }] })
+      }
+      if (url.endsWith('/api/v1/chats/contacts/list')) {
+        if (failedLookup === 'remarks') throw new Error('remarks unavailable')
+        return envelope({ items: [{ user_id: 77, remark: '万宇' }], has_more: false })
+      }
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory()
+    expect(page.recentContacts).toEqual([
+      { userId: 77, displayName: failedLookup === 'profiles' ? '万宇' : '公开昵称' },
+      { userId: 88, displayName: '保留名称' },
+    ])
+  })
+
+  it('marks incomplete aggregate summaries for lazy hydration and resolves the two call participants in detail', async () => {
+    const record = { room_id: 'split-speakers', caller_user_id: 77, callee_user_ids: [42], call_summary_status: 'done',
+      call_summary_template: '{{speaker:s1}}与{{speaker:s4}}确认排期。', call_summary: '旧昵称方说话人A（s1）与自己方说话人B（s4）确认排期。' }
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [{ trtc: record }], has_more: false })
+      if (url.endsWith('/api/v1/trtc/call-detail')) return envelope({ ...record,
+        participant_profiles: [{ user_id: 77, display_name: '旧昵称' }, { user_id: 42, display_name: '自己' }],
+        call_summary_speaker_labels: { s1: '旧昵称方说话人A', s2: '旧昵称方说话人B', s3: '自己方说话人A', s4: '自己方说话人B' },
+        room_transcript_segments: [
+          { speaker_user_id: 77, speaker_num: 1, speaker_profile_segment_key: 'peer', text: '你好', start_ms: 0, end_ms: 10 },
+          { speaker_user_id: 42, speaker_num: 1, speaker_profile_segment_key: 'self', text: '你好', start_ms: 10, end_ms: 20 },
+          { speaker_user_id: 77, speaker_num: 2, speaker_profile_segment_key: 'peer', text: '嗯', start_ms: 20, end_ms: 30 },
+          { speaker_user_id: 42, speaker_num: 2, speaker_profile_segment_key: 'self', text: '确认', start_ms: 30, end_ms: 40 },
+        ],
+      })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 42, nick_name: '自己' }, { user_id: 77, nick_name: '旧昵称' }] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [{ user_id: 77, remark: '万宇' }], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const owner = service(fetchImpl)
+    const page = await owner.listCallHistory({ includeRecentContacts: false })
+    expect(page.items[0]).toMatchObject({ peerDisplayName: '万宇', summaryNeedsDetail: true })
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('call-detail'))).toBe(false)
+    expect((await owner.callDetail(page.items[0]!.callRef)).summaryText).toBe('万宇与你确认排期。')
+  })
+
   it('forwards a bounded calendar date range and separates it from ordinary history cache entries', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => envelope({ items: [], has_more: false }))
     const subject = service(fetchImpl)
@@ -90,8 +177,8 @@ describe('CallHistoryService', () => {
     expect(detail.stableId).toBe(record!.stableId)
     expect(detail.stableId).not.toContain('identity-room')
     expect(detail.summaryText).toBe(remarkFailure
-      ? '我与Jotmoer、Jotmoer、Jotmoer方说话人A和已标记姓名聊天。'
-      : '我与英梦华、安宝、Jotmoer方说话人A和已标记姓名聊天。')
+      ? '你与Jotmoer、Jotmoer、Jotmoer方说话人A和已标记姓名聊天。'
+      : '你与英梦华、安宝、Jotmoer方说话人A和已标记姓名聊天。')
     expect(detail.participants.map(p => p.userId).sort()).toEqual([42, 77])
     expect(detail.transcriptSegments[0]?.speakerDisplayName).toBe(remarkFailure ? 'Jotmoer' : '英梦华')
     expect(fetchImpl.mock.calls.filter(([input]) => String(input).endsWith('/api/v1/auth/get-public-users-by-ids'))).toHaveLength(1)
@@ -129,7 +216,7 @@ describe('CallHistoryService', () => {
       throw new Error(`unexpected ${url}`)
     })
     const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false })
-    expect(page.items.map(item => item.summaryPreview)).toEqual(['我与张总确认小林的排期', '确认排期', undefined, '访客确认排期'])
+    expect(page.items.map(item => item.summaryPreview)).toEqual(['你与张总确认小林的排期', '确认排期', undefined, '访客确认排期'])
     expect(JSON.stringify(page)).not.toContain('{{')
     expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('call-detail'))).toBe(false)
   })
@@ -197,7 +284,7 @@ describe('CallHistoryService', () => {
       summary_speaker_user_ids: { s1: 42 },
     })))
     const presentation = await owner.timelineCallRecord({ crd: { ri: 'template-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
-    await expect(owner.callDetail(presentation!.callRef!)).resolves.toMatchObject({ summaryText: '我确认周五上线', summaryStatus: 'done' })
+    await expect(owner.callDetail(presentation!.callRef!)).resolves.toMatchObject({ summaryText: '你确认周五上线', summaryStatus: 'done' })
   })
 
   it('seals a timeline call for the existing detail endpoint without exposing its room', async () => {

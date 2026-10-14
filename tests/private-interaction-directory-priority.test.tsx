@@ -59,6 +59,7 @@ it('sends a user retry and all its pages while background avatar slots remain oc
   await act(async () => { renderer!.root.findByType('button').props.onClick() })
   expect(snapshot.error).toBeUndefined()
   expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+  expect(provider.mock.calls.filter(args => args[0] === 'private-interaction.directory').map(args => args[1].background)).toEqual([true, undefined, undefined])
   expect(blocked.controller.signal.aborted).toBe(false)
   expect(invalidate).not.toHaveBeenCalled()
   blocked.controller.abort(); await blocked.pending

@@ -2,7 +2,16 @@ import type { DshRemoteTimelineNode } from './types.js'
 
 export interface DshAccountSessionCursor { updated_at: number; session_ref: string; runtime_ref: string }
 export interface DshAccountSession {
+  canonicalIdentity?: boolean
   runtimeRef: string
+  /** Server-verified retired read addresses for this same session. */
+  previousRuntimeRefs?: string[]
+  readableRuntimeRefs?: string[]
+  contentRevision?: string
+  historyRevision?: string
+  /** Account-owned local alias; Runtime is absent until Host registration completes.
+   * Server readiness selects the reader, not whether this identity is unique. */
+  coveredLocalHistory?: { runtimeRef?: string; updatedAt: number; projectionAsOfSeq: number; source?: 'local' | 'cloud' }
   sessionRef: string
   workspaceRef: string
   workspaceName: string

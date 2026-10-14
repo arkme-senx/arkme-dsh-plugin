@@ -6,6 +6,10 @@ import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+// These launch the real bundler/package manager; assertions cover artifact contents,
+// not a wall-clock SLA. Bound the child below the test deadline on loaded CI hosts.
+const packageCommandTimeout = 90_000
+const packageTestTimeout = 120_000
 
 function runPnpm(args: string[]) {
   const pnpmCli = process.env.npm_execpath
@@ -17,7 +21,8 @@ function runPnpm(args: string[]) {
   ], {
     cwd: projectRoot,
     encoding: 'utf8',
-  }, 30_000)
+    timeout: packageCommandTimeout,
+  })
 }
 
 describe('published package contents', () => {
@@ -35,7 +40,7 @@ describe('published package contents', () => {
 
     expect(paths).toContain('docs/consumer-plugin-contract.md')
     expect(paths.some(path => path.startsWith('docs/superpowers/'))).toBe(false)
-  })
+  }, packageTestTimeout)
 
   it('builds a Release Set plugin without an external pinyin-pro runtime dependency', () => {
     runPnpm(['run', 'bundle'])
@@ -47,7 +52,7 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])pinyin-pro\1/)
-  }, 30_000)
+  }, packageTestTimeout)
 
   it('builds a Release Set plugin without an external mediabunny runtime dependency', () => {
     runPnpm(['run', 'bundle'])
@@ -59,7 +64,7 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
-  }, 30_000)
+  }, packageTestTimeout)
 
   it('ships browser factories without unresolved local chunk requires', () => {
     runPnpm(['run', 'bundle'])
@@ -92,5 +97,5 @@ describe('published package contents', () => {
     expect(javascript).not.toContain('node_modules/@deepseek-ai/dsh-session/')
     const manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'))
     expect(manifest.peerDependencies).toHaveProperty('@deepseek-ai/dsh-session')
-  }, 30_000)
+  }, packageTestTimeout)
 })

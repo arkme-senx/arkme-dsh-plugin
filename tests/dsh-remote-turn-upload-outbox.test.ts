@@ -43,6 +43,98 @@ function uploadCollector(target: Buffer[], fail = false): typeof fetch {
 }
 
 describe('DSH remote Turn OSS outbox', () => {
+  it.each(['SEALED', 'PREPARED', 'UPLOADED'])('preserves %s payload bytes when a source binding clears old upload credentials', async state => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-binding-pending-'))
+    const uploads: Buffer[] = []
+    const outbox = new DshRemoteTurnUploadOutbox({ directory, profileRef: 'web', key: Buffer.alloc(32, 1), controlPlane: backend(), fetch: uploadCollector(uploads) })
+    const events = [entry('turn/start', 1), entry('assistant/message', 2, { text: 'keep pending bytes' }), entry('turn/end', 3)]
+    try {
+      await outbox.capture('s', events)
+      const db = new DatabaseSync(join(directory, 'turn-upload.sqlite3'))
+      db.prepare('UPDATE dsh_turn_upload_v2 SET state = ?, upload_id = ?, next_attempt_at_millis = ?').run(state, 'old-source-grant', Number.MAX_SAFE_INTEGER)
+      const bytes = (db.prepare('SELECT spool_bytes FROM dsh_turn_upload_v2').get() as { spool_bytes: number }).spool_bytes
+      expect(await outbox.reconcileSourceBindings({ s: 'b'.repeat(64) }, async () => undefined)).toBe(true)
+      expect(db.prepare('SELECT state,upload_id,spool_bytes,next_attempt_at_millis FROM dsh_turn_upload_v2').get()).toEqual({ state: 'SEALED', upload_id: null, spool_bytes: bytes, next_attempt_at_millis: 0 })
+      db.close()
+      await outbox.activate(runtime)
+      await outbox.drain()
+      expect(uploads).toHaveLength(1)
+      expect(JSON.parse(gunzipSync(uploads[0]!).toString()).events).toEqual(events)
+    } finally { await outbox.close() }
+  })
+
+  it('repairs a foreign receipt once while preserving pending payloads and an open live Turn across restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-source-binding-'))
+    const uploads: Buffer[] = []
+    let denied = true
+    const prepare = vi.fn(async () => {
+      if (denied) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'old source')
+      return { upload_id: 'u', upload_url: 'https://oss.example.test/o', upload_headers: {}, expires_at: 9_999_999_999_999 }
+    })
+    const options = { directory, profileRef: 'web', key: Buffer.alloc(32, 1), controlPlane: backend({ prepare }), fetch: uploadCollector(uploads) }
+    const first = new DshRemoteTurnUploadOutbox(options)
+    const bindings = { 'session-01': 'a'.repeat(64) }
+    const quiesce = vi.fn(async () => undefined)
+    try {
+      // An old server redirect was mistaken for this source's committed receipt.
+      const db = new DatabaseSync(join(directory, 'turn-upload.sqlite3'))
+      await first.capture('session-01', [entry('turn/start', 1), entry('turn/end', 2)])
+      db.exec("UPDATE dsh_turn_upload_v2 SET state = 'COMMITTED', spool_bytes = 0")
+      db.exec("INSERT INTO dsh_history_scan_v2 VALUES ('session-01', 'native-journal-v2:old', 2, 1)")
+      db.close()
+      expect(first.historyResumeSeq('session-01')).toBe(3)
+      const pending = [entry('turn/start', 10), entry('assistant/message', 11), entry('turn/end', 12)]
+      await first.capture('session-01', pending)
+      await first.capture('session-01', [entry('turn/start', 20), entry('assistant/message', 21)])
+      await first.activate(runtime)
+      await first.drain()
+      expect(first.stats()).toMatchObject({ COMMITTED: 1, SEALED: 1, OPEN: 1 })
+      denied = false
+      expect(await first.reconcileSourceBindings(bindings, quiesce)).toBe(true)
+      expect(first.historyResumeSeq('session-01')).toBe(0)
+      expect(first.needsHistoryRevision('session-01', 'old')).toBe(true)
+      expect(first.stats()).toMatchObject({ COMMITTED: 0, SEALED: 1, OPEN: 1 })
+      // Replaying the original journal now captures the previously skipped Turn.
+      await first.capture('session-01', [entry('turn/start', 1), entry('turn/end', 2)], 1)
+      await first.drain()
+      expect(first.stats()).toMatchObject({ COMMITTED: 2, OPEN: 1 })
+      expect(uploads.map(x => JSON.parse(gunzipSync(x).toString()).events)).toContainEqual(pending)
+      expect(await first.reconcileSourceBindings(bindings, quiesce)).toBe(false)
+      expect(first.stats().COMMITTED).toBe(2)
+      expect(quiesce).toHaveBeenCalledTimes(1)
+    } finally { await first.close() }
+    const second = new DshRemoteTurnUploadOutbox(options)
+    try {
+      expect(await second.reconcileSourceBindings(bindings, quiesce)).toBe(false)
+      expect(second.stats().COMMITTED).toBe(2)
+      expect(quiesce).toHaveBeenCalledTimes(1)
+    } finally { await second.close() }
+  })
+
+  it('serializes concurrent binding receipts behind an in-flight commit without cancelling its upload', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-source-binding-flight-'))
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const commit = vi.fn(async () => { await barrier; return {} })
+    const outbox = new DshRemoteTurnUploadOutbox({ directory, profileRef: 'web', key: Buffer.alloc(32, 1), controlPlane: backend({ commit }), fetch: uploadCollector([]) })
+    try {
+      await outbox.capture('session-01', [entry('turn/start', 1), entry('turn/end', 2)])
+      await outbox.activate(runtime)
+      const drain = outbox.drain()
+      await vi.waitFor(() => expect(commit).toHaveBeenCalledTimes(1))
+      const stop = vi.fn(async () => undefined)
+      const repairs = Array.from({ length: 40 }, () => outbox.reconcileSourceBindings({ 'session-01': 'a'.repeat(64) }, stop))
+      expect(outbox.isReconcilingSourceBindings()).toBe(true)
+      release()
+      await drain
+      const repaired = await Promise.all(repairs)
+      expect(repaired.filter(Boolean)).toHaveLength(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(outbox.stats()).toMatchObject({ COMMITTED: 0, SEALED: 0, UPLOADED: 0 })
+      expect(outbox.isReconcilingSourceBindings()).toBe(false)
+    } finally { release(); await outbox.close() }
+  })
+
   it('restores an evicted short-object receipt from the server and backfills its tail without reuploading', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-turn-restore-receipt-'))
     const prepare = vi.fn(), complete = vi.fn(async () => ({}))

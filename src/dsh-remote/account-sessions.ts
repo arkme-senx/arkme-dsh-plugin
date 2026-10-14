@@ -1,3 +1,4 @@
+import { LocalHistoryCoverage, type LocalAliasReader } from './local-history-coverage.js'
 import { DshCloudNativeTransport } from './cloud-native-transport.js'
 import { DshNativeHistoryCache } from './native-history-cache.js'
 import type { NativeHistoryPage, NativeHistoryRecord } from './native-history.js'
@@ -36,6 +37,7 @@ interface Channel {
 
 /** Account directory and controller-side routing. DSH Host remains the sole execution owner. */
 export class DshAccountSessions {
+  private readonly coverage?: LocalHistoryCoverage
   private lifetime = new AbortController()
   private readonly cloud: DshCloudNativeTransport
   private readonly nativeHistories = new Map<string, { key: string; address: Record<string, unknown>; touched: number }>()
@@ -45,11 +47,15 @@ export class DshAccountSessions {
     requireAccount: () => Promise<string | void>
     historyCache?: DshNativeHistoryCache
     onCacheError?: () => void
+    localAliasReader?: LocalAliasReader
     localStatus: () => DshRemoteStatus
     createTransport: () => DshRemoteRealtimeTransport
     profileRef: string
     clientRef: string
-  }) { this.cloud = new DshCloudNativeTransport(options.request) }
+  }) {
+    this.cloud = new DshCloudNativeTransport(options.request)
+    if (options.localAliasReader) this.coverage = new LocalHistoryCoverage(options.localAliasReader)
+  }
 
   close(): void {
     this.lifetime.abort(new Error('会话账号已切换'))
@@ -57,6 +63,7 @@ export class DshAccountSessions {
     this.channels.clear()
     this.nativeHistories.clear()
     this.cloud.close()
+    this.coverage?.clear()
     this.lifetime = new AbortController()
   }
 
@@ -95,11 +102,15 @@ export class DshAccountSessions {
     signal.throwIfAborted()
     const localRuntimeRef = this.options.localStatus().runtimeRef
     const localRuntime = localRuntimeRef === undefined ? undefined : runtimes.get(localRuntimeRef)
-    const items = array(page.items).map(raw => {
+    const items: DshAccountSessionPage['items'] = array(page.items).map(raw => {
       const row = object(raw), runtimeRef = ref(row.runtime_ref), runtime = runtimes.get(runtimeRef)
       if (!runtime) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '会话目录发生变化，请刷新', true)
       return {
-        runtimeRef, sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
+        canonicalIdentity: row.canonical_identity === true,
+        runtimeRef, ...(Array.isArray(row.deduplicated_runtime_refs) ? { previousRuntimeRefs: row.deduplicated_runtime_refs.map(ref) } : {}), sessionRef: ref(row.session_ref), workspaceRef: String(row.workspace_ref ?? ''), workspaceName: row.workspace_ref === '' ? '未分组' : '工作区信息暂不可用',
+        ...(Array.isArray(row.readable_runtime_refs) ? { readableRuntimeRefs: row.readable_runtime_refs.map(ref) } : {}),
+        ...(typeof row.content_revision === 'string' ? { contentRevision: row.content_revision } : {}),
+        ...(typeof row.history_revision === 'string' ? { historyRevision: row.history_revision } : {}),
         capabilities: runtime.capabilities, title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,
         projectionAsOfSeq: Number.isSafeInteger(row.projection_as_of_seq) && Number(row.projection_as_of_seq) >= -1 ? Number(row.projection_as_of_seq) : -1,
         blank: row.blank === true, archived: row.archived === true, origin: String(row.origin ?? ''),
@@ -130,6 +141,10 @@ export class DshAccountSessions {
         }
       } catch { signal.throwIfAborted(); warning = '部分工作区信息暂未更新' }
     }))
+    if (this.coverage) {
+      try { await this.coverage.annotate(items, localRuntimeRef, signal) }
+      catch { signal.throwIfAborted() /* Unknown account ownership cannot authorize alias folding. */ }
+    }
     signal.throwIfAborted()
     return { contractVersion: 1, items, ...(warning === undefined ? {} : { warning }), ...(localRuntime === undefined ? {} : { localRuntime: { desktopName: localRuntime.desktopName, runtimeName: localRuntime.runtimeName } }), ...(page.next_cursor === undefined ? {} : { nextCursor: page.next_cursor as NonNullable<DshAccountSessionPage['nextCursor']> }), ...(localRuntimeRef === undefined ? {} : { localRuntimeRef }) }
   }

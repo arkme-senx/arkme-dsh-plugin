@@ -13,10 +13,12 @@ export function ArkmeOfficialNotificationDetail({
   id,
   scope,
   onClose,
+  embedded = false,
 }: {
   id: string
   scope: string
-  onClose(): void
+  onClose?(): void
+  embedded?: boolean
 }) {
   const snapshot = useSyncExternalStore(
     officialNotifications.subscribe,
@@ -58,7 +60,7 @@ export function ArkmeOfficialNotificationDetail({
   }, [id, scope, attempt, snapshot.revision])
   // A committed detail render, not a background fetch or list preview, acknowledges reading.
   useEffect(() => {
-    if (!notice || notice.readAtMillis > 0 || acknowledged.current) return
+    if (embedded || !notice || notice.readAtMillis > 0 || acknowledged.current) return
     const acknowledge = () => {
       if (document.hidden || acknowledged.current) return
       acknowledged.current = true
@@ -71,16 +73,16 @@ export function ArkmeOfficialNotificationDetail({
     return () => {
       document.removeEventListener('visibilitychange', acknowledge)
     }
-  }, [notice, scope])
+  }, [notice, scope, embedded])
 
   return (
     <article
       aria-label={tr('官方通知详情')}
-      className="arkme-official-detail"
+      className={`arkme-official-detail${embedded ? ' arkme-official-detail--embedded' : ''}`}
     >
       <style>{detailCss}</style>
       <div className="arkme-official-detail__inner">
-        <nav className="arkme-official-detail__navigation">
+        {!embedded && <nav className="arkme-official-detail__navigation">
           <button
             type="button"
             className="arkme-official-detail__back"
@@ -90,7 +92,7 @@ export function ArkmeOfficialNotificationDetail({
             <ArrowLeft size={16} aria-hidden />
             {tr('通知列表')}
           </button>
-        </nav>
+        </nav>}
         {error ? (
           <div role="alert" className="arkme-official-detail__status">
             {error}
@@ -102,7 +104,7 @@ export function ArkmeOfficialNotificationDetail({
           <p role="status" className="arkme-official-detail__status">{tr('正在加载通知…')}</p>
         ) : (
           <>
-            <header className="arkme-official-detail__header">
+            {!embedded && <header className="arkme-official-detail__header">
               <div className="arkme-official-detail__label">
                 <MegaphoneSimple size={15} aria-hidden />
                 <span>{tr('官方通知')}</span>
@@ -114,7 +116,7 @@ export function ArkmeOfficialNotificationDetail({
                   hour: '2-digit', minute: '2-digit', hour12: false,
                 })}
               </time>
-            </header>
+            </header>}
             <div className="arkme-official-detail__body">
               <Markdown
                 skipHtml

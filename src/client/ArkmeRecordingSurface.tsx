@@ -129,8 +129,8 @@ const styles: Record<string, CSSProperties> = {
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { padding: '12px 14px', borderRadius: 10, background: colors.dangerSoft, color: colors.danger, fontSize: 13 },
   transcriptList: { width: '100%', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: '10px 12px 0', boxSizing: 'border-box', listStyle: 'none' },
-  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '28px' },
-  transcriptContent: { minWidth: 0, minHeight: 22, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
+  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '34px' },
+  transcriptContent: { minWidth: 0, minHeight: 22, width: 'fit-content', maxWidth: '100%', justifySelf: 'start', padding: '6px 10px', boxSizing: 'border-box', borderRadius: '4px 12px 12px', background: arkmeTheme.messageOther, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
   transcriptTime: { display: 'inline-block', marginLeft: 8, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
   transcriptSpeaker: { maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
   transcriptSpeakerName: { minWidth: 0, marginLeft: 4, whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', fontWeight: 500, letterSpacing: '.02px' },
@@ -359,6 +359,7 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
 }) {
   const speakerStyle: CSSProperties = {
     ...styles.transcriptSpeaker,
+    marginTop: 6,
     ...(item.isSelf ? { gridColumn: 3, gridRow: 1, justifySelf: 'end', flexDirection: 'row-reverse' } : {}),
   }
   const speakerIdentity = <>
@@ -374,6 +375,7 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
   return <li
     className="arkme-recording-transcript-row"
     data-recording-transcript-item={item.itemId}
+    data-recording-speaker-self={item.isSelf || undefined}
     data-recording-search-highlight={searchHighlighted || undefined}
     data-recording-playing={isPlaying || undefined}
     style={{
@@ -405,7 +407,11 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
       {speakerIdentity}
       <span aria-hidden="true" style={{ ...styles.transcriptEditSlot, ...(item.isSelf ? { marginLeft: 0, marginRight: 2 } : {}) }}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
     </button>}
-    <div className="arkme-recording-transcript-content" style={{ ...styles.transcriptContent, ...(item.isSelf ? { gridColumn: '1 / 3', gridRow: 1, justifySelf: 'end', maxWidth: '100%', paddingLeft: 24, boxSizing: 'border-box', textAlign: 'left' } : {}) }}>
+    <div className="arkme-recording-transcript-content" style={{
+      ...styles.transcriptContent,
+      ...(item.isSelf ? { gridColumn: '1 / 3', gridRow: 1, justifySelf: 'end', maxWidth: 'calc(100% - 24px)', borderRadius: '12px 4px 12px 12px', background: arkmeTheme.messageOwn, textAlign: 'left' } : {}),
+      ...(isPlaying ? { boxShadow: `inset 0 0 0 1px ${colors.accent}` } : {}),
+    }}>
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
         <span style={{ position: 'relative', display: 'inline-block' }}>

@@ -1,3 +1,5 @@
+import { arrangementEvidence, projectEvidence, type ArrangementEvidenceData } from '../arrangement-provenance.js'
+import { ArrangementSourceRecovery } from './arrangement-source-recovery.js'
 import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
 import { createHmac } from 'node:crypto'
 import { projectArrangementRecordingSource, validRecordingSourceDay } from '../arrangement-recording-source.js'
@@ -59,7 +61,7 @@ function arrangementCreationSource(item: Record<string, unknown>): ArkmeArrangem
   const records = listValue(item.related_records).map(objectValue)
   const recordCount = listValue(item.record_uids).filter(value => stringValue(value).trim()).length
   const project = (text: string, at: unknown) => ({ text, ...(numberValue(at) > 0 ? { createdAtMillis: Math.trunc(numberValue(at)) } : {}) })
-  if (records.length || recordCount) {
+  if ((records.length || recordCount) && !listValue(item.source_items).length && !stringValue(item.source_text)) {
     const items = records.filter(record => stringValue(record.text_content).trim()).map(record => project(stringValue(record.text_content), record.create_at))
     return { kind: 'quick-note', items, unavailableCount: Math.max(recordCount, records.length) - items.length }
   }
@@ -121,7 +123,8 @@ export class ArrangementService {
   private readonly arrangementReminderRefs = new Map<string, ArkmeArrangementReminderRefEntry>()
   private readonly arrangementWrites = new Set<string>()
 
-  constructor(private readonly runtime: ServiceRuntime) {}
+  private readonly recovery: ArrangementSourceRecovery
+  constructor(private readonly runtime: ServiceRuntime) { this.recovery = new ArrangementSourceRecovery(runtime) }
 
   async arrangementBoardCache(accountScope: string, rawPages?: unknown): Promise<ArkmeArrangementBoardCache> {
     const session = await this.runtime.requireSession()
@@ -551,7 +554,31 @@ export class ArrangementService {
     if (stringValue(data.uid).trim() !== arrangementUid) {
       throw new ArkmePluginError('arrangement-contract-invalid', '安排详情响应身份不一致', true, 502)
     }
+    if (objectValue(data.source_provenance).version !== 1 && [5,6].includes(Number(data.source_type))) {
+      const recovered = await this.recovery.recover(data, session, signal).catch(() => undefined)
+      if (recovered) data.source_provenance = { version: 1, items: [recovered] }
+    }
     return await this.arrangementItem(data, session.userId)
+  }
+
+  async sourceDocument(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<string> {
+    const session=await this.runtime.requireSession()
+    const ref=this.openArrangementRef(arrangementRef,session.userId)
+    const data=await this.runtime.authenticatedIntelligentPost<Record<string,unknown>>('/api/v1/arrangements/source/read',{uid:ref.arrangementUid,evidence_id:evidenceId},session,signal,{lane:'interactive-read',bypassCache:true})
+    if(data.state!=='ready') throw new ArkmePluginError('arrangement-source-unavailable',stringValue(data.reason)||'来源暂不可查看',false,404)
+    return stringValue(data.content)
+  }
+
+  async sourceEvidence(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArrangementEvidenceData> {
+    const session = await this.runtime.requireSession()
+    const ref = this.openArrangementRef(arrangementRef, session.userId)
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail', { uid: ref.arrangementUid }, session, signal, { lane: 'interactive-read', bypassCache: true })
+    if (data.uid !== ref.arrangementUid || ![1,2,3].includes(Number(data.status))) throw new ArkmePluginError('arrangement-source-mismatch', '安排已删除或来源已变化，请刷新', false, 409)
+    const recovered = await this.recovery.cached(data, session)
+    if (recovered && objectValue(data.source_provenance).version !== 1) data.source_provenance = { version: 1, items: [recovered] }
+    const evidence = arrangementEvidence(data).find(e => e.id === evidenceId)
+    if (!evidence) throw new ArkmePluginError('arrangement-source-missing', '来源信息已变化，请刷新', false, 404)
+    return evidence
   }
 
   private async reconcileArrangementDelete(
@@ -591,12 +618,20 @@ export class ArrangementService {
     }
     const dueAtMillis = Math.trunc(numberValue(item.due_at))
     const remindAtMillis = Math.trunc(numberValue(item.remind_at))
-    const recordingSource = projectArrangementRecordingSource(item)
+    if ([5,6].includes(Number(item.source_type)) && objectValue(item.source_provenance).version !== 1) {
+      const session = await this.runtime.requireSession()
+      if (session.userId === viewerUserId) { const recovered = await this.recovery.cached(item, session); if (recovered) item.source_provenance = { version: 1, items: [recovered] } }
+    }
+    const evidence = arrangementEvidence(item)
+    const summary = evidence.find(e => e.kind === 'audio_summary' && e.summary_id)
+    const recordingSource = projectArrangementRecordingSource(summary ? { ...item, recording_source: { kind: 'daily-summary', date_stamp: summary.date_stamp, tz_offset: summary.tz_offset, summary_id: summary.summary_id } } : item)
     return {
       arrangementRef: await this.arrangementRef(viewerUserId, arrangementUid),
       title: stringValue(item.title),
       description: stringValue(item.description),
       creationSource: arrangementCreationSource(item),
+      provenance: evidence.map(projectEvidence),
+      sourceType: numberValue(item.source_type),
       ...(recordingSource ? { recordingSource } : {}),
       recognitionState: stringValue(item.recognition_state),
       status: arrangementStatus(item.status),

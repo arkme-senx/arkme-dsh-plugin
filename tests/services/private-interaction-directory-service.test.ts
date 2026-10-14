@@ -25,6 +25,11 @@ function fixture() {
   return { runtime, source, service: new InterwovenService(runtime as never, source, profile) }
 }
 describe('authoritative private interaction directory', () => {
+  it('schedules passive revalidation in the Host background budget', async () => {
+    const { service, runtime } = fixture()
+    await service.privateInteractionDirectory({ background: true })
+    expect(runtime.authenticatedChatPost.mock.calls[0]?.[4]).toEqual({ lane: 'background-read', bypassCache: true })
+  })
   it('projects real bundle shape with stable identity, remark, avatar and complete counters', async () => {
     const { service, runtime, source } = fixture()
     const result = await service.privateInteractionDirectory({ limit: 50 })
