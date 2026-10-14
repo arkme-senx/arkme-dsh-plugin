@@ -60,7 +60,18 @@ describe('automatic capability consent through packed official DSH',()=>{
    expect(await service.testLogin(10001)).toMatchObject({status:'authenticated',userId:10001})
    const sdk=createArkmeSdk({fetchImpl:(url,init)=>fetch(new URL(url,scaffold.authenticatedUrl),{...init,headers:{...init?.headers,origin:new URL(scaffold.authenticatedUrl).origin}})})
    const scope='test:10001'
-   expect((await sdk.automaticCapabilities(scope)).settings).toHaveLength(5)
+   const defaults=(await sdk.automaticCapabilities(scope)).settings
+   expect(defaults).toHaveLength(5)
+   const established=new Set(['record_thought','chat_thought','arrangement_recognition'])
+   for(const item of defaults) {
+    const enabled=established.has(item.key)
+    expect(item).toMatchObject({enabled,version:enabled?1:0,enabledAt:enabled?1:0})
+   }
+   // Explicitly close the existing automatic features, then exercise opting in.
+   // Defaults and an explicit saved false are different server-owned states.
+   for(const item of defaults.filter(item=>item.enabled)) {
+    await sdk.updateAutomaticCapability(scope,{key:item.key,enabled:false,expectedVersion:item.version,billingConsent:false})
+   }
    expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
    page=await browser.newPage({viewport:{width:1280,height:900},locale:'zh-CN'})
