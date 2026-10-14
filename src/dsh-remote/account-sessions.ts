@@ -141,9 +141,9 @@ export class DshAccountSessions {
         }
       } catch { signal.throwIfAborted(); warning = '部分工作区信息暂未更新' }
     }))
-    if (localRuntimeRef && this.coverage) {
-      try { await this.coverage.annotate(items, localRuntimeRef, this.lifetime.signal) }
-      catch { signal.throwIfAborted() /* Missing local proof keeps both sources visible. */ }
+    if (this.coverage) {
+      try { await this.coverage.annotate(items, localRuntimeRef, signal) }
+      catch { signal.throwIfAborted() /* Unknown account ownership cannot authorize alias folding. */ }
     }
     signal.throwIfAborted()
     return { contractVersion: 1, items, ...(warning === undefined ? {} : { warning }), ...(localRuntime === undefined ? {} : { localRuntime: { desktopName: localRuntime.desktopName, runtimeName: localRuntime.runtimeName } }), ...(page.next_cursor === undefined ? {} : { nextCursor: page.next_cursor as NonNullable<DshAccountSessionPage['nextCursor']> }), ...(localRuntimeRef === undefined ? {} : { localRuntimeRef }) }

@@ -80,3 +80,26 @@ it('bounds failed recovery for 100 rejected identities and cancels it on account
  scope.abort();upload.clear();release();await new Promise(resolve=>setTimeout(resolve,0))
  expect(recovered).not.toHaveBeenCalled();expect(send).toHaveBeenCalledOnce();expect(failed).not.toHaveBeenCalled()
 })
+
+it('recovers a lost recovery ACK after restart without re-reading history or publishing another identity', async () => {
+  const signal = new AbortController().signal, items = [{ session_ref: 'restored' }], binding = 'c'.repeat(64)
+  let admitted = false
+  const send = vi.fn(async (batch: Array<{session_ref: string; recovery_proof?: unknown}>) => {
+    if (batch[0]?.recovery_proof) { admitted = true; throw new Error('response lost after server commit') }
+    return admitted
+      ? { accepted_session_refs: ['restored'], rejected_session_refs: [], source_bindings: { restored: binding }, source_recovery_version: 1 }
+      : { accepted_session_refs: [], rejected_session_refs: ['restored'], source_recovery_version: 1 }
+  })
+  const read = vi.fn(async () => ({ version: 1 as const, messages: {['a'.repeat(64)]: 1}, sequence: ['a'.repeat(64)] }))
+  const recovered = vi.fn(async () => {}), failed = vi.fn()
+  await new ProjectionUpload().page(items, send, signal, { signal, read, recovered, failed })
+  await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce())
+  expect(admitted).toBe(true)
+  expect(recovered).not.toHaveBeenCalled()
+  const restarted = new ProjectionUpload()
+  for (let i = 0; i < 100; i++) {
+    expect(await restarted.page(items, send, signal, { signal, read, recovered, failed })).toEqual({ accepted: 1, rejected: 0, sourceBindings: { restored: binding } })
+  }
+  expect(read).toHaveBeenCalledOnce()
+  expect(send.mock.calls.filter(([batch]) => batch.some(item => item.recovery_proof))).toHaveLength(1)
+})

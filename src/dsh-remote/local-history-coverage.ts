@@ -10,16 +10,16 @@ export interface LocalAliasReader {
 export class LocalHistoryCoverage {
   constructor(private readonly local: LocalAliasReader) {}
   clear(): void {}
-  async annotate(rows: DshAccountSession[], runtime: string, signal: AbortSignal): Promise<void> {
-    const candidates = rows.filter(row => !row.local && row.origin !== 'subagent' && (row.canonicalIdentity || row.previousRuntimeRefs?.includes(runtime)))
+  async annotate(rows: DshAccountSession[], runtime: string | undefined, signal: AbortSignal): Promise<void> {
+    const candidates = rows.filter(row => !row.local && row.origin !== 'subagent' && (row.canonicalIdentity || (runtime !== undefined && row.previousRuntimeRefs?.includes(runtime))))
     if (!candidates.length) return
     const summaries = await this.local.summaries(candidates.map(row => row.sessionRef), signal)
     signal.throwIfAborted()
     for (const row of candidates) {
       const local = summaries.get(row.sessionRef)
       if (!local) continue
-      row.coveredLocalHistory = { runtimeRef: runtime, updatedAt: local.updatedAt, projectionAsOfSeq: local.projectionAsOfSeq ?? -1,
-        source: !row.archived && (local.running || row.readableRuntimeRefs?.includes(runtime)) ? 'local' : 'cloud' }
+      row.coveredLocalHistory = { ...(runtime === undefined ? {} : { runtimeRef: runtime }), updatedAt: local.updatedAt, projectionAsOfSeq: local.projectionAsOfSeq ?? -1,
+        source: !row.archived && (local.running || (runtime !== undefined && row.readableRuntimeRefs?.includes(runtime))) ? 'local' : 'cloud' }
     }
   }
 }

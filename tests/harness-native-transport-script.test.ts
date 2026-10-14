@@ -288,3 +288,28 @@ it('keeps an ongoing native selection through completion and hides an archived a
  f.directory.publish([{...row,archived:true}],'local-runtime')
  expect((await f.rpc('session/list',{})).result.value.items).toEqual([])
 })
+
+it('keeps one account-owned entry while cold-start Host registration has no Runtime yet', async () => {
+  for (const [running, selected] of [[false, false], [true, false], [false, true]]) {
+    const f = fixture()
+    if (selected) f.directory.select('same')
+    f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', running, updatedAt: 1 }] } } }))
+    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })])
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+    // Registration enriches the identity; it must not insert a second row.
+    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { runtimeRef: 'restored', updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })], 'restored')
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+  }
+})
+
+it('returns a cold-start cloud selection to its native owner when registration identifies the same Runtime', () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true })])
+  f.directory.select('arkme:cloud:same')
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+})

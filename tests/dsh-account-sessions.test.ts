@@ -20,7 +20,7 @@ import { ArkmeSdk } from '../src/sdk/index.js'
 import { accountSessionTools } from '../src/dsh-remote/account-session-tools.js'
 import { ArkmePluginError } from '../src/arkme-service.js'
 
-function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader) {
+function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader, registering = false) {
   let receive: Parameters<DshRemoteRealtimeTransport['subscribe']>[0]['onEvent'] | undefined
   const metadata: DshRemoteTrustedEventMetadata = { senderRole: 'host', runtimeRef: 'runtime-remote', acceptedAtMillis: Date.now(), targetHostLeaseGeneration: 8 }
   const transport: DshRemoteRealtimeTransport = {
@@ -40,7 +40,7 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache, localAlias
     throw new Error(path)
   })
   const requireAccount = vi.fn(async () => '3016')
-  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, runtimeRef: 'runtime-local', hostGeneration: 1, capabilities: [], revision: 1 }) })
+  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, ...(historyCache ? { historyCache } : {}), createTransport: () => transport, profileRef: 'controller-profile', clientRef: 'controller', localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, ...(!registering ? { runtimeRef: 'runtime-local' } : {}), hostGeneration: 1, capabilities: [], revision: 1 }) })
   return { directory, post, transport, requireAccount, emit: (payload: Record<string, unknown>, overrides: Partial<DshRemoteTrustedEventMetadata> = {}) => receive?.(payload, { ...metadata, ...overrides }) }
 }
 
@@ -290,4 +290,21 @@ it('shares verified source selection through Host HTTP, SDK and registered DSH T
     expect(JSON.stringify(expected)).not.toContain(hash)
     expect(f.post.mock.calls.some(([path]) => path.includes('/sessions/metadata') || path.includes('session-events') || path.includes('session-turn'))).toBe(false)
   } finally { f.directory.close(); await ctx.fiber.dispose(); server.closeAllConnections(); server.close(); await once(server, 'close') }
+})
+
+
+it('annotates owned canonical identities while local Host registration is pending', async () => {
+  const summaries = vi.fn(async () => new Map([['same-session', { updatedAt: 1, running: false }]]))
+  const f = fixture(false, undefined, { summaries }, true)
+  const original = f.post.getMockImplementation()!
+  f.post.mockImplementation(async (...args) => {
+    const result = await original(...args)
+    return args[0].endsWith('/sessions/account-list') ? { ...result, items: (result.items as Array<Record<string, unknown>>).map(row => ({ ...row, canonical_identity: true })) } : result
+  })
+  const page = await f.directory.list()
+  expect(page.localRuntimeRef).toBeUndefined()
+  expect(page.items[0]?.coveredLocalHistory).toEqual({ updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' })
+  expect(summaries).toHaveBeenCalledOnce()
+  expect(f.transport.connect).not.toHaveBeenCalled()
+  f.directory.close()
 })

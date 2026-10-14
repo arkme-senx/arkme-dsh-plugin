@@ -61,3 +61,14 @@ it('folds a restored account-owned identity before its new runtime has uploaded 
  expect(row.coveredLocalHistory?.source).toBe('cloud')
  expect(row.coveredLocalHistory?.runtimeRef).toBe('new-runtime')
 })
+
+it('recognizes an account-owned canonical alias before Host registration supplies a Runtime', async () => {
+  const coverage = new LocalHistoryCoverage({ summaries: async () => new Map([['same', { updatedAt: 1, running: false }]]) })
+  const rows = [
+    { runtimeRef: 'cloud', sessionRef: 'same', canonicalIdentity: true },
+    { runtimeRef: 'cloud', sessionRef: 'foreign', canonicalIdentity: true },
+    { runtimeRef: 'legacy', sessionRef: 'same' },
+  ] as DshAccountSession[]
+  await coverage.annotate(rows, undefined, new AbortController().signal)
+  expect(rows.map(row => row.coveredLocalHistory?.source)).toEqual(['cloud', undefined, undefined])
+})

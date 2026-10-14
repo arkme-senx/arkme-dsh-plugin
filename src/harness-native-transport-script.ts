@@ -67,8 +67,8 @@ function installNativeTransport(route: string): void {
     const matches = (aliasCandidates.get(local.sessionId) ?? []).filter(row => {
       const cut = row.coveredLocalHistory
       return row.sessionRef === local.sessionId && !row.local && row.origin !== 'subagent'
-        && !!localRuntimeRef && (row.canonicalIdentity || row.previousRuntimeRefs?.includes(localRuntimeRef))
-        && cut?.runtimeRef === localRuntimeRef
+        && (row.canonicalIdentity || (localRuntimeRef !== undefined && row.previousRuntimeRefs?.includes(localRuntimeRef)))
+        && cut !== undefined && cut.runtimeRef === localRuntimeRef
     })
     const row = matches.length === 1 ? matches[0] : undefined
     // Do not move an active/selected local conversation when an upload completes.
@@ -140,7 +140,7 @@ function installNativeTransport(route: string): void {
       // The account directory is authoritative only after full pagination.
       // Redirect a retained old selection through the existing native owner.
       const retired = split(selected)
-      const canonical = retired && incoming.find(row => row.sessionRef === retired.id && row.previousRuntimeRefs?.includes(retired.runtime))
+      const canonical = retired && incoming.find(row => row.sessionRef === retired.id && ((row.local && row.runtimeRef === retired.runtime) || row.previousRuntimeRefs?.includes(retired.runtime)))
       if (canonical) redirect(canonical)
       aliasCandidates.clear()
       for (const row of incoming) if (row.coveredLocalHistory) {
