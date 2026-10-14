@@ -344,6 +344,9 @@ span.arkme-forward-search {
 /* Keep both Arkme navigation columns visible at every viewport width. DSH may
    report its sidebar as collapsed at 1024px; the plugin still owns its navigation rail
    and at least a 120px directory with search/add controls (plus the 4px divider budget). */
+/* The shell itself is not a scrollport. Hidden Harness rightbar content can
+   overflow its zero-width track; focus/reveal must not pan both Arkme columns. */
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) { overflow: clip; }
 /* Harness 0.1.5 renamed the collapsed third-column marker from details to rightbar. */
 /* Conversations, Contacts and the Web login workspace share the same directory
    width contract. Routes without a directory retain only the navigation rail. */

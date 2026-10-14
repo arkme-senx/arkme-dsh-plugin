@@ -1,3 +1,4 @@
+import { isConversationFollowing } from './conversation-bottom-follow.js'
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 /** Viewport affordance only; unrelated to auto-follow tolerance or unread state. */
@@ -12,7 +13,7 @@ export function useScrollBottomVisibility(
   const measure = useCallback(() => {
     const body = viewport.current
     const nextVisible = active && body !== null && body.clientHeight > 0
-      && body.scrollHeight - body.clientHeight - body.scrollTop > 100
+      && !isConversationFollowing(body) && body.scrollHeight - body.clientHeight - body.scrollTop > 100
     // Do not enqueue same-value updates while other surface updates are pending.
     if (measuredVisible.current === nextVisible) return
     measuredVisible.current = nextVisible

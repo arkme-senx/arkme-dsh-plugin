@@ -1821,19 +1821,21 @@ export class ArkmeSdk {
   }
 
   async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
-    if ((await this.capabilities(signal)).features.unifiedChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统一聊天时间线', retryable: false })
+    const features = (await this.capabilities(signal)).features
+    if (features.unifiedChatTimeline !== true || (query.reconcile || query.anchorId) && features.durableChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持所请求的聊天时间线能力', retryable: false })
     return await this.readSource(sourceRef, { cursor: { unified: query }, ...(query.limit === undefined ? {} : { limit: query.limit }), ...(signal === undefined ? {} : { signal }) })
   }
 
   async readSource(
     sourceRef: string,
-    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {},
   ): Promise<ArkmeTimelinePage> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
     return await this.call<ArkmeTimelinePage>('source.timeline', {
       sourceRef,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.background === true ? { background: true } : {}),
     }, options.signal)
   }
 
@@ -2330,7 +2332,7 @@ export class ArkmeSdk {
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
   async calendarChatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     const { signal, ...params } = options
     return await this.call<ArkmeCalendarBucketPage>('calendar.chat-statistics', params, signal)

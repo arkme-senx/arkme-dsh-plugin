@@ -15,6 +15,7 @@ export default defineConfig([
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
+      'timeline-cache-worker': 'src/timeline-cache-worker.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',

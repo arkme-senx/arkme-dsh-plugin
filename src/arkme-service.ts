@@ -35,6 +35,7 @@ import type { RecordOwnerId } from './record-owner-id.js'
 import { RecordDeletionService } from './services/record-deletion-service.js'
 import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
 import { isRecentEmojiId } from './emoji-recent.js'
+import { normalizeConversationViewports } from './conversation-viewport-state.js'
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import { LocalRecordingDirectorySource } from './recording-directory-source.js'
@@ -593,6 +594,13 @@ export class ArkmeService {
       this.callHistory,
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.realtime.subscribeChatRealtime(event => {
+      if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
+      else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
+      else if (event.type === 'sessions-delta') for (const update of event.updates) {
+        if (update.sourceKey) void this.unifiedTimeline.refreshHint(update.sourceKey)
+      }
+    })
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
     this.botConversation = new BotConversationService(
@@ -972,6 +980,7 @@ export class ArkmeService {
         recordingWorkflowV2: true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
+        durableChatTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
@@ -1495,7 +1504,7 @@ export class ArkmeService {
     return await this.interwoven.queryPrivateInteractions(options)
   }
   /** @internal Built-in conversation directory; never creates a private chat. */
-  async privateInteractionDirectory(options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal'> = {}) {
+  async privateInteractionDirectory(options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal' | 'background'> = {}) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.interwoven.privateInteractionDirectory(options)
     const visibility = await this.conversationDirectoryVisibility.query(page.items.map(item => item.sourceRef), [], options.signal)
@@ -1973,14 +1982,15 @@ export class ArkmeService {
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> {
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
+      this.realtime.preferChatProjection(session.userId, source.ownerRef)
       return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal), session.userId)
+      }, options.signal, options.background === true), session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
@@ -2113,6 +2123,21 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  async conversationViewports(accountKey: string, surface: string, entries?: unknown, signal?: AbortSignal): Promise<import('./conversation-viewport-state.js').ConversationViewportEntries> {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (accountKey !== `${this.config.environment}:${userId}`) throw new ArkmePluginError('viewport-account-changed', '账号已变化，请重新打开对话', false, 409)
+    if (!surface || surface.length > 2048) throw new ArkmePluginError('viewport-scope-invalid', '阅读位置窗口无效', false, 400)
+    if (!this.stateStore.readConversationViewports || !this.stateStore.writeConversationViewports) throw new ArkmePluginError('viewport-storage-unavailable', '本地阅读位置存储暂不可用', true, 503)
+    if (entries !== undefined) {
+      signal?.throwIfAborted()
+      await this.stateStore.writeConversationViewports(accountKey, surface, normalizeConversationViewports(entries))
+      return []
+    }
+    return await this.stateStore.readConversationViewports(accountKey, surface)
+  }
+
   private async requireRecentEmojiAccount(accountKey: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()
@@ -2632,7 +2657,7 @@ export class ArkmeService {
   }
 
   async calendarChatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     return await this.calendar.chatStatistics(options)
   }

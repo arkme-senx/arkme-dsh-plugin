@@ -24,6 +24,8 @@ it('forwards timeline cancellation without accepting caller-owned user identity'
   const service = { readSource: vi.fn() }
   await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'topic-ref', limit: 40, userId: 999 }, undefined, undefined, undefined, undefined, signal)
   expect(service.readSource).toHaveBeenCalledWith('topic-ref', { limit: 40, signal })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', limit: 40, background: true }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { limit: 40, signal, background: true })
 })
 
 it('passes contact detail request cancellation to each existing business owner', async () => {
@@ -1399,6 +1401,8 @@ describe('outgoing call Host API dispatch', () => {
       chat_session_uid: 'must-not-forward', user_id: 999,
     })
     expect(service.calendarChatStatistics).toHaveBeenCalledWith({ sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000 })
+    await dispatchArkmeHostOperation(service as never, 'calendar.chat-statistics', { sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000, background: true })
+    expect(service.calendarChatStatistics).toHaveBeenLastCalledWith({ sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000, background: true })
   })
 
   it('rejects missing or oversized interwoven references', async () => {

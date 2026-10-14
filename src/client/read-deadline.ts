@@ -1,3 +1,7 @@
+export class ArkmeReadTimeoutError extends Error {
+  constructor() { super('读取超时，请重试'); this.name = 'ArkmeReadTimeoutError' }
+}
+
 /** Bound interactive reads, including browser connection-queue time. Never retry writes here. */
 export async function withArkmeReadDeadline<T>(
   read: (signal: AbortSignal) => Promise<T>,
@@ -11,7 +15,7 @@ export async function withArkmeReadDeadline<T>(
   const onAbort = () => { rejectCancelled(controller.signal.reason) }
   controller.signal.addEventListener('abort', onAbort, { once: true })
   signal?.addEventListener('abort', cancel, { once: true })
-  const timer = setTimeout(() => { controller.abort(new Error('读取超时，请重试')) }, 30_000)
+  const timer = setTimeout(() => { controller.abort(new ArkmeReadTimeoutError()) }, 30_000)
   try {
     return await Promise.race([read(controller.signal), cancelled])
   } finally {

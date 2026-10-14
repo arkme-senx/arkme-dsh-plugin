@@ -66,7 +66,7 @@ it('reads without changing selected conversation or either unread projection; lo
   expect(arkmeUi.getSnapshot().selectedSource).toEqual(selected)
   expect(arkmeChatDirectory.getSnapshot().sources[0]?.unreadCount).toBe(8)
   expect(mark).not.toHaveBeenCalled()
-  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline'])
+  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline', 'source.timeline'])
 })
 
 it('contains Tab, ignores IME Escape, supports closing and restores focus', async () => {
@@ -100,19 +100,19 @@ it('opens media above the chat preview and Escape only closes media', async () =
   await act(async () => media.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   expect(find('测试群的聊天预览')).not.toBeNull()
   expect(onClose).not.toHaveBeenCalled()
-  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline'])
+  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline', 'source.timeline'])
 })
 
 it('updates this conversation automatically without refresh controls or read acknowledgement', async () => {
   await render()
   await act(async () => arkmeChatTimelineDelta.publish([{ source: { ...source, sourceKey: 'another' }, items: [message] }]))
-  expect(callArkme).toHaveBeenCalledTimes(1)
+  expect(callArkme).toHaveBeenCalledTimes(2)
   messages = [{ ...message, textContent: '自动更新正文' }]
   await act(async () => arkmeChatTimelineDelta.publish([{ source, items: messages }]))
   expect(document.body.textContent).toContain('自动更新正文')
   expect(document.body.textContent).not.toContain('消息已更新')
   expect(document.body.textContent).not.toContain('刷新消息')
-  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline', 'source.timeline'])
+  expect(vi.mocked(callArkme).mock.calls.map(args => args[0])).toEqual(['source.timeline', 'source.timeline', 'source.timeline'])
   expect(arkmeChatDirectory.getSnapshot().sources[0]?.unreadCount).toBe(8)
 })
 
