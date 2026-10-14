@@ -60,6 +60,18 @@ it('does not publish a cache page with gaps, rolls back invalid batches, and res
 it('rejects nonadvancing source pages instead of hiding missing history', async () => {
   await expect(readFiveTurns({ records: turns(1), hasMore: true }, async () => ({ records: [], hasMore: false }))).rejects.toThrow('不连续')
 })
+
+it('atomically discards old events when revision changes without a sequence rewind', () => {
+  const { cache } = fixture(), records = turns(7), key = 'same-source'
+  cache.write(key, records, { cursor: 41, cloudRevision: 'generation-old' })
+  const next = structuredClone(records.slice(12))
+  next[0]!.event.data = { migrated: true }
+  expect(() => cache.write(key, [...next, { type: 'event', event: { seq: -1, type: 'invalid' } }], { cursor: 41, cloudRevision: 'generation-new' })).toThrow()
+  expect(cache.snapshot(key)?.cloudRevision).toBe('generation-old')
+  cache.write(key, next, { cursor: 41, cloudRevision: 'generation-new' })
+  expect(cache.page(key, 41)?.records).toEqual(next)
+  expect(cache.page(key, 41, 12)).toBeUndefined()
+})
 it('evicts whole sessions at the capacity bound and never invents an empty foreign page', () => {
   const { cache } = fixture()
   for (let i = 0; i < 257; i++) cache.write(`key-${String(i).padStart(3, '0')}`, turns(1), { cursor: 5, hasMore: false })

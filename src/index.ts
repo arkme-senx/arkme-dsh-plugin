@@ -1,3 +1,4 @@
+import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
@@ -604,15 +605,24 @@ export function apply(ctx: Context, config: Config): void {
     const controlPlane = new DshRemoteHttpControlPlane({
       post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
     })
+    const sessionOwnership = new DshRemoteSessionOwnershipStore(stateDirectory, profileRef)
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      sessionOwnership,
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
+      readRecoveryProof: async (sessionId, through, signal) => {
+          signal.throwIfAborted()
+          const account = await service.accountScope.scopedSession()
+          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
+          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
+          signal.throwIfAborted()
+          return proof
+        },
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
       readSession: async () => {
@@ -656,6 +666,18 @@ export function apply(ctx: Context, config: Config): void {
         const session = await service.accountScope.scopedSession()
         if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
         return String(session.userId)
+      },
+      localAliasReader: {
+        summaries: async (refs, signal) => {
+          const account = await service.accountScope.scopedSession()
+          if (!account || !service.accountScope.ready()) return new Map()
+          const owned = await sessionOwnership.listOwned(String(account.userId), refs)
+          signal.throwIfAborted()
+          // Native transport already owns live list metadata. Directory folding
+          // needs only account ownership, never a second all-session scan.
+          return new Map(refs.filter(ref => owned.has(ref)).map(ref => [ref, { updatedAt: 0, projectionAsOfSeq: -1, running: false }]))
+        },
+
       },
       localStatus: () => host.getStatus(),
       createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
