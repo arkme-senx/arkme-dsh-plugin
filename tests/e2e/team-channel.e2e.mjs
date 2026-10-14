@@ -47,6 +47,8 @@ describe('independent Team channel, installed artifact on official DSH', () => {
     let scaffold, browser, page
     const failures = [], upstreamRequests = []
     let retryMarker
+    let joinResponseLost = false, protectedJoinId
+    const applicationCommands = [], statusIds = [], claimedIds = new Set()
     const retriedCommands = [], sendFaults = [], cancellationAcks = []
     const identity = value => ({ user_id: value, nick_name: names.get(value), jotmo_id: `fixture_${value}`, head_img: '', identity_ready: true })
     const handler = async (req, res) => {
@@ -56,15 +58,23 @@ describe('independent Team channel, installed artifact on official DSH', () => {
         const path = new URL(req.url, 'http://localhost').pathname
         let result
         if (path === '/api/internal/v1/auth/public-user-identities/query') result = { code: 200, data: { items: (input.user_ids ?? []).map(identity) } }
-        else if (path === '/api/internal/v1/auth/ensure-jotmo-id') result = { code: 200, data: { created: true, name: input.name } }
+        else if (path === '/api/internal/v1/auth/ensure-jotmo-id') {
+          claimedIds.add(input.name)
+          result = { code: 200, data: { created: true, name: input.name } }
+        }
+        else if (path === '/api/v1/auth/check-jotmo-id-available') result = {code:200,data:{available:!claimedIds.has(input.name),reason:claimedIds.has(input.name)?'taken':''}}
         else if (path === '/api/public/v1/auth/the-best-api-for-testing') result = { code: 200, data: { access_token: token(input.user_id), refresh_token: `fixture-${input.user_id}` } }
         else if (path === '/api/v1/auth/get-user-info') {
           const id = JSON.parse(Buffer.from(req.headers.authorization.split(' ')[1].split('.')[1], 'base64url')).user_id
           result = { code: 200, data: { ...identity(id), phone: '13800000000' } }
         } else if (/^\/api\/(v1|public\/v1)\/team\//.test(path) || /^\/api\/v1\/(records|files)\//.test(path)) {
           upstreamRequests.push(path)
+          if (path.endsWith('/join-requests/status')) statusIds.push(input.jotmo_id)
           const trackedSend = path.endsWith('/conversations/messages/send') && input.content?.text_content === retryMarker
-          const fault = trackedSend ? sendFaults.shift() : undefined
+          const trackedApplication = path.endsWith('/join-requests/create') && input.jotmo_id === protectedJoinId
+          if (trackedApplication) applicationCommands.push(input)
+          const fault = trackedApplication && joinResponseLost ? 'after' : trackedSend ? sendFaults.shift() : undefined
+          if (trackedApplication) joinResponseLost = false
           if (trackedSend) retriedCommands.push(input)
           if (fault === 'before') {
             res.writeHead(503, { 'content-type': 'application/json' })
@@ -93,18 +103,23 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening')
       const origin = `https://127.0.0.1:${proxy.address().port}`
       const existing = await teamCall(users.owner, 'list-mine')
-      const team = existing.teams.find(item => item.jotmo_id === 'arkme_cn') ?? (await teamCall(users.owner, 'create', { request_uid: randomUUID(), name: '即我团队验收', jotmo_id: 'arkme_cn' })).team
+      const officialTeam = existing.teams.find(item => item.jotmo_id === 'arkme_cn') ?? (await teamCall(users.owner, 'create', { request_uid: randomUUID(), name: '即我团队验收', jotmo_id: 'arkme_cn' })).team
+      // The official channel cannot pause. Use an ordinary channel for the
+      // pause/resume chain, and check the official policy independently.
+      const team = existing.teams.find(item=>item.jotmo_id==='arkme_e2e_ordinary') ?? (await teamCall(users.owner,'create',{request_uid:randomUUID(),name:'普通团队链路验收',jotmo_id:'arkme_e2e_ordinary'})).team
+      const officialChannel = await teamCall(users.owner,'message-channel/get',{team_id:officialTeam.team_id})
+      expect(await teamCall(users.owner,'message-channel/configure',{team_id:officialTeam.team_id,expected_revision:officialChannel.revision,enabled:false})).toMatchObject({enabled:true,can_pause:false})
       let channel = await teamCall(users.owner, 'message-channel/get', { team_id: team.team_id })
       channel = await teamCall(users.owner, 'message-channel/configure', { team_id: team.team_id, expected_revision: channel.revision, enabled: true, rotate_link: true })
       expect(channel.public_ref).toMatch(/^[a-f0-9]{32}$/)
-      for (const user of [users.member, users.otherMember]) {
-        const application = await teamCall(user, 'join-requests/create', { team_id: team.team_id, request_uid: randomUUID() }, true)
-        if (application.code === 200) await teamCall(users.owner, 'join-requests/decide', { team_id: team.team_id, user_id: user, revision: application.data.revision, approve: true })
+      for (const fixtureTeam of [team,officialTeam]) for (const user of [users.member, users.otherMember]) {
+        const application = await teamCall(user, 'join-requests/create', { team_id: fixtureTeam.team_id, request_uid: randomUUID() }, true)
+        if (application.code === 200) await teamCall(users.owner, 'join-requests/decide', { team_id: fixtureTeam.team_id, user_id: user, revision: application.data.revision, approve: true })
         else expect(application.data.reason).toBe('already_member')
       }
       // Re-runs may follow a failed role-switch assertion; restore only synthetic fixture memberships.
       for (const visitor of [users.visitor, users.stranger]) {
-        const state = await teamCall(visitor, 'join-requests/status', { jotmo_id: 'arkme_cn' })
+        const state = await teamCall(visitor, 'join-requests/status', { jotmo_id: team.jotmo_id })
         if (state.state === 'joined') await teamCall(users.owner, 'members/remove', { team_id: team.team_id, target_user_id: visitor })
       }
       const conversation = (await teamCall(users.visitor, 'conversations/open', { public_ref: channel.public_ref })).conversation
@@ -118,12 +133,12 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect(message.state).toBe('published')
       expect((await teamCall(users.visitor, 'conversations/messages/send', command)).message_uid).toBe(message.message_uid)
       expect((await teamCall(users.stranger, 'conversations/timeline/page', { conversation_uid: uid, side: 'external' }, true)).data.reason).toBe('not_accessible')
-      expect((await teamCall(users.stranger, 'join-by-jotmo-id', { jotmo_id: 'arkme_cn' }, true)).data.reason).toBe('approval_required')
+      expect((await teamCall(users.stranger, 'join-by-jotmo-id', { jotmo_id: team.jotmo_id }, true)).data.reason).toBe('approval_required')
       for (const user of [users.owner, users.member, users.otherMember]) {
         expect((await teamCall(user, 'conversations/timeline/page', { conversation_uid: uid, side: 'team' })).messages.some(item => item.message_uid === message.message_uid)).toBe(true)
       }
       expect(await teamCall(users.member, 'conversations/attention')).toMatchObject({team:true,external:false})
-      expect(await teamCall(users.member, 'join-requests/status', {jotmo_id:'arkme_cn'})).toEqual({state:'joined'})
+      expect(await teamCall(users.member, 'join-requests/status', {jotmo_id:team.jotmo_id})).toEqual({state:'joined'})
       const config = { environment: 'test', stateDirectory: join(root, 'state'), keychainServicePrefix: `com.senqisi.team-e2e-${randomUUID()}`, allowProduction: false, updateCheckEnabled: false, openApiMcpEnabled: false, dshRemoteFeatureEnabled: false, extensionShareDiscoveryEnabled: false, toolProfile: 'disabled', shareWebsite: origin }
       for (const key of ['auth', 'subject', 'record', 'data', 'team', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
       const overlay = join(root, 'overlay.json')
@@ -133,7 +148,93 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       expect(await service.testLogin(users.member)).toMatchObject({ status: 'authenticated' })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
       page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+      page.on('pageerror', error => failures.push(error))
       await page.goto(scaffold.authenticatedUrl)
+      {
+        await page.getByRole('button', {name:'联系人',exact:true}).click()
+        const teams = page.locator('[data-directory-section="teams"]')
+        const toggle = teams.locator('.arkme-contact-directory-section-header')
+        if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+        const openForm = async label => {
+          await teams.getByRole('button',{name:'团队操作',exact:true}).click()
+          await page.getByRole('menuitem',{name:label,exact:true}).click()
+          const dialog = page.getByRole('dialog',{name:label,exact:true})
+          await dialog.waitFor()
+          return dialog
+        }
+        const applyTo = async id => {
+          const dialog = await openForm('加入团队')
+          expect(await dialog.getByRole('button',{name:'查询申请状态',exact:true}).count()).toBe(0)
+          await dialog.getByRole('textbox',{name:'团队即我号',exact:true}).fill(id)
+          await dialog.getByRole('button',{name:'申请加入',exact:true}).click()
+          return dialog
+        }
+        // An existing member gets a definitive result without rewriting membership.
+        let form
+        const missingId = `missing_${randomUUID().replaceAll('-','')}`
+        form = await applyTo(missingId)
+        await form.getByRole('alert').filter({hasText:'请检查团队即我号是否正确，再试一次'}).waitFor()
+        await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+        expect(await form.getByRole('alert').textContent()).toBe('请检查团队即我号是否正确，再试一次')
+        expect(statusIds).not.toContain(missingId)
+        await form.getByRole('button',{name:'取消',exact:true}).click()
+        for (const joinedTeam of [team,officialTeam]) {
+          const membersBefore = await teamCall(users.owner,'members/list',{team_id:joinedTeam.team_id})
+          form = await applyTo(joinedTeam.jotmo_id)
+          await form.getByRole('status').filter({hasText:'已加入团队'}).waitFor()
+          expect(await form.getByRole('button',{name:'申请加入',exact:true}).count()).toBe(0)
+          const membersAfter = await teamCall(users.owner,'members/list',{team_id:joinedTeam.team_id})
+          expect(membersAfter.items.find(item=>item.user_id===users.member)).toEqual(membersBefore.items.find(item=>item.user_id===users.member))
+          await form.getByRole('button',{name:'完成',exact:true}).click()
+        }
+        // Creation goes through the real Host and Team service; only the account
+        // naming directory is a fixture. No Team response is substituted here.
+        const createdId = `dialog_${randomUUID().replaceAll('-','')}`
+        form = await openForm('创建团队')
+        await form.getByRole('textbox',{name:'团队名称',exact:true}).fill('表单真实创建')
+        await form.getByRole('textbox',{name:'团队即我号',exact:true}).fill(createdId)
+        await expect.poll(()=>form.getByRole('button',{name:'创建团队',exact:true}).isEnabled()).toBe(true)
+        await form.getByRole('button',{name:'创建团队',exact:true}).click()
+        await form.waitFor({state:'hidden'})
+        expect((await teamCall(users.member,'list-mine')).teams.find(item=>item.jotmo_id===createdId)).toMatchObject({name:'表单真实创建',role:1})
+        const suffix = randomUUID().replaceAll('-','').slice(0,12)
+        const ordinary = (await teamCall(users.owner,'create',{request_uid:randomUUID(),name:'公开加入验收',jotmo_id:`open_${suffix}`})).team
+        form = await applyTo(ordinary.jotmo_id)
+        await form.getByRole('status').filter({hasText:'已加入团队'}).waitFor()
+        expect(await teamCall(users.member,'join-requests/status',{jotmo_id:ordinary.jotmo_id})).toEqual({state:'joined'})
+        await form.getByRole('button',{name:'完成',exact:true}).click()
+        const protectedName = `审批恢复验收 ${suffix}`
+        const protectedTeam = (await teamCall(users.owner,'create',{request_uid:randomUUID(),name:protectedName,jotmo_id:`review_${suffix}`})).team
+        protectedJoinId = protectedTeam.jotmo_id
+        const initialChannel = await teamCall(users.owner,'message-channel/get',{team_id:protectedTeam.team_id})
+        await teamCall(users.owner,'message-channel/configure',{team_id:protectedTeam.team_id,expected_revision:initialChannel.revision,enabled:true})
+        joinResponseLost = true
+        form = await applyTo(protectedJoinId)
+        await form.getByRole('alert').waitFor()
+        await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+        await form.getByRole('status').filter({hasText:'等待团队所有者审批'}).waitFor()
+        expect(applicationCommands).toHaveLength(1)
+        const application = (await teamCall(users.owner,'join-requests/list',{team_id:protectedTeam.team_id})).items.find(item=>item.user_id===users.member)
+        expect(application.state).toBe('pending')
+        await teamCall(users.owner,'join-requests/decide',{team_id:protectedTeam.team_id,user_id:users.member,revision:application.revision,approve:false})
+        await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+        await form.getByRole('status').filter({hasText:'加入申请未通过'}).waitFor()
+        await form.getByRole('button',{name:'重新申请',exact:true}).click()
+        await form.getByRole('status').filter({hasText:'等待团队所有者审批'}).waitFor()
+        const reapplied = (await teamCall(users.owner,'join-requests/list',{team_id:protectedTeam.team_id})).items.find(item=>item.user_id===users.member)
+        expect(reapplied.revision).toBeGreaterThan(application.revision)
+        expect(applicationCommands).toHaveLength(2)
+        expect(applicationCommands[1].request_uid).not.toBe(applicationCommands[0].request_uid)
+        await teamCall(users.owner,'join-requests/decide',{team_id:protectedTeam.team_id,user_id:users.member,revision:reapplied.revision,approve:true})
+        await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+        await form.getByRole('status').filter({hasText:'已加入团队'}).waitFor()
+        await form.getByRole('button',{name:'完成',exact:true}).click()
+        // Focus recovery must refresh the directory even with no IM/SSE process.
+        await teams.getByRole('button',{name:new RegExp(protectedName)}).waitFor()
+        expect(applicationCommands).toHaveLength(2)
+        // Return to the original conversation for the independent Record chain.
+        await page.getByRole('button',{name:'对话',exact:true}).click()
+      }
       const directory = page.locator('[data-arkme-retained-directory="conversations"]')
       await directory.getByRole('treeitem', { name: /验收-visitor/ }).click()
       const panel = page.locator('.team-message-panel')
@@ -290,7 +391,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
       await panel.getByRole('alert').filter({ hasText: /权限|访问|不可/ }).waitFor()
       expect(await panel.getByText(`${reply} 已修改`, { exact: true }).count()).toBe(0)
-      expect(await teamCall(users.member,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'not_member'})
+      expect(await teamCall(users.member,'join-requests/status',{jotmo_id:team.jotmo_id})).toEqual({state:'not_member'})
       expect((await teamCall(users.member, 'conversations/timeline/page', { conversation_uid: uid, side: 'team' }, true)).data.reason).toBe('not_accessible')
       await service.logout(); await service.testLogin(users.visitor)
       await page.reload()
@@ -300,6 +401,13 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       if (await teamToggle.getAttribute('aria-expanded') !== 'true') await teamToggle.click()
       await teamsSection.getByRole('button', { name: '团队操作', exact: true }).click()
       await page.getByRole('menuitem', { name: '通过链接发消息', exact: true }).click()
+      const opensBeforeInvalidInput = upstreamRequests.filter(path=>path.endsWith('/conversations/open')).length
+      await page.getByRole('textbox', { name: '团队消息链接', exact: true }).fill('dawd')
+      await page.getByRole('button', { name: '打开对话', exact: true }).click()
+      const linkForm = page.getByRole('dialog',{name:'通过链接发消息',exact:true})
+      await linkForm.getByRole('alert').filter({hasText:'请粘贴完整的团队消息链接'}).waitFor()
+      expect(await linkForm.textContent()).not.toMatch(/Invalid URL|Failed to construct/)
+      expect(upstreamRequests.filter(path=>path.endsWith('/conversations/open'))).toHaveLength(opensBeforeInvalidInput)
       await page.getByRole('textbox', { name: '团队消息链接', exact: true }).fill(`${origin}/team-message?channel=${channel.public_ref}`)
       await page.getByRole('button', { name: '打开对话', exact: true }).click()
       await panel.locator('article').getByText(`${reply} 已修改`, { exact: true }).waitFor()
@@ -368,7 +476,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       if(process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-owner.png')})
       await settings.getByRole('button',{name:'拒绝',exact:true}).click()
       await expect.poll(() => settings.getByText('加入申请',{exact:true}).count()).toBe(0)
-      expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'rejected'})
+      expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:team.jotmo_id})).toEqual({state:'rejected'})
       await teamCall(users.stranger,'join-requests/create',{team_id:team.team_id,request_uid:randomUUID()})
       // This fixture runs without IM. Re-enter the page to read the new request;
       // production uses the existing Team change subscription, not a refresh button.
@@ -379,7 +487,7 @@ describe('independent Team channel, installed artifact on official DSH', () => {
       await settings.getByRole('button',{name:'同意',exact:true}).click()
       await settings.getByRole('button',{name:'确认',exact:true}).click()
       await expect.poll(() => settings.getByText('加入申请',{exact:true}).count()).toBe(0)
-      expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:'arkme_cn'})).toEqual({state:'joined'})
+      expect(await teamCall(users.stranger,'join-requests/status',{jotmo_id:team.jotmo_id})).toEqual({state:'joined'})
       expect(await teamCall(users.owner,'conversations/attention')).toMatchObject({applications:false})
 
     } catch (error) {
