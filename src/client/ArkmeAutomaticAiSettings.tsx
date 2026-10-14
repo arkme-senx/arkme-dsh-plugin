@@ -70,7 +70,7 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
   const profile = visibleSettings?.find(item => item.key === 'personal_profile' && item.enabled)
   return <section className="arkme-automatic-ai" aria-label={tr('AI 自动分析')}>
     <h3>{tr('AI 自动分析')}</h3>
-    <p>{tr('开启后在后台自动运行，消耗 AI 额度。')}</p>
+    <p>{tr('开启后自动分析，消耗 AI 额度。')}</p>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">{tr('正在读取设置…')}</p>}
     {!loading && !settings && <button type="button" onClick={() => { setError(''); void reload() }}>{tr('重新加载')}</button>}
@@ -81,10 +81,6 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
     </div>)}
     <details className="arkme-automatic-ai-help"><summary>{tr('使用说明')}</summary>
       {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title)}</strong>：{tr(capabilityLocations[setting.key])}</p>)}
-      <p><strong>{tr('额度规则')}</strong></p>
-      <p>{tr('按实际用量扣额度，无新结果也会扣除。')}</p>
-      <p>{tr('额度不足暂停；系统异常重试不重复扣除。')}</p>
-      <p>{tr('关闭后保留已有内容，已开始的分析仍可能扣额度。')}</p>
     </details>
     {retryProfile && profile && !loading && <button type="button" disabled={saving} onClick={() => { void save(profile, true) }}>{tr('个人档案已授权，重试启动分析')}</button>}
     {confirm && loadedScope === accountScope && <ArkmeConfirmDialog titleId={titleId} title={tr('开启功能')} busy={saving} onClose={() => setConfirm(undefined)}

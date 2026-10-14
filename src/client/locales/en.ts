@@ -1,16 +1,12 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
-额度规则|Allowance rules
 手机「探索 → 个人档案」|Mobile: Explore → Personal profile
 手机快记列表或详情|Mobile: note list or details
 手机聊天页面|Mobile: chat page
 左侧「安排」|Plans in the left navigation
 手机「探索 → 目标」|Mobile: Explore → Goals
-开启后在后台自动运行，消耗 AI 额度。|Enabled features run automatically in the background and use your AI allowance.
+开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
 额度使用说明|AI allowance usage
-按实际用量扣额度，无新结果也会扣除。|Allowance is deducted by actual usage, even without a new result.
-额度不足暂停；系统异常重试不重复扣除。|Analysis pauses when allowance is insufficient. System retries do not deduct twice.
-关闭后保留已有内容，已开始的分析仍可能扣额度。|Existing content is kept when disabled. Analysis already started may still use allowance.
 AI 自动分析|Automatic AI analysis
 自动识别设置|Automatic recognition settings
 开启功能|Enable feature

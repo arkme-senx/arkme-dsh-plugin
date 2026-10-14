@@ -17,6 +17,17 @@ function fixture() {
 }
 
 describe('automatic capability owner', () => {
+  it('displays the owner default and closes it without a new enable consent', async () => {
+    const f = fixture()
+    Object.assign(f.state, { enabled: true, version: 1, enabled_at: 1 })
+    expect((await f.service.query('prod:1')).settings[0]).toMatchObject({ enabled: true, version: 1, enabledAt: 1 })
+    expect(f.post).toHaveBeenCalledTimes(1)
+    await f.service.update({ key: 'record_thought', enabled: false, expectedVersion: 1 }, 'prod:1')
+    expect(f.state).toMatchObject({ enabled: false, version: 2, enabled_at: 0 })
+    await expect(f.service.update({ key: 'record_thought', enabled: true, expectedVersion: 1, billingConsent: true }, 'prod:1')).rejects.toThrow('conflict')
+    expect(f.state.enabled).toBe(false)
+  })
+
   it.each(['capability_disabled', 'points_insufficient', ''])('reopening profile respects the actual pause reason %s', async reason => {
     const saved = { key: 'personal_profile', title: '个人档案', enabled: true, version: 1, enabled_at: 1 }
     const post = vi.fn(async () => ({ activated: true, processing: { phase: 'paused', rebuild_run_id: 'run-existing' }, latest_job: { last_error_code: reason } }))

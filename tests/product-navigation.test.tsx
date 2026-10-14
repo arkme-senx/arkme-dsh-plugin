@@ -135,6 +135,7 @@ describe('Arkme product navigation', () => {
     expect(productNavigationSource).toContain("arkmeUi.openDshSettings('arkme-usage')")
     expect(productNavigationSource).not.toContain('<strong>我的账户</strong>')
     expect(productNavigationSource).toContain('arkmeUi.openDshSettings()')
+    expect(productNavigationSource).not.toContain('tr("AI 自动分析")')
   })
 
   it('dismisses the profile menu when pressing Escape or clicking outside it in every desktop layout', () => {

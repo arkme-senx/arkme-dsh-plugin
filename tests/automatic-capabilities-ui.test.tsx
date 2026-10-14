@@ -28,13 +28,14 @@ const writes = () => mocks.call.mock.calls.filter(([op]) => op === 'account.capa
 
 it('requires human billing consent, carries the observed version, and closes directly', async () => {
   await render(); expect(writes()).toHaveLength(0)
-  expect(host.querySelector('.arkme-automatic-ai > p')?.textContent).toBe('开启后在后台自动运行，消耗 AI 额度。')
+  expect(host.querySelector('.arkme-automatic-ai > p')?.textContent).toBe('开启后自动分析，消耗 AI 额度。')
   const help = host.querySelector('details')!
   expect(help.open).toBe(false)
   await act(async () => help.querySelector('summary')!.click())
   expect(help.open).toBe(true)
   expect(help.textContent).toContain('手机「探索 → 个人档案」')
-  expect(help.textContent).toContain('无新结果也会扣除')
+  expect(help.textContent).not.toContain('额度规则')
+  expect(help.textContent).not.toContain('已开始的分析')
   expect(writes()).toHaveLength(0)
   await act(async () => help.querySelector('summary')!.click())
   expect(help.open).toBe(false)
