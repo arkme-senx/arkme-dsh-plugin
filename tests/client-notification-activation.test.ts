@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createClientLocaleStub } from './client-locale-stub.js'
+// Load the UI graph during collection, outside the notification resolution budget.
+import { apply } from '../src/client/index.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
+import { arkmeNotificationActivation } from '../src/client/notification-activation-store.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -38,11 +42,6 @@ describe('client notification activation', () => {
       activeAtMillis: 10, unreadCount: 1, latestSequence: 9,
     }
     mocks.callArkme.mockResolvedValue({ directory: 'root', items: [source], hasMore: false })
-    const [{ apply }, { arkmeUi }, { arkmeNotificationActivation }] = await Promise.all([
-      import('../src/client/index.js'),
-      import('../src/client/ui-controller.js'),
-      import('../src/client/notification-activation-store.js'),
-    ])
     const effects: Array<{ run: () => (() => void) | void; label: string }> = []
     apply({
       slots: { inject: vi.fn(), register: vi.fn() },
@@ -86,7 +85,6 @@ describe('client notification activation', () => {
 
   it('reports not-found instead of silently dropping a V2 activation miss', async () => {
     mocks.callArkme.mockResolvedValue({ directory: 'root', items: [], hasMore: false })
-    const { apply } = await import('../src/client/index.js')
     const effects: Array<{ run: () => (() => void) | void; label: string }> = []
     apply({
       slots: { inject: vi.fn(), register: vi.fn() }, locale: createClientLocaleStub(),
@@ -111,7 +109,6 @@ describe('client notification activation', () => {
       firstSignal = signal
       return new Promise(() => undefined)
     }).mockRejectedValueOnce(new Error('directory unavailable'))
-    const { apply } = await import('../src/client/index.js')
     const effects: Array<{ run: () => (() => void) | void; label: string }> = []
     apply({
       slots: { inject: vi.fn(), register: vi.fn() }, locale: createClientLocaleStub(),

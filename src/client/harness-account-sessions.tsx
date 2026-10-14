@@ -8,6 +8,7 @@ import { callArkme } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
 import { openNativeAccountSession } from './harness-native-navigation.js'
 import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
+import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
 type SessionsState = ReturnType<ISessions['list']['getSnapshot']>
 type Workspace = { workspaceId: string; title: string; path: string; createdAt?: number; sessionIds: string[] }
@@ -50,19 +51,27 @@ export function projectAccountSessionOrder(view: BrowserView, sessions: Sessions
 /** Local rows keep native identity, blank/activity state and all native actions. */
 export function projectAccountSessions(local: SessionsState, rows: readonly DshAccountSession[], selected?: DshAccountSession): SessionsState {
   const byId = { ...local.byId }, ids = [...local.ids]
+  const directory = (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__
+  const visibleIds = ids.filter(id => { if (!(directory?.preferredSession?.(id) && directory.preferredSession(id) !== id) && !directory?.canonicalLocal?.(id)) return true; delete byId[id]; return false })
+  ids.splice(0, ids.length, ...visibleIds)
   for (const row of selected && !rows.some(row => accountSessionKey(row) === accountSessionKey(selected)) ? [...rows, selected] : rows) {
     if (row.archived || row.origin === 'subagent') continue
     const id = (row.local ? row.sessionRef : accountSessionKey(row)) as SessionId
-    if (byId[id]) continue
+    if (byId[id] || (directory?.preferredSession?.(id) && directory.preferredSession(id) !== id)) continue
     // A row is selectable only after its native added event has landed.
     if (!row.local && (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__) continue
     byId[id] = { id, title: row.title, displayTitle: row.title, updatedAt: row.updatedAt, running: row.running, blank: row.blank }
     ids.push(id)
   }
-  return { ...local, byId, ids: [...new Set(ids)], current: selected ? accountSessionKey(selected) as SessionId : local.current }
+  const current = selected ? (selected.local ? selected.sessionRef : accountSessionKey(selected)) : local.current
+  return { ...local, byId, ids: [...new Set(ids)], current: (current ? directory?.preferredSession?.(current) || directory?.canonicalLocal?.(current) || current : current) as SessionId }
 }
 
 export function projectAccountWorkspaces(local: WorkspacesState, rows: readonly DshAccountSession[]): WorkspacesState {
+  const directory = (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__
+  const visible = (id: string) => !directory?.preferredSession?.(id) || directory.preferredSession(id) === id
+  rows = rows.filter(row => visible(row.local ? row.sessionRef : accountSessionKey(row)))
+  local = { ...local, items: local.items.map(item => ({ ...item, sessionIds: item.sessionIds.filter(visible) })) }
   const groups = new Map<string, Workspace>()
   const names = new Map<string, Set<string>>()
   for (const row of rows) {
@@ -92,10 +101,13 @@ const catalogKey = Symbol.for('arkme.account-session-catalog')
 /** Apply a complete authoritative catalog as add/update/delete; unchanged rows retain identity. */
 export function reconcileAccountSessions(previous: DshAccountSession[], incoming: DshAccountSession[]): DshAccountSession[] {
   const known = new Map(previous.map(row => [accountSessionKey(row), row]))
-  const next = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()].map(row => {
+  // A moving paginated catalog can repeat a source. Resolve its latest row
+  // first, then collapse old registrations before publishing to either view.
+  const unique = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()]
+  const next = collapseAccountSessionCopies(unique, previous).map(row => {
     const old = known.get(accountSessionKey(row))
-    return old && (Object.keys(row) as Array<keyof DshAccountSession>).every(key =>
-      key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : row[key] === old[key]) ? old : row
+    return old && ([...new Set([...Object.keys(row), ...Object.keys(old)])] as Array<keyof DshAccountSession>).every(key =>
+      key === 'coveredLocalHistory' ? JSON.stringify(row.coveredLocalHistory) === JSON.stringify(old.coveredLocalHistory) : key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' ? (row.previousRuntimeRefs ?? []).join('\0') === (old.previousRuntimeRefs ?? []).join('\0') : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }
@@ -136,7 +148,7 @@ function createCatalog(surface: Element, remove: () => void) {
         } while (cursor && active)
         if (!active || signal.aborted) return
         const merged = reconcileAccountSessions(rows, next)
-        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows) }
+        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows, localRuntimeRef) }
         if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
       } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
       finally { if (signal === controller.signal) busy = false }
@@ -220,7 +232,7 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   }, [catalog])
   useEffect(() => { void catalog.refresh() }, [local.current, catalog])
   const sessionState = useMemo(() => projectAccountSessions(local, rows), [local, rows])
-  const workspaceState = useMemo(() => projectAccountWorkspaces(workspaces, rows), [workspaces, rows])
+  const workspaceState = useMemo(() => projectAccountWorkspaces(workspaces, rows), [workspaces, rows, local])
   const view = props.useStore(state => state)
   const viewState = useMemo(() => projectAccountSessionOrder(view, sessionState), [view, sessionState])
   const originResolver = useRef<(element: HTMLElement) => { title: string; lines: string[] } | undefined>(() => undefined)

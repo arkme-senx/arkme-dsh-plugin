@@ -82,7 +82,7 @@ export async function connectConversationDrafts(bridge: ConversationWindowBridge
   for (const key of keys) {
    if (!key.startsWith(prefix)) continue
    const draft = store.get(key)
-   const value = draft.text === '' && draft.attachments.length === 0 && draft.markdown === undefined ? null : draft
+   const value = draft.text === '' && draft.attachments.length === 0 && draft.markdown === undefined && draft.extensionTarget === undefined ? null : draft
    // Object URLs belong to their creating page; receivers resolve previews from the asset/file reference.
    queued.set(key, value ? {...value, attachments: value.attachments.map(({previewUrl: _preview, ...item}) => item)} : null)
    if (value === null) previous.delete(key); else previous.set(key, value)

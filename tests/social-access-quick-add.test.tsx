@@ -21,7 +21,7 @@ afterEach(() => {
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
   api.bound = true
 })
-it.each(['创建群聊', '发起通话'])('keeps an already opened %s dialog while hiding new social actions', async label => {
+it.each(['创建群聊', '发起通话'])('keeps an already opened %s dialog and all menu actions available after unbinding', async label => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
   await act(async () => { renderer = create(<ArkmeQuickAddButton onContactAdd={vi.fn()} onSourceCreated={vi.fn()} />) })
   const openMenu = async () => { await act(async () => { renderer!.root.findByProps({ 'aria-haspopup': 'menu' }).props.onClick() }) }
@@ -39,6 +39,6 @@ it.each(['创建群聊', '发起通话'])('keeps an already opened %s dialog whi
   await act(async () => { dialog.findByProps({ 'aria-label': '关闭' }).props.onClick() })
   await openMenu()
   const text = JSON.stringify(renderer!.toJSON())
-  for (const hidden of ['添加联系人', '创建群聊', '发起通话']) expect(text).not.toContain(hidden)
+  for (const label of ['添加联系人', '创建群聊', '发起通话']) expect(text).toContain(label)
   expect(text).toContain('添加 Bot')
 })

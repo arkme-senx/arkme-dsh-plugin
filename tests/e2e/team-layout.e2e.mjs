@@ -16,11 +16,15 @@ const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'
 if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) throw new Error('Install the immutable tgz with the official CLI first')
 const { launchWebScaffold } = await import(pathToFileURL(join(dshRoot, 'apps/web/tests/scaffold.ts')).href)
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
-it('keeps Team detail compact, uses shared menus and respects member permissions', async () => {
+// The focused lane still installs the same artifact and checks real browser
+// behavior; the default lane continues through all conversation/media checks.
+const onlyDialogs = process.env.ARKME_TEAM_DIALOG_ONLY === '1'
+it(onlyDialogs ? 'validates team membership results and link errors in compact dialogs' : 'keeps Team detail compact, uses shared menus and respects member permissions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'arkme team layout '))
-  let scaffold, browser, page
+  let scaffold, browser, page, releaseJoinReply
   const failures = [], calls = []
   let teamOwnerFixture
+  let phoneBound = true
   const api = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
     const input = JSON.parse(Buffer.concat(chunks).toString() || '{}')
@@ -29,7 +33,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     if (path.endsWith('/the-best-api-for-testing')) {
       const token = [{ alg: 'none' }, { user_id: input.user_id, exp: Math.floor(Date.now() / 1000) + 3600 }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.') + '.fixture'
       data = { access_token: token, refresh_token: 'layout-fixture' }
-    } else if (path.endsWith('/get-user-info')) data = { user_id: Number(JSON.parse(Buffer.from(String(req.headers.authorization).split('.')[1], 'base64url')).user_id), nick_name: '布局验收', jotmo_id: 'layout_test', phone: '13800000000' }
+    } else if (path.endsWith('/get-user-info')) data = { user_id: Number(JSON.parse(Buffer.from(String(req.headers.authorization).split('.')[1], 'base64url')).user_id), nick_name: '布局验收', jotmo_id: 'layout_test', phone: phoneBound ? '13800000000' : '' }
     else if (path === '/api/v1/records/detail') data = { record_core: { record_uid: 'personal-team-search', owner_user_id: 99001001, creator_user_id: 99001001,
       origin_kind: 5, source_kind: 4, status: 1, content_access_state: 1, version: 1, template_kind: 1,
       text_content: '搜索打开的完整团队快记正文', send_at: Date.now(), content_payload: {} } }
@@ -54,6 +58,8 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     let canPause, pendingApplications = []
     let sendTasks = []
     let holdTextDelivery = false, failNextTimeline = false, accountBoundaryFixture = false
+    let holdJoinReply = false
+    let statusFailures = 0, pendingApproved = false
     const sendRetries = []
     const teamRef = 'team-app-team.fixture', publicRef = 'b'.repeat(32)
     const channel = () => ({ teamRef, name: 'Arkme Internal Interview', jotmoId: 'arkme_cn', publicRef, link: `https://example.com/team-message?channel=${publicRef}`, enabled, revision: 3, canManage: owner, ...(canPause === undefined ? {} : { canPause }) })
@@ -96,6 +102,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       calls.push(op)
       if (accountBoundaryFixture && op.startsWith('team.app.')) { await route.continue(); return }
       if (op === 'team.app.timeline' && failNextTimeline) { failNextTimeline=false; await route.abort('connectionfailed'); return }
+      if (op === 'team.app.join.status' && statusFailures > 0) {
+        --statusFailures
+        await route.fulfill({json:{ok:false,error:{code:'local-network-unavailable',message:'INTERNAL_DIAGNOSTIC',retryable:true}}})
+        return
+      }
       let value
       if (op === 'search.records') value = {items:[{recordUid:'personal-team-search',sourceKind:4,sourceUid:'team-source',routeTargetKind:'record_detail',routeTargetUid:'personal-team-search',sourceTitle:'团队对话',title:'搜索团队快记',textContent:'检索摘要 [im_emoji:yummy_face] [jm_emoji:thumb_up]',snippet:'检索摘要 [im_emoji:yummy_face] [jm_emoji:thumb_up]',sendAtMillis:Date.now(),media:[],files:[]}],sourceAggregates:[],hasMore:false,queryGuard:{state:'ok'}}
       else if (op === 'reactions' && params.action === 'history') value = {items:[],has_more:false}
@@ -140,6 +151,11 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         {nickname:'设计同事',read:false,readAt:0},{nickname:'研发同事',read:false,readAt:0}]}
       else if(op === 'team.app.read') value={}
       else if(op === 'team.app.create.check') value={available:params.jotmoId !== 'already_taken',reason:params.jotmoId === 'already_taken' ? 'taken' : ''}
+      else if(op === 'team.app.join') {
+        if (holdJoinReply) await new Promise(resolve => { releaseJoinReply = resolve })
+        value={state:'pending'}
+      }
+      else if(op === 'team.app.join.status') value={state:params.jotmoId === 'pending_team' && !pendingApproved ? 'pending' : 'joined'}
       else if (op === 'team.app.conversations' && voicePreviewText !== undefined) value = await hostOwner.executeTeamApp(op, params)
       else if (op === 'team.app.conversations') value = { items: params.side === 'team'
         ? [conversation(), secondConversation()]
@@ -205,6 +221,7 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
       await page.getByRole('menuitem', { name: label, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: label, exact: true })
       await dialog.waitFor()
+      expect(await dialog.evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(500)
       if (label === '创建团队') {
         await dialog.getByRole('textbox', {name:'团队名称',exact:true}).fill('测试团队')
         await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('你好')
@@ -217,9 +234,76 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
         await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('available_team')
         await expect.poll(()=>dialog.getByRole('button',{name:'创建团队',exact:true}).isEnabled()).toBe(true)
         expect(calls).not.toContain('team.app.create')
+      } else if (label === '加入团队') {
+        expect(await dialog.getByRole('button', {name:'查询申请状态',exact:true}).count()).toBe(0)
+        const teamIdInput = dialog.getByRole('textbox', {name:'团队即我号',exact:true})
+        await teamIdInput.fill('arkme_cn')
+        holdJoinReply = true
+        await dialog.getByRole('button', {name:'申请加入',exact:true}).click()
+        await expect.poll(() => typeof releaseJoinReply).toBe('function')
+        expect(await teamIdInput.isEditable()).toBe(false)
+        expect(await teamIdInput.isDisabled()).toBe(false)
+        expect(await dialog.getByRole('button', {name:'关闭',exact:true}).isDisabled()).toBe(true)
+        expect(await dialog.getByRole('button', {name:'取消',exact:true}).isDisabled()).toBe(true)
+        await page.keyboard.press('Escape'); expect(await dialog.isVisible()).toBe(true)
+        await page.keyboard.press('Tab')
+        expect(await teamIdInput.evaluate(node => document.activeElement === node)).toBe(true)
+        // Simulate returning to the page after approval while the stale
+        // pending HTTP response is still in flight. The queued read wins.
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+        holdJoinReply = false; releaseJoinReply()
+        await dialog.getByRole('status').filter({hasText:'已加入团队'}).waitFor()
+        expect(calls).toContain('team.app.join.status')
+        expect(await dialog.getByRole('button', {name:'申请加入',exact:true}).count()).toBe(0)
+        await capture('plugin-team-join-success')
+        await dialog.getByRole('textbox', {name:'团队即我号',exact:true}).fill('pending_team')
+        await dialog.getByRole('button', {name:'申请加入',exact:true}).click()
+        await dialog.getByRole('status').filter({hasText:'等待团队所有者审批'}).waitFor()
+        expect(await dialog.getByRole('button', {name:'申请加入',exact:true}).count()).toBe(0)
+        await capture('plugin-team-join-pending')
+        statusFailures = 3
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        await dialog.getByRole('alert').filter({hasText:'恢复连接后会自动更新'}).waitFor()
+        expect(await dialog.textContent()).not.toContain('INTERNAL_DIAGNOSTIC')
+        pendingApproved = true
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        await dialog.getByRole('status').filter({hasText:'已加入团队'}).waitFor()
+        expect(await dialog.getByRole('alert').count()).toBe(0)
+        expect(calls.filter(op => op === 'team.app.join')).toHaveLength(2)
+        await capture('plugin-team-join-recovered')
+        phoneBound = false
+        await teamIdInput.fill('unbound_team')
+        await dialog.getByRole('button', {name:'申请加入',exact:true}).click()
+        const binding = page.getByRole('dialog', {name:'绑定手机号后继续',exact:true})
+        await binding.waitFor()
+        await binding.getByRole('button', {name:'暂不绑定',exact:true}).click()
+        await dialog.getByRole('alert').filter({hasText:'绑定手机号后继续'}).waitFor()
+        expect(calls.filter(op => op === 'team.app.join')).toHaveLength(2)
+        await capture('plugin-team-join-phone-required')
+        phoneBound = true
+      } else {
+        await dialog.getByRole('textbox', {name:'团队消息链接',exact:true}).fill('dawd')
+        await dialog.getByRole('button', {name:'打开对话',exact:true}).click()
+        await dialog.getByRole('alert').filter({hasText:'请粘贴完整的团队消息链接'}).waitFor()
+        expect(await dialog.textContent()).not.toMatch(/Invalid URL|Failed to construct/)
+        expect(await dialog.getByRole('textbox', {name:'团队消息链接',exact:true}).getAttribute('aria-invalid')).toBe('true')
+        await capture('plugin-team-link-invalid')
       }
-      await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+      await page.setViewportSize({width:420,height:480})
+      const bounds = await dialog.evaluate(node => {
+        const {left,right,top,bottom} = node.getBoundingClientRect()
+        return {left,right,top,bottom}
+      })
+      expect(bounds.left).toBeGreaterThanOrEqual(16)
+      expect(bounds.right).toBeLessThanOrEqual(404)
+      expect(bounds.top).toBeGreaterThanOrEqual(16)
+      expect(bounds.bottom).toBeLessThanOrEqual(464)
+      if (label === '通过链接发消息') await capture('plugin-team-link-invalid-narrow')
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({state:'hidden'})
+      await page.setViewportSize({width:1440,height:1000})
     }
+    if (onlyDialogs) return
     await detail.getByRole('button', { name: '复制链接', exact: true }).click()
     await page.getByText('链接已复制', { exact: true }).waitFor()
     await expect.poll(()=>page.getByRole('alert').filter({hasText:'链接已复制'}).evaluate(node=>getComputedStyle(node).opacity)).toBe('1')
@@ -650,12 +734,15 @@ it('keeps Team detail compact, uses shared menus and respects member permissions
     failures.push(error)
     if (page && process.env.ARKME_E2E_CAPTURE_DIR) await page.screenshot({ path: join(process.env.ARKME_E2E_CAPTURE_DIR, 'failure.png') }).catch(() => {})
   } finally {
+    releaseJoinReply?.()
     await page?.unrouteAll({behavior:'wait'}).catch(e => failures.push(e))
     await browser?.close().catch(e => failures.push(e))
     if (scaffold) await scaffold.ctx.get('arkmeData').logout().catch(e => failures.push(e))
     await scaffold?.close().catch(e => failures.push(e))
     await new Promise(resolve => api.close(resolve))
     await rm(root, { recursive: true, force: true })
+    // An early focused-lane return must still surface teardown/page errors.
+    if (onlyDialogs && failures.length) throw new AggregateError(failures, failures.map(String).join('\n'))
   }
   if (failures.length) throw new AggregateError(failures, failures.map(String).join('\n'))
 })

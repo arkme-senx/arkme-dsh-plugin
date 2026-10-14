@@ -212,6 +212,23 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('routes directory refreshes separately from authoritative timeline invalidations', () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), vi.fn())
+    const internal = service as any
+    vi.spyOn(internal.directory, 'accept').mockResolvedValue(undefined)
+    const arrival = vi.spyOn(internal.unifiedTimeline, 'refreshHint').mockResolvedValue(undefined)
+    const revoke = vi.spyOn(internal.unifiedTimeline, 'invalidate').mockResolvedValue(undefined)
+    try {
+      internal.realtime.emitChatClientEvent({type:'sessions-delta',revision:1,updates:[{sourceKey:'chat',source:{},timelineItems:[]}]})
+      expect(arrival).toHaveBeenCalledExactlyOnceWith('chat')
+      expect(revoke).not.toHaveBeenCalled()
+      internal.realtime.emitChatClientEvent({type:'timeline-changed',revision:2,sourceKey:'chat',timelineItemKey:'relation',changeKind:'deleted',relationTerminal:true})
+      expect(revoke).toHaveBeenCalledWith('chat','relation',true)
+      internal.realtime.emitChatClientEvent({type:'members-invalidated',revision:3,sourceKey:'chat'})
+      expect(revoke).toHaveBeenCalledWith('chat')
+    } finally { service.dispose() }
+  })
+
   it('reads revision snapshots through signed chat references and rejects mismatched account/source before HTTP', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -662,6 +679,44 @@ describe('ArkmeService', () => {
     expect(bodies).toContainEqual({
       start_at: Math.max(0, lowerBound), end_at: lowerBound + 24 * 60 * 60 * 1_000, order: 'asc', limit: 50,
     })
+  })
+
+  it('projects calendar shared text with a viewer-bound reference and rechecks recipient access on detail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let revoked = false
+    const calls: unknown[] = []
+    const payload = { render_kind: 'shared_recording_memory', source_digest: 'shared-day',
+      display_at: 1_787_310_000_000, end_at: 1_787_310_060_000, title: '共享会议', summary: '讨论计划', shared_by_user_id: 7, transcript: '共享全文' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/calendar/records/query')) return json({ code: 200, data: {
+        items: [{ record_uid: 'shared-uid', send_at: payload.display_at,
+          record_core: { owner_user_id: 7, content_access_state: 1, title: payload.title, text_content: payload.summary,
+            origin_container_ref: 'shared-chat', content_payload: { payload_kind: 1, schema_version: 1, text_state: 1, shared_recording: { ...payload, render_kind: undefined, schema_version: 1 } } } }], has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chats/records/detail')) {
+        calls.push(JSON.parse(String(init?.body)))
+        if (revoked) return json({ code: 403, message: '共享已撤回' })
+        return json({ code: 200, data: { item: { content_payload: payload } } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+    const shared = page.items[0]!.content!.sharedRecording!
+    expect(shared).toMatchObject({ sourceDigest: 'shared-day', sharedByUserId: 7 })
+    expect(shared.transcript).toBeUndefined()
+    expect(page.items[0]!.content!.isMe).toBe(false)
+    expect(shared.detailRef).toMatch(/^arkme-shared-recording-detail-v1\./)
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).resolves.toMatchObject({ transcript: '共享全文' })
+    expect(calls).toEqual([{ chat_session_uid: 'shared-chat', record_uid: 'shared-uid', record_owner_user_id: 7 }])
+    revoked = true
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other' }
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
   })
 
   it('keeps emoji intact at all calendar projection limits without changing the raw source', async () => {
@@ -1156,6 +1211,7 @@ describe('ArkmeService', () => {
 
     expect(service.clientConfig()).toEqual({
       captchaId: 'captcha-test-id-1234567890',
+      baiduMapBrowserAk: '',
       environment: 'test',
       testLoginEnabled: true,
       jiwoScanLoginEnabled: false,
@@ -3023,7 +3079,7 @@ describe('ArkmeService', () => {
     const clientEvents: unknown[] = []
     service.subscribeChatRealtime(event => { clientEvents.push(event) })
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
-      effectiveReadSequence: 8, unreadCount: 0,
+      effectiveReadSequence: 8, unreadCount: 0, latestSequence: 8,
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
       .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
@@ -3033,6 +3089,7 @@ describe('ArkmeService', () => {
       sourceKey: privateSourceKey,
       effectiveReadSequence: 8,
       unreadCount: 0,
+      latestSequence: 8,
     })
     const groupRef = sources.items[1]!.sourceRef
     await expect(service.listGroupBots(groupRef)).resolves.toMatchObject({ displayName: '项目群', items: [] })
@@ -5503,10 +5560,11 @@ describe('ArkmeService', () => {
       contact: {},
     }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
-    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+    const service = new ArkmeService({...config, teamBaseUrl: 'https://team.test'}, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, body })
+      if (url === 'https://team.test/api/v1/team/discovery/search') return json({code: 200, data: {team: null}})
       if (url === 'https://auth.test/api/v1/auth/search-contact-account') {
         expect(body).toEqual({ identifier_type: 2, identifier: 'mbr_sylj', phone_pre: '86' })
         return json({ code: 200, data: {

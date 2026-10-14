@@ -24,6 +24,7 @@ interface Entry {
   query: CalendarMonthQuery
   snapshot: CalendarMonthSnapshot
   refreshed: number
+  revision: number
   listeners: Set<() => void>
   controller?: AbortController
   pending?: Promise<void>
@@ -72,7 +73,7 @@ export class CalendarMonthCache {
       const saved = this.saved.get(key)
       entry = { query, snapshot: { ...(saved ? { value: saved.value } : {}), loading: false, error: '' },
         // Disk is immediately usable, but always revalidated after a page reload.
-        refreshed: 0, listeners: new Set() }
+        refreshed: 0, revision: 0, listeners: new Set() }
       this.entries.set(key, entry)
     } else { entry.query = query; this.entries.delete(key); this.entries.set(key, entry) }
     this.prune()
@@ -99,12 +100,13 @@ export class CalendarMonthCache {
     if (entry.pending) return entry.pending
     if (entry.snapshot.value && entry.refreshed > 0 && this.now() - entry.refreshed < FRESH_MS) return
     const controller = new AbortController()
+    const revision = entry.revision
     entry.controller = controller
     this.publish(entry, { ...entry.snapshot, loading: true, error: '' })
     const current = () => this.account === account && entry.controller === controller && !controller.signal.aborted
     entry.pending = Promise.resolve().then(() => this.load(query, controller.signal, background)).then(value => {
       if (!current()) return
-      entry.refreshed = this.now()
+      entry.refreshed = revision === entry.revision ? this.now() : 0
       this.publish(entry, { value, loading: false, error: '' })
       const clean = cleanPage(value)
       if (clean) { this.saved.delete(identity(query)); this.saved.set(identity(query), { value: clean, refreshed: entry.refreshed }); this.persist() }
@@ -117,7 +119,13 @@ export class CalendarMonthCache {
         this.saved.delete(identity(query)); this.persist(); entry.refreshed = 0
       }
       this.publish(entry, { ...(accessDenied ? {} : entry.snapshot), loading: false, error: error instanceof Error ? error.message : String(error) })
-    }).finally(() => { if (entry.controller === controller) { delete entry.pending; delete entry.controller } })
+    }).finally(() => {
+      if (entry.controller !== controller) return
+      delete entry.pending; delete entry.controller
+      // A burst dirties one in-flight read, rather than repeatedly cancelling it
+      // after the upstream request has already spent transport capacity.
+      if (revision !== entry.revision && entry.listeners.size && this.account === account) void this.ensure(account, entry.query, true)
+    })
     return entry.pending
   }
   invalidate(event: CalendarInvalidation): void {
@@ -129,9 +137,11 @@ export class CalendarMonthCache {
     if (event.hard) this.persist()
     for (const entry of [...this.entries.values()]) {
       if (!affected(entry.query.startDate, entry.query.endDate)) continue
+      entry.revision++; entry.refreshed = 0
+      if (!event.hard && entry.pending) continue
       this.cancel(entry); entry.refreshed = 0
       this.publish(entry, { ...(event.hard ? {} : entry.snapshot.value ? { value: entry.snapshot.value } : {}), loading: false, error: '' })
-      if (entry.listeners.size && this.account) void this.ensure(this.account, entry.query)
+      if (entry.listeners.size && this.account) void this.ensure(this.account, entry.query, true)
     }
   }
   refresh(account: string, query: CalendarMonthQuery): void {

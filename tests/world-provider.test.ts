@@ -202,6 +202,42 @@ describe('world Provider projection', () => {
     })
   })
 
+  it('cancels the world interaction transport when the Host request disconnects', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let started!: () => void
+    const upstreamStarted = new Promise<void>(resolve => { started = resolve })
+    let upstreamSignal: AbortSignal | null | undefined
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
+          images: [], videos: [], voices: [], extend_count: 1,
+        }], total: 1 } })
+      }
+      expect(String(input)).toBe('https://world.test/api/v1/public-record/extend-list')
+      upstreamSignal = init?.signal
+      started()
+      return await new Promise<Response>((_resolve, reject) => {
+        const abort = () => { reject(upstreamSignal?.reason ?? new DOMException('Aborted', 'AbortError')) }
+        if (upstreamSignal?.aborted) abort()
+        else upstreamSignal?.addEventListener('abort', abort, { once: true })
+      })
+    })
+    const service = new ArkmeService({ ...config, requestTimeoutMs: 500 }, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+    const controller = new AbortController()
+    const pending = dispatchArkmeHostOperation(service, 'world.interactions.list', {
+      recordRef: feed.items[0]!.recordRef,
+    }, undefined, undefined, undefined, undefined, controller.signal)
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await upstreamStarted
+    controller.abort()
+    await rejected
+    expect(upstreamSignal?.aborted).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('publishes text interactions with a stable mutation UID and the selected parent', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

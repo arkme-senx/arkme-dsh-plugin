@@ -436,14 +436,30 @@ export class DshApiProxyAdapter {
     limit?: number
     cursor?: string
     workspaceInventory?: DshRemoteWorkspaceInventory
+    sessionInventory?: readonly DshRemoteSessionSummary[]
     includeUngrouped?: boolean
   } = {}): Promise<{
     items: DshRemoteSessionSummary[]
     nextCursor?: string
   }> {
+    const snapshot = input.sessionInventory ?? await this.sessionInventory(input.workspaceInventory)
+    const all = snapshot.filter(item =>
+      (input.sessionId === undefined || item.sessionId === input.sessionId)
+      && (input.includeUngrouped || item.workspaceId !== '')
+      && (input.workspaceId === undefined || item.workspaceId === input.workspaceId))
+    const offset = readOffset(input.cursor)
+    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
+    return pageByBytes({
+      all, offset, limit: pageLimit(input.limit),
+      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
+    })
+  }
+
+  /** One request-owned metadata snapshot; callers page it without another DSH read. */
+  async sessionInventory(workspaceInventory?: DshRemoteWorkspaceInventory): Promise<DshRemoteSessionSummary[]> {
     const list = this.api.sessions?.list
     if (typeof list !== 'function') this.unsupported('session.list')
-    const workspaceInventory = input.workspaceInventory ?? await this.workspaceInventory()
+    workspaceInventory ??= await this.workspaceInventory()
     const workspaces = workspaceInventory.items
     const archived = new Set(workspaceInventory.archivedSessionIds)
     const workspaceBySession = new Map<string, string>()
@@ -451,10 +467,9 @@ export class DshApiProxyAdapter {
       for (const sessionId of workspace.sessionIds) workspaceBySession.set(sessionId, workspace.workspaceId)
     }
     const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('remote-sessions'), payload: {} }))
-    const all = value.items.flatMap<DshRemoteSessionSummary>(item => {
-      if (input.sessionId !== undefined && item.sessionId !== input.sessionId) return []
+    if (value.items.length > 10_000) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '会话目录超过上报上限')
+    return value.items.flatMap<DshRemoteSessionSummary>(item => {
       const workspaceId = workspaceBySession.get(item.sessionId) ?? ''
-      if ((!input.includeUngrouped && workspaceId === '') || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
       const titleValue = item.projections?.values.title
       return [{
         sessionId: item.sessionId,
@@ -474,12 +489,19 @@ export class DshApiProxyAdapter {
           : {}),
       }]
     }).sort((left, right) => right.updatedAt - left.updatedAt)
-    const offset = readOffset(input.cursor)
-    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
-    return pageByBytes({
-      all, offset, limit: pageLimit(input.limit),
-      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
-    })
+  }
+
+  // The public DSH list is already a complete metadata snapshot. Read it once;
+  // paging our own filtered projection would re-fetch the whole DSH directory.
+  async localHistorySummaries(): Promise<Map<string, { updatedAt: number; projectionAsOfSeq?: number; running: boolean }>> {
+    const list = this.api.sessions?.list
+    if (typeof list !== 'function') this.unsupported('session.list')
+    const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('history-summaries'), payload: {} }))
+    if (value.items.length > 10_000) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '会话目录超过校验上限')
+    return new Map(value.items.map(item => [item.sessionId, {
+      updatedAt: item.updatedAt, running: item.running,
+      ...(item.projections === undefined ? {} : { projectionAsOfSeq: item.projections.asOfSeq }),
+    }]))
   }
 
   async history(input: { sessionId: string; beforeSeq?: number; limit?: number }): Promise<{

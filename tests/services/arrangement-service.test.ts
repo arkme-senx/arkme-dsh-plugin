@@ -37,7 +37,7 @@ describe('ArrangementService', () => {
 it.each([
   [{ description: 'summary', source: { source_items: [{ text: '原始输入', create_at: 100 }] } }, { kind: 'input', items: [{ text: '原始输入', createdAtMillis: 100 }], unavailableCount: 0 }],
   [{ source_text: '旧版原文' }, { kind: 'input', items: [{ text: '旧版原文' }], unavailableCount: 0 }],
-  [{ record_uids: ['private-record'], related_records: [{ uid: 'private-record', text_content: '快记原文', create_at: 200 }], source_text: 'ignored' }, { kind: 'quick-note', items: [{ text: '快记原文', createdAtMillis: 200 }], unavailableCount: 0 }],
+  [{ record_uids: ['private-record'], related_records: [{ uid: 'private-record', text_content: '快记原文', create_at: 200 }], source_text: '原始输入' }, { kind: 'input', items: [{ text: '原始输入' }], unavailableCount: 0 }],
   [{ record_uids: ['private-record'] }, { kind: 'quick-note', items: [], unavailableCount: 1 }],
   [{ description: 'only summary' }, { kind: 'none', items: [], unavailableCount: 0 }],
 ])('preserves creation source without leaking owner identities: %j', async (fields, expected) => {

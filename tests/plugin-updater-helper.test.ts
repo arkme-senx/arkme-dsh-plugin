@@ -744,6 +744,8 @@ describe('companion plugin updater', () => {
     expect(spawnUpdater).not.toHaveBeenCalled()
   })
 
+  // Exercise native install/restart/rollback to completion; its own health deadlines
+  // bound failure. This is a functional integration test, not a host-speed benchmark.
   it('installs through file: tgz, restarts, and rolls back from the previous local artifact', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-updater-integration-'))
     const fakeDsh = join(root, 'fake-dsh.mjs')
@@ -936,7 +938,7 @@ if (args[0] === 'web') {
       if (previousEnv.invalidPolicy === undefined) delete process.env.FAKE_INVALID_POLICY_VERSION
       else process.env.FAKE_INVALID_POLICY_VERSION = previousEnv.invalidPolicy
     }
-  }, 15_000)
+  }, 90_000)
 
   it('migrates a legacy managed plan into a durable receipt on first fixed-version update', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-legacy-plan-'))

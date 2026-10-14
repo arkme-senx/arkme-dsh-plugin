@@ -1,3 +1,6 @@
+import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
+import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
+import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
 import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
@@ -126,6 +129,8 @@ export interface Config {
   toolProfile: ArkmeToolProfile
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
+  /** Public browser AK; enable JavaScript API and restrict allowed web origins in Baidu. */
+  baiduMapBrowserAk?: string
   interwovenMomentsEnabled: boolean
   selfCalendarViewsEnabled: boolean
   recordingWorkbenchEnabled: boolean
@@ -181,6 +186,7 @@ export const Config: Schema<Config> = Schema.object({
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
   toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
   relatedRecordingsEnabled: Schema.boolean().default(true),
+  baiduMapBrowserAk: Schema.string().default(''),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
   selfCalendarViewsEnabled: Schema.boolean().default(true),
@@ -364,6 +370,14 @@ export function apply(ctx: Context, config: Config): void {
   const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const clientModules = (ctx as Context & { clientModules: DshClientModulesLike }).clientModules
+  const migrationManager = new AppMigrationManager({
+    enabled: process.env.ARKME_DESKTOP_MANAGED_RESTART === '1' && arkmeDesktopBridgeConfigFromEnv(process.env) !== undefined,
+    currentVersion: process.env.ARKME_APP_VERSION ?? '',
+    platform: process.platform, architecture: process.arch,
+    stateDirectory: migrationStateRoot(dshHome, config.environment),
+    serviceOrigin: config.updateServiceBaseUrl,
+    artifactOrigin: config.updateArtifactBaseUrl.trim() || 'https://d.jiwo.cc',
+  })
   const updateManager = new ArkmePluginUpdateManager({
     enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
@@ -591,15 +605,24 @@ export function apply(ctx: Context, config: Config): void {
     const controlPlane = new DshRemoteHttpControlPlane({
       post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
     })
+    const sessionOwnership = new DshRemoteSessionOwnershipStore(stateDirectory, profileRef)
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      sessionOwnership,
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
+      readRecoveryProof: async (sessionId, through, signal) => {
+          signal.throwIfAborted()
+          const account = await service.accountScope.scopedSession()
+          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
+          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
+          signal.throwIfAborted()
+          return proof
+        },
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
       readSession: async () => {
@@ -643,6 +666,18 @@ export function apply(ctx: Context, config: Config): void {
         const session = await service.accountScope.scopedSession()
         if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
         return String(session.userId)
+      },
+      localAliasReader: {
+        summaries: async (refs, signal) => {
+          const account = await service.accountScope.scopedSession()
+          if (!account || !service.accountScope.ready()) return new Map()
+          const owned = await sessionOwnership.listOwned(String(account.userId), refs)
+          signal.throwIfAborted()
+          // Native transport already owns live list metadata. Directory folding
+          // needs only account ownership, never a second all-session scan.
+          return new Map(refs.filter(ref => owned.has(ref)).map(ref => [ref, { updatedAt: 0, projectionAsOfSeq: -1, running: false }]))
+        },
+
       },
       localStatus: () => host.getStatus(),
       createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
@@ -701,6 +736,7 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
+    migrationManager,
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
@@ -885,6 +921,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.resumeRecordingImports().catch(() => undefined)
     return () => undefined
   }, 'dsh-arkme: recording import recovery')
+  ctx.effect(() => () => migrationManager.dispose(), 'dsh-arkme: installer download lifecycle')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()

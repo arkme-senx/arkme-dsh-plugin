@@ -9,13 +9,22 @@ vi.mock('../src/client/api.js', () => ({
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
+import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
+import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 
 describe('recording transcript speaker popover', () => {
   let renderer: ReactTestRenderer
+  let items: ArkmeRecordingWorkbenchItem[]
 
   beforeEach(() => {
+    items = [{
+      itemId: 'item-1', itemRef: 'sealed-item-1', transcriptSource: 'system', sessionKey: 'session-1',
+      startAtMillis: 1_000, endAtMillis: 2_000, speakerNumber: 1, speakerKey: 'speaker:1',
+      speakerColorIndex: 1, speakerLabel: '说话人 1', sameSpeakerItemCount: 1,
+      isSelf: false, isBackground: false, text: '转写内容',
+    }]
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     mocks.callArkme.mockReset().mockImplementation(async operation => {
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
@@ -27,20 +36,7 @@ describe('recording transcript speaker popover', () => {
           message: '',
           totalDurationMillis: 1_000,
           processingCount: 0,
-          items: [{
-            itemId: 'item-1',
-            itemRef: 'sealed-item-1',
-            startAtMillis: 1_000,
-            endAtMillis: 2_000,
-            speakerNumber: 1,
-            speakerKey: 'speaker:1',
-            speakerColorIndex: 1,
-            speakerLabel: '说话人 1',
-            canBindSpeaker: true,
-            isSelf: false,
-            isBackground: false,
-            text: '转写内容',
-          }],
+          items,
         },
         summary: { state: 'empty', message: '', items: [] },
         timeline: { state: 'empty', message: '', items: [] },
@@ -86,6 +82,49 @@ describe('recording transcript speaker popover', () => {
     expect(renderer.root.findByProps({ 'aria-label': '编辑说话人' })).toBeDefined()
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.speaker.options'))
       .toHaveLength(1)
+  })
+
+  it('keeps a repeated speaker individually editable without enabling batch changes', async () => {
+    items.push({ ...items[0]!, itemId: 'item-2', itemRef: 'sealed-item-2', startAtMillis: 2_000, endAtMillis: 3_000 })
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => undefined} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    const button = renderer.root.findByProps({ 'data-recording-transcript-item': 'item-2' })
+      .findByProps({ 'aria-label': '编辑说话人 说话人 1' })
+    expect(button.props['data-recording-speaker-repeated']).toBe(true)
+    const stopPropagation = vi.fn()
+    await act(async () => {
+      button.props.onClick({ stopPropagation,
+        currentTarget: { getBoundingClientRect: () => ({ left: 24, right: 104, top: 144, bottom: 166 }) },
+      })
+      await tick()
+    })
+    expect(stopPropagation).toHaveBeenCalledOnce()
+    const editor = renderer.root.findByType(ArkmeRecordingSpeakerEditor)
+    expect(editor.props.item.itemRef).toBe('sealed-item-2')
+    expect(editor.props.forceBatchUpdate).toBe(false)
+    expect(button.props['aria-expanded']).toBe(true)
+  })
+
+  it('restarts visible identity for a different person, recording, source, or a return after another speaker', async () => {
+    const base = items[0]!
+    const variants: Partial<ArkmeRecordingWorkbenchItem>[] = [
+      {}, {}, { speakerKey: 'speaker:2' }, {}, { sessionKey: 'session-2' },
+      { transcriptSource: 'doubao' }, { isSelf: true },
+      { speakerKey: '' }, { speakerKey: '' },
+    ]
+    items = variants.map((change, index) => ({ ...base, ...change,
+      itemId: `item-${index}`, itemRef: `sealed-item-${index}`,
+      startAtMillis: index * 1_000, endAtMillis: (index + 1) * 1_000,
+    }))
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => undefined} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    const repeated = items.map(item => renderer.root.findByProps({ 'data-recording-transcript-item': item.itemId })
+      .findByProps({ 'aria-label': '编辑说话人 说话人 1' }).props['data-recording-speaker-repeated'] === true)
+    expect(repeated).toEqual([false, true, false, false, false, false, false, false, false])
   })
   it.each([
     { status: 'logged-out' as const, environment: 'test' as const },

@@ -7,6 +7,7 @@ vi.mock('../src/client/ArkmeNoteDetails.js', () => ({
   ArkmeTimelineDetailDrawer: ({ item }: { item: { textContent: string } }) => <div data-complete-detail>{item.textContent}</div>,
   ForwardRecordsDetail: () => <div>转发记录</div>,
 }))
+import { ArkmeArrangementCreate } from '../src/client/ArkmeArrangementCreate.js'
 import { ArkmePersonalDayCalendar } from '../src/client/ArkmePersonalDayCalendar.js'
 import { arkmeCalendarMonths } from '../src/client/calendar-month-cache.js'
 import { arkmeCalendarInvalidations } from '../src/client/calendar-invalidation-store.js'
@@ -50,15 +51,41 @@ afterEach(() => { act(() => view?.unmount()); view = undefined; arkmeCalendarMon
 async function mount(accountScope = 'prod:123') { await act(async () => { view = create(<ArkmePersonalDayCalendar accountScope={accountScope} onClose={() => {}} />) }) }
 
 describe('first-rail personal day calendar', () => {
+  it('selects a future date, reads only its arrangements, and opens a date-scoped creation dialog', async () => {
+    await mount()
+    const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
+    expect(month.props.allowFuture).toBe(true)
+    mocks.read.mockClear()
+    const future = new Date(today.getFullYear() + 1, 0, 20)
+    await act(async () => { month.props.onVisibleMonthChange(new Date(future.getFullYear(), 0, 1)); month.props.onSelectDate(future) })
+    expect(view!.root.findAllByProps({ 'aria-label': '未来安排' })).toHaveLength(1)
+    expect(mocks.read.mock.calls.map(call => call[0])).toEqual(['arrangements.list'])
+    expect(text()).toContain('当天暂无安排')
+    expect(view!.root.findAllByProps({className:'arkme-calendar-lunar-date'})).toHaveLength(1)
+    expect(view!.root.findAllByProps({'aria-label':'刷新当天安排'})).toHaveLength(0)
+    expect(view!.root.findAllByProps({'aria-label':'关闭我的一天'})).toHaveLength(0)
+    const add = view!.root.findAllByType('button').find(node => Array.isArray(node.props.children) && node.props.children.includes('添加安排'))!
+    await act(async () => add.props.onClick())
+    expect(view!.root.findAllByProps({ role: 'dialog', 'aria-label': '添加安排' })).toHaveLength(1)
+    expect(text()).toContain(personalDateKey(future))
+    expect(view!.root.findByType(ArkmeArrangementCreate).props.dateContext).toEqual({defaultDate:personalDateKey(future),timezone})
+    expect(view!.root.findAllByProps({ 'aria-label': '安排时间' })).toHaveLength(0)
+    expect(view!.root.findByProps({ 'aria-label': '输入安排内容' })).toBeDefined()
+  })
   it('loads month/day using the production documented reader and keeps per-source index', async () => {
     await mount()
     expect(mocks.read.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['calendar.buckets', 'calendar.activity', 'recordings.calendar']))
+    expect(text()).not.toContain('原版日历')
+    expect(text()).toContain('当天位置')
     expect(text()).toContain('自己的内容')
     expect(text()).toContain('录音索引有内容')
     expect(text()).toContain('当前来源已加载')
+    expect(view!.root.findAllByProps({className:'arkme-calendar-lunar-date'})).toHaveLength(1)
+    expect(view!.root.findAllByProps({'aria-label':'刷新当天活动'})).toHaveLength(0)
+    expect(view!.root.findAllByProps({'aria-label':'关闭我的一天'})).toHaveLength(0)
     const labels = view!.root.findAllByType('button').map(button => button.props.children)
     expect(labels).toContain('个人记录'); expect(labels).toContain('录音')
-    expect(labels).toContain('对话'); expect(labels).not.toContain('私聊'); expect(labels).toContain('通话'); expect(labels).toContain('原始明细')
+    expect(labels).toContain('对话'); expect(labels).not.toContain('私聊'); expect(labels).toContain('通话'); expect(labels).not.toContain('原始明细')
   })
   it('renders rich details lazily without navigation/read receipts until explicitly requested', async () => {
     const navigate = vi.spyOn(arkmeUi, 'showRecordingTarget').mockImplementation(() => {})
@@ -106,22 +133,14 @@ describe('first-rail personal day calendar', () => {
   })
 })
 
-it('opens arrangements below the calendar and restores the mounted day on back or date selection', async () => {
+it('keeps the calendar day visible without an entry to the full arrangement board', async () => {
   await mount()
-  const body = view!.root.findByProps({ className: 'arkme-personal-day-body' })
-  await act(async () => view!.root.findByProps({ className: 'arkme-arrangement-entry' }).props.onClick())
-  expect(body.props.hidden).toBe(true)
-  expect(view!.root.findAll(node => !!node.props['data-arrangement-column'])).toHaveLength(3)
-  await act(async () => view!.root.findByProps({ 'aria-label': '返回日历' }).props.onClick())
-  expect(body.props.hidden).toBe(false)
-  expect(view!.root.findByProps({ className: 'arkme-personal-day-body' })).toBe(body)
-  await act(async () => view!.root.findByProps({ className: 'arkme-arrangement-entry' }).props.onClick())
+  expect(view!.root.findAllByProps({ className: 'arkme-arrangement-entry' })).toHaveLength(0)
+  expect(view!.root.findAll(node => !!node.props['data-arrangement-column'])).toHaveLength(0)
   const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
   await act(async () => month.props.onSelectDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)))
-  expect(view!.root.findAll(node => !!node.props['data-arrangement-column'])).toHaveLength(0)
-  expect(view!.root.findByProps({ className: 'arkme-personal-day-body' }).props.hidden).toBe(false)
+  expect(view!.root.findByProps({ className: 'arkme-personal-day-body' }).props.hidden).toBeUndefined()
 })
-
 
 it('places the arrangements tab between conversations and calls and retains it across dates', async () => {
   await mount()
@@ -129,7 +148,6 @@ it('places the arrangements tab between conversations and calls and retains it a
   const labels = filters.findAllByType('button').map(node => node.props.children)
   expect(labels.indexOf('安排')).toBe(labels.indexOf('对话') + 1)
   expect(labels.indexOf('通话')).toBe(labels.indexOf('安排') + 1)
-  expect(view!.root.findByProps({className:'arkme-arrangement-entry'}).findAllByType('svg')).toHaveLength(1)
   await act(async () => view!.root.findByProps({'data-day-arrangements-tab':true}).props.onClick())
   expect(view!.root.findAllByProps({'data-day-arrangements':'identified'})).toHaveLength(1)
   expect(view!.root.findAllByProps({'data-day-arrangements':'due'})).toHaveLength(1)

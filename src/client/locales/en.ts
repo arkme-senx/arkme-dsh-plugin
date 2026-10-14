@@ -1,5 +1,120 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+当天录音实体|Entities from this recording day
+实体|Entities
+查看录音实体|View recording entities
+查看实体 {name}|View entity {name}
+关闭实体列表|Close entity list
+实体类型|Entity type
+录音内容已更新，请刷新实体列表|Recording content changed. Refresh the entity list.
+识别未完成，已有结果仅供参考|Recognition is incomplete. Existing results are provisional.
+当天录音尚无实体识别结果|No recognition results for this day yet.
+识别中，结果可能继续更新|Recognizing entities. Results may change.
+等待实体识别|Waiting to recognize entities
+正在准备识别|Preparing entity recognition
+正在处理实体|Processing entities
+等待转写完成|Waiting for transcription
+等待剩余转写完成|Waiting for the remaining transcription
+尚未识别实体|Entities have not been recognized yet
+部分转写异常|Some transcription is unavailable
+部分转写异常，已有实体可查看|Some transcription is unavailable. Existing entities are still accessible
+转写异常，暂无法继续识别|Transcription is unavailable. Recognition cannot continue yet
+开始识别|Start recognition
+正在提交…|Submitting…
+未能确认识别已开始，请刷新后重试|Could not confirm recognition started. Refresh before retrying
+正在识别实体|Recognizing entities
+正在核对实体|Reviewing entities
+正在保存结果|Saving results
+正在恢复识别|Recovering recognition
+当天识别结果|Recognition results for this day
+正在读取实体…|Loading entities…
+暂时无法显示实体列表|Entity list is unavailable.
+实体更新失败，请刷新重试|Could not refresh entities. Try again.
+自动更新已暂停，请手动刷新|Automatic updates paused. Refresh to continue.
+刷新实体|Refresh entities
+当前类型下没有实体|No entities in this category.
+暂无已识别实体|No recognized entities yet.
+{count} 次提及|{count} mentions
+提及位置不可用，请刷新实体列表|Mention locations are unavailable. Refresh the entity list.
+正在读取提及…|Loading mentions…
+原文位置已不可用|Original location unavailable
+暂无可用提及|No available mentions
+上一页提及|Previous mentions
+下一页提及|Next mentions
+原文已更新，请刷新录音后重试|Transcript changed. Refresh the recording and try again.
+上一页实体|Previous entities
+下一页实体|Next entities
+人物|People
+组织|Organizations
+地点|Places
+宠物|Pets
+事件|Events
+项目|Projects
+作品|Works
+品牌|Brands
+其他|Other
+团队搜索结果|Team search result
+申请已提交，等待审批|Request submitted, awaiting approval
+申请加入团队|Apply to join team
+
+模型请求失败，请稍后重试或选择其他模型。|The model request failed. Try again later or choose another model.
+模型生成超时，请重试或选择其他模型。|Generation timed out. Try again or choose another model.
+模型生成已中断，请重试。|Generation was interrupted. Try again.
+模型输出不完整，请重试或选择其他模型。|The model returned an incomplete result. Try again or choose another model.
+当天录音内容超出本次处理范围，请联系开发团队。|This day's recordings exceed the processing limit. Contact the development team.
+生成内容未通过完整性检查，请重试。|The generated content failed the completeness check. Try again.
+生成未完成，请重试或选择其他模型。|Generation did not complete. Try again or choose another model.
+正在读取模型…|Loading models…
+选择模型并重试|Choose a model and retry
+暂无可用生成模型，请稍后重试。|No generation models are available. Try again later.
+位置来源|Location sources
+位置日期|Location date
+查看所有位置|View all locations
+全部日期|All dates
+返回 {date}|Back to {date}
+当前日期显示个人记录的设备位置|This date shows device locations from your own records.
+返回位置|Back to locations
+定位到当前位置|Go to current location
+当前位置|Current location
+正在获取当前位置…|Getting current location…
+请在系统或浏览器设置中允许位置访问后重试|Allow location access in your system or browser settings, then try again.
+请开启系统定位服务后重试|Turn on system location services, then try again.
+请完成位置授权后重试|Allow location access, then try again.
+当前环境不支持定位，请在支持定位的客户端或浏览器中打开|Location is unavailable here. Open in a client or browser that supports location.
+获取当前位置超时，请重试|Getting your location timed out. Try again.
+暂时无法定位到当前位置，请重试|Could not get your current location. Try again.
+百度地图加载失败，可选择下方地点查看记录|Baidu Maps could not load. Select a location below to view its records.
+可查看的地点|Available locations
+位置来源筛选|Filter location sources
+筛选位置来源|Filter location sources
+关闭地点记录|Close location records
+该地点的记录|Records at this location
+{count} 条位置记录|{count} location records
+快记的位置|Locations in my notes
+我发送的位置|Locations I sent
+发给我的位置|Locations sent to me
+群聊中的位置|Locations in group chats
+历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
+识别安排|Detected plans
+查看当天录音识别的安排|View plans detected from this day's recordings
+当天录音识别的安排|Plans from this day's recordings
+由当天录音总结识别，与安排板块保持同步。|Detected from this day's recording summary and kept in sync with Plans.
+{count} 项|{count} plans
+共 {count} 项|{count} plans in total
+已识别 {count} 项|{count} plans detected so far
+识别安排加载失败，请刷新重试。|Couldn't load detected plans. Refresh to retry.
+当天录音与安排的关联暂不可用，已有安排仍可在安排板块查看。|Recording-to-plan links are temporarily unavailable. Existing plans are still available in Plans.
+录音安排仍在整理，当前数量可能不完整。|Recording plans are still being processed. The count may be incomplete.
+当天录音尚未识别出安排|No plans detected from this day's recordings yet
+前往安排|Go to Plans
+来自录音 · 来源暂不可定位|From a recording · source location unavailable
+查看来源录音总结|View the source recording summary
+来源：{date}录音|Source: recording on {date}
+来源总结版本暂不可用，当前显示该日可用内容。|The source summary version is unavailable. Showing available content for that day.
+默认日期：{date}|Default date: {date}
+未写日期时使用此日期，内容中的明确日期优先。|Used when no date is specified. Explicit dates in your text take priority.
+当前服务暂不支持日历默认日期，尚未提交安排；输入已保留。|Calendar default dates are not supported by the service yet. No plan was submitted; your input is saved.
+安排已保存，正在识别内容和日期…|Plan saved. Interpreting its content and date…
 统计尚未启用|Statistics not enabled
 录音转写统计尚未启用|Recording transcription statistics are not enabled yet
 来源明细|Source breakdown
@@ -13,6 +128,10 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 减免|Waived
 长录音|Long recordings
 全天候录音|All-day recordings
+开始录音|Start recording
+正在准备录音…|Preparing recording…
+正在保存录音…|Saving recording…
+正在上传录音…|Uploading recording…
 文件上传|File uploads
 还有 {v0} 段录音待结算，当前用量仅含已结算部分|{v0} recording segments await settlement. Usage includes settled segments only.
 录音按人声时长计量，录音静音时长不计量|Recordings are measured by speech duration; silence is not counted.
@@ -44,6 +163,18 @@ AI 对话|AI conversation
 当天已识别|Identified on this day
 今天到期|Due today
 当天到期|Due on this day
+当天安排|Arrangements for this day
+当天暂无安排|No arrangements for this day
+未来安排|Upcoming arrangements
+刷新当天安排|Refresh arrangements for this day
+安排时间|Arrangement time
+安排内容|Arrangement details
+日期|Date
+时间|Time
+创建安排|Create arrangement
+请选择有效的安排时间|Choose a valid arrangement time
+安排内容最多500字|Arrangement details can contain up to 500 characters
+输入想做的事…|Enter what you want to do…
 正在加载当天安排…|Loading arrangements for this day…
 当天正在更新…|Updating…
 更新失败，已保留当前内容|Update failed. Current content has been kept.
@@ -64,6 +195,7 @@ AI识别中…|AI recognition in progress…
 当天创建|Created on this day
 更新识别结果|Update recognition result
 安排已保存，未完成AI识别|Saved; AI recognition did not complete
+安排已保存，未完成AI识别，可在安排模块查看原始内容。|Saved, but AI recognition did not complete. View the original content in Plans.
 安排已保存，AI识别尚未结束，可稍后更新结果。|Saved. AI recognition is still running; you can update the result later.
 安排已保存，暂未获取识别结果，请稍后重试。|Saved. Recognition results are unavailable; try again later.
 安排已不可访问，请刷新确认。|Arrangement is unavailable. Refresh to check.
@@ -95,6 +227,12 @@ AI识别中…|AI recognition in progress…
 未设置通知时间|No notification time set
 通知|Notifications
 通知类型|Notification types
+通知消息|Notification messages
+新的通知会显示在这里|New notifications will appear here
+展开全文|Show full message
+查看互动|View interaction
+安排暂时无法加载|This arrangement is temporarily unavailable
+新消息|New messages
 全部已读|Mark all as read
 暂时没有通知|No notifications yet
 切换其他类型查看通知|Switch to another type to view notifications
@@ -369,6 +507,13 @@ DSH 内测群|DSH beta group
 登录后查看数据管理|Sign in to manage your data
 ‹ 数据管理|‹ Data management
 管理、迁入和保留属于你的记录。|Manage, import, and preserve your records.
+开放平台|Open platform
+让其他 AI 使用你的即我数据|Connect other AI assistants to your Arkme data
+将记录、录音转写、对话和安排接入其他 AI 助手或自己的应用。|Use your notes, recording transcripts, conversations, and arrangements with other AI assistants or your own apps.
+前往开放平台|Open platform
+复制 Agent 接入指南|Copy Agent setup guide
+复制失败，请打开指南后复制链接。|Could not copy. Open the guide to copy its link.
+查看接入指南|View setup guide
 最近删除|Recently deleted
 导入数据|Import data
 导出数据|Export data
@@ -407,6 +552,10 @@ AI 小结|AI recap
 活动片段|Activity timeline
 原始明细|Original records
 查看范围|Scope
+部分来源已加载|Some sources loaded
+当前来源已加载|Current sources loaded
+{v0}尚未完整覆盖；有更多页面时可继续加载。|{v0} is not fully covered yet; load more pages when available.
+部分数据尚未完整同步。|Some data has not finished syncing.
 当前仅显示部分来源。|Only some sources are shown.
 概览只统计当前筛选下已加载、可查看的内容，不是全天总量。|This overview counts accessible, loaded content matching your filters, not the full day's totals.
 地点|Location
@@ -1044,6 +1193,15 @@ Bot 接入方式|Bot connection method
 下个月|Next month
 跳转月份|Go to month
 跳转年月|Go to month and year
+选择年月|Choose month and year
+年月选择|Month and year
+关闭年月选择|Close month and year picker
+转写操作|Transcript actions
+总结操作|Summary actions
+时间轴操作|Timeline actions
+录音状态|Recording status
+取消多选|Cancel selection
+正在准备转写对比|Preparing transcript comparison
 调整日历高度|Resize calendar
 拖动调整高度，方向键也可调整|Drag or use arrow keys to resize
 打开快记详情|Open note details
@@ -1699,4 +1857,33 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 打开你的录音，点击说话人名称并选择自己；请先试听确认。|Open your recording, listen to confirm, then click the speaker name and select yourself.
 从录音中标记我|Label myself in a recording
 管理声纹|Manage voiceprint
+处理完成后将通知你，并自动更新对应日期的总结和时间轴。|You will be notified when processing finishes. Summaries and timelines for the affected dates will then update automatically.
+录音仍可导入；完成通知与自动整理暂不可用。|You can still import recordings. Completion notifications and automatic summaries are currently unavailable.
+录音处理完成|Recording processing complete
+录音处理未全部完成|Some recordings could not be processed
+录音总结与时间轴已更新|Recording summaries and timelines updated
+录音暂无可整理内容|No recording content available to summarize
+录音整理未全部完成|Some recording summaries or timelines could not be updated
+本次 {total} 个文件，已完成 {completed} 个。|{completed} of {total} files processed.
+涉及 {count} 个录音日期。|Covers {count} recording dates.
+已更新|Updated
+部分完成|Partially complete
+无可用内容|No content available
+未完成|Incomplete
+返回通知|Back to notifications
+对应日期的总结和时间轴正在自动整理，完成后会再次通知。|Summaries and timelines for the affected dates are being updated. You will be notified when they are ready.
+查看录音|View recordings
+查看总结|View summary
+查看时间轴|View timeline
+暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
+表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
+通知操作失败，请重试|Notification action failed. Try again.
+部分录音通知未能标记已读，请重试|Some recording notifications could not be marked as read. Try again.
+录音通知暂时不可用|Recording notifications are currently unavailable
+加载更多录音通知|Load more recording notifications
+来源时间轴版本暂不可用，当前显示该日可用内容。|The original timeline version is unavailable. Showing available content for that day.
+重试录音通知|Retry recording notifications
+等待处理|Waiting for processing
+调整实体列表宽度|Resize entity list
+加载更多提及|Load more mentions
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

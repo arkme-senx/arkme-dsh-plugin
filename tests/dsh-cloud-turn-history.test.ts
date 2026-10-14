@@ -36,7 +36,7 @@ function turn(start: number) {
 function fixture(starts: number[] = [0]) {
   const objects = starts.map(turn).reverse()
   const post = vi.fn(async (path: string, body: any): Promise<Record<string, unknown>> => {
-    if (path.endsWith('/sessions/list')) return { items: [{ session_ref: 'session', title: '远端会话', history_storage_version: 'oss_turn_v1', source_updated_at: 1 }] }
+    if (path.endsWith('/sessions/metadata')) return { ...identity, title: '远端会话', history_storage_version: 'oss_turn_v1', source_updated_at: 1, history_revision: 'generation-1' }
     if (path.endsWith('/session-events/list')) return { entries: [], complete: true }
     if (path.endsWith('/session-turn-objects/list')) {
       const offset = Number(body.cursor ?? 0), items = objects.slice(offset, offset + body.limit).map(o => o.index)
@@ -178,7 +178,7 @@ it('aborts downloads when the consumer leaves and never writes a partial snapsho
 
 it('fails closed on missing ownership, incomplete journals and repeated index cursors', async () => {
   const foreign = fixture(), original = foreign.post.getMockImplementation()!
-  foreign.post.mockImplementation(async (path, body) => path.endsWith('/sessions/list') ? { items: [] } : original(path, body))
+  foreign.post.mockImplementation(async (path, body) => path.endsWith('/sessions/metadata') ? { ...identity, session_ref: 'foreign' } : original(path, body))
   await expect(foreign.cloud.call('runtime', foreign.body, 'foreign', new AbortController().signal)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
   expect(foreign.fetcher).not.toHaveBeenCalled()
   const gap = fixture([0, 5])

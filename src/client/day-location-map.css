@@ -1,0 +1,9 @@
+.arkme-day-map-backdrop{position:fixed;inset:0;z-index:10400;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(15,20,25,.32)}
+.arkme-day-map-dialog{position:relative;width:min(1100px,100%);height:min(820px,calc(100dvh - 48px));display:flex;flex-direction:column;overflow:hidden;border-radius:16px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-text-primary,#202326);box-shadow:0 20px 70px #0003;font-size:13px}
+.arkme-day-map-heading{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;gap:16px}
+.arkme-day-map-heading h2{font-size:17px;margin:0}
+.arkme-day-map-heading button{font:inherit;color:inherit;cursor:pointer;width:30px;height:30px;font-size:22px;background:transparent;border:0;border-radius:8px}
+.arkme-day-map-dialog>.arkme-location-browser{padding:0 12px 12px;min-height:0}
+.arkme-day-map-dialog .arkme-location-view,.arkme-day-map-dialog .arkme-location-stage{min-height:180px}
+.arkme-day-map-detail{position:absolute;inset:0;z-index:10;overflow:auto;display:flex;flex-direction:column}
+@media(max-width:650px){.arkme-day-map-backdrop{padding:12px}.arkme-day-map-dialog{height:calc(100dvh - 24px)}.arkme-day-map-heading{padding:12px}.arkme-day-map-dialog>.arkme-location-browser{padding:0 6px 6px}}

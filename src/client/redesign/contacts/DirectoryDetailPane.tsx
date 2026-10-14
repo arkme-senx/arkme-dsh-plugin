@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryContactProfile, ArkmeSourceItem } from '../../../types.js'
-import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigation-logo.png'
-import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
+import { ArkmeJiwoBrandMark } from '../../ArkmeJiwoBrandMark.js'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
 import { ConversationProfileDetail } from './ConversationProfileDetail.js'
@@ -29,20 +28,7 @@ export function DirectoryDetailPane({
 }: DirectoryDetailPaneProps) {
   if (selection.kind === 'none') {
     return <div className="arkme-directory-detail-empty">
-      <img
-        className="arkme-directory-detail-logo"
-        src={`data:image/png;base64,${arkmeNavigationLogoBase64}`}
-        alt="Arkme"
-        data-arkme-theme-image="light"
-        draggable={false}
-      />
-      <img
-        className="arkme-directory-detail-logo"
-        src={`data:image/png;base64,${arkmeNavigationLogoDarkBase64}`}
-        alt="Arkme"
-        data-arkme-theme-image="dark"
-        draggable={false}
-      />
+      <ArkmeJiwoBrandMark className="arkme-directory-detail-logo" style={{ width: 96, height: 96 }} />
     </div>
   }
   if (selection.kind === 'unmarked-speaker') {

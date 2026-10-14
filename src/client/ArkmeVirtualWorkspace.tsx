@@ -1,6 +1,5 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
-import { isSocialSource, useSocialAccess } from './social-access-store.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
@@ -34,7 +33,7 @@ import type {
   ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeSourceDirectoryPinResult,
 } from '../types.js'
-import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
+import { arkmeBadgeUnreadCount } from '../chat-attention.js'
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
 import { createSelfTopic } from './create-self-topic.js'
@@ -64,7 +63,7 @@ import {
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
-import { arkmeChatDirectory, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { mergePrivateInteractionSources } from './private-interaction-directory.js'
 import { usePrivateInteractionDirectory } from './use-private-interaction-directory.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
@@ -258,10 +257,6 @@ const styles: Record<string, CSSProperties> = {
   mutedUnreadDot: {
     position: 'absolute', top: -1, right: -1, width: 10, height: 10, boxSizing: 'border-box',
     borderRadius: 999, background: '#ff5f57', border: `2px solid ${colors.panel}`,
-  },
-  interactionUnreadDot: {
-    position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, boxSizing: 'border-box',
-    borderRadius: 999, background: '#20c66a', border: `2px solid ${colors.panel}`,
   },
   avatar: {
     width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
@@ -687,10 +682,8 @@ export function arkmeRootChatUnreadPlacement(source: {
   badgeUnreadCount?: number
   notificationAllowed?: boolean
   isMuted?: boolean
-  privateInteraction?: { attentionCount: number }
 }): 'avatar' | 'dot' | 'none' {
   if (arkmeBadgeUnreadCount(source) > 0) return 'avatar'
-  if (source.kind === 'private_chat' && (source.privateInteraction?.attentionCount ?? 0) > 0) return 'avatar'
   const rawUnreadCount = Math.max(0, Math.trunc(source.unreadCount ?? 0))
   return rawUnreadCount > 0 && (source.notificationAllowed === false || source.isMuted === true)
     ? 'dot'
@@ -927,7 +920,6 @@ export function ArkmeNavigation({
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   useArkmeLocale()
-  const socialAllowed = useSocialAccess(active)
   const activeRef = useRef(active)
   activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -1042,7 +1034,7 @@ export function ArkmeNavigation({
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
-    authenticated && socialAllowed && directory === 'root' && chatDirectory.baselineReady)
+    authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
     const anchor = selfEntryRef.current
     if (anchor === null || !active || !authenticated || directory !== 'root') return
@@ -1732,12 +1724,9 @@ export function ArkmeNavigation({
   }
   const selectSource = (source: ArkmeSourceItem) => {
     activateNativeEntry()
-    const optimisticRead = (source.kind === 'private_chat' || source.kind === 'group_chat')
-      && source.unreadCount > 0
-      && arkmeChatDirectory.markReadOptimistic(source, source.sourceKey, source.latestSequence ?? 0, directory === 'root' ? sources : [])
-    arkmeUi.selectSource(optimisticRead
-      ? { ...source, ...projectArkmeChatAttentionFromMuted(0, source.isMuted === true) }
-      : source)
+    // Selection can restore history. Only the conversation viewport knows when
+    // it follows latest; its reading-intent owner controls optimistic badges/ACK.
+    arkmeUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }
@@ -2048,6 +2037,7 @@ export function ArkmeNavigation({
         <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
       </button>
       {active && authenticated && <ArkmeQuickAddButton
+        recordingAccountKey={currentAccountKey}
         onNewDshSession={showHarnessEntry ? () => startEmbeddedHarnessSession(() => {
           activateNativeEntry()
           arkmeUi.showHarness()
@@ -2118,7 +2108,7 @@ export function ArkmeNavigation({
             onActivateSurface?.()
           }}
         />}
-        {authenticated && socialAllowed && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
         {authenticated && showHarnessEntry && codexEntryVisible && <button type="button" role="treeitem" aria-label="Codex"
           aria-selected={ui.mode === 'codex'} data-arkme-codex-entry
           style={{ ...styles.chatRow, ...(ui.mode === 'codex' ? styles.chatRowActive : {}) }}
@@ -2129,7 +2119,7 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
           </span>
         </button>}
-        {authenticated && socialAllowed && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow
+        {authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow
           onClick={() => { void openOfficialAuthor() }}
         />}
         {showArkoInSearch && <ArkmeArkoRow
@@ -2155,7 +2145,7 @@ export function ArkmeNavigation({
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.filter(row => row.kind === 'notifications' || socialAllowed || row.kind === 'bot' || row.kind === 'source' && !isSocialSource(row.source)).map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.map(row => {
           if (row.kind === 'notifications') return <ArkmeNotificationRowContent key="notifications"
             selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
             onClick={showNotifications} summary={notificationSummary}
@@ -2222,9 +2212,7 @@ export function ArkmeNavigation({
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource !== undefined
             && arkmeSourceIdentityKey(ui.selectedSource) === arkmeSourceIdentityKey(source)
           const unreadPlacement = arkmeRootChatUnreadPlacement(source)
-          const directBadgeUnreadCount = arkmeBadgeUnreadCount(source)
-          const interactionUnreadCount = source.privateInteraction?.attentionCount ?? 0
-          const badgeUnreadCount = directBadgeUnreadCount > 0 ? directBadgeUnreadCount : interactionUnreadCount
+          const badgeUnreadCount = arkmeBadgeUnreadCount(source)
           const unreadText = badgeUnreadCount > 99 ? '99+' : badgeUnreadCount
           const mutationPending = directoryMutation?.kind === 'source'
             && directoryMutation.key === arkmeSourceIdentityKey(source)
@@ -2258,11 +2246,6 @@ export function ArkmeNavigation({
               <ArkmeDirectorySourceAvatar source={source} size={38} />
               {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
               {unreadPlacement === 'dot' && <span style={styles.mutedUnreadDot} />}
-              {directBadgeUnreadCount > 0 && interactionUnreadCount > 0 && <span
-                aria-label={tr("有未读群互动")}
-                title={tr("有未读群互动")}
-                style={styles.interactionUnreadDot}
-              />}
             </span>
             <span data-arkme-conversation-content style={styles.chatContent}>
               <span style={styles.chatTop}>
@@ -2281,8 +2264,8 @@ export function ArkmeNavigation({
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </div>
         })}</ArkmeDirectoryWindow>
-        {socialAllowed && teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
-        {socialAllowed && privateInteractionDirectory.error && <button type="button" onClick={() => arkmeInterwovenInvalidation.invalidate()}
+        {teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
+        {privateInteractionDirectory.error && <button type="button" onClick={privateInteractionDirectory.retry}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
           {tr(privateInteractionDirectory.error)}
         </button>}

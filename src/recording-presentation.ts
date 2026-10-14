@@ -34,6 +34,7 @@ export function buildRecordingGenerationTranscript(
   items: readonly (ArkmeRecordingTranscriptItem & { event?: string; generationText?: string })[],
   kind: 'summary' | 'timeline',
   dayStartMillis: number,
+  timeZone?: string,
 ): string {
   const available = items
     .filter(item => item.text.trim() !== '' && item.endAtMillis > item.startAtMillis)
@@ -48,7 +49,7 @@ export function buildRecordingGenerationTranscript(
     return [
       `说话人：${item.speakerLabel}`,
       ...(item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
-      `[${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
+      `[${timeZone ? new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(item.startAtMillis) : `${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)}`} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
       text,
     ].join('\n')
   })
@@ -381,7 +382,7 @@ export function projectRecordingVersions(
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),
       content,
       timelineEvents,
-      error: stringValue(version.error ?? version.error_message).trim(),
+      error: stringValue(version.llm_error).trim() || stringValue(version.error).trim() || stringValue(version.error_message).trim(),
       sourceIndex,
     })
     sourceIndex += 1

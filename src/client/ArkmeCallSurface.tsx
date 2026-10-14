@@ -1,5 +1,7 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
+import { ArkmeCallHistorySummary } from './ArkmeCallHistorySummary.js'
+import { ArkmeOverlayScrollArea } from './ArkmeOverlayScrollArea.js'
 import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -25,7 +27,6 @@ import type {
   ArkmeSourceList,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -58,7 +59,6 @@ type TypePickerPlacement =
   | { kind: 'center' }
   | { kind: 'anchored'; left: number; top: number }
 
-const CALL_SURFACE_AVATAR_PRELOAD_LIMIT = 40
 const CALL_HISTORY_SETTLED_REFRESH_DELAY_MS = 2_400
 const OFFICIAL_AUTHOR_DISPLAY_NAME = '即' + '我作者'
 const OFFICIAL_AUTHOR_RECOMMENDATION_LABEL = OFFICIAL_AUTHOR_DISPLAY_NAME + ' · 推荐'
@@ -233,7 +233,8 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, color: arkmeTheme.tertiary, background: arkmeTheme.input, boxSizing: 'border-box',
   },
   searchInput: { minWidth: 0, flex: 1, border: 0, outline: 0, padding: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 13 },
-  list: { minHeight: 0, flex: 1, overflowY: 'auto', margin: 0, padding: 0, listStyle: 'none' },
+  listViewport: { minHeight: 0, flex: 1, display: 'flex', marginRight: -15 },
+  list: { margin: 0, padding: '0 15px 0 0', listStyle: 'none' },
   callRow: {
     width: '100%', minHeight: 64, display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) auto',
     alignItems: 'center', columnGap: 10, rowGap: 4, padding: '8px 8px', border: 0, borderRadius: 13,
@@ -435,27 +436,6 @@ function detailSubtitle(item: ArkmeCallHistoryItem): string {
   return `${mediaLabel(item.mediaType)} · ${formatDuration(item.durationSeconds)}`
 }
 
-async function preloadCallSurfaceAvatars(refs: readonly (string | undefined)[]): Promise<void> {
-  const unique = new Set<string>()
-  for (const ref of refs) {
-    const normalized = cleanAvatarRef(ref)
-    if (normalized !== undefined) unique.add(normalized)
-    if (unique.size >= CALL_SURFACE_AVATAR_PRELOAD_LIMIT) break
-  }
-  await Promise.allSettled([...unique].map(async ref => await arkmeAvatarImages.load(ref)))
-}
-
-async function preloadHistoryAvatars(page: ArkmeCallHistoryPage): Promise<void> {
-  await preloadCallSurfaceAvatars([
-    ...(page.recentContacts ?? []).map(contact => contact.avatarRef),
-    ...page.items.map(item => item.peerAvatarRef),
-  ])
-}
-
-async function preloadSourceAvatars(sources: readonly ArkmeSourceItem[]): Promise<void> {
-  await preloadCallSurfaceAvatars(sources.map(source => source.avatarRef))
-}
-
 function targetForSource(source: ArkmeSourceItem): CallTarget {
   const peerUserId = Number.isSafeInteger(source.peerUserId) && source.peerUserId !== undefined && source.peerUserId > 0
     ? source.peerUserId
@@ -588,7 +568,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState('')
   const paginationAbortRef = useRef<AbortController>()
-  const listRef = useRef<HTMLUListElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const listAnchorRef = useRef<{ key: string; top: number }>()
   const [selectedRef, setSelectedRef] = useState('')
   const privateChatAbortRef = useRef<AbortController>()
@@ -702,8 +682,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     void refreshCallHistory(pageRef.current, cursor => callArkme<ArkmeCallHistoryPage>('calls.history.list', {
       limit: 30, ...(cursor ? { cursor } : {}), includeRecentContacts: !cursor,
     }, controller.signal), controller.signal)
-      .then(async value => {
-        await preloadHistoryAvatars(value)
+      .then(value => {
         if (controller.signal.aborted || historyGenerationRef.current !== generation) return
         historyRefreshingRef.current = false
         const list = listRef.current
@@ -742,7 +721,6 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
       if (value.hasMore && (!value.nextCursor?.trim() || value.nextCursor === page.nextCursor)) {
         throw new Error('通话记录分页游标无效，请重试')
       }
-      await preloadHistoryAvatars(value)
       if (controller.signal.aborted || historyGenerationRef.current !== generation) return
       setPage(previous => previous === undefined ? value : {
         ...previous,
@@ -826,10 +804,10 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeSourceList>('sources.list', { directory: 'root', limit: 100 }, controller.signal)
-      .then(async value => {
+      .then(value => {
+        if (!active || controller.signal.aborted) return
         const privateChats = value.items.filter(item => item.kind === 'private_chat')
-        await preloadSourceAvatars(privateChats)
-        if (active) setSources(privateChats)
+        setSources(privateChats)
       })
       .catch(() => undefined)
     return () => { active = false; controller.abort() }
@@ -840,10 +818,9 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, controller.signal)
-      .then(async value => {
-        const avatarRef = cleanAvatarRef(value.avatarRef)
-        if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+      .then(value => {
         if (!active || controller.signal.aborted) return
+        const avatarRef = cleanAvatarRef(value.avatarRef)
         setOfficialAuthorProfile({
           userId: value.userId,
           displayName: value.displayName.trim() || OFFICIAL_AUTHOR_DISPLAY_NAME,
@@ -869,9 +846,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
     setContactSearchError('')
     const timer = setTimeout(() => {
       void callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: value }, controller.signal)
-        .then(async result => {
-          const avatarRef = cleanAvatarRef(result.avatarRef)
-          if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+        .then(result => {
           if (!active || controller.signal.aborted) return
           setContactSearchResult(result)
           setContactSearchState('ready')
@@ -1189,9 +1164,6 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
 
   const renderCallRow = (item: ArkmeCallHistoryItem, sample: boolean) => {
     const selected = callHistoryIdentity(item) === selectedRef
-    const summary = item.summaryStatus === 'pending' ? '摘要生成中…'
-      : item.summaryStatus === 'failed' ? '摘要生成失败，点击查看详情'
-      : item.summaryStatus === 'done' && item.summaryPreview?.trim() ? tr("AI 摘要：{v0}", { v0: item.summaryPreview.trim() }) : ''
     return <li key={callKey(item)} data-arkme-call-row={callHistoryIdentity(item)}>
       <button data-arkme-feedback="neutral"
         type="button"
@@ -1215,9 +1187,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
           {mediaLabel(item.mediaType)} · {formatDuration(item.durationSeconds)}
         </span>
         <time style={styles.callTime}>{sample ? item.resultLabel : shortTime(item.startedAtMillis)}</time>
-        {summary && <span style={styles.callSummary} data-arkme-call-summary="true">
-          <span style={{ ...styles.callSummaryText, ...(item.summaryStatus === 'done' ? {} : { WebkitLineClamp: 1 }) }}>{summary}</span>
-        </span>}
+        <ArkmeCallHistorySummary item={item} style={styles.callSummary} textStyle={styles.callSummaryText} />
       </button>
     </li>
   }
@@ -1276,25 +1246,29 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
         <p style={styles.sectionLabel}>{tr("最近通话")}</p>
         {historyState === 'loading' ? <div style={styles.status}>{tr("正在读取通话记录...")}</div>
           : historyState === 'error' ? <div style={styles.status}>{historyError || '通话记录暂时不可用'}</div>
-            : <ul ref={listRef} aria-label={tr("通话记录列表")} style={styles.list} onScroll={event => {
-              const list = event.currentTarget
-              if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
-                void loadMoreHistory()
-              }
-            }}>
-              {callRows.map(row => renderCallRow(row.item, row.sample))}
-              {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
-              {loadingMore && <li role="status" style={styles.status}>
-                <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
-                  <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
-                    <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
-                  </circle>
-                </svg>{tr("加载更多…")}</li>}
-              {!loadingMore && loadMoreError && <li style={styles.status}>
-                <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
-              </li>}
-              {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
-            </ul>}
+            : <div style={styles.listViewport}>
+              <ArkmeOverlayScrollArea ref={listRef} aria-label={tr("通话记录列表")} onScroll={event => {
+                const list = event.currentTarget
+                if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
+                  void loadMoreHistory()
+                }
+              }}>
+                <ul style={styles.list}>
+                  {callRows.map(row => renderCallRow(row.item, row.sample))}
+                  {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
+                  {loadingMore && <li role="status" style={styles.status}>
+                    <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
+                      <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
+                        <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
+                      </circle>
+                    </svg>{tr("加载更多…")}</li>}
+                  {!loadingMore && loadMoreError && <li style={styles.status}>
+                    <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
+                  </li>}
+                  {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
+                </ul>
+              </ArkmeOverlayScrollArea>
+            </div>}
       </section>
     </aside>
     {browserResize.handle}

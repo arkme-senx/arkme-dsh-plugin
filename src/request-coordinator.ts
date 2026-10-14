@@ -23,6 +23,10 @@ export interface ArkmeRequestLimit {
 }
 
 export interface ArkmeRequestCoordinatorOptions {
+  /** Aggregate transport budget; composite owners do not consume a second slot. */
+  maxConcurrent?: number
+  maxQueued?: number
+  defaultRouteLimit?: Partial<ArkmeRequestLimit>
   laneLimits?: Partial<Record<ArkmeRequestLane, Partial<ArkmeRequestLimit>>>
   serviceLimits?: Partial<Record<ArkmeRequestService, Partial<ArkmeRequestLimit>>>
   defaultServiceLimit?: Partial<ArkmeRequestLimit>
@@ -34,6 +38,8 @@ export interface ArkmeCoordinatedRequest<T> {
   scope: string
   lane: ArkmeRequestLane
   service: ArkmeRequestService
+  /** Composite owners retain their route budget; their child transports own lane/service admission. */
+  admission?: 'transport' | 'route-only'
   /** Omit for mutations and other calls that must never be coalesced. */
   key?: string
   /** Explicitly registered read route; never set for mutations. */
@@ -78,6 +84,7 @@ interface ResolvedLimit extends ArkmeRequestLimit {
 interface QueuedPermit {
   lane: ArkmeRequestLane
   service: ArkmeRequestService
+  transport: boolean
   route?: ResolvedLimit
   sequence: number
   onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue']
@@ -199,8 +206,15 @@ export class ArkmeRequestCoordinator {
   private readonly stats = new Map<string, ArkmeRequestStats>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private sequence = 0
+  private activeTransports = 0
+  private readonly maxConcurrent: number
+  private readonly maxQueued: number
+  private readonly defaultRouteLimit: Partial<ArkmeRequestLimit> | undefined
 
   constructor(options: ArkmeRequestCoordinatorOptions = {}) {
+    this.maxConcurrent = positiveInteger(options.maxConcurrent, Number.MAX_SAFE_INTEGER)
+    this.maxQueued = positiveInteger(options.maxQueued, Number.MAX_SAFE_INTEGER)
+    this.defaultRouteLimit = options.defaultRouteLimit
     this.now = options.now ?? Date.now
     this.random = options.random ?? Math.random
     const now = this.now()
@@ -222,6 +236,9 @@ export class ArkmeRequestCoordinator {
 
   async run<T>(request: ArkmeCoordinatedRequest<T>): Promise<T> {
     if (request.signal?.aborted === true) throw abortError(request.signal.reason)
+    if (request.admission === 'route-only' && !request.route?.trim()) {
+      throw new TypeError('Composite owner reads require a bounded route')
+    }
     const scope = request.scope.trim() || 'public'
     const epoch = this.epoch(scope)
     const key = request.key?.trim()
@@ -376,7 +393,7 @@ export class ArkmeRequestCoordinator {
     const routeKey = request.route === undefined ? undefined : `${scope}\u0000${request.route}`
     let route = routeKey === undefined ? undefined : this.routeLimits.get(routeKey)
     if (routeKey !== undefined && route === undefined) {
-      route = resolveLimit({ maxConcurrent: 1, ratePerSecond: 5, burst: 1, maxQueued: 128 }, undefined, this.now())
+      route = resolveLimit({ maxConcurrent: 1, ratePerSecond: 5, burst: 1, maxQueued: 128 }, this.defaultRouteLimit, this.now())
       this.routeLimits.set(routeKey, route)
     }
     let attempts = 0
@@ -385,7 +402,7 @@ export class ArkmeRequestCoordinator {
     const deadline = recovery === undefined ? undefined : setTimeout(() => controller.abort(recovery.timeout()), recovery.deadlineMs)
     try {
       while (true) {
-        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue)
+        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission)
         this.bump(request, 'started')
         if (controller.signal.aborted) throw abortError(controller.signal.reason)
         if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
@@ -406,7 +423,7 @@ export class ArkmeRequestCoordinator {
             continue
           }
           const cooldownMs = normalizedDuration(request.serviceCooldownMs?.(error))
-          if (cooldownMs > 0) {
+          if (cooldownMs > 0 && request.admission !== 'route-only') {
             const service = this.serviceLimits.get(request.service)!
             service.cooldownUntil = Math.max(service.cooldownUntil, this.now() + cooldownMs)
           }
@@ -469,13 +486,18 @@ export class ArkmeRequestCoordinator {
     signal: AbortSignal,
     route?: ResolvedLimit,
     onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue'],
+    admission: 'transport' | 'route-only' = 'transport',
   ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(abortError(signal.reason))
     const laneLimit = this.laneLimits.get(lane)!
     const serviceLimit = this.serviceLimits.get(service)!
-    const laneQueued = this.queue.reduce((count, item) => count + (item.lane === lane ? 1 : 0), 0)
-    const serviceQueued = this.queue.reduce((count, item) => count + (item.service === service ? 1 : 0), 0)
-    if (laneQueued >= laneLimit.maxQueued || serviceQueued >= serviceLimit.maxQueued) {
+    const transport = admission !== 'route-only'
+    const laneQueued = this.queue.reduce((count, item) => count + (item.transport && item.lane === lane ? 1 : 0), 0)
+    const serviceQueued = this.queue.reduce((count, item) => count + (item.transport && item.service === service ? 1 : 0), 0)
+    const routeQueued = route === undefined ? 0 : this.queue.reduce((count, item) => count + (item.route === route ? 1 : 0), 0)
+    const transportQueued = this.queue.reduce((count, item) => count + Number(item.transport), 0)
+    if (transport ? transportQueued >= this.maxQueued || laneQueued >= laneLimit.maxQueued || serviceQueued >= serviceLimit.maxQueued
+      : route !== undefined && routeQueued >= route.maxQueued) {
       const error = new ArkmeRequestQueueOverflowError(lane, service)
       const stats = this.stats.get(requestStatKey(lane, service))
         ?? { started: 0, joined: 0, cacheHits: 0, cooldownSkips: 0, staleDropped: 0, queueRejected: 0 }
@@ -492,7 +514,7 @@ export class ArkmeRequestCoordinator {
         onQueue?.('cancel', { lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
         reject(abortError(signal.reason))
       }
-      queued = { lane, service, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
+      queued = { lane, service, transport, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
       signal.addEventListener('abort', abort, { once: true })
       this.queue.push(queued)
       onQueue?.('enter', { lane, service, queueLength: this.queue.length, laneQueued, serviceQueued, laneActive: laneLimit.active, serviceActive: serviceLimit.active })
@@ -514,12 +536,15 @@ export class ArkmeRequestCoordinator {
       queued.signal.removeEventListener('abort', queued.abort)
       const lane = this.laneLimits.get(queued.lane)!
       const service = this.serviceLimits.get(queued.service)!
-      this.refill(lane)
-      this.refill(service)
-      lane.tokens = Math.max(0, lane.tokens - 1)
-      service.tokens = Math.max(0, service.tokens - 1)
-      lane.active += 1
-      service.active += 1
+      if (queued.transport) {
+        this.activeTransports += 1
+        this.refill(lane)
+        this.refill(service)
+        lane.tokens = Math.max(0, lane.tokens - 1)
+        service.tokens = Math.max(0, service.tokens - 1)
+        lane.active += 1
+        service.active += 1
+      }
       if (queued.route !== undefined) {
         this.refill(queued.route)
         queued.route.tokens = Math.max(0, queued.route.tokens - 1)
@@ -530,8 +555,11 @@ export class ArkmeRequestCoordinator {
       queued.resolve(() => {
         if (released) return
         released = true
-        lane.active = Math.max(0, lane.active - 1)
-        service.active = Math.max(0, service.active - 1)
+        if (queued.transport) {
+          this.activeTransports = Math.max(0, this.activeTransports - 1)
+          lane.active = Math.max(0, lane.active - 1)
+          service.active = Math.max(0, service.active - 1)
+        }
         if (queued.route !== undefined) queued.route.active = Math.max(0, queued.route.active - 1)
         this.drain()
       })
@@ -551,10 +579,12 @@ export class ArkmeRequestCoordinator {
       }
       const lane = this.laneLimits.get(queued.lane)!
       const service = this.serviceLimits.get(queued.service)!
-      const laneBlocked = this.blocked(lane, 'lane', queued.blockedBy)
-      const serviceBlocked = this.blocked(service, 'service', queued.blockedBy)
+      const poolBlocked = queued.transport && this.activeTransports >= this.maxConcurrent
+      if (poolBlocked) queued.blockedBy?.add('pool-concurrency')
+      const laneBlocked = queued.transport && this.blocked(lane, 'lane', queued.blockedBy)
+      const serviceBlocked = queued.transport && this.blocked(service, 'service', queued.blockedBy)
       const routeBlocked = queued.route !== undefined && this.blocked(queued.route, 'route', queued.blockedBy)
-      if (!laneBlocked && !serviceBlocked && !routeBlocked) return index
+      if (!poolBlocked && !laneBlocked && !serviceBlocked && !routeBlocked) return index
     }
     return -1
   }
@@ -588,13 +618,13 @@ export class ArkmeRequestCoordinator {
       const route = queued.route
       if (route !== undefined) this.refill(route)
       if (route !== undefined && route.active >= route.maxConcurrent) continue
-      if (lane.active >= lane.maxConcurrent || service.active >= service.maxConcurrent) continue
+      if (queued.transport && (this.activeTransports >= this.maxConcurrent || lane.active >= lane.maxConcurrent || service.active >= service.maxConcurrent)) continue
       const now = this.now()
       delay = Math.min(delay, Math.max(
-        this.tokenDelay(lane),
-        this.tokenDelay(service),
-        lane.cooldownUntil - now,
-        service.cooldownUntil - now,
+        queued.transport ? this.tokenDelay(lane) : 0,
+        queued.transport ? this.tokenDelay(service) : 0,
+        queued.transport ? lane.cooldownUntil - now : 0,
+        queued.transport ? service.cooldownUntil - now : 0,
         route === undefined ? 0 : Math.max(this.tokenDelay(route), route.cooldownUntil - now),
       ))
     }

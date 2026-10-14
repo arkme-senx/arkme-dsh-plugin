@@ -22,7 +22,7 @@ export type ReactionResponse<R extends ReactionRequest> = R extends { action: 'n
   : R extends { action: 'set' } ? ReactionSetResult : R extends { action: 'actors' } ? ReactionActorPage
   : R extends { action: 'groups' } ? ReactionGroupPage : R extends { action: 'received' } ? ReactionReceivedPage : R extends { action: 'history-policy-query' } ? ReactionHistoryPolicy : R extends { action: 'history-policy-set' } ? ReactionHistoryPolicyResult : R extends { action: 'history' } ? ReactionHistoryPage : R extends { action: 'library-query' } ? ReactionLibrary : ReactionLibraryResult
 export type ReactionRequest = { accountKey: string; traceId?: string } & (
- | { action: 'notifications'; after_id?: string; limit: number }
+ | { action: 'notifications'; after_id?: string; limit: number; include_read?: boolean }
  | { action: 'notifications-read'; items: { id: string; revision: number }[] }
  | { action: 'query'; targets: ReactionTargetRef[]; actorPresentation?: 'deferred' }
  | { action: 'set'; target: ReactionTargetRef; expression: ReactionExpression; active: boolean; expected_revision: number; request_id: string }
@@ -37,6 +37,6 @@ export type ReactionRequest = { accountKey: string; traceId?: string } & (
 )
 
 export interface ReactionNotification {
- id: string; revision: number; actorUserId: number; sourceKey: string; itemUid: string; recordOwnerUserId: number; sendAtMillis: number; text: string; selections: ReactionSelection[]
+ unread?: boolean; id: string; revision: number; actorUserId: number; sourceKey: string; itemUid: string; recordOwnerUserId: number; sendAtMillis: number; text: string; selections: ReactionSelection[]
 }
 export interface ReactionNotificationPage { items: ReactionNotification[]; after_id: string; has_more: boolean }

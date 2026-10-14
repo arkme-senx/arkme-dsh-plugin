@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeRelatedRecordingEligibility,
@@ -7,14 +7,26 @@ import type {
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
   ArkmeRelatedRecordingPageState,
+  ArkmeRelatedRecordingShareResult,
 } from '../types.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
-import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export const MAX_ARKME_RELATED_RECORDING_PAGE_SIZE = 20
 export const MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH = 1024
 const MAX_ARKME_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
 const RELATED_RECORDINGS_FUNC_TYPE = 17
+const SHARE_REF_PREFIX = 'arkme-related-recording-share-v1'
+
+interface ShareReference {
+  userId: number
+  chatSessionUid: string
+  sessionId: string
+  momentId: string
+  isShared: boolean
+  relationUid: string
+  sequence: number
+}
 
 interface ArkmeSharedRecordingDetailRefPayload {
   version: 1
@@ -67,6 +79,7 @@ function participantRoleName(role: number): string {
 }
 
 export class RelatedRecordingService {
+  private readonly sharing = new Map<string, { action: 'share' | 'withdraw'; task: Promise<ArkmeRelatedRecordingShareResult> }>()
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
@@ -74,6 +87,142 @@ export class RelatedRecordingService {
 
   isEnabled(): boolean {
     return this.runtime.config.relatedRecordingsEnabled !== false
+  }
+
+  async mutateShare(sourceRef: string, actionRef: string, action: 'share' | 'withdraw'): Promise<ArkmeRelatedRecordingShareResult> {
+    const session = await this.runtime.requireSession()
+    const source = await this.requirePrivateSource(sourceRef, session.userId)
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    const reference = this.openShareReference(actionRef, signingKey)
+    if (reference.userId !== session.userId || reference.chatSessionUid !== source.ownerRef) {
+      throw new ArkmePluginError('related-recording-share-context-invalid', '共享录音与当前账号或私聊不匹配', false, 403)
+    }
+    const key = JSON.stringify([session.userId, source.ownerRef, reference.sessionId, reference.momentId])
+    const pending = this.sharing.get(key)
+    if (pending !== undefined) {
+      if (pending.action === action) return await pending.task
+      throw new ArkmePluginError('related-recording-share-busy', '共享操作正在处理中', false, 409)
+    }
+    const task = this.performShareMutation(session, reference, action, signingKey)
+    this.sharing.set(key, { action, task })
+    try { return await task } finally { this.sharing.delete(key) }
+  }
+
+  private async performShareMutation(
+    session: ArkmeSessionCredentials, reference: ShareReference, action: 'share' | 'withdraw', signingKey: string,
+  ): Promise<ArkmeRelatedRecordingShareResult> {
+    if (!this.isEnabled() || !await this.loadRelatedRecordingEligibility(session)) {
+      throw new ArkmePluginError('related-recordings-not-allowed', '当前账号暂未开放相关录音能力', false, 403)
+    }
+    // A second owner call must never continue after the account has changed.
+    const assertCurrent = async () => {
+      const current = await this.runtime.requireSession()
+      if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+        throw new ArkmePluginError('related-recording-share-context-changed', '账号已切换，请重新打开相关录音', false, 409)
+      }
+    }
+    let relationUid = reference.relationUid
+    let sequence = reference.sequence
+    if (action === 'share') {
+      if (reference.isShared) throw new ArkmePluginError('related-recording-already-shared', '此录音已共享，请刷新列表', false, 409)
+      const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/detail',
+        { chat_session_uid: reference.chatSessionUid }, session, undefined, { lane: 'interactive-read', bypassCache: true })
+      const chat = objectValue(detail.session)
+      const counterpartUserId = numberValue(objectValue(detail.private_counterpart).user_id)
+      if (stringValue(chat.chat_session_uid) !== reference.chatSessionUid || ![1, 3].includes(numberValue(chat.session_kind))
+        || !Number.isSafeInteger(counterpartUserId) || counterpartUserId <= 0 || counterpartUserId === session.userId) {
+        throw new ArkmePluginError('related-recording-peer-invalid', '当前私聊用户不可用，请刷新后重试', false, 409)
+      }
+      const send = async () => {
+        await assertCurrent()
+        const ticket = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/related-recordings/share-ticket', {
+          counterpart_user_id: counterpartUserId, session_id: reference.sessionId, moment_id: reference.momentId,
+        }, session, undefined, { lane: 'write' })
+        if (stringValue(ticket.ticket).trim() === '' || numberValue(ticket.expires_at) <= 0) {
+          throw new ArkmePluginError('related-recording-ticket-invalid', '共享凭证暂不可用，请稍后重试', true, 502)
+        }
+        await assertCurrent()
+        return await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/records/shared-recording', {
+          chat_session_uid: reference.chatSessionUid, share_ticket: ticket.ticket,
+        }, session, undefined, { lane: 'write', trackWriteOutcome: true })
+      }
+      let result: Record<string, unknown>
+      try { result = await send() } catch (error) {
+        // Match mobile: renew only an explicitly expired ticket, never replay an unknown write outcome.
+        if (!(error instanceof ArkmeUpstreamResponseError) || objectValue(error.responseData).reason !== 'share_ticket_expired') throw error
+        result = await send()
+      }
+      relationUid = stringValue(result.rel_uid).trim()
+      sequence = numberValue(result.seq)
+      if (stringValue(result.chat_session_uid) !== reference.chatSessionUid || relationUid === '' || sequence <= 0) {
+        throw new ArkmePluginError('related-recording-share-response-invalid', '共享结果未确认，请刷新列表查看状态', false, 502)
+      }
+    } else {
+      if (!reference.isShared) throw new ArkmePluginError('related-recording-not-shared', '此录音尚未共享', false, 409)
+      if (relationUid === '') {
+        // Older page projections omit rel_uid. Resolve a unique own share, bounded like mobile.
+        const matches = new Map<string, number>()
+        let cursor = ''
+        for (let page = 0; page < 3; page += 1) {
+          const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/records/related-recordings/page', {
+            chat_session_uid: reference.chatSessionUid, page_size: 20, ...(cursor ? { cursor } : {}),
+          }, session, undefined, { lane: 'interactive-read', bypassCache: true })
+          for (const value of listValue(data.moment_ls ?? data.items)) {
+            const item = objectValue(value)
+            const uid = firstOptionalString(item, ['source_relation_uid', 'sourceRelationUid', 'rel_uid', 'relUid', 'relation_uid', 'relationUid'])
+            if (uid && !booleanValue(item.is_shared_by_other ?? item.isSharedByOther)
+              && booleanValue(item.is_shared ?? item.isShared) && booleanValue(item.share_state_known ?? item.shareStateKnown)
+              && stringValue(item.moment_id ?? item.momentId) === reference.momentId
+              && stringValue(item.session_id ?? item.sessionId ?? item.id) === reference.sessionId) {
+              matches.set(uid, numberValue(item.shared_sequence ?? item.sharedSequence ?? item.seq))
+            }
+          }
+          const next = stringValue(data.next_cursor ?? data.nextCursor).trim()
+          if (!booleanValue(data.has_more ?? data.hasMore) || !next || next === cursor) break
+          cursor = next
+        }
+        if (matches.size !== 1) throw new ArkmePluginError('related-recording-share-relation-missing', '暂未找到唯一的共享记录，请刷新列表后重试', false, 409)
+        ;[relationUid, sequence] = [...matches][0]!
+      }
+      await assertCurrent()
+      const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/records/shared-recording/revoke', {
+        chat_session_uid: reference.chatSessionUid, rel_uid: relationUid,
+      }, session, undefined, { lane: 'write', trackWriteOutcome: true })
+      if (stringValue(result.chat_session_uid) !== reference.chatSessionUid || stringValue(result.rel_uid) !== relationUid
+        || !(booleanValue(result.revoked) || booleanValue(result.already_revoked))) {
+        throw new ArkmePluginError('related-recording-withdraw-response-invalid', '撤回结果未确认，请刷新列表查看状态', false, 502)
+      }
+    }
+    const isShared = action === 'share'
+    return {
+      recordingRef: this.relatedRecordingRef(session.userId, reference.chatSessionUid, reference.momentId, signingKey),
+      shareActionRef: this.shareReference({ ...reference, isShared, relationUid: isShared ? relationUid : '', sequence: isShared ? sequence : 0 }, signingKey),
+      shareStateKnown: true, isShared, sequence,
+      timelineItemKey: `arkme-chat-timeline-item-v1.${createHmac('sha256', signingKey)
+        .update(`chat-timeline-item-key-v1:${session.userId}:${reference.chatSessionUid}:${relationUid}`).digest('base64url')}`,
+    }
+  }
+
+  private shareReference(reference: ShareReference, signingKey: string): string {
+    const encoded = encodeOpaqueJson(reference)
+    return `${SHARE_REF_PREFIX}.${encoded}.${createHmac('sha256', signingKey).update(`${SHARE_REF_PREFIX}.${encoded}`).digest('base64url')}`
+  }
+
+  private openShareReference(value: string, signingKey: string): ShareReference {
+    try {
+      const [prefix, encoded, signature, extra] = value.split('.')
+      if (prefix !== SHARE_REF_PREFIX || !encoded || !signature || extra !== undefined || value.length > 8192) throw new Error()
+      const expected = createHmac('sha256', signingKey).update(`${SHARE_REF_PREFIX}.${encoded}`).digest()
+      const actual = Buffer.from(signature, 'base64url')
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error()
+      const reference = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as ShareReference
+      if (!Number.isSafeInteger(reference.userId) || reference.userId <= 0 || !reference.chatSessionUid?.trim()
+        || !reference.sessionId?.trim() || !reference.momentId?.trim() || typeof reference.isShared !== 'boolean'
+        || typeof reference.relationUid !== 'string' || !Number.isSafeInteger(reference.sequence)) throw new Error()
+      return reference
+    } catch {
+      throw new ArkmePluginError('related-recording-share-ref-invalid', '共享录音引用无效，请刷新列表', false, 403)
+    }
   }
 
   async relatedRecordingEligibility(
@@ -298,6 +447,16 @@ export class RelatedRecordingService {
       'source_relation_uid', 'sourceRelationUid', 'rel_uid', 'relUid', 'relation_uid', 'relationUid',
     ]) ?? ''
     const sharedSequence = numberValue(item.shared_sequence ?? item.sharedSequence ?? item.seq ?? item.sequence)
+    const sessionId = firstOptionalString(item, ['session_id', 'sessionId', 'id']) ?? ''
+    const shareStateKnown = booleanValue(item.share_state_known ?? item.shareStateKnown)
+    const isShared = booleanValue(item.is_shared ?? item.isShared)
+    const title = stringValue(item.title ?? item.orig_name ?? item.origName).trim()
+    const summary = stringValue(item.summary ?? item.summary_text ?? item.summaryText).trim()
+    const transcriptAvailable = booleanValue(item.transcript_available ?? item.transcriptAvailable) && transcript.trim() !== ''
+    const shareActionRef = !isSharedByOther && shareStateKnown && sessionId !== ''
+      && itemChatSessionUid === chatSessionUid && (isShared || (title !== '' && summary !== '' && transcriptAvailable))
+      ? this.shareReference({ userId, chatSessionUid, sessionId, momentId, isShared,
+        relationUid: sourceRelationUid, sequence: sharedSequence }, signingKey) : undefined
     const sharedRecordingDetailRef = isSharedByOther && itemChatSessionUid.trim() !== '' && recordUid.trim() !== ''
       && recordOwnerUserId !== undefined && recordOwnerUserId > 0
       ? this.sharedRecordingDetailRef({
@@ -312,17 +471,19 @@ export class RelatedRecordingService {
       : undefined
     return {
       recordingRef: this.relatedRecordingRef(userId, chatSessionUid, momentId, signingKey),
+      shareStateKnown, isShared,
+      ...(shareActionRef === undefined ? {} : { shareActionRef }),
       ...(sharedRecordingDetailRef === undefined ? {} : { sharedRecordingDetailRef }),
       startAtMillis,
       endAtMillis: numberValue(item.end_at ?? item.endAt ?? item.endAtMillis),
       ...(dateStamp === undefined ? {} : { dateStamp }),
       ...(Number.isSafeInteger(timezoneOffsetMillis) ? { timezoneOffsetMillis } : {}),
       timeRangeText: stringValue(item.time_range_text ?? item.timeRangeText).trim(),
-      title: stringValue(item.title ?? item.orig_name ?? item.origName).trim(),
-      summary: stringValue(item.summary ?? item.summary_text ?? item.summaryText).trim(),
+      title,
+      summary,
       summaryStatus: numberValue(item.summary_status ?? item.summaryStatus),
       ...(transcript === '' ? {} : { transcript }),
-      transcriptAvailable: booleanValue(item.transcript_available ?? item.transcriptAvailable) && transcript !== '',
+      transcriptAvailable,
       speakers,
       participants,
       isSharedByOther,

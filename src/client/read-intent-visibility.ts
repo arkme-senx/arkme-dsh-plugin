@@ -4,6 +4,7 @@ const availabilityListeners = new Set<() => void>()
 /** A temporary overlay can suppress automatic read acknowledgement without deactivating the conversation. */
 export function suspendArkmeVisibleReadIntent(): () => void {
   readIntentSuspensions += 1
+  if (readIntentSuspensions === 1) for (const listener of availabilityListeners) listener()
   let released = false
   return () => {
     if (released) return

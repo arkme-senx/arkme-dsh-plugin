@@ -8,6 +8,7 @@ import type {
 } from '../types.js'
 
 export interface ArkmeConversationTimelineSnapshot {
+  cache?: import('../types.js').ArkmeTimelinePage['cache'] | undefined
   unified?: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineWindow | undefined
   mode?: 'latest' | 'around'
   aroundSequenceRange?: ArkmeConversationTimelineSequenceRange
@@ -50,6 +51,7 @@ export function arkmeConversationTimelineContentEqual(
   if (left === right) return true
   if (left === undefined || right === undefined) return false
   return JSON.stringify(left.unified) === JSON.stringify(right.unified)
+    && left.cache?.origin === right.cache?.origin && left.cache?.persistence === right.cache?.persistence && left.cache?.stale === right.cache?.stale
     && (left.mode ?? 'latest') === (right.mode ?? 'latest')
     && JSON.stringify(left.aroundSequenceRange) === JSON.stringify(right.aroundSequenceRange)
     && left.hasMore === right.hasMore
@@ -142,7 +144,11 @@ export class ArkmeConversationMemoryCache {
   private readonly recency = new Map<string, true>()
   private readonly appliedTimelineDeltas = new Map<string, WeakSet<ArkmeTimelineItem>>()
 
-  constructor(private readonly maxSources = 20) {}
+  private readonly timelineBytes = new Map<string, number>()
+  constructor(private readonly maxSources = 20, private readonly viewportStore?: {
+    getViewport(source: string): ArkmeConversationViewportSnapshot | undefined
+    storeViewport(source: string, value: ArkmeConversationViewportSnapshot): void
+  }) {}
 
   unappliedTimelineDeltaItems(conversationKey: string, items: readonly ArkmeTimelineItem[]): ArkmeTimelineItem[] {
     const applied = this.appliedTimelineDeltas.get(conversationKey)
@@ -192,6 +198,8 @@ export class ArkmeConversationMemoryCache {
       ...(latestSequence === undefined ? {} : { latestSequence }),
     }
     this.timelines.set(conversationKey, next)
+    // Conservative UTF-16 upper bound; includes both unified and native projections.
+    this.timelineBytes.set(conversationKey, JSON.stringify(next).length * 2)
     this.touch(conversationKey)
     const pending = this.pendingInterwovenMoments.get(conversationKey)
     if (pending === undefined) return undefined
@@ -239,13 +247,14 @@ export class ArkmeConversationMemoryCache {
   }
 
   getViewport(conversationKey: string): ArkmeConversationViewportSnapshot | undefined {
-    const viewport = this.viewports.get(conversationKey)
+    const viewport = this.viewports.get(conversationKey) ?? this.viewportStore?.getViewport(conversationKey)
     if (viewport !== undefined) this.touch(conversationKey)
     return viewport
   }
 
   storeViewport(conversationKey: string, viewport: ArkmeConversationViewportSnapshot): void {
     this.viewports.set(conversationKey, viewport)
+    this.viewportStore?.storeViewport(conversationKey, viewport)
     this.touch(conversationKey)
   }
 
@@ -256,6 +265,7 @@ export class ArkmeConversationMemoryCache {
 
   clear(): void {
     this.timelines.clear()
+    this.timelineBytes.clear()
     this.interwovenMoments.clear()
     this.interwovenStates.clear()
     this.interwovenRefreshRevisions.clear()
@@ -269,11 +279,13 @@ export class ArkmeConversationMemoryCache {
   private touch(conversationKey: string): void {
     this.recency.delete(conversationKey)
     this.recency.set(conversationKey, true)
-    while (this.recency.size > Math.max(1, this.maxSources)) {
+    while (this.recency.size > Math.max(1, this.maxSources)
+      || this.recency.size > 1 && [...this.timelineBytes.values()].reduce((sum, bytes) => sum + bytes, 0) > 32 * 1024 * 1024) {
       const oldest = this.recency.keys().next().value as string | undefined
       if (oldest === undefined) return
       this.recency.delete(oldest)
       this.timelines.delete(oldest)
+      this.timelineBytes.delete(oldest)
       this.appliedTimelineDeltas.delete(oldest)
       this.interwovenMoments.delete(oldest)
       this.interwovenStates.delete(oldest)

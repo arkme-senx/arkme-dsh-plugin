@@ -1,4 +1,5 @@
 import type { ArkmeRecordingDailyMetrics } from '../../types.js'
+import type { ReactNode } from 'react'
 import { arkmeTheme } from '../arkme-theme.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 
@@ -16,7 +17,7 @@ function inputDurationLabel(millis: number): string {
   return tr('{hours}小时{minutes}分{seconds}秒', { hours: Math.floor(minutes / 60), minutes: minutes % 60, seconds: seconds % 60 })
 }
 
-export function RecordingDailyMetrics({metrics,loading=false,localPending=false}:{metrics?:ArkmeRecordingDailyMetrics | undefined;loading?:boolean;localPending?:boolean}) {
+export function RecordingDailyMetrics({metrics,loading=false,localPending=false,children}:{metrics?:ArkmeRecordingDailyMetrics | undefined;loading?:boolean;localPending?:boolean;children?:ReactNode}) {
   useArkmeLocale()
   const incomplete = metrics?.archiveState !== 'ready' || localPending
   const bytes = !metrics || metrics.confirmedCount === 0 && incomplete ? tr('暂不可用')
@@ -33,6 +34,7 @@ export function RecordingDailyMetrics({metrics,loading=false,localPending=false}
     <span>{tr('人声存储 {size}',{size:loading ? '—' : bytes})}</span>
     <span>{tr('转写 {count} 字',{count:loading || !metrics ? '—' : new Intl.NumberFormat(arkmeIntlLocale()).format(metrics.textCount)})}</span>
     <span style={{whiteSpace:'nowrap'}}>{tr('转写输入时长 {duration}',{duration:loading ? '—' : duration})}</span>
+    {children}
     {!loading && ((metrics?.pendingCount ?? 0) > 0 || (metrics?.asrInputPendingCount ?? 0) > 0 || localPending) && <span>{tr('处理中，统计待更新')}</span>}
     {!loading && (metrics?.unknownCount ?? 0) > 0 && <span>{tr('部分大小暂不可确认')}</span>}
     {!loading && (metrics?.asrInputUnknownCount ?? 0) > 0 && <span>{tr('部分转写输入时长暂不可确认')}</span>}

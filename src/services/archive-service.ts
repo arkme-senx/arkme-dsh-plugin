@@ -17,7 +17,7 @@ export class ArchiveService {
   }
 
   async list(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
-    return this.runtime.runOwnerRead('archives', { operation: 'list', cursor }, async readSignal => {
+    return this.runtime.runCompositeOwnerRead('archives', { operation: 'list', cursor }, async readSignal => {
       const session = await this.runtime.requireSession()
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/archives/list', {
         entity_type: 1, limit: 50, ...(cursor === undefined ? {} : { cursor }),
@@ -48,7 +48,7 @@ export class ArchiveService {
 
   async states(sourceRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeArchiveState[]> {
     if (sourceRefs.length === 0 || sourceRefs.length > 200 || new Set(sourceRefs).size !== sourceRefs.length) throw invalid()
-    return this.runtime.runOwnerRead('archives', { operation: 'states', sourceRefs }, async readSignal => {
+    return this.runtime.runCompositeOwnerRead('archives', { operation: 'states', sourceRefs }, async readSignal => {
       const session = await this.runtime.requireSession()
       const refs = await Promise.all(sourceRefs.map(ref => this.sources.openSourceRef(ref, session.userId)))
       if (refs.some(ref => ref.kind !== 'topic')) throw new ArkmePluginError('archive-target-invalid', '仅支持个人主题归档', false, 400)

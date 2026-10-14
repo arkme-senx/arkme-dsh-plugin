@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
@@ -15,6 +15,7 @@ import type {
   ArkmeWorldPublishResult,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
+  ArkmeWorldNotificationTarget,
   ArkmeWorldAuthorLabel,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
@@ -28,6 +29,8 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../ex
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
@@ -918,6 +921,8 @@ function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteracti
   </span>
 }
 
+const WorldNotificationFocus = createContext<string | undefined>(undefined)
+
 function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }: {
   item: ArkmeWorldInteractionItem
   replyToName?: string
@@ -925,6 +930,9 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
   replyTargetRef?: string
   onReply?(item: ArkmeWorldInteractionItem): void
 }) {
+  const focused = useContext(WorldNotificationFocus) === item.interactionRef
+  const rowRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (focused) rowRef.current?.scrollIntoView?.({ block: 'center' }) }, [focused])
   const reply = replyToName !== undefined
   const active = replyTargetRef === item.interactionRef
   if (compact) {
@@ -934,8 +942,9 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
       <span>：<WorldLinkText text={item.textContent} /></span>
     </span>
   }
-  return <div data-world-comment-level={reply ? 'reply' : 'root'} style={{
+  return <div ref={rowRef} data-world-notification-focus={focused || undefined} data-world-comment-level={reply ? 'reply' : 'root'} style={{
     ...(reply ? styles.interactionReply : styles.interactionRoot),
+    ...(focused ? { background: arkmeTheme.active, borderRadius: 8, outline: `1px solid ${arkmeTheme.border}` } : {}),
   }}>
     <InteractionAvatar item={item} reply={reply} compact={compact} />
     <div style={styles.interactionBody}>
@@ -1305,8 +1314,9 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     scrollRootRef.current = element
     if (element !== null) element.scrollTop = scrollPositionsRef.current[scope]
   }, [scope])
+  const notificationFocus = useContext(WorldNotificationFocus)
   const selectScope = (nextScope: WorldScope) => {
-    if (nextScope === scope) return
+    if (nextScope === scope && !notificationFocus) return
     const transition = worldScopeScrollTransition(
       scrollPositionsRef.current,
       scope,
@@ -1419,6 +1429,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
   const uploadedAssetsRef = useRef<{ mutationId: string; assets: ArkmeUploadedAsset[] }>()
+  const requestRef = useRef<AbortController>()
+  useEffect(() => () => requestRef.current?.abort(), [])
   const resetMutationId = () => {
     mutationIdRef.current = uuid()
     uploadedAssetsRef.current = undefined
@@ -1442,10 +1454,17 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
     if (files.some(file => !file.type.startsWith('image/'))) { setMessage('只能上传图片'); return }
     if (files.some(file => file.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) { setMessage('单张图片不能超过 20MB'); return }
     const controller = new AbortController()
+    requestRef.current = controller
+    const owner = arkmeAuthStore.getSnapshot().auth
+    const stopAccount = arkmeAuthStore.subscribe(() => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      if (current?.status !== owner?.status || current?.environment !== owner?.environment || current?.userId !== owner?.userId) controller.abort()
+    })
     sendingRef.current = true
     setSending(true)
     setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
     try {
+      await requirePhoneForSocialAction('发布到世界', controller.signal)
       const cachedUploads = uploadedAssetsRef.current
       let assets: ArkmeUploadedAsset[] = []
       if (files.length > 0) {
@@ -1461,6 +1480,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
           uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }
         }
       }
+      controller.signal.throwIfAborted()
       setMessage('正在发布…')
       const result = await withTimeout<ArkmeWorldPublishResult>(files.length > 0
         ? worldSdk.publishWorldFileAssets({
@@ -1479,6 +1499,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
             textContent,
           }, controller.signal),
       90_000, '发布等待太久，请刷新世界后确认是否已发布', () => { controller.abort() })
+      controller.signal.throwIfAborted()
       if (!result.worldPublished) {
         throw new Error(result.error ?? (result.recordSaved ? '内容已保存，但发到世界失败，请重试' : '发布失败，请稍后重试'))
       }
@@ -1486,7 +1507,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
       onPublished(result)
       onClose()
     } catch (error) { setMessage(messageOf(error, '发布失败，请稍后重试')) }
-    finally { controller.abort(); sendingRef.current = false; setSending(false) }
+    finally { stopAccount(); controller.abort(); sendingRef.current = false; setSending(false) }
   }
   return <div role="dialog" aria-modal="true" aria-label={tr("发世界")} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
     <section style={{ ...styles.modal, ...styles.publishModal }} data-world-publish-dialog="spacious">
@@ -1531,6 +1552,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
 
 function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void; onCountResolved(count: number, hasMore: boolean): void }) {
   useArkmeLocale()
+  const focusRef = useContext(WorldNotificationFocus)
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -1573,18 +1595,29 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
     const controller = new AbortController()
     loadController.current = controller
     setState({ status: 'loading', items: [], hasMore: false })
-    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
+    void (async () => {
+      let page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
+      const items = [...page.items]
+      for (let count = 0; focusRef && !items.some(value => value.interactionRef === focusRef) && page.hasMore && count < 100; count++) {
+        const offset = page.nextOffset
+        if (offset === undefined) throw new Error('评论分页数据不完整')
+        page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset }, controller.signal)
+        if (page.hasMore && (page.nextOffset === undefined || page.nextOffset <= offset)) throw new Error('评论分页未推进')
+        items.push(...page.items)
+      }
+      return { ...page, items: [...new Map(items.map(value => [value.interactionRef, value])).values()] }
+    })()
       .then(page => {
         if (controller.signal.aborted) return
-        setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
+        setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(focusRef && !page.items.some(value => value.interactionRef === focusRef) ? { message: tr('未找到这条回复，可能已删除或不可查看') } : {}), ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
         onCountResolved(page.items.length, page.hasMore)
         hydrateViewerAuthorLabels(page.items, controller.signal)
       })
       .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
-  }, [hydrateViewerAuthorLabels, item.recordRef, onCountResolved])
+  }, [focusRef, hydrateViewerAuthorLabels, item.recordRef, onCountResolved])
   useEffect(() => {
     load()
-    textareaRef.current?.focus()
+    if (!focusRef) textareaRef.current?.focus()
     return () => { loadController.current?.abort() }
   }, [load])
   useEffect(() => {
@@ -1671,7 +1704,8 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId, onBackToWorld, onSourceActivated }: {
+export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, onBackToWorld, onSourceActivated }: {
+  notificationRef?: string
   target?: ArkmeWorldViewTarget
   initialScope?: WorldScope
   currentUserId?: number
@@ -1679,6 +1713,7 @@ export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId,
   onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void
 } = {}) {
   useArkmeLocale()
+  const [notificationTarget, setNotificationTarget] = useState(notificationRef)
   const [scope, setScope] = useState<WorldScope>(initialScope)
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
@@ -1830,7 +1865,24 @@ export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId,
       })
   }, [hydrateViewerAuthorLabels])
 
-  useEffect(() => { if (target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target])
+  const loadNotification = useCallback(() => {
+    if (!notificationTarget) return
+    loadControllers.current.all?.abort()
+    const controller = new AbortController()
+    loadControllers.current.all = controller
+    setViews(current => ({ ...current, all: loadingState() }))
+    void callArkme<ArkmeWorldNotificationTarget>('world.notification-target', { interactionRef: notificationTarget }, controller.signal).then(value => {
+      if (controller.signal.aborted) return
+      setViews(current => ({ ...current, all: { status: 'success', items: [value.root], hasMore: false } }))
+      setLoaded(current => ({ ...current, all: true }))
+      setInteractionRecordRef(value.root.recordRef)
+    }).catch(error => {
+      if (!controller.signal.aborted) setViews(current => ({ ...current, all: { status: 'error', items: [], message: messageOf(error, tr('这条世界动态或评论已不可查看')) } }))
+    })
+    return () => controller.abort()
+  }, [notificationTarget])
+  useEffect(loadNotification, [loadNotification])
+  useEffect(() => { if (!notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget])
   useEffect(() => {
     if (target === undefined) return
     setInteractionRecordRef(undefined)
@@ -1881,10 +1933,11 @@ export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId,
     invalidateWorldVoiceprintAvailability(state.items.map(item => item.recordRef))
     for (const item of state.items) resolvedVoiceprintRefsRef.current.delete(item.recordRef)
     setVoiceprintAvailabilityRevision(current => current + 1)
-    if (target === undefined) load(scope, 0, true)
+    if (notificationTarget) loadNotification()
+    else if (target === undefined) load(scope, 0, true)
     else loadUser(target, 0, true)
   }
-  const selectScope = (next: WorldScope) => { setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
+  const selectScope = (next: WorldScope) => { setNotificationTarget(undefined); setLoaded({ all: false, mine: false }); setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
   const toggleInteractions = (item: ArkmeWorldFeedItem) => {
     setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
   }
@@ -2026,7 +2079,7 @@ export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId,
     finally { setInviteSending(false) }
   }
 
-  return <main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
+  return <WorldNotificationFocus.Provider value={notificationTarget}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
     <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
       {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : target === undefined && scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
       {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
@@ -2054,5 +2107,5 @@ export function ArkmeWorldSurface({ target, initialScope = 'all', currentUserId,
       onClose={() => { if (!authorCardBusy) setAuthorCardItem(undefined) }}
       onSend={() => { void openPrivateChatForAuthor(authorCardItem) }}
     />}
-  </main>
+  </main></WorldNotificationFocus.Provider>
 }

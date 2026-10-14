@@ -103,7 +103,7 @@ export class OfficialNotificationService {
     cursor = '',
     signal?: AbortSignal,
   ): Promise<ArkmeOfficialNotificationPage> {
-    return this.runtime.runOwnerRead(
+    return this.runtime.runCompositeOwnerRead(
       'official-notifications',
       { cursor },
       async (readSignal) => {

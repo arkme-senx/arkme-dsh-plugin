@@ -45,7 +45,7 @@ export interface ArkmeUiState {
   chatRevision: number
   recordRevision: number
   topicDirectoryRevision: number
-  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness' | 'codex' | 'team'
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
@@ -65,6 +65,7 @@ export interface ArkmeUiState {
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldViewTarget
+  worldInteractionRef?: string
   worldInitialScope?: 'all' | 'mine'
   worldNavigationRevision?: number
   /** Web-only login is an overlay so a logged-out Harness view remains in place. */
@@ -122,6 +123,7 @@ export class ArkmeUiController {
   private conversationTargetRevision = 0
   private notificationActivationRevision = 0
   private searchTargetRevision = 0
+  private recordingTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
   /** Navigation and presentation state, stable across projection-only invalidations. */
@@ -219,6 +221,12 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'calls' })
   }
 
+  showArrangements(): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'arrangements' })
+  }
+
   showCalendar(): void {
     this.leaveContacts()
     if (this.state.calendarOpen === true) {
@@ -237,8 +245,13 @@ export class ArkmeUiController {
 
   showWorld(scope: 'all' | 'mine' = 'all'): void {
     this.leaveContacts()
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'world', worldInitialScope: scope, worldNavigationRevision: (this.state.worldNavigationRevision ?? 0) + 1 })
+  }
+
+  showWorldInteraction(interactionRef: string): void {
+    this.showWorld()
+    this.publish({ ...this.state, worldInteractionRef: interactionRef })
   }
 
   showUserWorld(target: ArkmeWorldTarget): void {
@@ -246,7 +259,7 @@ export class ArkmeUiController {
     if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw new TypeError('世界用户 ID 必须是正整数')
     const displayName = target.displayName.replace(/\s+/g, ' ').trim()
     if (displayName === '') throw new TypeError('世界用户名不能为空')
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'world',
@@ -269,11 +282,23 @@ export class ArkmeUiController {
     this.showWorld()
   }
 
-  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity): void {
+  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity, window?: import('../types.js').ArkmeRecordingWindow): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(segment === undefined ? {} : { segment }) } })
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(window ? { window } : {}), ...(segment === undefined ? {} : { segment }) } })
   }
+
+  showRecordingSummaryTarget(dateStamp: number, versionId?: string, window?: import('../types.js').ArkmeRecordingWindow): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, ...(window ? { window } : {}), summary: { ...(versionId ? { versionId } : {}) } } })
+  }
+  showRecordingTimelineTarget(dateStamp: number, versionId?: string, window?: import('../types.js').ArkmeRecordingWindow): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, ...(window ? { window } : {}), timeline: { ...(versionId ? { versionId } : {}) } } })
+  }
+
 
   showSearch(): void {
     this.leaveContacts()
@@ -531,6 +556,8 @@ export class ArkmeUiController {
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && JSON.stringify(next.recordingTarget?.segment) === JSON.stringify(this.state.recordingTarget?.segment)
+      && JSON.stringify(next.recordingTarget?.summary) === JSON.stringify(this.state.recordingTarget?.summary)
+      && next.recordingTarget?.revision === this.state.recordingTarget?.revision
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
       && next.extensionShareRef === this.state.extensionShareRef
@@ -540,6 +567,7 @@ export class ArkmeUiController {
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && next.webLoginDialogOpen === this.state.webLoginDialogOpen
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
+      && next.worldInteractionRef === this.state.worldInteractionRef
       && next.worldInitialScope === this.state.worldInitialScope
       && next.worldNavigationRevision === this.state.worldNavigationRevision
       && sameSelectedSource(next.selectedSource, this.state.selectedSource)

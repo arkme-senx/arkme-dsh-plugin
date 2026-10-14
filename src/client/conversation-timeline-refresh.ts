@@ -14,7 +14,19 @@ export async function readConversationTimelineWindow(
   snapshot: ConversationTimelineReadWindow,
   readPage: (cursor?: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
+  followsLatest?: () => boolean,
 ): Promise<ArkmeTimelinePage> {
+  // Following the live tail needs one bounded authoritative page. Re-reading
+  // every previously visited page makes latency and response bytes grow forever.
+  // Check again after I/O: a reader may have scrolled into history meanwhile.
+  if (snapshot.unified && snapshot.mode !== 'around' && followsLatest?.()) {
+    signal.throwIfAborted()
+    const latest = await readPage()
+    signal.throwIfAborted()
+    if (latest.unified?.complete && followsLatest()) return latest
+    // A partial source must not erase known events; retain the ordinary atomic
+    // reconciliation, also when the user changed their reading intent.
+  }
   if (snapshot.unified) return await refreshUnifiedTimelineWindow(snapshot.unified, readPage, signal, snapshot.mode !== 'around')
   const records = snapshot.items.filter(item => item.status === 1 && item.awaitingTimelineProjection !== true)
   const aroundRange = snapshot.mode === 'around' ? snapshot.aroundSequenceRange : undefined
@@ -33,6 +45,7 @@ export async function readConversationTimelineWindow(
   let first: ArkmeTimelinePage | undefined
   for (;;) {
     signal.throwIfAborted()
+    if (visited.size >= 500 || items.size > 2000) throw new Error('消息列表刷新超过窗口上限，请重新定位')
     const key = JSON.stringify(cursor ?? null)
     if (visited.has(key)) throw new Error('消息列表刷新游标未推进')
     visited.add(key)
