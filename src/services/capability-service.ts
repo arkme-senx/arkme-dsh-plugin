@@ -61,7 +61,7 @@ export class CapabilityService {
     const home = await post('activate', {})
     if (home.activated !== true) return invalid()
     const processing = objectValue(home.processing), job = objectValue(home.latest_job)
-    if (processing.phase === 'paused' && job.error_code === 'capability_disabled' && typeof processing.rebuild_run_id === 'string' && processing.rebuild_run_id) {
+    if (processing.phase === 'paused' && job.last_error_code === 'capability_disabled' && typeof processing.rebuild_run_id === 'string' && processing.rebuild_run_id) {
       await post('rebuild/resume', { run_id: processing.rebuild_run_id })
     }
   }

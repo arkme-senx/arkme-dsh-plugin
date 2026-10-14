@@ -12,6 +12,7 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 额度不足暂停；系统异常重试不重复扣除。|Analysis pauses when allowance is insufficient. System retries do not deduct twice.
 关闭后保留已有内容，已开始的分析仍可能扣额度。|Existing content is kept when disabled. Analysis already started may still use allowance.
 AI 自动分析|Automatic AI analysis
+自动识别设置|Automatic recognition settings
 开启功能|Enable feature
 自动整理个人档案|Automatically organize personal profile
 阿森有想法（快记）|Asen’s thoughts (notes)

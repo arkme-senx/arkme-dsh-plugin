@@ -17,6 +17,21 @@ function fixture() {
 }
 
 describe('automatic capability owner', () => {
+  it.each(['capability_disabled', 'points_insufficient', ''])('reopening profile respects the actual pause reason %s', async reason => {
+    const saved = { key: 'personal_profile', title: '个人档案', enabled: true, version: 1, enabled_at: 1 }
+    const post = vi.fn(async () => ({ activated: true, processing: { phase: 'paused', rebuild_run_id: 'run-existing' }, latest_job: { last_error_code: reason } }))
+    const service = new CapabilityService({
+      config: { environment: 'prod' }, requireSession: async () => ({ userId: 1, accessToken: 'fixture' }),
+      authenticatedPost: async (path: string) => path.endsWith('/query') ? [saved] : saved,
+      authenticatedRequestOptions: () => ({}), post,
+    } as never)
+    await service.update({ key: 'personal_profile', enabled: true, expectedVersion: 0, billingConsent: true }, 'prod:1')
+    expect(post.mock.calls.length).toBe(reason === 'capability_disabled' ? 2 : 1)
+    if (reason === 'capability_disabled') expect(post).toHaveBeenLastCalledWith(
+      'https://memory-core.jotmo.cc', '/api/v1/personal-profile/v3/experience/rebuild/resume',
+      { run_id: 'run-existing' }, 'fixture', [200], undefined, false, {})
+  })
+
   it.each([
     ['query', 429], ['query', 503], ['update', 429], ['update', 503],
   ] as const)('%s HTTP %s does not delay ordinary Record or Chat requests', async (method, status) => {
