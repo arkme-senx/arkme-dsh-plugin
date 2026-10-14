@@ -143,6 +143,8 @@ function historyOutbox() {
     activate: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     capture: vi.fn(async () => undefined),
+    isReconcilingSourceBindings: vi.fn(() => false),
+    reconcileSourceBindings: vi.fn(async () => false),
     historyResumeSeq: vi.fn((_sessionRef: string) => 0),
     restoreHistoryReceipts: vi.fn(async () => undefined),
     historyUncoveredFrom: vi.fn((_sessionRef: string, _startSeq: number, endSeq: number) => endSeq + 1),
@@ -1319,14 +1321,34 @@ it('uploads fresh sessions beside a rejected retired source without falsely comp
    { sessionId: 'fresh', title: 'new', updatedAt: 2000, running: false, blank: false, workspaceId: 'workspace-01' },
  ] })
  const send = vi.spyOn(f.controlPlane, 'syncSessions').mockImplementation(async value => {
-   if ((value.items as Array<{session_ref: string}>).some(item => item.session_ref === 'session-01')) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'retired')
-   return {}
+   return { accepted_session_refs: ['fresh'], rejected_session_refs: ['session-01'] }
  })
  const complete = vi.spyOn(f.controlPlane, 'completeProjectionSnapshot')
  try {
    await f.host.start(); await (f.host as unknown as { backgroundProjectionFlight: Promise<void> }).backgroundProjectionFlight
-   expect(send).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ session_ref: 'fresh' })] }), expect.any(AbortSignal))
+   expect(send).toHaveBeenCalledOnce()
+   expect(send).toHaveBeenCalledWith(expect.objectContaining({ report_conflicts: true, items: expect.arrayContaining([expect.objectContaining({ session_ref: 'fresh' })]) }), expect.any(AbortSignal))
    expect(complete).not.toHaveBeenCalled()
    expect(f.diagnostics).toHaveBeenCalledWith('projection_sync_failed', expect.objectContaining({ session_items_acked: 1, server_completed: false, error_code: 'REMOTE_PROJECTION_CONFLICT' }))
  } finally { await f.host.stop() }
+})
+
+it('does not delay metadata snapshot completion on background receipt repair', async () => {
+  const outbox = historyOutbox()
+  let release!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  outbox.reconcileSourceBindings.mockImplementation(async () => { await barrier; return false })
+  const { host, controlPlane, controlCalls } = await fixture({ turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox })
+  try {
+    await host.start()
+    await vi.waitFor(() => expect(outbox.activate).toHaveBeenCalledOnce())
+    controlPlane.syncSessions = async value => {
+      const items = value.items as Array<{ session_ref: string }>
+      return { accepted_session_refs: items.map(i => i.session_ref), rejected_session_refs: [], source_bindings: { 'session-01': 'a'.repeat(64) } }
+    }
+    const before = controlCalls.filter(x => x.name === 'complete').length
+    await (host as unknown as { syncProjectionSnapshot(force: boolean): Promise<void> }).syncProjectionSnapshot(true)
+    expect(outbox.reconcileSourceBindings).toHaveBeenCalled()
+    expect(controlCalls.filter(x => x.name === 'complete').length).toBeGreaterThan(before)
+  } finally { release(); await host.stop() }
 })

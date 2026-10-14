@@ -24,7 +24,7 @@ export class LocalHistoryCoverage {
       const local = summaries.get(row.sessionRef)
       if (!local || !Number.isSafeInteger(local.projectionAsOfSeq ?? -1) || (local.projectionAsOfSeq ?? -1) < -1 || !Number.isSafeInteger(local.updatedAt)) continue
       const cut = { runtimeRef: runtime, updatedAt: local.updatedAt, projectionAsOfSeq: local.projectionAsOfSeq ?? -1 }
-      const cloudSignature = JSON.stringify([row.runtimeRef, row.historyRevision, row.contentRevision, row.projectionAsOfSeq, row.updatedAt])
+      const cloudSignature = JSON.stringify([row.runtimeRef, row.historyRevision, row.contentRevision])
       const signature = JSON.stringify([cloudSignature, cut])
       const key = JSON.stringify([runtime, row.runtimeRef, row.sessionRef])
       const previous = this.entries.get(key)

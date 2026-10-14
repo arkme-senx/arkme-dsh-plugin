@@ -105,7 +105,7 @@ describe('Arkme remote Host account contract', () => {
     })
     Object.assign(host, {
       started: true, connected: false, accountId: '1',
-      turnUpload: { capture },
+      turnUpload: { capture, isReconcilingSourceBindings: () => false },
       runtime: {
         runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
         hostGeneration: 7, capabilities: ['session.events'], updatedAtMillis: 1,
@@ -851,7 +851,7 @@ function liveHost() {
   const capture = vi.fn(async (_ref: string, _entries: Array<{ event: { seq: number } }>) => undefined)
   const host = inertHost(adapter)
   Object.assign(host, { started: true, connected: true, accountId: '1',
-    channelManager: { publishProjectionEvent: published }, turnUpload: { capture },
+    channelManager: { publishProjectionEvent: published }, turnUpload: { capture, isReconcilingSourceBindings: () => false },
     runtime: { runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
       capabilities: ['session.events', 'session.history'], updatedAtMillis: 1 },
   })

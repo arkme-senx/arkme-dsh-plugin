@@ -108,3 +108,9 @@ it('uses the validated persistence end when a legacy list has unknown or pre-mig
  await f.proven('local'); expect(f.read).toHaveBeenCalledTimes(2)
  expect(f.close).toHaveBeenCalledOnce()
 })
+
+it('does not read histories again for cloud rename, timestamp or metadata watermark changes',async()=>{
+ const f=fixture(10000);await f.proven()
+ for(let i=1;i<=400;i++)expect((await f.list({updatedAt:42+i,projectionAsOfSeq:10000+i,title:'renamed'})).coveredLocalHistory?.source).toBe('local')
+ expect(f.content).toHaveBeenCalledOnce();expect(f.cloud).toHaveBeenCalledOnce()
+})

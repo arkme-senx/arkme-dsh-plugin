@@ -1,3 +1,4 @@
+import { LocalSummaryCache } from './dsh-remote/local-summary-cache.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
@@ -650,6 +651,10 @@ export function apply(ctx: Context, config: Config): void {
     let historyCache: DshNativeHistoryCache | undefined
     try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
     catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
+    const localSummaries = new LocalSummaryCache(() => apiProxy.localHistorySummaries())
+    const stopSummaryEvents = apiProxy.subscribeProjectionEvents(event => {
+      if (event.kind !== 'interactions') localSummaries.invalidate()
+    })
     const directory = new DshAccountSessions({
       ...(historyCache ? { historyCache } : {}),
       onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
@@ -665,16 +670,8 @@ export function apply(ctx: Context, config: Config): void {
           if (!account || !service.accountScope.ready()) return new Map()
           const owned = await sessionOwnership.listOwned(String(account.userId), refs)
           const wanted = new Set(refs.filter(ref => owned.has(ref)))
-          const result = new Map<string, { updatedAt: number; projectionAsOfSeq?: number; running: boolean }>()
-          let cursor: string | undefined
-          for (let page = 0; page < 100 && wanted.size; page++) {
-            signal.throwIfAborted()
-            const value = await apiProxy.sessions({ includeUngrouped: true, limit: 100, ...(cursor ? { cursor } : {}) })
-            for (const row of value.items) if (wanted.delete(row.sessionId)) result.set(row.sessionId, row)
-            if (!value.nextCursor || value.nextCursor === cursor) break
-            cursor = value.nextCursor
-          }
-          signal.throwIfAborted()
+          const snapshot = await localSummaries.get(signal)
+          const result = new Map([...snapshot].filter(([id]) => wanted.has(id)))
           return result
         },
         content: async (sessionId, through, signal) => {
@@ -704,6 +701,7 @@ export function apply(ctx: Context, config: Config): void {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
         directory.close()
+        localSummaries.clear()
         if (!service.accountScope.ready()) host.cancelPendingConnection()
         lifecycleTail = lifecycleTail.then(
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
@@ -715,6 +713,8 @@ export function apply(ctx: Context, config: Config): void {
       await lifecycleTail
       return async () => {
         unsubscribe()
+        stopSummaryEvents()
+        localSummaries.clear()
         await lifecycleTail
         directory.close()
         historyCache?.close()

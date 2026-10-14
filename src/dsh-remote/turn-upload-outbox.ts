@@ -205,6 +205,7 @@ export class DshRemoteTurnUploadOutbox {
   private runtime: DshRemoteRuntimeProjection | undefined
   private captureTail: Promise<void> = Promise.resolve()
   private drainFlight: Promise<void> | undefined
+  private bindingFlight: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private controller = new AbortController()
   private closed = false
@@ -276,6 +277,10 @@ export class DshRemoteTurnUploadOutbox {
         created_at_millis INTEGER NOT NULL,
         updated_at_millis INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS dsh_history_source_binding_v1 (
+        session_ref TEXT PRIMARY KEY,
+        revision TEXT NOT NULL
+      );
       DROP TABLE IF EXISTS dsh_history_finalization_v1;
       DROP TABLE IF EXISTS dsh_history_backfill_v1;
     `)
@@ -308,6 +313,53 @@ export class DshRemoteTurnUploadOutbox {
       WHERE state = 'PENDING'
     `).run(this.now())
     this.scheduleDrain(0)
+  }
+
+  /** Reset only derived receipts after the server binds this exact source.
+   * Pending payloads survive; a repeated binding (including after restart) is free.
+   * Stop the journal reader before discarding its checkpoint, and let an active
+   * upload finish before resetting credentials. This never gates metadata ACKs. */
+  isReconcilingSourceBindings(): boolean { return this.bindingFlight !== undefined }
+
+  async reconcileSourceBindings(bindings: Record<string, string>, quiesce: () => Promise<void>): Promise<boolean> {
+    if (this.closed) return false
+    while (this.bindingFlight) await this.bindingFlight
+    if (this.closed) return false
+    const changed = Object.entries(bindings).filter(([ref, revision]) => {
+      const known = this.database.prepare('SELECT revision FROM dsh_history_source_binding_v1 WHERE session_ref = ?').get(ref) as { revision: string } | undefined
+      return known?.revision !== revision
+    })
+    if (!changed.length) return false
+    const flight = (async () => {
+      await this.recovery
+      await quiesce()
+      await this.drainFlight
+      // Capture appends remain intact; all SQLite changes below are synchronous.
+      await this.captureTail
+      if (this.closed) return
+      this.database.exec('BEGIN IMMEDIATE')
+      try {
+        for (const [ref, revision] of changed) {
+          this.database.prepare("DELETE FROM dsh_turn_upload_v2 WHERE session_ref = ? AND state = 'COMMITTED'").run(ref)
+          this.database.prepare('DELETE FROM dsh_history_scan_v2 WHERE session_ref = ?').run(ref)
+          this.database.prepare('DELETE FROM dsh_history_completion_v2 WHERE session_ref = ?').run(ref)
+          this.database.prepare(`UPDATE dsh_turn_upload_v2 SET
+            state = 'SEALED', upload_id = NULL, upload_credential_nonce = NULL,
+            upload_credential_ciphertext = NULL, expires_at_millis = NULL,
+            prepared_host_generation = NULL, attempts = 0, next_attempt_at_millis = 0
+            WHERE session_ref = ? AND state IN ('SEALED', 'PREPARED', 'UPLOADED')`).run(ref)
+          this.database.prepare(`INSERT INTO dsh_history_source_binding_v1 VALUES (?, ?)
+            ON CONFLICT(session_ref) DO UPDATE SET revision = excluded.revision`).run(ref, revision)
+        }
+        this.database.exec('COMMIT')
+      } catch (error) { this.database.exec('ROLLBACK'); throw error }
+    })()
+    this.bindingFlight = flight
+    try { await flight; return !this.closed }
+    finally {
+      if (this.bindingFlight === flight) this.bindingFlight = undefined
+      if (!this.closed) this.scheduleDrain(0)
+    }
   }
 
   async capture(sessionRef: string, entries: readonly DshRemoteHistoryEntry[], historyTurnStart?: number): Promise<void> {
@@ -477,7 +529,7 @@ export class DshRemoteTurnUploadOutbox {
 
   async drain(): Promise<void> {
     await this.recovery
-    if (this.closed || this.runtime === undefined) return
+    if (this.closed || this.runtime === undefined || this.bindingFlight !== undefined) return
     if (this.drainFlight !== undefined) return await this.drainFlight
     const flight = this.performDrain()
     this.drainFlight = flight
@@ -494,6 +546,7 @@ export class DshRemoteTurnUploadOutbox {
     await this.recovery.catch(() => undefined)
     this.controller.abort()
     await this.drainFlight?.catch(() => undefined)
+    await this.bindingFlight?.catch(() => undefined)
     this.database.close()
     this.key.fill(0)
   }
@@ -652,7 +705,7 @@ export class DshRemoteTurnUploadOutbox {
   }
 
   private async performDrain(): Promise<void> {
-    while (!this.closed && this.runtime !== undefined) {
+    while (!this.closed && this.runtime !== undefined && this.bindingFlight === undefined) {
       const row = this.nextReady()
       if (row === undefined) {
         const finalization = this.nextFinalizationReady()

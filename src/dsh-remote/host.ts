@@ -697,13 +697,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
 
   private scheduleHistoryObjectBackfill(delayMillis: number): void {
     if (!this.started || this.accountId === undefined || this.runtime === undefined ||
-      this.turnUpload === undefined || this.options.sessionPersistence === undefined ||
+      this.turnUpload === undefined || this.turnUpload.isReconcilingSourceBindings() || this.options.sessionPersistence === undefined ||
       this.historyObjectBackfillTimer !== undefined || this.historyObjectBackfillFlight !== undefined) return
     const accountId = this.accountId
     const runtime = this.runtime
     this.historyObjectBackfillTimer = setTimeout(() => {
       this.historyObjectBackfillTimer = undefined
-      if (!this.historyOwnerMatches(accountId, runtime) || this.turnUpload === undefined) return
+      if (!this.historyOwnerMatches(accountId, runtime) || this.turnUpload === undefined || this.turnUpload.isReconcilingSourceBindings()) return
       const controller = new AbortController()
       this.historyObjectBackfillController = controller
       const flight = this.backfillOneHistorySession(accountId, runtime, controller.signal)
@@ -1709,6 +1709,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       progress('read_sessions')
       const sessions = [] as Awaited<ReturnType<DshApiProxyAdapter['sessions']>>['items']
       if (capabilities.has('session.list')) {
+        const sessionInventory = await this.options.apiProxy.sessionInventory(workspaceInventory)
+        check()
         let cursor: string | undefined
         const seenCursors = new Set<string>()
         for (let pageCount = 0; pageCount < 200; pageCount += 1) {
@@ -1718,6 +1720,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           const page = await this.accountSessionPage(accountId, {
             limit: 50,
             workspaceInventory,
+            sessionInventory,
             includeUngrouped: true,
             ...(cursor === undefined ? {} : { cursor }),
           })
@@ -1776,11 +1779,26 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         diagnostic.item_count = Math.min(100, sessionItems.length - offset)
         progress('upload_sessions')
         const uploaded = await this.projectionUpload.page(sessionItems.slice(offset, offset + 100), async items => this.options.controlPlane.syncSessions({
+          report_conflicts: true,
           runtime_ref: runtime.runtimeRef,
           host_generation: runtime.hostGeneration,
           snapshot_ref: snapshotRef,
           items,
         }, signal), signal)
+        const outbox = this.turnUpload
+        if (outbox !== undefined && uploaded.sourceBindings !== undefined) {
+          void outbox.reconcileSourceBindings(uploaded.sourceBindings, async () => {
+            if (!this.historyOwnerMatches(accountId, runtime)) return
+            this.historyObjectBackfillController?.abort()
+            if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
+            this.historyObjectBackfillTimer = undefined
+            await this.historyObjectBackfillFlight?.catch(() => undefined)
+          }).then(changed => {
+            if (changed && this.historyOwnerMatches(accountId, runtime)) this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS)
+          }).catch(error => {
+            if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() }
+          })
+        }
         rejectedSessions += uploaded.rejected
         diagnostic.session_items_acked += uploaded.accepted
         if (sessionItems.length === 0) break
