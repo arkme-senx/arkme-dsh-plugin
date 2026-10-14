@@ -141,7 +141,16 @@ export interface ArkmeBillingOrderSnapshot {
 export type ArkmeContactIdentifierKind = 'phone' | 'arkme_id'
 
 /** Browser/model-safe projection returned by contact lookup. */
+export interface ArkmeContactTeamSearchResult {
+  name: string
+  jotmoId: string
+  avatar: import('./team-profile-contract.js').ArkmeTeamAvatar
+  state: string
+  requiresApproval: boolean
+}
+
 export interface ArkmeContactSearchResult {
+  team?: ArkmeContactTeamSearchResult
   contactRef: string
   identifierKind: ArkmeContactIdentifierKind
   displayName: string
@@ -1494,6 +1503,7 @@ export interface ArkmeProviderCapabilities {
     userCard: true
     openPrivateChat: true
     /** Search accounts and idempotently add/open a contact conversation. */
+    contactTeamDiscovery?: true
     contactAdd?: true
     /** Built-in quick-add surface plus SDK/Host support for contacts, groups, and Bots. */
     conversationQuickAdd?: true
@@ -3983,6 +3993,7 @@ export type ArkmePluginOperation =
   | 'private-interaction.query'
   | 'private-interaction.directory'
   | 'contacts.add'
+  | 'contacts.team-join'
   | 'chat.private.open-from-contact'
   | 'group.create'
   | 'bots.list'

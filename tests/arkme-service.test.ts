@@ -5548,10 +5548,11 @@ describe('ArkmeService', () => {
       contact: {},
     }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
-    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+    const service = new ArkmeService({...config, teamBaseUrl: 'https://team.test'}, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, body })
+      if (url === 'https://team.test/api/v1/team/discovery/search') return json({code: 200, data: {team: null}})
       if (url === 'https://auth.test/api/v1/auth/search-contact-account') {
         expect(body).toEqual({ identifier_type: 2, identifier: 'mbr_sylj', phone_pre: '86' })
         return json({ code: 200, data: {

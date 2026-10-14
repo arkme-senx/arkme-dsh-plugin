@@ -232,3 +232,13 @@ The built-in Arkme UI and the model-facing `arkme_call_start` tool support outgo
 - Build and preview generated executable code before asking the human to install it.
 - Installation into a DSH profile requires explicit human confirmation.
 - Uninstalling a Consumer must not remove Provider credentials, cache, or outbox data.
+
+
+### Team discovery from contact search
+
+Gate this extension on `capabilities().features.contactTeamDiscovery === true`.
+`searchContact(exactIdentifier)` retains its personal-contact result and may include a separate `team` with name, public `jotmoId`, avatar reference, admission `state`, and `requiresApproval`. A team is never a registered personal user; do not pass its identity to `addContact` or private-chat methods. New account names still obey the shared global naming registry.
+
+After explicit user intent, `joinContactTeam(team.jotmoId, requestUid)` uses the same Host owner as the built-in UI. Generate a UUID once per intent and reuse it when retrying. `pending` means awaiting owner approval, not membership. Refresh contact search for current `joined`, `pending`, `rejected`, `none`, or `not_member` state. Image references are viewer-bound; signed storage URLs and internal team IDs are not part of this SDK contract.
+
+The equivalent DSH tools are `arkme_contact_search` and `arkme_team_join`; the latter participates in the existing conversational write-confirmation policy.

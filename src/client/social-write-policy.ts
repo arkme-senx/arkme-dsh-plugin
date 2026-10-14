@@ -5,6 +5,7 @@ export function socialWriteAction(operation: string, params?: Record<string, unk
     case 'world.publish-text': case 'world.publish-file-assets': return '发布到世界'
     case 'world.interactions.create-text': return '发表评论或回复'
     case 'related-recordings.share': return '共享录音'
+    case 'contacts.team-join': return '加入团队'
     case 'contacts.add': return '添加联系人'
     case 'group.create': return '创建群聊'
     case 'group.members.add': return '邀请群成员'

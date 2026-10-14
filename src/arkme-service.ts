@@ -629,7 +629,7 @@ export class ArkmeService {
     })
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
-    this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
+    this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
       resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
         contactRef, session, signal,
@@ -995,6 +995,7 @@ export class ArkmeService {
         groupMemberAdd: true,
         userCard: true,
         openPrivateChat: true,
+        contactTeamDiscovery: true,
         contactAdd: true,
         conversationQuickAdd: true,
         groupSettings: true,
@@ -1144,6 +1145,11 @@ export class ArkmeService {
   ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
     return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
   }
+  async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal, expectedAccountKey?: string): Promise<{ state: string }> {
+    const result = await this.teamApp.execute('team.app.join', { jotmoId, requestUid, ...(expectedAccountKey ? { expectedAccountKey } : {}) }, signal) as { state: string }
+    return { state: result.state }
+  }
+
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
   async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {

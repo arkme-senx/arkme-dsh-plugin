@@ -1,5 +1,9 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+团队搜索结果|Team search result
+申请已提交，等待审批|Request submitted, awaiting approval
+申请加入团队|Apply to join team
+
 模型请求失败，请稍后重试或选择其他模型。|The model request failed. Try again later or choose another model.
 模型生成超时，请重试或选择其他模型。|Generation timed out. Try again or choose another model.
 模型生成已中断，请重试。|Generation was interrupted. Try again.
