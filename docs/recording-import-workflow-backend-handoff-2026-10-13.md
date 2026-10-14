@@ -1,162 +1,98 @@
-# 手动导入录音：批次完成通知与自动更新日总结、时间轴
+# 手动导入录音：批次通知与自动日总结、时间轴
 
-日期：2026-10-13。适用：Arkme 插件手动「导入历史音频」。
+日期：2026-10-13。本次已在任务开发分支实现并提交 Audio 后端与插件配套，尚未部署。验收证据见 [实现矩阵](recording-import-workflow-implementation-matrix.md)。截图中的原交接草案由本合同替代；不代表现网已具备能力。
 
-## 交付状态与分工
+## 产品结果与职责
 
-插件已准备批次关联、任务重启恢复、通知列表/未读/分页/已读、按日期查看录音和具体总结/时间轴版本的前端及 Host 适配。以下 HTTP 接口、字段扩展均为**提议的 v1 合同，待后端确认、开发、部署与联调**，不代表现网已有这些能力。本次没有修改、部署 Audio/Record 云端，也没有在真实账号触发上传或自动模型生成。
+一次手动导入点击形成固定批次。所有文件的主处理链成功且转写可读后，服务端持久化 processing 通知；随后自动更新实际录音日期的日总结和时间轴；两种结果逐一验证可读后持久化 analysis 通知。客户端关闭、推送送达和已读都不是调度条件。
 
-后端应先提供测试环境并通过文末验收，最后才令 capabilities 返回 supported:true。不支持时保留原有上传，插件不制造本地完成通知，不由浏览器调用生成接口替代后台调度。所有 HTTP 调用使用现有 authenticatedAudioPost，鉴权在 Host 完成，不把访问令牌交给浏览器。
+Audio 独占处理事实、版本与协调。插件负责上传身份、通知读取和结果导航。总结使用 kind=2，时间轴 kind=1；不替换为相关联系人记忆或日语义事件，也不随自动总结触发安排提取。日输入覆盖账号当日全部已可用的 system 原文，保留说话人身份及历史版本。
 
-## 已确认产品流程
+无声文件不会伪造转写；全静音批次不调用模型。失败/暂停/缺失成员先显示未全部完成，续传恢复后更新同一阶段通知。两个生成结果独立显示，失败不能拿旧成功版本替代。多日期中有日期无可整理内容、其余成功时为 partial，不伪报全部完成。
 
-1. 用户一次点击「导入」提交的所选文件构成一个固定批次；之后再点导入是新批次。
-2. 本批所有文件在云端完成必要的解析、人声/说话人处理与转写，且转写已可读，持久化第一条「录音处理完成」通知，进入对话板块的总通知。
-3. 第一条通知写入成功后，按本批文件实际覆盖的录音日期自动生成/更新总结和时间轴。**不需要用户打开通知，不等待推送送达或已读。**
-4. 总结和时间轴的新版本全部落库并可读取后，持久化第二条「录音总结与时间轴已更新」通知。多个日期合并到这条通知，详情按天给查看入口。
-5. 已有当日内容结合当日全部可用转写生成新版本，保留历史；不是只总结新文件，也不是按上传日期更新。
-6. 失败、取消、额度暂停、无有效人声/转写不能误报完整成功。部分结果分别显示；成功的项目可查看，失败项目由后端自动重试或沿用现有手动重试流程。
+## 创建与固定身份
 
-## 批次关联：扩展现有 Audio new-session
-
-现有 `POST /api/v1/audio/new-session` 在手动导入时可新增：
+普通上传保留 `POST /api/v1/audio/new-session`。已协商的批次使用 `POST /api/v1/audio/import-batches/new-session`，共用创建领域实现，但强制要求批次字段。独立路由使后端回退后返回明确错误，避免旧端忽略未知字段而静默创建普通 Session。批次请求除既有录音字段外包含：
 
 ```json
 {
-  "source": 2,
-  "recording_kind": 3,
-  "operate_at": 1791849600000,
-  "orig_name": "会议.wav",
-  "tz_offset": 28800000,
-  "start_at": 1791504000000,
+  "create_request_uid": "019a0000-0000-7000-8000-000000000001",
   "import_batch": {
-    "batch_id": "由客户端生成的UUID",
+    "contract_version": 2,
+    "batch_id": "01a00000-0000-7000-8000-000000000001",
     "item_index": 0,
     "item_count": 12,
-    "time_zone": "Asia/Shanghai"
+    "time_zone": "Asia/Shanghai",
+    "file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "file_size": 12345,
+    "ownership": "self"
   }
 }
 ```
 
-- `batch_id` 标识一次提交；唯一键必须含鉴权账号，不能仅靠客户端 UUID 作为访问权限。
-- `item_index` 从 0 起，固定小于 `item_count`；同批所有成员的数量及时区必须一致。插件当前校验上限 10000 个，后端可给出实际容量限制，需联调一致后再启用。
-- 后端必须把 session 创建和批次成员绑定原子持久化；唯一约束 `(account_id,batch_id,item_index)`。超时重试返回原 session，不重复建批/成员。相同索引但文件身份不一致时返回明确冲突。
-- 缺少 import_batch 的旧端、实时录音、目录工具保持原有行为。本版本只有手动导入弹窗在能力确认后传此字段。
-- 插件将字段经 loopback 请求头 `X-Arkme-Import-Batch`（encodeURIComponent(JSON.stringify(context))）传入 Host，随 RecordingImportJob 保存，上传恢复/重试保留，new-session 转成上例 snake_case。请求头仅是本机桥接，不是新增云 API。
-- 本机已有未完成同文件任务可能被复用，而没有创建新的云 session；后端不可把本批缺少的索引视作完成。新批次不偷改旧任务归属。
+- batch_id 使用点击导入时生成的 UUIDv7，其时间确定 30 天恢复截止时间；示例仅展示格式，实际值由 SDK `recordingImportBatchID()` 或 UI 生成。服务端拒绝未来超过 5 分钟或已经过期的身份，不限制录音 start_at 的历史日期。
+- 每个新任务持久化一个独立的 create_request_uid UUIDv7，丢失响应/重启后重放同一身份；不靠文件名扫描恢复新批次。
+- 成员最多 10000，index 从 0 起。固定数量、时区、文件身份、归属及创建信息冲突明确拒绝；同请求在 30 天窗口内返回原 Session。
+- Session 创建与批次成员绑定同一个 Mongo 事务。不增加独立成员集合，不复制 Child 状态。
+- 本地任务只在 batch/index/count/timezone 和录音分类相符时复用；新批次不会偷用旧批次身份。
+- 无 batch 的旧端、实时/设备录音保留原路径。尚未上传字节不可能在关机后继续上传。
+- 最后一个新成员接纳后 24 小时仍未完整结束，给出软提醒并降低检查频率；30 天窗口内恢复可继续推进。明确失败可以更早提醒。
 
-### 文件未到齐、关闭客户端与重试
+## 通知 HTTP 合同
 
-不能用 active 列表变空、`accepted`、`has_done_child` 单一布尔值，或已到达成员数作为完整成功条件。必须同时校验预期数量、逐成员最终结果，以及对应转写读模型已就绪。
+全部使用现有鉴权与 POST JSON envelope，账号来自鉴权。业务码按现有 Audio 约定检查，HTTP 200 不等于业务成功。前缀 `/api/v1/audio/import-batches/`：
 
-本版在创建首个云 session 时建立批次，不另设由浏览器负责的 seal 调用，避免把最终触发依赖于页面仍打开。全部 item_count 成员已到齐且成功即可收尾。若某些成员根本未上传到云端（关闭页面、格式失败、网络中断、手动移除），后端需建立持久的未完成批次与失联超时策略，超时只报告未全部完成，不能报成功或永久等待。**超时窗口、续传后的恢复策略需后端同事确认并交付**；不得简单用几秒无新请求判定失败，大文件可长时间上传。
-
-- 尚无任何云 session 的本地失败，只在原上传弹窗报错，无云端通知可产生。
-- 已保存云端的音频处理和后续生成不依赖客户端在线；尚未传到云端的字节当然不能在关机后继续上传。
-- 本机已有任务的「重试」保留原 batch/index；用户重新选文件并点击导入产生新批次。后端按原始文件/session 身份防止同一天同一输入重复耗费模型调用。
-- 暂停与可重试故障不是成功。失败通知及恢复后结果可以更新同批同阶段记录，不能每次轮询或进程重启新增一条通知。
-
-## 新增能力与通知接口（待后端确认）
-
-所有请求：POST，Audio 服务现有鉴权与业务响应 envelope，以下展示 envelope 解包后的 data。不能只依赖 HTTP 200；沿用现有业务成功码检查。路由前缀：`/api/v1/audio/import-batches/`。
-
-| 后缀 | 请求 | 响应/用途 |
+| 后缀 | 请求 | 用途 |
 | --- | --- | --- |
-| capabilities | `{}` | `{"supported":true}`；只有整个 v1 链路可用时才置 true |
-| notifications/query | `{"cursor":"","limit":50}` | 下面的通知页；空 cursor 第一页 |
-| notifications/read | `{"ids":["notice-id-0001"]}` | `{"acknowledged":true}`，当前账号精确已读，最多 50 条 |
-| notifications/read | `{"through_sequence":"序列游标"}` | `{"acknowledged":true}`；将已观察序列及之前标已读，不误读并发产生的新通知 |
+| capabilities | `{"contract_version":2}` | 返回 `supported` 与服务端 `contract_version:2`；仅版本相等才支持 |
+| notifications/query | `{"contract_version":2,"cursor":"","limit":50}` | 账号级通知页和统计 |
+| notifications/read | `{"contract_version":2,"items":[{"id":"ObjectID","sequence":"60"}]}` | 只标记观察到的通知版本，最多 50 个 |
+| notifications/read | `{"contract_version":2,"read_through":"0123456789abcdef01234567:60"}` | 只标记已观察序号及之前的通知 |
 
-query 或 capabilities 明确 404/501 时，插件视为尚不支持；401/403/5xx/无效响应必须显示可恢复错误，不能装作没有通知。read 请求的错误永远不能视作成功。
+query data 包含 `contract_version,supported,items,total,unread_count,latest,read_through,next_cursor`。sequence 是服务端十进制整数字符串；read_through 是绑定头通知 ID 与观察序号的不透明凭据，调用者原样回传，不能自行拼装。分页 cursor 同时绑定该锚点。按 sequence 倒序；恢复产生新结果时更新原 ID、分配新序号并重新未读；单纯已读不改变排序。选中项按 id + sequence 精确匹配，旧页面点击不得吞掉同一通知更新后的未读状态；items 与 read_through 互斥。列表/统计/水位在一致快照中读取。
 
-```json
-{
-  "supported": true,
-  "total": 60,
-  "unread_count": 12,
-  "through_sequence": "opaque-sequence-60",
-  "next_cursor": "opaque-next-page",
-  "latest": {
-    "id": "notice-id-0002",
-    "batch_id": "batch-uuid-0001",
-    "stage": "analysis",
-    "state": "completed",
-    "file_count": 12,
-    "completed_count": 12,
-    "failed_count": 0,
-    "created_at": 1791849660000,
-    "read_at": 0,
-    "message": "",
-    "days": [{
-      "date": "2026-10-09",
-      "summary": {"state":"completed","version_id":"existing-summary-id"},
-      "timeline": {"state":"completed","version_id":"existing-timeline-id"}
-    }]
-  },
-  "items": []
-}
-```
+notice 字段：`id,sequence,batch_id,stage,state,time_zone,file_count,completed_count,failed_count,created_at,updated_at,read_at,message,days`。stage 为 processing/analysis；state 为 completed/partial/failed/skipped/expired。时间戳均毫秒，未读 read_at=0。
 
-实际第一页 `items` 应包含 latest；上例省略重复正文。所有页的 total/unread_count/latest/through_sequence 均为账号级真值，而不是当前页统计。按 created_at 倒序，等时间用稳定 ID/序列打破平局；游标为不透明值，不能重复返回当前游标。结束时 next_cursor 为空。
+days 的每项包含 `date,date_stamp,end_stamp,summary,timeline`。日期为固定 IANA 时区的自然日 `[date_stamp,end_stamp)`，DST 可为 23/25 小时；最多 366 天。summary/timeline 各含 `state` 与可选 `version_id`，completed 必须有可读的精确 ID。处理通知允许 pending；生成通知仅含终态。expired 表示批次自动协调窗口结束，不代表 underlying summary 版本写为 failed。
 
-- id、batch_id：8～80 位字母、数字、下划线或短横线；不同账号不可互读。
-- stage：processing 或 analysis。state：completed/partial/failed/skipped，均为可通知的阶段结果。
-- file_count > 0；completed_count/failed_count 是云端文件处理数量，之和不得超过 file_count。未到达、暂停、取消等差额在 message 说明，禁止标为完整成功。
-- created_at/read_at 为毫秒整数，未读 read_at=0。阅读操作绝不能改 created_at、对话排序时间。
-- days：本批涉及的录音日，严格 YYYY-MM-DD，去重，最多 366 天；如实际业务超过该上限需先协商分页。使用固定 time_zone 及录音时间计算；跨午夜音频按实际覆盖拆分，夏令时不能简单加 24 小时。
-- processing 通知中的 summary/timeline 可为 `{"state":"pending"}`，表示下一阶段还未完成。
-- analysis 通知中两个结果均应为终态。各结果 state 为 completed/partial/failed/skipped；completed 必须带真实、可读的 version_id，复用现有总结/时间轴查询返回的版本 ID。
-- analysis 的整体 completed 仅用于所有涉及日期的两种结果都 completed；无转写可生成时用 skipped，并说明原因。生成失败/额度不足用对应失败结果，不能带旧版本伪装本次成功。
-- message 是普通文本说明，不能含密钥、调试堆栈或不必要的录音全文。
-- total>0 必须给 latest 与 through_sequence；插件的通知行排序和未读数量使用账号级汇总，不从 50 条列表推算。
+文件数量始终表示文件处理数量，不能拿生成版本数冒充。普通说明不包含密钥或录音全文。权限校验覆盖列表、已读及版本读取。
 
-## 服务端自动整理与一致性
+## 自动执行与恢复
 
-建议由 Audio 拥有批次聚合和生成任务，现有通知 owner 可协同持久化。接口对插件暴露统一 Audio facade，内部领域归属由同事决定。
+持久批次是恢复锚点，不额外引入 outbox/任务引擎。处理通知与阶段推进事务提交；同一天两种版本与批次引用也事务提交。cron 按索引有界扫描，每次只准备一天，MQ 丢失可以补投。
 
-1. 成员处理完成事件事务更新批次；重复投递幂等。所有必要阶段成功且转写可读后，写唯一 processing 通知和 outbox。
-2. 通知持久化成功后创建/唤醒按日整理任务。推送失败不阻塞整理，用户已读不是前置条件。采用 outbox 保证崩溃恢复时通知和任务不丢失。
-3. 生成输入由后端重新鉴权后汇总对应日期全部可用转写；范围包含当天已有录音。权限、录音“我的/他人”归属遵循现有 daily projection 合同，不新增别人账号可见性，不直接采信客户端文件名或时间范围决定数据权限。
-4. 不依赖前端 `recordings.generate` 传来的整段文本。复用现有 summary/create 所属生成服务和用户模型配置，冻结路由/提示词版本，并按正常额度/计费逻辑执行。
-5. 幂等键至少包含账号、录音日期、转写输入版本/指纹、生成类型、模型路由及提示词版本。同批或同日多批到达合并/串行调度，不让旧任务晚完成覆盖更新输入生成的版本。处理同时存在的实时录音时，采用明确输入快照，不能无限等待当天未来录音结束。
-6. 每个日期独立保留 summary 和 timeline 状态、输入版本、输出版本 ID、失败原因与重试次数。可重试错误退避；额度/权限问题明确结束或暂停，禁止无限忙轮询和重复扣费。
-7. 两种结果均落库并能通过现有日查询读到后，再写/更新该批唯一 analysis 通知。先前历史版本保留；已通知的版本 ID 稳定。允许复用相同输入已生成的新版本，但不得拿旧输入的旧版本报告更新成功。
-8. 失败/取消不是完整成功。是否对部分成功文件立即整理，后端应按默认“仍有文件失败则先通知未全部完成，完成重试后再整理”执行；若希望先出部分总结，需另行确认产品规则。
+自动任务使用独立 `jm.audioSummary.recordingImport` 队列和单消费者，复用 summary worker、用户模型快照和既有限流。消费者用数据库 CAS 独占认领；重复投递不会重复请求模型，迟到结果不能改写已失败版本。执行结果未知超过五分钟标为失败，不盲目重调供应商；用户手动重试产生新版本。当前不新增用户收费政策，不虚构外部供应商 exactly-once 能力。
 
-## 插件接入位置
+同日手动/自动提交共用日锁，自动 identity 包含账号、输入、区间、类型、模型、提示词。全日正文与说话人从同一 Mongo snapshot 构建。它不是插件 UI 的会话重叠展示剪枝，人工原入口正文合同保持原样。
 
-- `src/recording-workflow-contract.ts`：公开批次/通知类型与 batch 校验。
-- `src/client/recordings/ArkmeRecordingImportDialog.tsx`：每次导入能力探测，生成 UUID、固定 itemCount/index；不从弹窗空态触发通知/生成。
-- `src/client/api.ts`、`src/recording-import-routes.ts`：本地上传传递 batch。
-- `src/services/recording-service.ts`、`src/state-store.ts`：接纳和恢复 batch 信息。
-- `src/services/recording-import-gateway.ts`：new-session 可选 import_batch。
-- `src/services/recording-workflow-service.ts`：提议路由的 Host 适配、响应校验、跨账号校验。
-- `src/client/recording-notification-store.ts`：共享通知读取、去重、分页、错误保留、前台每 60 秒校准与 focus/online 刷新；不支持时退避到至少 5 分钟。未接 IM 推送前不能承诺秒级到达。
-- `src/client/ArkmeNotificationCenter.tsx`：总通知新增录音类型、汇总未读/排序、已读。
-- `src/client/ArkmeRecordingNotificationDetail.tsx`：按天结果及三个查看入口。
-- `src/client/ui-controller.ts`、`ArkmeRecordingSurface.tsx`：定位指定总结或时间轴版本，原版本缺失时明确提示。
+## 插件接入
 
-后端可后续提供账号内“录音通知已变更”IM hint；它只用于促使读取，不能成为未读/成功状态的唯一真值。本期采用轮询兼容。
+Host `RecordingWorkflowService` 是 UI、SDK 与 Tools 的统一 owner。SDK 提供能力查询、通知页、已读和精确版本读取；Tools 正式注册查询/已读，写操作要求明确用户授权。访问令牌不进入浏览器或模型。
 
-## 联调验收清单
+通知携带原时区/日界。详情按既有 `/api/v1/summary/get-by-ids` 的 `ids` 数组查询精确版本，不依赖浏览器本地日期列表；版本缺失明确显示不可用。日查询、轮询及手动再生成保持通知原日界。手动 `/api/v1/summary/create` 随通知传 `time_zone` 与 `day_end_stamp`，Audio 校验完整自然日、由该时区推导 offset，并为时间轴冻结同一窗口的 system 证据；未携带这两个字段的原手动入口保持已有合同。零时间戳附近的日界允许因时区为负数，不改变历史录音起点下限。原通知存储的账号切换保护、分页和轮询继续使用。
 
-- 单日多文件：全部云端成功后恰好第一条通知；两种新版本可读后才第二条；列表、未读、对话排序正确。
-- 多日期、跨午夜、夏令时：更新录音实际日期；通知详情能逐日打开正确结果，不按上传日期错误归档。
-- 当日已有总结：新增内容与已有内容综合生成新版，历史可访问；两批并发不重复生成、不乱覆盖。
-- 断网、重启、关闭浏览器：已到云端的任务继续；未到达成员不被忽略；能力缺失、服务暂时异常不影响旧上传。
-- 单个失败、解析无声、取消、额度暂停：不能出现“全部完成”；通知说明原因，可重试，恢复后无重复通知/扣费。
-- read-all 与新通知并发：只读 through_sequence 之前的数据；切换账号、登出后晚到响应被丢弃。
-- notification id、batch id、session id 非本账号时拒绝；权限撤销后的结果入口不能读取他人数据。
-- 两个结果一个成功一个失败：展示各自状态，成功版本可看，失败结果不冒充最新成功版本。
-- 后端实际部署前 supported=false；只有上述端到端通过后开启 true。
+能力与查询双向校验 `contract_version:2`：缺失/不同版本或接口 404/501 均不启用新批次，查询显示不支持；鉴权错误和服务故障仍报错。后端对批次接纳和已读写入也独立验证版本，版本不符不写入。已进入批次的任务在专用创建接口不可用时保留失败/重试语义，绝不降级普通创建；版本判定不是用户配置。旧服务明确不支持时仍可普通上传；不存在本地伪造的完成通知，也没有新增灰度配置。通知轮询不是秒级推送。
 
-## 本次插件验证
+## 存储与发布
 
-- 16 个相关测试文件共 359 项通过，覆盖批次透传/恢复、通知合同、分页与未读、账号切换、通知详情与版本跳转、原有通知列表和上传流程。
-- TypeScript 类型检查与插件打包通过。
-- 独立 3101 Web 环境使用现有账号验证了总通知的「录音」分类；后端尚未接入时正常兼容，不产生虚假完成通知。
-- 自动处理、通知落库、后台生成及真实新版本跳转仍须后端部署后联调。上述自动化测试使用受控数据，不能替代真实全链路验收。
+仅新增 `recording_import_batch` 和 `recording_import_notification` 两个集合，分别承载固定成员/恢复锚点与录音导入结果通知。后者按批次阶段唯一，保存通知未读状态和版本引用，既不承载 IM 消息，也不是通用通知平台。集合名称由尚未上线草案的 `recording_notification` 收窄而来，不增加第三个集合，不为未上线草案加入迁移或双写。六个显式索引覆盖批次唯一性/到期扫描、阶段唯一性/序号唯一性/未读扫描和通知 expires_at TTL 清理；audio_summary 增加自动 identity 的 partial unique 索引。没有历史回填，没有 Session 新索引，没有独立结果表或 counter 集合。
 
-## 同事需交回的信息
+发布前核对目标 Mongo 副本集事务、预建索引成本和共享资源容量，再完整部署 API、cron、summary worker；插件是否匹配由代码自动协商，发布人员无需手工判断字段版本。回滚保留新增数据与历史版本；旧服务不会继续推进新批次。生产发布与真实付费模型验收尚未执行。
 
-确认实际路由及字段是否采用以上合同、返回业务码、失联批次超时/恢复策略、默认模型与计费策略、跨天日界与录音归属规则、测试环境及可重复的多批次数据。若接口命名/分页/状态枚举调整，请同步插件适配与测试，不能仅开放 capability 后依靠前端猜字段。
+## 辅助数据生命周期（最终合同 v2）
+
+本次选择 30 天批次恢复窗口、90 天通知保留期，这是明确的产品规则，不是现网既有保留策略或录音存储期限，也没有新增可配置开关。
+
+| 数据 | 保留与收口 | 仍然可用的能力 |
+| --- | --- | --- |
+| 进行中的批次 | 自提交时间起最多 30 天；缺项/故障在窗口内恢复 | 已上传录音由原 Audio 主链继续处理 |
+| 已完成批次 | 阶段结果与通知事务提交后立即移除 members/days 大字段，仅保留身份及期限至 30 天 | 同一创建请求可返回原 Session，不会新建成员或模型任务 |
+| 30 天到期但未结束的批次 | 同一事务写入 expired 通知并删除批次；使用已有 due_batches 索引、cron 和 revision fence | 已完成日期仍有结果链接；未完成项显示自动整理已到期，按日期手动整理 |
+| 录音导入通知 | 自最后实质内容更新保留 90 天，已读/轮询不延长；expires_at 为 BSON Date，TTL 索引物理清理 | 列表、最新项及未读数到期立即排除；不等待 TTL 后台删除 |
+| 录音、转写、总结和时间轴 | 不受上述辅助数据清理影响 | 沿用原录音页面及历史版本读取 |
+
+到期不会取消或删除已经交给 Audio/summary owner 的任务；已上传完的客户端 finalizing 仍可完成确认。过期批次不能新接纳或重新续传；只有未上传文件需要重新导入，避免重复导入已有录音。
+
+通知全读在同一个 Mongo snapshot 中确认锚点存在后按观察序号写入；锚点失效则不写。即使 TTL 清空历史记录后数值序号重新分配，旧请求也不能消费新通知。旧分页锚点返回无效游标，UI 自动重新请求首页；常规刷新替换旧列表，避免已清理通知永久滞留本机。选中已读继续匹配 ID + sequence。
+
+API 常量和 Host 为 v2，公开 SDK capability 为 recordingWorkflowV2，不保留尚未上线 v1 草案的适配层。批次不新增 TTL 索引，复用现有调度索引；本次仅多一个通知 TTL 索引，整个功能累计七个显式新增索引（批次 2、通知 4、audio_summary 1）。无第三个集合、counter、额外清理服务或生产配置。

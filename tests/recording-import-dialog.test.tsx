@@ -97,6 +97,19 @@ describe('recording import dialog behavior', () => {
     expect(mocks.callArkme.mock.calls.some(call => call[0] === 'recordings.generate')).toBe(false)
   })
 
+  it('keeps an ordinary upload when Host reports the workflow contract unsupported', async () => {
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
+      throw new Error('unexpected')
+    })
+    await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![4].batch).toBeUndefined()
+  })
+
   it('matches the desktop modal chrome with the upload-dialog close control', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '关闭上传文件' })).toHaveLength(1)
     expect(renderer.root.findByType('dialog').props.style).toMatchObject({ border: 0, outline: 'none' })
