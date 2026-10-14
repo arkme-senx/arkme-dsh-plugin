@@ -905,8 +905,13 @@ export class RecordingService {
     return await this.recordingImportStatus(importRef)
   }
 
-  async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> {
+  async recordingImportList(signal?: AbortSignal, page?: { toMillis: number; limit: number; offset: number }): Promise<PublicRecordingImportCurrentSnapshot> {
     this.assertWorkbenchEnabled()
+    if (page && (!Number.isSafeInteger(page.toMillis) || page.toMillis <= 0
+      || !Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > RECORDING_IMPORT_HISTORY_MAX_PAGE_SIZE
+      || !Number.isSafeInteger(page.offset) || page.offset < 0)) {
+      throw new ArkmePluginError('recording-import-list-invalid', '未完成任务查询参数无效', false)
+    }
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of jobs) {
@@ -917,11 +922,13 @@ export class RecordingService {
     let activeOwnerTasks: Awaited<ReturnType<RecordingImportOwnerGateway['listOwnerTasks']>>['tasks'] | undefined
     let owner: PublicRecordingImportCurrentSnapshot['owner'] = { state: 'available' }
     try {
-      activeOwnerTasks = (await this.recordingImportOwnerGateway.listOwnerTasks({
+      const ownerPage = await this.recordingImportOwnerGateway.listOwnerTasks({
         viewerUserId: session.userId,
-        scope: 'active', toMillis: Date.now(), limit: RECORDING_IMPORT_VISIBLE_LIMIT, offset: 0,
+        scope: 'active', toMillis: page?.toMillis ?? Date.now(), limit: page?.limit ?? RECORDING_IMPORT_VISIBLE_LIMIT, offset: page?.offset ?? 0,
         ...(signal === undefined ? {} : { signal }),
-      })).tasks
+      })
+      activeOwnerTasks = ownerPage.tasks
+      if (page) owner = { state: 'available', hasMore: ownerPage.hasMore, nextOffset: page.offset + ownerPage.tasks.length }
     } catch (error) {
       if (signal?.aborted === true
         || recordingImportErrorCode(error) === 'recording-import-account-mismatch') throw error

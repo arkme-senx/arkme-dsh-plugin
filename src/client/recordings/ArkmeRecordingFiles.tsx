@@ -13,6 +13,7 @@ export interface RecordingFilesCount {
   dateStamp: number
   count: number
   complete: boolean
+  loading: boolean
 }
 
 interface Props {
@@ -25,11 +26,16 @@ interface Props {
 }
 type Action = { kind: 'delete' | 'start' | 'ownership'; file: RecordingFile }
 interface FileRead {
+  version: string
+  complete: boolean
+  completedAt: number
   controller: AbortController
   toMillis: number
   offset: number
   loading: boolean
   resume: boolean
+  currentReading: boolean
+  resumeCurrent: boolean
   revision: number
   items: RecordingFile[]
   seen: Set<string>
@@ -38,7 +44,7 @@ const control: CSSProperties = { minHeight: 32, padding: '5px 10px', border: `1p
 const button: CSSProperties = { ...control, cursor: 'pointer' }
 const note: CSSProperties = { color: theme.secondary, fontSize: 12, lineHeight: '20px' }
 const PAGE_SIZE = 50
-const PAGES_PER_BATCH = 10
+const COMPLETED_SCAN_TTL = 60_000
 
 function instant(value: number, showDate = true) {
   return value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
@@ -100,7 +106,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
     if (deleting.current) { context.resume = true; return }
     context.loading = true; setLoading(true); setHistoryError('')
     try {
-      for (let pageIndex = 0; pageIndex < PAGES_PER_BATCH; pageIndex++) {
+      while (!context.controller.signal.aborted) {
         const readRevision = context.revision
         const page = await withArkmeReadDeadline(signal => callArkme<PublicRecordingImportHistoryPage>('recordings.import.history', {
           toMillis: context.toMillis, limit: PAGE_SIZE, offset: context.offset,
@@ -109,7 +115,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
         // A deletion can shift offset pagination while this page is in flight.
         // Discard that page and continue from the adjusted cursor.
         if (deleting.current || readRevision !== context.revision) { context.resume = true; return }
-        if (page.hasMore && page.items.length === 0) throw new Error(tr('文件列表未能继续加载，请重试'))
+        if (page.hasMore && !page.items.some(file => !context.seen.has(recordingFileKey(file)))) throw new Error(tr('文件列表未能继续加载，请重试'))
         context.offset += page.items.length
         const pageItems = withoutDeleted(page.items)
         context.items = mergeRecordingFiles(context.items, pageItems)
@@ -118,6 +124,8 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
         // Keep the loaded tail during a background refresh. Replace the whole
         // snapshot only when the server confirms the scan is complete.
         setHistory(previous => withoutDeleted(page.hasMore ? mergeRecordingFiles(previous, pageItems) : snapshotItems))
+        context.complete = !page.hasMore
+        if (context.complete) context.completedAt = Date.now()
         setHasMore(page.hasMore)
         if (!page.hasMore) break
       }
@@ -132,23 +140,72 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
     }
   }
 
+  const loadCurrent = async (context: FileRead) => {
+    if (context.currentReading || context.controller.signal.aborted) return
+    if (deleting.current) { context.resumeCurrent = true; return }
+    context.currentReading = true
+    setCurrentLoading(true)
+    const items: RecordingFile[] = []
+    let offset = 0
+    const toMillis = Date.now()
+    try {
+      while (!context.controller.signal.aborted) {
+        const readRevision = context.revision
+        const snapshot = await withArkmeReadDeadline(signal => callArkme<PublicRecordingImportCurrentSnapshot>('recordings.import.list', {
+          toMillis, limit: PAGE_SIZE, offset,
+        }, signal), context.controller.signal)
+        if (context.controller.signal.aborted) return
+        if (deleting.current || readRevision !== context.revision) { context.resumeCurrent = true; return }
+        items.push(...snapshot.items)
+        setCurrent(previous => withoutDeleted(mergeRecordingFiles(
+          snapshot.owner.state === 'unavailable' || snapshot.owner.hasMore ? previous : [], items,
+        )))
+        if (snapshot.owner.state === 'unavailable') throw new Error(tr('部分未完成文件暂未同步，请重试'))
+        if (!snapshot.owner.hasMore) {
+          // Older plugin hosts do not expose active-task pagination metadata.
+          if (snapshot.owner.hasMore === undefined && snapshot.items.length >= 20) {
+            throw new Error(tr('未完成文件较多，当前仅显示最近任务'))
+          }
+          break
+        }
+        const next = snapshot.owner.nextOffset
+        if (!Number.isSafeInteger(next) || next! <= offset) throw new Error(tr('文件列表未能继续加载，请重试'))
+        offset = next!
+      }
+    } catch (error) {
+      if (!context.controller.signal.aborted) {
+        setCurrentReadFailed(true)
+        setCurrentWarning(error instanceof Error ? error.message : tr('未完成文件加载失败，请重试'))
+      }
+    } finally {
+      context.currentReading = false
+      if (!context.controller.signal.aborted) {
+        setCurrentLoading(false)
+        if (context.resumeCurrent && !deleting.current) { context.resumeCurrent = false; void loadCurrent(context) }
+      }
+    }
+  }
+
   useEffect(() => {
     if (!active) return
-    const context: FileRead = { controller: new AbortController(), toMillis: Date.now(), offset: 0, loading: false, resume: false, revision: 0, items: [], seen: new Set() }
+    const version = `${revision}:${refreshRevision}`
+    const cached = request.current
+    // Active tasks can move into completed history while this tab is hidden.
+    const previous = cached?.version === version && (!cached.complete || (current.length === 0 && Date.now() - cached.completedAt < COMPLETED_SCAN_TTL)) ? cached : undefined
+    const context: FileRead = {
+      version, complete: previous?.complete ?? false, completedAt: previous?.completedAt ?? 0,
+      controller: new AbortController(), toMillis: previous?.toMillis ?? Date.now(),
+      offset: previous?.offset ?? 0, items: previous?.items ?? [], seen: new Set(previous?.seen),
+      loading: false, resume: false, currentReading: false, resumeCurrent: false, revision: previous?.revision ?? 0,
+    }
     request.current = context
-    setCurrentWarning(''); setCurrentReadFailed(false); setCurrentLoading(true); setHasMore(true)
-    void withArkmeReadDeadline(signal => callArkme<PublicRecordingImportCurrentSnapshot>('recordings.import.list', {}, signal), context.controller.signal)
-      .then(snapshot => {
-        if (context.controller.signal.aborted) return
-        setCurrent(withoutDeleted(snapshot.items))
-        setCurrentReadFailed(snapshot.owner.state === 'unavailable')
-        setCurrentWarning(snapshot.owner.state === 'unavailable' ? tr('部分未完成文件暂未同步，请重试')
-          : snapshot.items.length >= 20 ? tr('未完成文件较多，当前仅显示最近任务') : '')
-      }).catch(() => { if (!context.controller.signal.aborted) { setCurrentReadFailed(true); setCurrentWarning(tr('未完成文件加载失败，请重试')) } })
-      .finally(() => { if (!context.controller.signal.aborted) setCurrentLoading(false) })
-    void loadHistory(context)
+    setCurrentWarning(''); setCurrentReadFailed(false); setCurrentLoading(true); setHasMore(!context.complete)
+    void loadCurrent(context)
+    if (!context.complete) void loadHistory(context)
+    else setLoading(false)
     return () => { context.controller.abort() }
   }, [active, revision, refreshRevision])
+  useEffect(() => { if (!active) { setMenu(undefined); if (!busy) setAction(undefined) } }, [active, busy])
   useEffect(() => () => { mutation.current?.abort() }, [])
   useEffect(() => { setMenu(undefined); if (!busy) { setAction(undefined); setMutationError('') } }, [dateStamp])
   useEffect(() => {
@@ -246,6 +303,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
           deleting.current = false
           const context = request.current
           if (context?.resume && !context.loading) { context.resume = false; void loadHistory(context) }
+          if (context?.resumeCurrent && !context.currentReading) { context.resumeCurrent = false; void loadCurrent(context) }
         }
       }
     }
@@ -253,7 +311,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
   const { from, to } = recordingFileDayBounds(dateStamp)
   const complete = !loading && !currentLoading && !hasMore && !historyError && !currentWarning
 
-  useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete }) }, [dateStamp, files.length, complete, onCountChange])
+  useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete, loading: active && (loading || currentLoading) }) }, [dateStamp, files.length, complete, active, loading, currentLoading, onCountChange])
 
   return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
     {notice && <p role="status" style={note}>{notice}</p>}
@@ -281,10 +339,9 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
         </li>
       })}
     </ul>
-    {files.length === 0 && <p style={{ ...note, padding: '24px 0', textAlign: 'center' }}>{tr(complete ? '当天暂无音频文件' : '暂未找到当天文件，列表尚未查全')}</p>}
-    {(loading || currentLoading) && <p role="status" style={note}>{tr('正在查找音频文件…')}</p>}
+    {files.length === 0 && !loading && !currentLoading && <p style={{ ...note, padding: '24px 0', textAlign: 'center' }}>{tr(complete ? '当天暂无音频文件' : '暂未找到当天文件，列表尚未查全')}</p>}
     {historyError && <p role="alert" style={{ ...note, color: theme.danger }}>{historyError}</p>}
-    {!loading && (hasMore || historyError) && <button type="button" style={{ ...button, marginTop: 12 }} disabled={busy} onClick={() => { if (request.current) void loadHistory(request.current) }}>{tr(historyError ? '重试加载' : '继续查找更早文件')}</button>}
+    {!loading && historyError && <button type="button" style={{ ...button, marginTop: 12 }} disabled={busy} onClick={() => { if (request.current) void loadHistory(request.current) }}>{tr('重试加载')}</button>}
     {menu && createPortal(<div ref={menuRef} role="menu" aria-label={tr('音频文件操作')} style={{ position: 'fixed', left: menu.left, top: menu.top, zIndex: 10000, width: 160, padding: 4, border: `1px solid ${theme.border}`, borderRadius: 8, background: theme.menu, color: theme.text, boxShadow: theme.shadow }} onKeyDown={event => {
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
       event.preventDefault()

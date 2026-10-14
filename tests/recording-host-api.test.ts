@@ -129,6 +129,7 @@ describe('recording UI-only host operations', () => {
 
     await dispatchArkmeHostOperation(service, 'recordings.import.preflight', { fileNames: ['new.m4a', 'old.m4a'] })
     await dispatchArkmeHostOperation(service, 'recordings.import.list', {})
+    await dispatchArkmeHostOperation(service, 'recordings.import.list', { toMillis: 20, limit: 50, offset: 50 })
     await dispatchArkmeHostOperation(service, 'recordings.import.status', { importRef: 'opaque' })
     await dispatchArkmeHostOperation(service, 'recordings.import.retry', { importRef: 'opaque', expectedRevision: 3 })
     await dispatchArkmeHostOperation(service, 'recordings.import.cancel', { importRef: 'opaque', expectedRevision: 4 })
@@ -142,6 +143,8 @@ describe('recording UI-only host operations', () => {
     await dispatchArkmeHostOperation(service, 'recordings.import.session.delete', { sessionRef: 'session-opaque' })
 
     expect(recordingImportPreflight).toHaveBeenCalledWith(['new.m4a', 'old.m4a'], undefined)
+    expect(recordingImportList).toHaveBeenNthCalledWith(1, undefined, undefined)
+    expect(recordingImportList).toHaveBeenNthCalledWith(2, undefined, { toMillis: 20, limit: 50, offset: 50 })
     expect(recordingImportStatus).toHaveBeenCalledWith('opaque')
     expect(retryRecordingImport).toHaveBeenCalledWith('opaque', 3)
     expect(cancelRecordingImport).toHaveBeenCalledWith('opaque', 4)

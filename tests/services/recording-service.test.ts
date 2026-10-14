@@ -1183,6 +1183,35 @@ describe('RecordingService', () => {
     expect(JSON.stringify(history)).not.toContain('session-completed')
   })
 
+  it('exposes explicit active pagination while keeping the default current-task read bounded', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-active-pages-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    const owners = Array.from({ length: 55 }, (_, i) => ({
+      sessionId: `active-${i}`, ownership: 'self' as const, fileName: `${i}.wav`,
+      fileSize: 1_024, parsedSize: 0, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_001_000,
+      hasFinishedUpload: false,
+    }))
+    gateway.listOwnerTasks = vi.fn(async input => ({
+      ...ownerPage(owners.slice(input.offset, input.offset + input.limit)),
+      hasMore: input.offset + input.limit < owners.length,
+    }))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway))
+    expect((await service.recordingImportList()).items).toHaveLength(20)
+    const first = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 0 })
+    expect(first.items).toHaveLength(50)
+    expect(first.owner).toEqual({ state: 'available', hasMore: true, nextOffset: 50 })
+    const last = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 50 })
+    expect(last.items).toHaveLength(5)
+    expect(last.owner).toEqual({ state: 'available', hasMore: false, nextOffset: 55 })
+    await expect(service.recordingImportList(undefined, { toMillis: Date.now(), limit: 51, offset: 0 })).rejects.toMatchObject({ code: 'recording-import-list-invalid' })
+  })
+
   it('does not downgrade an accepted Audio session into a local processing task when owner reads fail', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-read-failure-'))
     const sessions: ArkmeSessionStore = {

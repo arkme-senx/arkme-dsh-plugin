@@ -1514,7 +1514,11 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
     )
-    case 'recordings.import.list': return await service.recordingImportList(requestSignal)
+    case 'recordings.import.list': return await service.recordingImportList(requestSignal, params.limit === undefined ? undefined : {
+      toMillis: numberParam(params, 'toMillis', Number.NaN),
+      limit: Math.trunc(numberParam(params, 'limit', 50)),
+      offset: Math.trunc(numberParam(params, 'offset', 0)),
+    })
     case 'recordings.import.history': return await service.recordingImportHistory({
       toMillis: numberParam(params, 'toMillis', Number.NaN),
       limit: Math.trunc(numberParam(params, 'limit', 50)),
