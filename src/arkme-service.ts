@@ -1,3 +1,4 @@
+import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
 import {readProfileImage} from './services/profile-image.js'
@@ -628,7 +629,7 @@ export class ArkmeService {
     })
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
-    this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
+    this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
       resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
         contactRef, session, signal,
@@ -968,6 +969,7 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        recordingWorkflowV2: true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
         forwardContent: true,
@@ -993,6 +995,7 @@ export class ArkmeService {
         groupMemberAdd: true,
         userCard: true,
         openPrivateChat: true,
+        contactTeamDiscovery: true,
         contactAdd: true,
         conversationQuickAdd: true,
         groupSettings: true,
@@ -1142,6 +1145,11 @@ export class ArkmeService {
   ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
     return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
   }
+  async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal, expectedAccountKey?: string): Promise<{ state: string }> {
+    const result = await this.teamApp.execute('team.app.join', { jotmoId, requestUid, ...(expectedAccountKey ? { expectedAccountKey } : {}) }, signal) as { state: string }
+    return { state: result.state }
+  }
+
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
   async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
@@ -1173,12 +1181,12 @@ export class ArkmeService {
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal) }
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
-  /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal) }
+  /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
-  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal) }
+  async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }

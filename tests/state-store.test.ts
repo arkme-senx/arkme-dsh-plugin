@@ -1,3 +1,4 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
 import { mkdtemp, readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -528,10 +529,18 @@ describe('ArkmeStateStore', () => {
 
   it('restores manual import batch identity after restart', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-batch-'))
-    const batch = { batchId: 'batch-0001', itemIndex: 1, itemCount: 3, timeZone: 'Asia/Shanghai' }
+    const batch = { batchId: recordingImportBatchID(), itemIndex: 1, itemCount: 3, timeZone: 'Asia/Shanghai' }
     await new ArkmeStateStore(root).putRecordingImportJob(10001, recordingJob({ batch }))
     const restored = await new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')
     expect(restored?.batch).toEqual(batch)
+  })
+
+  it('fails closed on malformed persisted batch identity instead of resuming an ordinary upload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-invalid-batch-'))
+    const batch = { batchId: 'invalid-batch-id', itemIndex: 0, itemCount: 1, timeZone: 'UTC' }
+    await new ArkmeStateStore(root).putRecordingImportJob(10001, recordingJob({ batch }))
+    const restored = await new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')
+    expect(restored).toMatchObject({ phase: 'failed', retryable: false, errorCode: 'recording-import-batch-invalid' })
   })
 
   it('persists recording import checkpoints and replaces them with revision CAS', async () => {

@@ -1,3 +1,5 @@
+import type { ArkmeRecordingWindow } from '../types.js'
+import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
 import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
@@ -105,6 +107,7 @@ export interface RecordingServiceDependencies {
 
 interface RecordingItemRefPayload {
   version: 1
+  window?: ArkmeRecordingWindow
   viewerUserId: number
   dateStamp: number
   sessionId: string
@@ -671,7 +674,7 @@ export class RecordingService {
         { lane: 'write', bypassCache: true },
       )
     }
-    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal) }
+    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal, item.window) }
   }
 
   async recordingImportUserId(): Promise<number> {
@@ -788,7 +791,7 @@ export class RecordingService {
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
     const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity)
-      && job.recordingKind === recordingKind)
+      && job.recordingKind === recordingKind && sameRecordingImportBatch(job.batch, metadata.batch))
     if (existing !== undefined) {
       const importRef = await this.recordingImportRef(existing)
       signal?.throwIfAborted()
@@ -823,7 +826,7 @@ export class RecordingService {
     const now = Date.now()
     const job: RecordingImportJob = {
       jobId: randomUUID(),
-      ...(metadata.batch ? { batch: { ...metadata.batch } } : {}),
+      ...(metadata.batch ? { batch: { ...metadata.batch }, createRequestUID: recordingCreateRequestUID(now) } : {}),
       userId: session.userId,
       revision: 1,
       phase: 'prepared',
@@ -1405,10 +1408,10 @@ export class RecordingService {
     return (await this.readRecordingTranscripts(dateStamp, session, signal)).section('system')
   }
 
-  private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal) {
-    const dayStart = this.recordingDayStart(dateStamp)
+  private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+    if (window) dayEnd.setTime(window.endStamp); else dayEnd.setDate(dayEnd.getDate() + 1)
     const date = dayStart.getTime()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
@@ -1416,7 +1419,7 @@ export class RecordingService {
         // The v2 endpoint omits the session-to-speaker bindings needed to
         // resolve a labelled person from get-speaker-ls.
         '/api/v1/audio/one-day-trans',
-        { start_at: date, end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+        { start_at: date, end_at: dayEnd.getTime(), tz_offset: window ? recordingBatchOffset(window.dateStamp, window.timeZone) : -dayStart.getTimezoneOffset() * 60_000 },
         session,
         signal,
       ),
@@ -1498,15 +1501,17 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     routeKey = '',
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     this.assertWorkbenchEnabled()
+    this.validateRecordingWindow(window)
     const normalizedRouteKey = routeKey.trim()
     if (normalizedRouteKey.length > 256) {
       throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
     }
-    const dayStart = this.recordingDayStart(dateStamp)
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const session = await this.runtime.requireSession()
-    const transcript = await this.recordingTranscriptWithSession(dayStart.getTime(), session, signal)
+    const transcript = (await this.readRecordingTranscripts(dayStart.getTime(), session, signal, window)).section('system')
     if (transcript.state === 'processing') {
       throw new ArkmePluginError(
         'recording-generation-transcript-processing',
@@ -1529,12 +1534,13 @@ export class RecordingService {
       '/api/v1/summary/create',
       {
         date_stamp: dayStart.getTime(),
-        tz_offset: -dayStart.getTimezoneOffset() * 60_000,
+        ...(window ? { time_zone: window.timeZone, day_end_stamp: window.endStamp } : {}),
+        tz_offset: window ? recordingBatchOffset(window.dateStamp, window.timeZone) : -dayStart.getTimezoneOffset() * 60_000,
         from_stamp: firstItem.startAtMillis,
         to_stamp: lastItem.endAtMillis,
         model_type: 1,
         prompt_ver: 1,
-        transcripts: buildRecordingGenerationTranscript(transcript.items, kind, dayStart.getTime()),
+        transcripts: buildRecordingGenerationTranscript(transcript.items, kind, dayStart.getTime(), window?.timeZone),
         kind: kind === 'timeline' ? 1 : 2,
         ...(normalizedRouteKey === '' ? {} : { route_key: normalizedRouteKey }),
       },
@@ -1548,7 +1554,7 @@ export class RecordingService {
       throw new ArkmePluginError('recording-generation-response-invalid', '生成请求响应无效', true, 502)
     }
     try {
-      const section = await this.recordingProjectionWithSession(dayStart.getTime(), kind, session, signal)
+      const section = await this.recordingProjectionWithSession(dayStart.getTime(), kind, session, signal, window)
       return section.state === 'empty'
         ? { state: 'processing', items: section.items, message: '内容仍在生成' }
         : section
@@ -1590,10 +1596,11 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
-    const dayStart = this.recordingDayStart(dateStamp)
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+    if (window) dayEnd.setTime(window.endStamp); else dayEnd.setDate(dayEnd.getDate() + 1)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/summary/list-timeline-by-range',
       {
@@ -1608,20 +1615,33 @@ export class RecordingService {
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
   }
 
-  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
-    return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal)
+  private validateRecordingWindow(window?: ArkmeRecordingWindow): void {
+    if (!window) return
+    try {
+      if (!Number.isSafeInteger(window.dateStamp) || !Number.isSafeInteger(window.endStamp) || window.dateStamp < -26 * 3600_000 || window.endStamp <= 0 || window.endStamp <= window.dateStamp || window.endStamp - window.dateStamp > 26 * 3600_000) throw new Error()
+      const civil = new Date(window.dateStamp + recordingBatchOffset(window.dateStamp, window.timeZone))
+      const end = new Date(window.endStamp + recordingBatchOffset(window.endStamp, window.timeZone))
+      if (civil.toISOString() !== `${window.date}T00:00:00.000Z` || end.getTime() - civil.getTime() !== 86400_000) throw new Error()
+    } catch { throw new ArkmePluginError('recording-window-invalid', '录音日期范围无效', false, 400) }
+  }
+
+  async recordingDay(dateStamp: number, signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingDay> {
+    this.validateRecordingWindow(window)
+    if (window && (!Number.isSafeInteger(dateStamp) || dateStamp < -26 * 3600_000)) throw new ArkmePluginError('recording-date-invalid', '录音日期无效', false, 400)
+    return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal, window)
   }
 
   private async recordingDayWithSession(
     dateStamp: number,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingDay> {
-    const date = this.recordingDayStart(dateStamp).getTime()
+    const date = window ? dateStamp : this.recordingDayStart(dateStamp).getTime()
     const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
-      this.readRecordingTranscripts(date, session, signal),
-      this.recordingProjectionWithSession(date, 'summary', session, signal),
-      this.recordingProjectionWithSession(date, 'timeline', session, signal),
+      this.readRecordingTranscripts(date, session, signal, window),
+      this.recordingProjectionWithSession(date, 'summary', session, signal, window),
+      this.recordingProjectionWithSession(date, 'timeline', session, signal, window),
     ])
     let transcript: ArkmeRecordingDay['transcript']
     if (transcriptResult.status === 'fulfilled') {
@@ -1643,6 +1663,7 @@ export class RecordingService {
           session.userId,
           recordingItemRefKey,
           speakerRefKey,
+          window,
         ), recordingBelongsToViewer: transcriptResult.value.ownSessionIds.has(item.sessionId) })),
       }
     } else {
@@ -1674,11 +1695,13 @@ export class RecordingService {
     viewerUserId: number,
     refKey: Buffer,
     speakerRefKey: Buffer,
+    window?: ArkmeRecordingWindow,
   ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId,
       dateStamp,
+      ...(window ? { window } : {}),
       sessionId: item.sessionId,
       childId: item.childId,
       asrItemIndex: item.asrItemIndex,
@@ -1751,7 +1774,8 @@ export class RecordingService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
-    const current = await this.recordingTranscriptWithSession(item.dateStamp, session, signal)
+    // Revalidate against the same civil day that produced the opaque item ref.
+    const current = (await this.readRecordingTranscripts(item.dateStamp, session, signal, item.window)).section('system')
     const currentItems = current.items
     const currentItem = currentItems.find(candidate => candidate.childId === item.childId
       && candidate.asrItemIndex === item.asrItemIndex && candidate.transcriptSource === item.transcriptSource)
@@ -1774,10 +1798,13 @@ export class RecordingService {
 
   private async openRecordingItemRef(itemRef: string): Promise<RecordingItemRefPayload> {
     const raw = await this.openRecordingRef('arkme-recording-item-v1', itemRef)
+    const window = raw.window as ArkmeRecordingWindow | undefined
+    this.validateRecordingWindow(window)
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId: numberValue(raw.viewerUserId),
       dateStamp: numberValue(raw.dateStamp),
+      ...(window ? { window } : {}),
       sessionId: stringValue(raw.sessionId).trim(),
       childId: stringValue(raw.childId).trim(),
       asrItemIndex: Math.trunc(numberValue(raw.asrItemIndex)),

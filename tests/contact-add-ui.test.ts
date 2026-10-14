@@ -66,7 +66,7 @@ describe('contact add dialog layout', () => {
     expect(source).toContain('aria-label="好友二维码加载中"')
     expect(source).not.toContain('profile !== null && <footer')
     expect(source).toContain("statusArea: { position: 'relative', gridRow: 1, minHeight: 0, overflow: 'hidden' }")
-    expect(source).toContain("candidateArea: { gridRow: 2, minHeight: 0, overflow: 'hidden' }")
+    expect(source).toContain("candidateArea: { gridRow: 2, minHeight: 0, overflowY: 'auto' }")
     expect(source).toContain("statusFeedback: { position: 'absolute', inset: '14px 0 0', height: 39")
     expect(source).toContain('{busy && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }}')
     expect(source).not.toContain('busyOverlay')

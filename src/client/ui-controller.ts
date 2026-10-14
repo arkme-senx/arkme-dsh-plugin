@@ -282,21 +282,21 @@ export class ArkmeUiController {
     this.showWorld()
   }
 
-  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity): void {
+  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity, window?: import('../types.js').ArkmeRecordingWindow): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(segment === undefined ? {} : { segment }) } })
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(window ? { window } : {}), ...(segment === undefined ? {} : { segment }) } })
   }
 
-  showRecordingSummaryTarget(dateStamp: number, versionId?: string): void {
+  showRecordingSummaryTarget(dateStamp: number, versionId?: string, window?: import('../types.js').ArkmeRecordingWindow): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, summary: { ...(versionId ? { versionId } : {}) } } })
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, ...(window ? { window } : {}), summary: { ...(versionId ? { versionId } : {}) } } })
   }
-  showRecordingTimelineTarget(dateStamp: number, versionId?: string): void {
+  showRecordingTimelineTarget(dateStamp: number, versionId?: string, window?: import('../types.js').ArkmeRecordingWindow): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, timeline: { ...(versionId ? { versionId } : {}) } } })
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { revision: ++this.recordingTargetRevision, dateStamp, startAtMillis: dateStamp, ...(window ? { window } : {}), timeline: { ...(versionId ? { versionId } : {}) } } })
   }
 
 

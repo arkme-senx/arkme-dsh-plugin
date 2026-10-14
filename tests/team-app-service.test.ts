@@ -31,6 +31,43 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it('projects discovered teams without signed URLs or internal identity and revalidates images through discovery', async () => {
+    const f = fixture(() => ({team: {name: '公开团队', jotmo_id: 'public_team', state: 'pending', requires_approval: true,
+      owner_user_id: 11, team_id: 'private-id', avatar: {mode: 'custom', key: 'avatar-key', url: 'https://signed.invalid/private'}}}))
+    const result = await f.service.searchContactTeam('public_team', await f.runtime.requireSession())
+    expect(result).toMatchObject({name: '公开团队', state: 'pending', requiresApproval: true, avatar: {mode: 'custom', imageRef: expect.stringMatching(/^team-app-profile-image\./)}})
+    expect(JSON.stringify(result)).not.toMatch(/signed.invalid|owner_user_id|private-id/)
+    expect(f.requests[0]?.path).toBe('/api/v1/team/discovery/search')
+    expect(f.requests[0]?.body).toEqual({jotmo_id: 'public_team'})
+  })
+  it('resolves a nonmember discovery avatar and rejects replaced or cross-account references', async () => {
+    let avatarKey = 'asset-one'
+    const f = fixture(path => path === '/avatar.jpg' ? new Response(new Uint8Array([1,2,3]),{headers:{'content-type':'image/jpeg'}})
+      : {team:{name:'公开团队',jotmo_id:'public_team',state:'none',requires_approval:true,
+          avatar:{mode:'custom',key:avatarKey,url:'https://userfiles.jotmo.cc/avatar.jpg'}}})
+    const result = await f.service.searchContactTeam('public_team',await f.runtime.requireSession())
+    const imageRef = result!.avatar.imageRef!
+    await expect(f.service.execute('team.app.image',{imageRef})).resolves.toEqual({base64:'AQID',mimeType:'image/jpeg'})
+    expect(f.requests.filter(v=>v.path==='/api/v1/team/discovery/search')).toHaveLength(2)
+    expect(f.requests.some(v=>v.path==='/api/v1/team/profile/get')).toBe(false)
+    avatarKey = 'asset-two'
+    await expect(f.service.execute('team.app.image',{imageRef})).rejects.toThrow()
+    f.changeAccount()
+    const count = f.requests.length
+    await expect(f.service.execute('team.app.image',{imageRef})).rejects.toThrow()
+    expect(f.requests).toHaveLength(count)
+  })
+  it.each([undefined, null, 'true', 'false', 0, 1])('rejects discovery with malformed approval policy %s', async policy => {
+    const f = fixture(() => ({team: {name:'Team',jotmo_id:'approval_team',state:'none',requires_approval:policy}}))
+    await expect(f.service.searchContactTeam('approval_team',await f.runtime.requireSession())).rejects.toThrow()
+  })
+
+  it('distinguishes missing teams from invalid discovery responses', async () => {
+    const missing = fixture(() => ({team: null})), broken = fixture(() => ({}))
+    await expect(missing.service.searchContactTeam('missing', await missing.runtime.requireSession())).resolves.toBeUndefined()
+    await expect(broken.service.searchContactTeam('missing', await broken.runtime.requireSession())).rejects.toThrow()
+  })
+
   it.each(['team.app.official','team.app.conversations','team.app.open'] as const)('rejects a stale browser account before %s can return another account data', async operation => {
     const f=fixture(()=>({channel,conversation}))
     await expect(f.service.execute(operation,{expectedAccountKey:'test:91'})).rejects.toMatchObject({code:'team-account-changed'})
@@ -252,6 +289,16 @@ describe('Team App owner adapter', () => {
     await expect(f.service.execute('team.app.join', { jotmoId: 'protected_team', requestUid: 'application-1' })).resolves.toEqual({ state: 'pending' })
     expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/join-by-jotmo-id', '/api/v1/team/join-requests/create'])
     expect(f.requests[1]?.body).toEqual({ jotmo_id: 'protected_team', request_uid: 'application-1' })
+  })
+  it.each(['joined','not_member'])('resolves an approved request replay to current %s membership', async state => {
+    const f = fixture(path => path.endsWith('/join-by-jotmo-id') ? new Response(JSON.stringify({code:1004,data:{reason:'approval_required'}})) : path.endsWith('/join-requests/create') ? {state:'approved'} : {state})
+    await expect(f.service.execute('team.app.join',{jotmoId:'protected_team',requestUid:'replay'})).resolves.toEqual({state})
+  })
+  it('recognizes approval racing with submission and rejects malformed success states', async () => {
+    const f = fixture(path => new Response(JSON.stringify({code:1004,data:{reason:path.endsWith('/join-by-jotmo-id')?'approval_required':'already_member'}})))
+    await expect(f.service.execute('team.app.join',{jotmoId:'protected_team',requestUid:'race'})).resolves.toEqual({state:'joined'})
+    const broken = fixture(path => path.endsWith('/join-by-jotmo-id') ? new Response(JSON.stringify({code:1004,data:{reason:'approval_required'}})) : {})
+    await expect(broken.service.execute('team.app.join',{jotmoId:'protected_team',requestUid:'broken'})).rejects.toThrow()
   })
   it('returns only current members and opaque removal handles', async () => {
     const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true }], total_count: 1 } : { teams: [{ ...channel, role: 1 }] })
