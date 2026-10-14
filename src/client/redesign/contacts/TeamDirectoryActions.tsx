@@ -93,7 +93,12 @@ function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: 
       if (!isCurrent()) return
       const state = teamJoinState(value.state)
       if (state) {
+        const previousState = resultRef.current?.state
         resultRef.current = { id, state }; setJoinResult(resultRef.current); setError('')
+        // A lost write response can be settled by this read. A later explicit
+        // reapplication must not replay that application's rejected receipt.
+        if (state !== 'none') requestUid.current = crypto.randomUUID()
+        if (previousState !== state && (state === 'joined' || previousState === 'joined')) onChanged()
       } else setError(tr(teamMembershipErrorText(undefined, 'status')))
     } catch (e) { if (isCurrent()) setError(tr(teamMembershipErrorText(e, 'status'))) }
     finally {
@@ -149,9 +154,9 @@ function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: 
       }
     } catch (e) {
       if (!signal.aborted) {
-        // The phone guard rejects before any join reaches the provider.
-        // Keep its actionable prompt instead of reconciling a rejected write.
-        if (mode === 'join' && e instanceof ArkmeClientError && e.body.code === 'social-phone-binding-required') {
+        // These guards reject before a membership/application can be accepted.
+        // Preserve the actionable prompt; only uncertain writes need recovery.
+        if (mode === 'join' && e instanceof ArkmeClientError && ['social-phone-binding-required', 'team-invalid_request', 'arkme-code-1001'].includes(e.body.code)) {
           attemptedId.current = ''; statusAgain.current = false
         }
         setError(tr(teamMembershipErrorText(e, mode)))
