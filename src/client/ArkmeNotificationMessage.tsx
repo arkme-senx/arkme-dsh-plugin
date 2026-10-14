@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { ArkmeArrangementDetail } from '../types.js'
-import type { ArkmeNotificationItem } from './ArkmeNotificationCenter.js'
+import type { ArkmeNotificationItem, ArkmeNotificationKind } from './ArkmeNotificationCenter.js'
+import officialIcon from '../../assets/notification-icons/verify-linear.svg'
+import arrangementIcon from '../../assets/notification-icons/calendar-linear.svg'
+import reactionIcon from '../../assets/notification-icons/emoji-happy-linear.svg'
+import worldIcon from '../../assets/notification-icons/global-linear.svg'
+import aiIcon from '../../assets/notification-icons/sms-linear.svg'
+import recordingIcon from '../../assets/notification-icons/microphone-linear.svg'
 import { ArkmeArrangementContent } from './ArkmeArrangementContent.js'
 import { ArkmeRecordingNotificationDetail } from './ArkmeRecordingNotificationDetail.js'
 import { ArkmeOfficialNotificationDetail } from './ArkmeOfficialNotificationDetail.js'
@@ -9,10 +15,17 @@ import { callArkme } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { tr } from './locale.js'
 
-export function NotificationBell({ size = 22 }: { size?: number }) {
-  return <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" />
-  </svg>
+// Keep the sender identities aligned with Flutter's MobileUnifiedNotificationPage.
+const notificationIcons: Record<ArkmeNotificationKind, string> = {
+  official: officialIcon, arrangement: arrangementIcon, reaction: reactionIcon,
+  world: worldIcon, ai: aiIcon, recording: recordingIcon,
+}
+
+function NotificationAvatar({ kind }: { kind: ArkmeNotificationKind }) {
+  const mask = `url(data:image/svg+xml;base64,${notificationIcons[kind]})`
+  return <span className="arkme-notification-avatar" aria-hidden="true">
+    <span className="arkme-notification-avatar-icon" data-notification-icon={kind} style={{ maskImage: mask, WebkitMaskImage: mask }} />
+  </span>
 }
 
 function ArrangementNoticeContent({ arrangementRef }: { arrangementRef: string }) {
@@ -49,11 +62,12 @@ export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onO
   return <article role="listitem" aria-label={`${category}：${item.title}`} className="arkme-notification-message">
     {timeLabel && <time className="arkme-notification-time" dateTime={new Date(item.atMillis).toISOString()}>{timeLabel}</time>}
     <div className="arkme-notification-message-row" data-notification-id={item.id}>
-      <span className="arkme-notification-avatar"><NotificationBell /></span>
+      <div className="arkme-notification-identity">
+        <NotificationAvatar kind={item.kind} />
+        <div className="arkme-notification-sender">{category}</div>
+      </div>
       <div className="arkme-notification-message-content">
-        <div className="arkme-notification-sender">{tr('通知')}</div>
         <div className="arkme-notification-bubble">
-          <div className="arkme-notification-category">{category}</div>
           <h3><ArkmeRichText text={item.title} /></h3>
           {item.recording ? <ArkmeRecordingNotificationDetail notice={item.recording} embedded /> : <>
             {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
