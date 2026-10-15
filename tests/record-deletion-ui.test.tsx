@@ -6,6 +6,32 @@ let view:ReactTestRenderer|undefined
 afterEach(async()=>{await act(async()=>view?.unmount());view=undefined})
 const result={items:[{recordUid:'a',version:2,result:'deleted' as const}]}
 const props=()=>({sourceRef:'source',deletionRefs:['ref'],port:{delete:vi.fn(async(_sourceRef: string, _deletionRefs: readonly string[], _signal: AbortSignal)=>result)},onCancel:vi.fn(),onResult:vi.fn(),onRefresh:vi.fn()})
+it('closes the confirmation while keeping the request alive and exposes stop to the toolbar', async () => {
+ const p = props(), onPendingChange = vi.fn(), stopRef = { current: undefined as (() => void) | undefined }
+ let finish!: (value: typeof result) => void
+ p.port.delete.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+ await act(async () => { view = create(<ArkmeRecordDeletionDialog {...p} onPendingChange={onPendingChange} stopRef={stopRef} />) })
+ act(() => view!.root.findByType(ArkmeConfirmDialog).props.onConfirm())
+ expect(view!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
+ expect(onPendingChange).toHaveBeenLastCalledWith(true)
+ expect(p.port.delete.mock.calls[0]![2].aborted).toBe(false)
+ expect(stopRef.current).toBeTypeOf('function')
+ await act(async () => finish(result))
+ expect(p.onResult).toHaveBeenCalledWith(result)
+ expect(onPendingChange).toHaveBeenLastCalledWith(false)
+ expect(stopRef.current).toBeUndefined()
+})
+it('stops from the toolbar and cannot apply a late success', async () => {
+ const p = props(), stopRef = { current: undefined as (() => void) | undefined }
+ let finish!: (value: typeof result) => void
+ p.port.delete.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+ await act(async () => { view = create(<ArkmeRecordDeletionDialog {...p} onPendingChange={vi.fn()} stopRef={stopRef} />) })
+ act(() => view!.root.findByType(ArkmeConfirmDialog).props.onConfirm())
+ act(() => stopRef.current!())
+ expect(p.port.delete.mock.calls[0]![2].aborted).toBe(true); expect(p.onRefresh).toHaveBeenCalledOnce()
+ await act(async () => finish(result))
+ expect(p.onResult).not.toHaveBeenCalled()
+})
 describe('record deletion confirmation',()=>{
  it('does not write until confirmed and leaves cancel harmless',async()=>{const p=props();await act(async()=>{view=create(<ArkmeRecordDeletionDialog {...p}/>)});expect(p.port.delete).not.toHaveBeenCalled();act(()=>view!.root.findByType(ArkmeConfirmDialog).props.onClose());expect(p.onCancel).toHaveBeenCalledOnce();expect(p.port.delete).not.toHaveBeenCalled()})
  it('prevents same-frame duplicate clicks',async()=>{const p=props();await act(async()=>{view=create(<ArkmeRecordDeletionDialog {...p}/>)});await act(async()=>{const confirm=view!.root.findByType(ArkmeConfirmDialog).props.onConfirm;confirm();confirm()});expect(p.port.delete).toHaveBeenCalledOnce();expect(p.onResult).toHaveBeenCalledWith(result)})
