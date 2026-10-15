@@ -3,7 +3,7 @@ import { RecordingService, type RecordingServiceDependencies } from '../src/serv
 import { ArkmePluginError, type ServiceRuntime } from '../src/services/service.js'
 
 const date = new Date(2026, 9, 14).getTime()
-function fixture() {
+function fixture(fixtureDate = date) {
   const session = { userId: 42, accessToken: 'test', refreshToken: 'test' }
   const rows: Array<Record<string, unknown>> = [
     { s: 0, e: 1000, n: 1, t: '本人发言' }, { s: 1000, e: 2000, n: 1, t: '手机播放' }, { s: 2000, e: 3000, n: 1, t: '后续发言' },
@@ -14,7 +14,7 @@ function fixture() {
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/one-day-trans')) {
       if (state.readFails && state.applied) throw new Error('read failed')
-      return { session_ls: [{ id: 'session', belong_usr: 42, start_at: date, end_at: date + 86_400_000, spk_ls: [{ num: 1, spk_id: 'person' }] }], child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: rows }] }
+      return { session_ls: [{ id: 'session', belong_usr: 42, start_at: fixtureDate, end_at: fixtureDate + 86_400_000, spk_ls: [{ num: 1, spk_id: 'person' }] }], child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: rows }] }
     }
     if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: 'person', nick_name: '周鹏' }] }
     if (path.endsWith('/speaker-corrections/context')) {
@@ -81,6 +81,15 @@ describe('speaker correction owner adapter', () => {
     expect(result.day!.transcript.items[0]!.speakerLabel).toBe('周鹏')
     expect(result.day!.transcript.items[0]!.soundSource).toBe('playback')
     expect(f.writes()[0]![1]).not.toHaveProperty('rejected_speaker_id')
+  })
+
+  it('keeps the explicit recording timezone day boundary on a DST day', async () => {
+    const dateStamp = Date.parse('2026-03-08T05:00:00Z')
+    const endStamp = Date.parse('2026-03-09T04:00:00Z')
+    const f = fixture(dateStamp)
+    const day = await f.service.recordingDay(dateStamp, undefined, { dateStamp, endStamp, timeZone: 'America/New_York', date: '2026-03-08' })
+    await f.service.applyRecordingSpeakerCorrection(request(day.transcript.items[0]!.itemRef))
+    expect(f.writes()[0]![1]).toMatchObject({ date_stamp: dateStamp, day_end: endStamp })
   })
 
   it('distinguishes unavailable capability from network errors and malformed contracts', async () => {

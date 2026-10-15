@@ -650,7 +650,7 @@ export class RecordingService {
     }
     return await this.writeRecordingCorrection('apply', primary, session, {
       item: this.correctionLocator(primary), items: items.map(item => this.correctionLocator(item)),
-      date_stamp: primary.dateStamp, day_end: new Date(new Date(primary.dateStamp).setDate(new Date(primary.dateStamp).getDate() + 1)).getTime(), expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey,
+      date_stamp: primary.dateStamp, day_end: primary.window?.endStamp ?? new Date(new Date(primary.dateStamp).setDate(new Date(primary.dateStamp).getDate() + 1)).getTime(), expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey,
       ...(rejectedSpeakerId ? { rejected_speaker_id: rejectedSpeakerId } : {}),
       ...(input.soundSource === undefined ? {} : { sound_source: input.soundSource }), detach: input.detach,
     }, items.length, signal)
