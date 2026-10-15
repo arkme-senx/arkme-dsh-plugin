@@ -1,4 +1,5 @@
 import { ExploreSurface } from './explore/ExploreSurface.js'
+import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
@@ -1725,7 +1726,6 @@ export function ArkmeTimelineMessageHeader({
   item,
   profile,
   member,
-  presentationIsMe = item.isMe,
 }: {
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
@@ -1735,9 +1735,7 @@ export function ArkmeTimelineMessageHeader({
   const memberDisplayName = member?.displayName.trim()
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
   return <span style={styles.messageHeader}>
-    {presentationIsMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
     {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
-    {!presentationIsMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
   </span>
 }
 
@@ -8202,6 +8200,7 @@ export function ArkmeSurface({
                           const reactionTarget = { resolveActor: resolveReactionActor, sourceKey: source.sourceKey, itemUid: item.itemUid, id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, messageActionRef: item.messageActionRef ?? '', source: source.displayName, sourceKind: source.kind, text: item.textContent ?? '' }
                           const canReact = !!item.messageActionRef
                           const messageBubble = <div
+                            className="arkme-timed-bubble"
                             role="button"
                             tabIndex={0}
                             style={{
@@ -8274,6 +8273,7 @@ export function ArkmeSurface({
                               {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
                               {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
                             </div>)}
+                            <ArkmeMessageTimestamp at={item.sendAtMillis} />
                           </div>
                           const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('附件发送状态')} key={task.taskRef} state={task.state} own={presentationIsMe}>
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}

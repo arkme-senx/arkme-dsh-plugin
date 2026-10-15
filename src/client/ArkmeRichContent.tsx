@@ -337,8 +337,8 @@ function LongText({
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
   />
-  if (!markdown && !collapsible) return <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
-  return <div style={styles.textFrame} {...(collapsible ? { 'data-arkme-text-collapsible': 'true' } : {})}>
+  if (!markdown && !collapsible) return <p data-arkme-plain-text style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
+  return <div style={styles.textFrame} data-arkme-message-text-flow={markdown ? 'true' : undefined} {...(collapsible ? { 'data-arkme-text-collapsible': 'true' } : {})}>
     {markdown
       ? <div style={{ maxHeight: collapsible && collapsed ? markdownHeight : undefined, overflow: 'hidden' }}>
         <div ref={markdownBody}>{content}</div>
@@ -1112,7 +1112,8 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   })
 
   return <>
-    <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
+    <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}
+      data-arkme-message-media-only={!isArticle && text === '' && blocks.length > 0 && blocks.every(block => block.kind === 'image' || block.kind === 'video') && failures.size === 0 && !display.mediaUnavailable && !previewError && !articleWindowError ? 'true' : undefined}>
       {inlineVoice !== undefined ? <>{renderVoice(inlineVoice, true)}{renderRows}</> : <>
         {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => {
           if (onArticleOpen !== undefined) { onArticleOpen(); return }

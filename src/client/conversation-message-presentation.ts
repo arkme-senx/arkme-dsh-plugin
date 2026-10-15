@@ -39,8 +39,10 @@ export function dayKey(value: number): string {
   const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
 }
 
-export function dayLabel(value: number): string {
-  return formatConversationDate(new Date(value), 'day')
+export function dayLabel(value: number, nowMillis = Date.now()): string {
+  const date = new Date(value)
+  if (!Number.isFinite(value) || value <= 0 || Number.isNaN(date.getTime())) return ''
+  return formatConversationDate(date, date.getFullYear() === new Date(nowMillis).getFullYear() ? 'calendarDay' : 'calendarDate')
 }
 
 export function timeLabel(value: number): string {

@@ -1,0 +1,43 @@
+.arkme-timed-bubble { position: relative; }
+.arkme-message-timestamp {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 3px 0 -3px auto;
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+/* Only the content and timestamp remain in this case. Reactions, errors and
+   agent badges automatically use the normal footer without overlapping. */
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:not([data-arkme-text-collapsible]):only-child):has(.arkme-markdown > p:last-child) > .arkme-message-timestamp {
+  position: absolute;
+  right: 13px;
+  bottom: 10px;
+  margin: 0;
+}
+/* Keep Markdown's reservation even while collapsed so its overflow measurement
+   cannot oscillate when the timestamp pushes the final word onto a new line. */
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:only-child) .arkme-markdown > p:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 42px;
+  height: 1px;
+}
+.arkme-timed-bubble:has(> [data-arkme-message-media-only="true"]:first-child:nth-last-child(2)) > .arkme-message-timestamp {
+  position: absolute;
+  right: 19px;
+  bottom: 16px;
+  margin: 0;
+  padding: 1px 5px;
+  border-radius: 7px;
+  color: #fff;
+  background: rgba(0, 0, 0, .52);
+}
