@@ -161,7 +161,10 @@ export class UnifiedChatTimelineService {
           await this.callStorage(cache, command)
           if (this.pendingInvalidations.get(id) === command) this.pendingInvalidations.delete(id)
         }
-      } catch { if (this.cache) this.failedStorage(this.cache) }
+      } catch {
+        // callStorage owns failure/replacement of the exact worker. A healthy
+        // admission rejection keeps this backlog fenced until the next owner call.
+      }
       finally { this.invalidating = undefined }
     })
     await this.invalidating
