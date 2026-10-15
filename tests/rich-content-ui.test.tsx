@@ -1110,7 +1110,8 @@ describe('Arkme rich content presentation', () => {
     expect(fileHtml).toContain('data-arkme-attachment-tile="file-icon"')
     expect(fileHtml).toContain('data-arkme-file-type="PDF"')
     expect(fileHtml).toContain('width:48px;height:48px')
-    expect(fileHtml).toContain('title="如何查看微信接收的文件.pdf"')
+    expect(fileHtml).toContain('aria-label="附件 如何查看微信接收的文件.pdf"')
+    expect(fileHtml).not.toContain('title="如何查看微信接收的文件.pdf"')
     expect(fileHtml).toContain('aria-label="移除如何查看微信接收的文件.pdf"')
 
     const imageHtml = renderToStaticMarkup(<ArkmeAttachmentDraftTile

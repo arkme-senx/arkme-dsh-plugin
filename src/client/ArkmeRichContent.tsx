@@ -9,7 +9,8 @@ import { preserveTextTogglePosition } from './preserve-text-toggle-position.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { ArkmeShareLinkPreview } from './ArkmeShareLinkPreview.js'
 import { parseShareLink } from '../share-link-preview.js'
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { ArkmeAttachmentTooltip } from './ArkmeAttachmentTooltip.js'
 import { createPortal } from 'react-dom'
 import { ArkmeFileIcon } from './ArkmeFileIcon.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -1182,21 +1183,37 @@ export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false
   return <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' }}><ArkmeRichText text={text || item.title || '非文本内容'} highlightMentions linkLabelMode="raw" /></p>
 }
 
-export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, disabled = false }: {
+export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, disabled = false, keyboardFocused = false }: {
   asset: Pick<ArkmeUploadedAsset, 'fileName' | 'fileKind'> & Partial<Pick<ArkmeUploadedAsset, 'mimeType'>>
   previewUrl?: string
   onRemove: () => void
   onOpen?: () => void
   disabled?: boolean
+  keyboardFocused?: boolean
 }) {
   useArkmeLocale()
+  const hintAnchor = useRef<HTMLSpanElement>(null)
+  const hintId = useId()
+  const [hintName, setHintName] = useState<string>()
+  const closeHint = useCallback(() => setHintName(undefined), [])
+  useLayoutEffect(() => {
+    if (keyboardFocused) setHintName(asset.fileName)
+    else if (!hintAnchor.current?.contains(hintAnchor.current.ownerDocument.activeElement)) closeHint()
+  }, [keyboardFocused, asset.fileName, closeHint])
+  const hintVisible = hintName === asset.fileName && asset.fileName !== ''
   const [failedPreviewUrl, setFailedPreviewUrl] = useState<string>()
   const visualPreview = previewUrl !== undefined && failedPreviewUrl !== previewUrl && (asset.fileKind === 1 || asset.fileKind === 3)
   const imagePreviewFailed = asset.fileKind === 1 && previewUrl !== undefined && failedPreviewUrl === previewUrl
-  return <span
+  return <><span ref={hintAnchor}
     data-arkme-attachment-tile={visualPreview ? asset.fileKind === 1 ? 'image-preview' : 'video-preview' : imagePreviewFailed ? 'image-error' : 'file-icon'}
-    title={asset.fileName}
     aria-label={`附件 ${asset.fileName}`}
+    aria-describedby={hintVisible ? hintId : undefined}
+    onPointerEnter={event => { if (event.pointerType !== 'touch') setHintName(asset.fileName) }}
+    onPointerLeave={closeHint}
+    onPointerCancel={closeHint}
+    onFocus={() => setHintName(asset.fileName)}
+    onBlur={closeHint}
+    onClickCapture={closeHint}
     style={{ position: 'relative', width: 48, height: 48, flex: 'none', display: 'inline-grid', placeItems: 'center', overflow: 'hidden', borderRadius: 8, background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' }}
   >
     <button type="button" aria-label={`预览 ${asset.fileName}`} onClick={onOpen} disabled={onOpen === undefined || imagePreviewFailed} style={{ border: 0, padding: 0, width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'transparent', cursor: imagePreviewFailed ? 'default' : 'pointer' }}>{visualPreview && asset.fileKind === 1
@@ -1213,7 +1230,7 @@ export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, 
       onClick={onRemove}
       style={{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, padding: 0, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: '0 1px 3px rgba(0,0,0,.14)', cursor: 'pointer', fontSize: 13, lineHeight: '16px' }}
     >×</button>
-  </span>
+  </span>{hintVisible && hintAnchor.current && <ArkmeAttachmentTooltip anchor={hintAnchor.current} id={hintId} name={asset.fileName} onClose={closeHint} />}</>
 }
 
 /** Session-only entry; owns a snapshot independent of the currently selected chat. */
