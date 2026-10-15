@@ -8,17 +8,21 @@ import { retainPartialTimelineMedia } from './timeline-media.js'
 // UI-only metadata survives immutable item updates but is never serialized to Host/cache APIs.
 const presentationKey = Symbol('conversation-message-presentation')
 const sendFailure = Symbol('conversation-message-send-failure')
+const localSubmission = Symbol('conversation-message-local-submission')
 interface SendFailure { state: 'failed' | 'uncertain'; message: string }
-type PresentedMessage = ArkmeTimelineItem & { [presentationKey]?: string; [sendFailure]?: SendFailure | undefined }
-function messagePresentation(item: ArkmeTimelineItem): Pick<PresentedMessage, typeof presentationKey> {
+type PresentedMessage = ArkmeTimelineItem & { [presentationKey]?: string; [sendFailure]?: SendFailure | undefined; [localSubmission]?: true | undefined }
+function messagePresentation(item: ArkmeTimelineItem): Pick<PresentedMessage, typeof presentationKey | typeof localSubmission> {
   const key = (item as PresentedMessage)[presentationKey]
-  return key === undefined ? {} : { [presentationKey]: key }
+  return key === undefined ? {} : { [presentationKey]: key, [localSubmission]: (item as PresentedMessage)[localSubmission] }
 }
 export function conversationMessageRenderKey(item: ArkmeTimelineItem): string {
   return (item as PresentedMessage)[presentationKey] ?? `message:${item.timelineEventId ?? item.itemUid}`
 }
 export function conversationMessageSendFailure(item: ArkmeTimelineItem): SendFailure | undefined {
   return (item as PresentedMessage)[sendFailure]
+}
+export function conversationMessageDefaultUnread(item: ArkmeTimelineItem): boolean {
+  return (item as PresentedMessage)[localSubmission] === true && item.status >= 0 && conversationMessageSendFailure(item) === undefined
 }
 
 export function mergeConversationMessages(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[]): ArkmeTimelineItem[] {
@@ -83,8 +87,9 @@ export function applyConversationSendResult(
     ...(candidate.selfRole === undefined && optimistic?.selfRole !== undefined
       ? { selfRole: optimistic.selfRole } : {}),
   }
-  const confirmed: ArkmeTimelineItem = {
+  const confirmed: PresentedMessage = {
     ...base,
+    [localSubmission]: result.localState === 'failed' ? undefined : (base as PresentedMessage)[localSubmission],
     itemUid: result.itemUid,
     status: result.status,
     ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
@@ -138,7 +143,7 @@ export class ArkmeConversationMessageMergeOwner extends ConfirmedSendRetentionOw
       this.submissions.delete(completed[0])
     }
     const previous = this.submissions.get(`${sourceKey}\0${item.itemUid}`)
-    const presented = { ...item, [presentationKey]: conversationMessageRenderKey(previous?.item ?? item), [sendFailure]: undefined }
+    const presented = { ...item, [presentationKey]: conversationMessageRenderKey(previous?.item ?? item), [sendFailure]: undefined, [localSubmission]: true as const }
     this.submissions.set(`${sourceKey}\0${item.itemUid}`, {
       sourceKey, originalUid: item.itemUid, item: presented, pending: true, expiresAtMillis: Infinity,
       ...(relationUid === undefined ? {} : { relationUid }),
