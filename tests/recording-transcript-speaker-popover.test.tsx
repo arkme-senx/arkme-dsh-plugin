@@ -27,6 +27,7 @@ describe('recording transcript speaker popover', () => {
     }]
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     mocks.callArkme.mockReset().mockImplementation(async operation => {
+      if (operation === 'recordings.totals.index') return { items: [], nextOffset: null }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.day') return {
         dateStamp: 1,
@@ -47,6 +48,7 @@ describe('recording transcript speaker popover', () => {
       }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     vi.stubGlobal('document', {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),

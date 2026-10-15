@@ -37,7 +37,17 @@ function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], mom
   return { source, items, unified, hasMore, ...(cursor ? { nextCursor: { unified: { mode: 'older' as const, cursor: `cursor:${cursor.beforeSequence}` } } } : {}) }
 }
 
-const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), localTimeline: vi.fn() }))
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), localTimeline: vi.fn(), mutationOwners: new Map<string, unknown>() }))
+
+// Preserve real mutation state within each case, including source/account switches,
+// but do not leak pending intents into the next synthetic account fixture.
+vi.mock('../src/client/record-mutation-feedback.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/client/record-mutation-feedback.js')>()
+  return { ...actual, recordMutationFeedback: (key: string) => {
+    if (!mocks.mutationOwners.has(key)) mocks.mutationOwners.set(key, new actual.RecordMutationFeedback())
+    return mocks.mutationOwners.get(key)
+  } }
+})
 
 vi.mock('../src/client/api.js', async () => { const { memberPageFixture, emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js')
   const remote = emptyTimelineCacheFixture(memberPageFixture(mocks.callArkme))
@@ -1803,6 +1813,7 @@ describe('conversation send directory projection', () => {
   })
 
   beforeEach(() => {
+    mocks.mutationOwners.clear()
     resetSelfTopicDirectories()
     timeline = []
     aroundTimeline = undefined
@@ -3349,6 +3360,26 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'delete-success' })).toHaveLength(0)
   })
 
+  it.each([target, group])('removes a $kind record before the response and keeps feedback out of another conversation', async currentSource => {
+    activeSource = currentSource
+    arkmeUi.selectSource(currentSource)
+    const pending = deferred<unknown>(), previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.record-delete'
+      ? pending.promise : previous(operation, ...args))
+    await enterMessageSelectMode({ itemUid: 'delete-pending', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Delete pending', status: 1 })
+    act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick())
+    await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'delete-pending' })).toHaveLength(0)
+    expect(renderedText(renderer!.root.findByProps({ 'data-arkme-record-mutation': 'pending' }))).toContain('正在同步')
+    await act(async () => { activeSource = other; arkmeUi.selectSource(other) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-record-mutation': 'pending' })).toHaveLength(0)
+    await act(async () => pending.resolve({ items: [{ recordUid: 'delete-pending', version: 4, result: 'deleted' }] }))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-record-mutation': 'confirmed' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-delete')).toHaveLength(1)
+  })
+
   it('does not resurrect a deleted Record from an older in-flight page', async () => {
     const item: ArkmeTimelineItem = { itemUid: 'delete-race', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
@@ -3393,10 +3424,11 @@ describe('conversation send directory projection', () => {
     await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('刷新核对'))!.props.onClick() })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
     expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
-    expect(renderedText(renderer!.toJSON())).toContain('核对读取失败')
+    expect(renderedText(renderer!.toJSON())).toContain('结果待核对')
+    expect(renderer!.root.findAllByType('button').some(button => button.children.includes('刷新核对'))).toBe(true)
   })
 
-  it.each(['unknown', 'rejected'] as const)('keeps unresolved selections and shows the %s outcome', async outcome => {
+  it.each(['unknown', 'rejected'] as const)('restores unresolved rows, exits selection and shows the %s outcome', async outcome => {
     const first: ArkmeTimelineItem = { itemUid: 'delete-partial-a', messageActionRef: 'select-a',
       recordDeletionRef: 'delete-a', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'First', status: 1 }
@@ -3410,9 +3442,10 @@ describe('conversation send directory projection', () => {
     act(() => renderer!.root.findByProps({ 'data-arkme-message-item-uid': second.itemUid }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() }))
     act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick())
     await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
-    if (outcome === 'rejected') expect(renderedText(renderer!.toJSON())).toContain('内容版本已变化，请刷新后重试')
+    expect(renderedText(renderer!.toJSON())).toContain(outcome === 'rejected' ? '1 条未删除，已恢复原位置' : '1 条结果待核对')
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': first.itemUid })).toHaveLength(0)
-    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': second.itemUid }).findByProps({ role: 'checkbox' }).props['aria-checked']).toBe(true)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': second.itemUid })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
   })
 
@@ -3715,11 +3748,11 @@ describe('conversation send directory projection', () => {
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick({ currentTarget: undefined }) })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': `指定到${outcome === 'same' ? '当前主题' : '目标主题'}` }).props.onClick({ stopPropagation: vi.fn() }) })
     if (outcome === 'unknown') {
-      const refresh = renderer!.root.findAllByType('button').find(button => button.children.includes('刷新并重新选择'))!
+      const refresh = renderer!.root.findAllByType('button').find(button => button.children.includes('刷新核对'))!
       await act(async () => { refresh.props.onClick() })
       expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     }
-    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'same' ? 1 : 0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'moved' ? 0 : 1)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(outcome === 'same' ? 0 : 1)
   })
 
@@ -3749,7 +3782,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
-  it.each(['single', 'bulk'].flatMap(entry => ['source', 'account'].map(change => [entry, change])))('cancels an in-flight %s assignment on %s switch and ignores its acknowledgement', async (entry, change) => {
+  it.each(['single', 'bulk'].flatMap(entry => ['source', 'account'].map(change => [entry, change])))('keeps an in-flight %s assignment on source switch but aborts on account switch: %s', async (entry, change) => {
     activeSource = sendToSelf
     arkmeUi.selectSource(sendToSelf)
     const topic = { ...sendToSelf, sourceRef: 'topic-work', sourceKey: 'topic:work', topicHierarchyKey: 'topic-work-key', kind: 'topic' as const, displayName: '工作' }
@@ -3770,7 +3803,7 @@ describe('conversation send directory projection', () => {
       if (change === 'account') arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 99 })
       else { activeSource = target; arkmeUi.selectSource(target) }
     })
-    expect(writeSignal?.aborted).toBe(true)
+    expect(writeSignal?.aborted).toBe(change === 'account')
     await act(async () => { pending.resolve({ movedRecordUids: ['selected-self'], projectionRefreshPending: false }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toHaveLength(0)
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('已指定主题')
