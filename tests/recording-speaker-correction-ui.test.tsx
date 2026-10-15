@@ -22,6 +22,7 @@ describe('speaker correction interaction', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     onUpdated.mockReset(); onClose.mockReset(); onPlay.mockReset()
     mocks.call.mockReset().mockImplementation(async op => {
+      if (op === 'recordings.speaker.correction.result') return null
       if (op === 'recordings.speaker.correction.context') return supported ? { supported: true, version: 'v1', maxItems: 100, soundSource: 'unknown', excludedSpeakers: [] } : { supported: false }
       if (op === 'recordings.speaker.correction.apply') return { affectedCount: 1, version: 'v2', undoRef: 'undo', day: { dateStamp: 1, transcript: { items: [item(0), item(1), item(2)] } } }
       if (op === 'recordings.speaker.correction.undo') return { affectedCount: 1, version: 'v3', day: { dateStamp: 1, transcript: { items: [item(0), item(1), item(2)] } } }
@@ -102,18 +103,88 @@ describe('speaker correction interaction', () => {
     expect(onUpdated).not.toHaveBeenCalled()
   })
 
-  it('confirms a lost response using the identical command and idempotency key', async () => {
+  it('uses the existing reread button to recover a committed result without writing again', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation((op, ...args) => {
+      if (op === 'recordings.speaker.correction.apply') return Promise.reject(new Error('响应丢失'))
+      if (op === 'recordings.speaker.correction.result') return original('recordings.speaker.correction.apply', ...args)
+      return original(op, ...args)
+    })
+    await mount(); await click('保存纠错')
+    expect(button('确认这次提交结果')).toBeUndefined()
+    await click('重新读取状态')
+    expect(writes()).toHaveLength(1)
+    expect(onUpdated).toHaveBeenCalledOnce()
+    expect(button('撤销这次纠错')).toBeDefined()
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+  })
+
+  it('never submits on reread when the original write did not arrive; explicit save reuses the frozen command', async () => {
     const original = mocks.call.getMockImplementation()!
     let lost = false
     mocks.call.mockImplementation((op, ...args) => {
       if (op === 'recordings.speaker.correction.apply' && !lost) { lost = true; return Promise.reject(new Error('连接中断')) }
       return original(op, ...args)
     })
-    await mount(); await click('保存纠错'); await click('确认这次提交结果')
+    await mount(); await click('保存纠错'); await click('重新读取状态')
+    expect(writes()).toHaveLength(1)
+    expect(onUpdated).not.toHaveBeenCalled()
+    expect(button('保存纠错').props.disabled).toBe(false)
+    expect(renderer.root.findByType('fieldset').props.disabled).toBe(true)
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('本次操作未保存')
+    await click('保存纠错')
     expect(writes()).toHaveLength(2)
     expect(writes()[1]![1]).toEqual(writes()[0]![1])
     expect(onUpdated).toHaveBeenCalledOnce()
   })
+
+  it('does not permit a new write when the receipt read itself fails', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation((op, ...args) => /correction\.(apply|result)$/.test(op) ? Promise.reject(new Error('连接中断')) : original(op, ...args))
+    await mount(); await click('保存纠错'); await click('重新读取状态')
+    expect(button('保存纠错').props.disabled).toBe(true)
+    expect(writes()).toHaveLength(1)
+    expect(onUpdated).not.toHaveBeenCalled()
+  })
+
+  it('reads an uncertain undo without repeating it, then only retries on the existing undo button', async () => {
+    const original = mocks.call.getMockImplementation()!
+    let lost = false
+    mocks.call.mockImplementation((op, ...args) => {
+      if (op === 'recordings.speaker.correction.undo' && !lost) { lost = true; return Promise.reject(new Error('撤销响应丢失')) }
+      return original(op, ...args)
+    })
+    await mount(); await click('保存纠错'); await click('撤销这次纠错'); await click('重新读取状态')
+    expect(writes()).toHaveLength(2)
+    expect(button('核对附近片段').props.disabled).toBe(true)
+    await click('撤销这次纠错')
+    expect(writes()).toHaveLength(3)
+    expect(writes()[2]![1]).toEqual(writes()[1]![1])
+    expect(button('撤销这次纠错')).toBeUndefined()
+  })
+
+  it('recovers a committed undo by reading its receipt with no repeated undo', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.undo' ? Promise.reject(new Error('响应丢失'))
+      : op === 'recordings.speaker.correction.result' ? original('recordings.speaker.correction.undo', ...args) : original(op, ...args))
+    await mount(); await click('保存纠错'); await click('撤销这次纠错'); await click('重新读取状态')
+    expect(writes()).toHaveLength(2)
+    expect(button('撤销这次纠错')).toBeUndefined()
+    expect(JSON.stringify(renderer.toJSON())).toContain('已撤销这次纠错')
+  })
+
+  it('discards a late receipt query after switching accounts', async () => {
+    const original = mocks.call.getMockImplementation()!
+    let resolve!: (value: unknown) => void
+    mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.apply' ? Promise.reject(new Error('连接中断'))
+      : op === 'recordings.speaker.correction.result' ? new Promise(done => { resolve = done }) : original(op, ...args))
+    await mount(); await click('保存纠错'); await click('重新读取状态')
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }); resolve(await original('recordings.speaker.correction.apply')); await tick() })
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(onUpdated).not.toHaveBeenCalled()
+    expect(writes()).toHaveLength(1)
+  })
+
 })
 
 it('bounds manual review by time, source and count without merging equal labels', () => {

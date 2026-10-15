@@ -183,6 +183,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'topic.create'

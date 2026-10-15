@@ -1585,6 +1585,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
+    case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
     case 'recordings.speaker.correction.apply': {
       if (!Array.isArray(params.itemRefs) || !params.itemRefs.every(value => typeof value === 'string')
         || typeof params.detach !== 'boolean' || (params.rejectCurrent !== undefined && typeof params.rejectCurrent !== 'boolean')

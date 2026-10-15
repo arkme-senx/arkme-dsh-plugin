@@ -67,6 +67,7 @@ import type {
   ArkmeRecordingSpeakerCorrectionInput,
   ArkmeRecordingSpeakerCorrectionUndoInput,
   ArkmeRecordingSpeakerCorrectionResult,
+  ArkmeRecordingSpeakerCorrectionResultQuery,
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
@@ -689,16 +690,7 @@ export class RecordingService {
         || (action === 'apply' && !stringValue(raw.correction_id))) {
         throw new ArkmePluginError('recording-correction-outcome-unknown', '保存结果未能确认，请刷新查看，勿重复提交', false, 502)
       }
-      const result: ArkmeRecordingSpeakerCorrectionResult = { affectedCount: Number(raw.affected_count), version: String(raw.version),
-        ...(action === 'apply' && raw.can_undo === true ? { undoRef: await this.sealCorrectionUndo(item, String(raw.correction_id)) } : {}) }
-      try {
-        const day = await this.recordingDayWithSession(item.dateStamp, session, signal, item.window, true)
-        if (day.transcript.state === 'error' || !day.transcript.items.some(row => row.itemId === `${item.childId}:${item.asrItemIndex}${item.transcriptSource === 'doubao' ? ':doubao' : ''}`)) throw new Error('incomplete readback')
-        result.day = day
-      }
-      catch { result.warning = '纠错已保存，但转写暂未刷新，请重新打开录音查看。' }
-      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
-      return result
+      return await this.readRecordingCorrectionResult(action, item, session, raw, signal)
     } catch (error) {
       // These owner responses definitively reject the command before commit.
       // Transport/server failures remain ambiguous and must replay the same key.
@@ -708,6 +700,42 @@ export class RecordingService {
       }
       throw error
     } finally { await this.invalidateSpeakerCache(session.userId) }
+  }
+
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const item = await this.openRecordingItemRef(query.itemRef)
+    if (item.viewerUserId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (!['apply', 'undo'].includes(query.action) || !/^[a-zA-Z0-9-]{16,80}$/.test(query.idempotencyKey)) throw new ArkmePluginError('recording-correction-invalid', '纠错请求编号无效', false, 400)
+    const raw = objectValue(await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-corrections/result',
+      { item: this.correctionLocator(item), action: query.action, idempotency_key: query.idempotencyKey }, session, signal, { bypassCache: true, lane: 'interactive-read' }))
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (raw.schema_version !== 1 || !('receipt' in raw)) throw new ArkmePluginError('recording-correction-contract-invalid', '暂时无法读取保存结果', true, 502)
+    // A missing receipt is only a read observation, not permission to retry a write.
+    if (raw.receipt === null) return null
+    const receipt = objectValue(raw.receipt)
+    if (receipt.schema_version !== 1 || receipt.state !== (query.action === 'apply' ? 'applied' : 'undone') || !stringValue(receipt.version)
+      || !Number.isInteger(receipt.affected_count) || Number(receipt.affected_count) < 1 || Number(receipt.affected_count) > 100
+      || (query.action === 'apply' && !stringValue(receipt.correction_id))) throw new ArkmePluginError('recording-correction-contract-invalid', '保存回执无效', true, 502)
+    return await this.readRecordingCorrectionResult(query.action, item, session, receipt, signal)
+  }
+
+  private async readRecordingCorrectionResult(action: 'apply' | 'undo', item: RecordingItemRefPayload, session: ArkmeSessionCredentials,
+    raw: Record<string, unknown>, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    const result: ArkmeRecordingSpeakerCorrectionResult = { affectedCount: Number(raw.affected_count), version: String(raw.version),
+      ...(action === 'apply' && raw.can_undo === true ? { undoRef: await this.sealCorrectionUndo(item, String(raw.correction_id)) } : {}) }
+    try {
+      // Enhanced utterance IDs cannot be looked up in the system transcript.
+      // Keep the day contract unchanged and read back the selected source.
+      const day = item.transcriptSource === 'system' ? await this.recordingDayWithSession(item.dateStamp, session, signal, item.window, true) : undefined
+      const transcript = day?.transcript ?? (await this.recordingComparisonWithSession(item.dateStamp, session, signal, item.window, true)).doubao
+      if (transcript.state === 'error' || !transcript.items.some(row => row.itemId === `${item.childId}:${item.asrItemIndex}${item.transcriptSource === 'doubao' ? ':doubao' : ''}`)) throw new Error('incomplete readback')
+      result.transcript = transcript
+      if (day) result.day = day
+    } catch { result.warning = action === 'undo' ? '纠错已撤销，但转写暂未刷新，请重新打开录音查看。' : '纠错已保存，但转写暂未刷新，请重新打开录音查看。' }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    return result
   }
 
   private recordingSpeakerOptionKey(key: Buffer, viewerUserId: number, kind: 'speaker' | 'arkme-user', id: string | number): string {
@@ -1751,8 +1779,12 @@ export class RecordingService {
   async recordingComparison(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingComparison> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
-    const date = this.recordingDayStart(dateStamp).getTime()
-    const data = await this.readRecordingTranscripts(date, session, signal)
+    return await this.recordingComparisonWithSession(dateStamp, session, signal)
+  }
+
+  private async recordingComparisonWithSession(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow, fresh = false): Promise<ArkmeRecordingComparison> {
+    const date = window ? dateStamp : this.recordingDayStart(dateStamp).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal, window, fresh)
     const key = await this.recordingRefKey('arkme-recording-item-v1')
     const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
     const project = (source: ArkmeRecordingTranscriptSource) => {
@@ -1762,7 +1794,7 @@ export class RecordingService {
         const speakerKey = this.recordingSpeakerMutationKey(item)
         counts.set(speakerKey, (counts.get(speakerKey) ?? 0) + 1)
       }
-      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key, speakerRefKey)) }
+      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key, speakerRefKey, window)) }
     }
     return { dateStamp: date, system: project('system'), doubao: project('doubao'), candidateCount: data.candidateCount, failedCount: data.failedCount, silentCount: data.silentCount }
   }

@@ -3310,7 +3310,15 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   version: string
   undoRef?: string
   day?: ArkmeRecordingDay
+  /** Fresh transcript from the corrected source; day remains the system day. */
+  transcript?: ArkmeRecordingDay['transcript']
   warning?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResultQuery {
+  itemRef: string
+  action: 'apply' | 'undo'
+  idempotencyKey: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -4020,6 +4028,7 @@ export type ArkmePluginOperation =
   | 'recordings.speaker.options'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
@@ -4430,6 +4439,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.entities.feedback.undo'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'

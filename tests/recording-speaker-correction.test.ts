@@ -23,6 +23,7 @@ function fixture(fixtureDate = date) {
       if (state.badContext) return { supported: true }
       return { supported: true, schema_version: 1, version: state.version, max_items: 100, sound_source: 'unknown', excluded_speakers: [], ...(state.applied ? { last_correction: { id: 'correction', can_undo: true } } : {}) }
     }
+    if (path.endsWith('/speaker-corrections/result')) return { schema_version: 1, receipt: receipts.get(String(body.idempotency_key)) ?? null }
     if (path.endsWith('/speaker-corrections/apply')) {
       if (state.unsupported) throw new ArkmePluginError('arkme-http-error', 'missing', false, 404)
       if (state.failWrite) throw new Error('connection lost')
@@ -166,4 +167,46 @@ describe('speaker correction owner adapter', () => {
     expect(f.post.mock.calls.some(([path]) => path.endsWith('/similar-session-speaker'))).toBe(false)
   })
 
+})
+
+
+it('reads receipts without performing a missing write, and recovers a lost committed response', async () => {
+  const f = fixture(), ref = (await f.service.recordingDay(date)).transcript.items[1]!.itemRef
+  const input = request(ref)
+  const query = { itemRef: ref, action: 'apply' as const, idempotencyKey: input.idempotencyKey }
+  expect(await f.service.recordingSpeakerCorrectionResult(query)).toBeNull()
+  expect(f.writes()).toHaveLength(0)
+  expect(f.state.applied).toBe(false)
+  f.state.loseResponse = true
+  await expect(f.service.applyRecordingSpeakerCorrection(input)).rejects.toThrow('response lost')
+  const result = await f.service.recordingSpeakerCorrectionResult(query)
+  expect(result?.transcript?.items[1]!.speakerLabel).toBe('说话人 8001')
+  expect(f.writes()).toHaveLength(1)
+  f.session.userId = 43
+  await expect(f.service.recordingSpeakerCorrectionResult(query)).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+})
+
+it('reads enhanced correction from its own source without inventing a day or a refresh failure', async () => {
+  const f = fixture(), original = f.post.getMockImplementation()!
+  f.post.mockImplementation(async (path, body) => {
+    const result = await original(path, body)
+    if (path.endsWith('/one-day-trans')) {
+      const children = (result as { child_ls: Array<Record<string, unknown>> }).child_ls
+      children[0]!.doubao_asr = f.rows.map(row => ({ ...row }))
+    }
+    return result
+  })
+  const selected = (await f.service.recordingComparison(date)).doubao.items[1]!
+  expect(selected.transcriptSource).toBe('doubao')
+  const input = request(selected.itemRef)
+  const result = await f.service.applyRecordingSpeakerCorrection(input)
+  expect(result.warning).toBeUndefined()
+  expect(result.day).toBeUndefined()
+  expect(result.transcript?.items[1]!).toMatchObject({ speakerLabel: '说话人 8001', transcriptSource: 'doubao' })
+  const restored = await f.service.recordingSpeakerCorrectionResult({ itemRef: selected.itemRef, action: 'apply', idempotencyKey: input.idempotencyKey })
+  expect(restored?.warning).toBeUndefined()
+  expect(restored?.transcript?.items[1]!.transcriptSource).toBe('doubao')
+  const undo = await f.service.undoRecordingSpeakerCorrection({ itemRef: result.transcript!.items[1]!.itemRef, undoRef: result.undoRef!, expectedVersion: 'v2', idempotencyKey: 'enhanced-undo-0001' })
+  expect(undo.warning).toBeUndefined()
+  expect(undo.transcript?.items[1]!.speakerLabel).toBe('周鹏')
 })

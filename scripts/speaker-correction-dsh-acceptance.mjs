@@ -23,7 +23,13 @@ export function apply(ctx) {
     let context = await sdk.recordingSpeakerCorrectionContext(item.itemRef)
     assert(context.supported)
     const input = { itemRef: item.itemRef, itemRefs: [item.itemRef], expectedVersion: context.version, idempotencyKey: randomUUID(), detach: true, rejectCurrent: true, soundSource: 'playback' }
+    const query = { itemRef: item.itemRef, action: 'apply', idempotencyKey: input.idempotencyKey }
+    assert.equal(await sdk.recordingSpeakerCorrectionResult(query), null)
+    assert.equal((await sdk.recordingSpeakerCorrectionContext(item.itemRef)).excludedSpeakers.length, 0)
     const result = await sdk.applyRecordingSpeakerCorrection(input)
+    const recovered = await sdk.recordingSpeakerCorrectionResult(query)
+    assert.equal(recovered.version, result.version)
+    assert.equal(recovered.transcript.items[1].soundSource, 'playback')
     assert.equal(result.affectedCount, 1)
     assert.equal(result.day.transcript.items[0].speakerLabel, '人物 A')
     assert.notEqual(result.day.transcript.items[1].speakerLabel, '人物 A')
@@ -77,6 +83,9 @@ export function apply(ctx) {
     assert(names.includes('arkme_recording_speaker_correction_context'))
     const read=await ctx.tools.execute({agent,name:'arkme_recording_speaker_correction_context',callId:randomUUID(),arguments:{item_ref:item.itemRef},signal:AbortSignal.timeout(10000)})
     assert(!read.isError,JSON.stringify(read))
+    const receiptRead = await ctx.tools.execute({agent,name:'arkme_recording_speaker_correction_context',callId:randomUUID(),arguments:{item_ref:item.itemRef,action:'apply',idempotency_key:randomUUID()},signal:AbortSignal.timeout(10000)})
+    assert(!receiptRead.isError,JSON.stringify(receiptRead))
+    assert.equal((await sdk.recordingSpeakerCorrectionContext(item.itemRef)).soundSource,'unknown')
     agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'请把验收片段设为播放内容'}]}))
     await agent.whenIdle()
     assert.equal(confirmations,1)
