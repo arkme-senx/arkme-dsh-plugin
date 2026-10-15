@@ -1800,6 +1800,11 @@ Arkme 账号|Arkme account
 暂无可用额度|No allowance remaining
 余量较少|Running low
 已识别说话人|Recognized speakers
+已标记 {marked} · 未标记 {unmarked}|Labeled {marked} · Unlabeled {unmarked}
+统计待更新|Counts awaiting update
+统计待更新，当前显示上次整理的目录。|Counts are awaiting an update. Showing the last prepared directory.
+目录更新暂未完成，请刷新重试。|Directory update could not finish. Refresh to retry.
+正在同步最新人物与统计…|Updating people and counts…
 查看录音中已标记和未标记的说话人|See labeled and unlabeled speakers from your recordings
 搜索说话人|Search speakers
 搜索已加载的说话人|Search loaded speakers
