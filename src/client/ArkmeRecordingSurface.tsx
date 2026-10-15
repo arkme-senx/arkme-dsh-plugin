@@ -1,3 +1,7 @@
+import { RecordingEntityPanel } from './recordings/RecordingEntityPanel.js'
+import { useRecordingEntities } from './recordings/use-recording-entities.js'
+import type { RecordingEntityOccurrence } from '../recording-entity-contract.js'
+import { createRecordingEntityUnderliner } from './recordings/recording-entity-underlines.js'
 import { FileAudio } from '@phosphor-icons/react/dist/icons/FileAudio'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeRecordingFiles } from './recordings/ArkmeRecordingFiles.js'
@@ -715,6 +719,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))
   const [activeTab, setActiveTab] = useState<RecordingTab | 'files'>('transcript')
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0)
+  const entityAccount = auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''
+  const entities = useRecordingEntities(entityAccount, selectedDate.getTime(), active && workbenchEnabled && !tour.sample, `${recordingRefreshRevision}:${fileRefreshRevision}`)
+  const [entityFocus, setEntityFocus] = useState<{ scope: string; version: string; key: string; occurrence: RecordingEntityOccurrence }>()
+  const [entityReveal, setEntityReveal] = useState<{ scope: string; version: string; key: string; sequence: number }>()
+  const currentEntityReveal = entityReveal?.scope === entities.scope && entityReveal.version === entities.data?.version ? entityReveal : undefined
   const [calendar, setCalendar] = useState<ArkmeRecordingCalendarMonth>()
   const [day, setDay] = useState<ArkmeRecordingDay>()
   const localCoverage = useLocalRecordingCoverage(auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${String(auth.auth.userId)}` : undefined, selectedDate.getTime(), day?.coverage?.intervals)
@@ -750,6 +759,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const playback = useRecordingPlayback(recordingMediaPath)
   const selectedTimelineMillis = playback.positionAtMillis
   const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
+  const entityDrawer = useSyncExternalStore(subscribeRecordingLayout, () => typeof window !== 'undefined' && window.innerWidth < 1440, () => false)
 
   useEffect(() => {
     if (!active || !workbenchEnabled) setMobileGuideOpen(false)
@@ -927,7 +937,29 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const selectedSummary = exactTargetActive && ui.recordingTarget?.window && ui.recordingTarget.summary?.versionId && summaryVersionId === ui.recordingTarget.summary.versionId ? exactTargetVersion?.version ?? undefined : day?.summary.items.find(version => version.id === summaryVersionId && version.selectable)
   const selectedTimeline = exactTargetActive && ui.recordingTarget?.window && ui.recordingTarget.timeline?.versionId && timelineVersionId === ui.recordingTarget.timeline.versionId ? exactTargetVersion?.version ?? undefined : day?.timeline.items.find(version => version.id === timelineVersionId && version.selectable)
   const transcriptItems = useMemo(() => day?.transcript.state === 'ready' ? day.transcript.items : [], [day?.transcript])
+  const entityUnderlinesByItem = useMemo(() => {
+    const underline = createRecordingEntityUnderliner(entities.data?.entities ?? [])
+    return new Map(transcriptItems.map(item => [item.itemId, underline(item.text)]))
+  }, [transcriptItems, entities.data?.entities])
+  const openTranscriptEntity = (key: string) => {
+    if (!entities.data?.entities?.some(entity => entity.key === key)) return
+    setEntityReveal(previous => ({ scope: entities.scope, version: entities.data!.version, key, sequence: (previous?.sequence ?? 0) + 1 }))
+    entities.setOpen(true)
+  }
   const [transcriptNavigation, setTranscriptNavigation] = useState<{ dateStamp: number; itemId: string }>()
+  const entityOccurrence = entityFocus?.scope === entities.scope && entityFocus.version === entities.data?.version ? entityFocus.occurrence : undefined
+  const entityTarget = entityOccurrence?.target
+  const focusedEntity = entityOccurrence ? entities.data?.entities?.find(entity => entity.key === entityFocus?.key) : undefined
+  const entityItem = entityTarget ? transcriptItems.find(item => item.searchIdentityHash === entityTarget.identityHash && item.searchVersion === entityTarget.transcriptVersion && item.transcriptSource === entityTarget.transcriptSource && Array.from(item.text).slice(entityTarget.start, entityTarget.start + entityTarget.length).join('') === entityOccurrence?.observedText) : undefined
+  const locateEntity = (occurrence: RecordingEntityOccurrence, key: string): boolean => {
+    const target = occurrence.target
+    const item = target && transcriptItems.find(item => item.searchIdentityHash === target.identityHash && item.searchVersion === target.transcriptVersion && item.transcriptSource === target.transcriptSource && Array.from(item.text).slice(target.start, target.start + target.length).join('') === occurrence.observedText)
+    if (!item || !entities.data) return false
+    setEntityFocus({ scope: entities.scope, version: entities.data.version, key, occurrence })
+    setActiveTab('transcript'); setSelectionMode(false)
+    setTranscriptNavigation({ dateStamp: selectedDate.getTime(), itemId: item.itemId })
+    return true
+  }
   const navigateTranscript = (value: number) => {
     const item = transcriptItems.find(item => item.endAtMillis > value) ?? transcriptItems.at(-1)
     if (!item) return
@@ -1099,10 +1131,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         speakerEditing={editingSpeaker?.item.itemRef === item.itemRef}
         isPlaying={playback.isPlaying && playback.activeItemRef === item.itemRef}
         selected={preciseItem?.itemId === item.itemId || selected}
-        searchHighlighted={preciseItem?.itemId === item.itemId}
+        searchHighlighted={preciseItem?.itemId === item.itemId || entityItem?.itemId === item.itemId}
         selectionControl={selectionMode && <input type="checkbox" aria-label={`选择录音片段 ${recordingTranscriptTimeLabel(item.startAtMillis)}`} checked={selectedForwardItems.some(selected => selected.itemId === item.itemId)} onClick={event => { event.stopPropagation() }} onChange={() => { toggleTranscriptSelection(item) }} />}
         {...(selectionMode ? { onToggleSelection: () => { toggleTranscriptSelection(item) } } : {})}
-        text={<RecordingTranscriptText text={item.text} matches={matchesByItem.get(item.itemId) ?? []} activeIndex={activeMatchIndex} />}
+        text={<RecordingTranscriptText text={item.text} matches={matchesByItem.get(item.itemId) ?? []} activeIndex={activeMatchIndex} entityRanges={entityUnderlinesByItem.get(item.itemId) ?? []} onEntityClick={openTranscriptEntity} {...(entityItem?.itemId === item.itemId && entityTarget ? { entityRange: { ...entityTarget, ...(focusedEntity ? { entityKey: focusedEntity.key, name: focusedEntity.name } : {}) } } : {})} />}
         onEditSpeaker={editSpeaker}
         onSelect={() => { tour.finish(false); void playback.playItem(item) }}
       />
@@ -1284,7 +1316,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <span>{tr('当天暂无录音')}</span>
       </div> : <>
       {!selectionMode && <div style={styles.dayTimeline}>{workbenchEnabled && <RecordingTranscriptTimeline key={selectedDate.getTime()} transcriptRoot={transcriptRootRef} followTranscript={active && activeTab === 'transcript' && !tour.sample && !dayLoading} onNavigateAtMillis={navigateTranscript} arrangementEntry={!tour.sample && <RecordingDayArrangements dateStamp={selectedDate.getTime()} accountScope={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''} active={active && ui.mode === 'recordings'} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />} items={transcriptItems} coverage={coverage} dailyMetrics={dayError || day?.dateStamp !== selectedDate.getTime() ? undefined : day?.transcript.dailyMetrics} coverageState={dayError || day?.transcript.state === 'error' ? 'error' : day?.coverage?.state ?? 'partial'} dayStartMillis={selectedDate.getTime()} loading={dayLoading} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { tour.finish(false); setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : { item, anchor, forceBatchUpdate: true }) }} onImportAudio={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} playbackLoading={playback.isLoading} onSelectAtMillis={value => { tour.finish(false); navigateTranscript(value); void playback.selectAt(transcriptItems, value) }} onTogglePlayback={() => { tour.finish(false); if (transcriptItems[0] !== undefined) void playback.toggleAt(transcriptItems, selectedTimelineMillis ?? transcriptItems[0].startAtMillis) }} />}{workbenchEnabled && playback.isLoading && <div role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr("录音加载中…")}</div>}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}</div>}
-      {tour.sample ? <RecordingTourSample tab={sampleTab} onTab={setSampleTab} /> : <div style={{ ...styles.analysis, ...(activeTab === 'transcript' ? { gridTemplateRows: `40px auto minmax(0,1fr)${selectionMode ? ' 72px' : ''}` } : {}) }}><nav style={styles.tabs} aria-label={tr("录音内容")}><span style={{ ...styles.tabList, flex: 1, minWidth: 0 }}>{([['transcript', '转写'], ['summary', '总结'], ['timeline', '时间轴'], ['files', '音频文件']] as const).filter(([id]) => id !== 'files' || workbenchEnabled).map(([id, label]) => <span key={id} style={{ ...styles.tabSlot, width: 100, minWidth: 80 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setSelectionMode(false); setEditingSpeaker(undefined); setExportNotice('') }}>{id === 'files' ? <FileAudio size={14} aria-hidden /> : <RecordingDesktopIcon name={id} size={14} />}{label}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span></nav>{activeTab === 'transcript' && <div role="group" aria-label={tr('转写操作')} style={styles.transcriptToolbar}>
+      {tour.sample ? <RecordingTourSample tab={sampleTab} onTab={setSampleTab} /> : <div style={{ position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}><div style={{ ...styles.analysis, flex: 1, minWidth: 0, ...(activeTab === 'transcript' ? { gridTemplateRows: `40px auto minmax(0,1fr)${selectionMode ? ' 72px' : ''}` } : {}) }}><nav style={styles.tabs} aria-label={tr("录音内容")}><span style={{ ...styles.tabList, flex: 1, minWidth: 0, overflowX: 'auto' }}>{([['transcript', '转写'], ['summary', '总结'], ['timeline', '时间轴'], ['files', '音频文件']] as const).filter(([id]) => id !== 'files' || workbenchEnabled).map(([id, label]) => <span key={id} style={{ ...styles.tabSlot, width: 100, minWidth: 80 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setSelectionMode(false); setEditingSpeaker(undefined); setExportNotice('') }}>{id === 'files' ? <FileAudio size={14} aria-hidden /> : <RecordingDesktopIcon name={id} size={14} />}{label}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span></nav>{activeTab === 'transcript' && <div role="group" aria-label={tr('转写操作')} style={styles.transcriptToolbar}>
         <RecordingTranscriptSearch key={selectedDate.getTime()} query={transcriptSearch} position={transcriptMatches.length === 0 ? 0 : activeMatchIndex + 1} count={transcriptMatches.length} onChange={value => { setTranscriptSearch(value); setTranscriptMatchIndex(0) }} onFind={() => { setTranscriptMatchIndex(0); transcriptRootRef.current?.querySelector('[data-recording-match="0"]')?.scrollIntoView({ block: 'center' }) }} onPrevious={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + transcriptMatches.length - 1) % transcriptMatches.length) }} onNext={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + 1) % transcriptMatches.length) }} />
         <span style={styles.actionCluster}>
           {workbenchEnabled && <>
@@ -1299,6 +1331,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
               style={styles.actionButton} disabled={dayLoading || comparisonLoading || transcriptItems.length === 0}
               onClick={() => { void openComparison() }}><RecordingDesktopIcon name="compare" /></button>
             </Tooltip>
+            {!selectionMode && <Tooltip label={tr('实体')} side="bottom" delayMs={200}>
+              <button data-arkme-feedback="neutral" type="button" aria-label={tr('查看录音实体')} aria-expanded={entities.open}
+                style={{ ...styles.actionButton, ...(entities.open ? { background: colors.subtle, color: colors.text } : {}) }}
+                data-recording-entity-trigger onClick={() => { setEntityReveal(undefined); entities.setOpen(!entities.open) }}><RecordingDesktopIcon name="entities" size={18} /></button>
+            </Tooltip>}
           </>}
           <Tooltip label={tr('导出')} side="bottom" delayMs={200}>
             <button data-arkme-feedback="neutral" type="button" aria-label={tr('导出')} style={styles.actionButton} onClick={downloadCurrent}><RecordingDesktopIcon name="export" size={20} /></button>
@@ -1311,7 +1348,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         onChanged={() => { playback.stop(); setComparison(undefined); setFileRefreshRevision(value => value + 1) }} />
         : dayError !== '' ? <div style={styles.error} role="alert">{dayError}</div>
         : emptyDay && !(exactTargetActive && ui.recordingTarget?.window && activeTab !== 'transcript') ? <ArkmeRecordingEmptyState recorded={coverage.length > 0} />
-        : activeTab === 'transcript' ? renderTranscript() : activeTab === 'summary' ? renderSummary() : renderTimeline()}{analysisFooter}</div>{selectionMode && <footer aria-label={tr("录音多选操作")} style={{ height: 72, display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) auto minmax(20px,1fr)', alignItems: 'center', borderTop: `1px solid ${colors.border}`, padding: '0 24px' }}><span style={{ fontSize: 13 }}>{tr("已选择")} {selectedForwardItems.length}/150</span><span style={{ display: 'flex', gap: 8 }}>{(['forward', 'exit'] as const).map(action => <button data-arkme-feedback="neutral" type="button" key={action} aria-label={action === 'forward' ? tr("转发录音片段") : tr("退出多选")} disabled={action === 'forward' && selectedForwardItems.length === 0} onClick={() => { if (action === 'forward') setForwardOpen(true); else { setSelectionMode(false); setForwardAttempt(createRecordingForwardAttempt([])) } }} style={{ width: 64, border: 0, padding: 0, background: 'transparent', color: colors.text, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: action === 'forward' && selectedForwardItems.length === 0 ? .4 : 1 }}><span style={{ width: 36, height: 36, borderRadius: 7, display: 'grid', placeItems: 'center', background: arkmeTheme.elevated }}><RecordingDesktopIcon name={action} size={22} /></span><span style={{ fontSize: 12 }}>{action === 'forward' ? tr("转发") : tr("退出")}</span></button>)}</span><span /></footer>}</div>}
+        : activeTab === 'transcript' ? renderTranscript() : activeTab === 'summary' ? renderSummary() : renderTimeline()}{analysisFooter}</div>{selectionMode && <footer aria-label={tr("录音多选操作")} style={{ height: 72, display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) auto minmax(20px,1fr)', alignItems: 'center', borderTop: `1px solid ${colors.border}`, padding: '0 24px' }}><span style={{ fontSize: 13 }}>{tr("已选择")} {selectedForwardItems.length}/150</span><span style={{ display: 'flex', gap: 8 }}>{(['forward', 'exit'] as const).map(action => <button data-arkme-feedback="neutral" type="button" key={action} aria-label={action === 'forward' ? tr("转发录音片段") : tr("退出多选")} disabled={action === 'forward' && selectedForwardItems.length === 0} onClick={() => { if (action === 'forward') setForwardOpen(true); else { setSelectionMode(false); setForwardAttempt(createRecordingForwardAttempt([])) } }} style={{ width: 64, border: 0, padding: 0, background: 'transparent', color: colors.text, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: action === 'forward' && selectedForwardItems.length === 0 ? .4 : 1 }}><span style={{ width: 36, height: 36, borderRadius: 7, display: 'grid', placeItems: 'center', background: arkmeTheme.elevated }}><RecordingDesktopIcon name={action} size={22} /></span><span style={{ fontSize: 12 }}>{action === 'forward' ? tr("转发") : tr("退出")}</span></button>)}</span><span /></footer>}</div><RecordingEntityPanel key={entities.scope} open={entities.open} {...(currentEntityReveal ? { reveal: currentEntityReveal } : {})} data={entities.data} loading={entities.loading} error={entities.error} paused={entities.paused} starting={entities.starting} startError={entities.startError} onStart={() => { void entities.start() }} compact={entityDrawer} onClose={() => entities.setOpen(false)} onRefresh={entities.refresh} onLocate={locateEntity} /></div>}
       </>}
     </section>
     {workbenchEnabled && comparison !== undefined && <RecordingTranscriptComparison key={`${String(selectedDate.getTime())}:${String(auth.auth?.userId)}`} dateStamp={selectedDate.getTime()} mediaPath={recordingMediaPath} prepared={comparison} onClose={() => { setComparison(undefined) }} />}

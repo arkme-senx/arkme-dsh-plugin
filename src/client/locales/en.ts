@@ -32,6 +32,59 @@ AI 自动分析|Automatic AI analysis
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
 持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
+当天录音实体|Entities from this recording day
+实体|Entities
+查看录音实体|View recording entities
+查看实体 {name}|View entity {name}
+关闭实体列表|Close entity list
+实体类型|Entity type
+录音内容已更新，请刷新实体列表|Recording content changed. Refresh the entity list.
+识别未完成，已有结果仅供参考|Recognition is incomplete. Existing results are provisional.
+当天录音尚无实体识别结果|No recognition results for this day yet.
+识别中，结果可能继续更新|Recognizing entities. Results may change.
+等待实体识别|Waiting to recognize entities
+正在准备识别|Preparing entity recognition
+正在处理实体|Processing entities
+等待转写完成|Waiting for transcription
+等待剩余转写完成|Waiting for the remaining transcription
+尚未识别实体|Entities have not been recognized yet
+部分转写异常|Some transcription is unavailable
+部分转写异常，已有实体可查看|Some transcription is unavailable. Existing entities are still accessible
+转写异常，暂无法继续识别|Transcription is unavailable. Recognition cannot continue yet
+开始识别|Start recognition
+正在提交…|Submitting…
+未能确认识别已开始，请刷新后重试|Could not confirm recognition started. Refresh before retrying
+正在识别实体|Recognizing entities
+正在核对实体|Reviewing entities
+正在保存结果|Saving results
+正在恢复识别|Recovering recognition
+当天识别结果|Recognition results for this day
+正在读取实体…|Loading entities…
+暂时无法显示实体列表|Entity list is unavailable.
+实体更新失败，请刷新重试|Could not refresh entities. Try again.
+自动更新已暂停，请手动刷新|Automatic updates paused. Refresh to continue.
+刷新实体|Refresh entities
+当前类型下没有实体|No entities in this category.
+暂无已识别实体|No recognized entities yet.
+{count} 次提及|{count} mentions
+提及位置不可用，请刷新实体列表|Mention locations are unavailable. Refresh the entity list.
+正在读取提及…|Loading mentions…
+原文位置已不可用|Original location unavailable
+暂无可用提及|No available mentions
+上一页提及|Previous mentions
+下一页提及|Next mentions
+原文已更新，请刷新录音后重试|Transcript changed. Refresh the recording and try again.
+上一页实体|Previous entities
+下一页实体|Next entities
+人物|People
+组织|Organizations
+地点|Places
+宠物|Pets
+事件|Events
+项目|Projects
+作品|Works
+品牌|Brands
+其他|Other
 团队搜索结果|Team search result
 申请已提交，等待审批|Request submitted, awaiting approval
 申请加入团队|Apply to join team
@@ -1863,4 +1916,6 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 来源时间轴版本暂不可用，当前显示该日可用内容。|The original timeline version is unavailable. Showing available content for that day.
 重试录音通知|Retry recording notifications
 等待处理|Waiting for processing
+调整实体列表宽度|Resize entity list
+加载更多提及|Load more mentions
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

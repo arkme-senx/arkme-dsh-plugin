@@ -1,5 +1,7 @@
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
+import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 export { recordingImportBatchID } from '../recording-workflow-contract.js'
 import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
 export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
@@ -494,6 +496,24 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  /** Explicit user command; idempotently starts recognition for the current account/day. */
+  async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
+    if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
+    return this.call('recordings.entities.start', { ...query }, signal)
+  }
+
+  /** Existing recognition for one recording day. Does not start an extraction job. */
+  async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities', { ...query }, signal)
+  }
+
+  /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities.occurrences', { ...query }, signal)
   }
 
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {

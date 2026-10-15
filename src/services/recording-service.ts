@@ -1408,6 +1408,17 @@ export class RecordingService {
     return (await this.readRecordingTranscripts(dateStamp, session, signal)).section('system')
   }
 
+  private readRecordingTranscriptData(dayStart: Date, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    // Keep the same Audio contract and source identity for presentation and entity evidence.
+    return this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/one-day-trans',
+      { start_at: dayStart.getTime(), end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+      session, signal,
+    )
+  }
+
   private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
     const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
@@ -1613,6 +1624,17 @@ export class RecordingService {
       signal,
     )
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
+  }
+
+  /** Host-only evidence reader: never expose Audio owner IDs through a consumer DTO. */
+  async entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
+    const dayStart = this.recordingDayStart(dateStamp), dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const response = await this.readRecordingTranscriptData(dayStart, session, signal)
+    // Mentions need exact text/identity, not speaker names, profiles or avatar references.
+    return projectRecordingTranscripts(response, [], new Map(), {
+      viewerUserId: session.userId, dayStartMillis: dayStart.getTime(), dayEndMillis: dayEnd.getTime(), transcriptSource: source,
+    })
   }
 
   private validateRecordingWindow(window?: ArkmeRecordingWindow): void {

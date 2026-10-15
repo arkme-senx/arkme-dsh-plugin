@@ -1,5 +1,7 @@
 import { CapabilityService } from './services/capability-service.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
+import { RecordingEntityService } from './services/recording-entity-service.js'
+import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
@@ -366,6 +368,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
   private readonly auth: AuthService
@@ -640,6 +643,7 @@ export class ArkmeService {
       profile: this.profile, media: this.media, userCandidates: this.contactDirectory,
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
+    this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
@@ -985,6 +989,8 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        recordingEntities: true,
+        recordingEntityStart: true,
         recordingWorkflowV2: true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
@@ -1125,6 +1131,7 @@ export class ArkmeService {
     this.bot.dispose()
     this.extensionReview.dispose()
     this.media.dispose()
+    this.recordingEntitiesOwner.dispose()
     this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()
@@ -1212,6 +1219,9 @@ export class ArkmeService {
   async speakerDirectorySeen(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.seen(input, signal) }
   async speakerDirectoryOpen(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.open(input, signal) }
 
+  async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.startRecordingEntities(query, signal) }
+  async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntities(query, signal) }
+  async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityOccurrences(query, signal) }
   async recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> { return await this.recording.recordingSpeakerOptions(signal) }
   async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> { return await this.recording.recordingSpeakerPresence(signal) }
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string) { return await this.recording.recordingSpeakerMembers(speakerRef, signal, expectedVersion) }
