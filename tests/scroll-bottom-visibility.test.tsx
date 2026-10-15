@@ -85,11 +85,12 @@ describe('scroll bottom visibility (not auto-follow or unread state)', () => {
       get scrollTop() { return top },
       set scrollTop(value: number) { top = value },
       scrollHeight: 1500, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
       addEventListener: (_: string, listener: () => void) => { listeners.add(listener) },
       removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener) },
     }
     const viewport = { current: body as unknown as HTMLDivElement }
-    const content = { current: { getBoundingClientRect: () => ({ height: contentHeight }) } as HTMLElement }
+    const content = { current: { getBoundingClientRect: () => ({ height: contentHeight }), querySelectorAll: () => [] } as HTMLElement }
     const restoreIntent = { current: undefined as boolean | undefined }
     function Harness({ follow }: { follow?: boolean }) {
       useLayoutEffect(() => { restoreIntent.current = follow }, [follow])

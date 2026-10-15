@@ -1,8 +1,10 @@
 import { Worker } from 'node:worker_threads'
 import type { ArkmeTimelinePage } from './types.js'
 import type { TimelineCacheCommit } from './unified-timeline-cache.js'
+import type { ChatSyncCommand } from './chat-message-sync.js'
 
 export type TimelineCacheCommand = { kind: 'reserve' | 'close' }
+  | { kind: 'sync'; command: ChatSyncCommand }
   | { kind: 'read'; scope: string; request: string; anchorId?: string; latest?: boolean }
   | { kind: 'write'; scope: string; request: string; page: ArkmeTimelinePage; options: TimelineCacheCommit }
   | { kind: 'invalidate'; scope: string; timelineItemKey?: string; terminal?: boolean; refreshOnly?: boolean }
@@ -13,7 +15,7 @@ export interface TimelineCachePort {
 }
 const unavailable = () => new Error('Timeline storage unavailable')
 function commandBytes(command: TimelineCacheCommand): number {
-  if (command.kind !== 'write') return 4096
+  if (command.kind !== 'write' && command.kind !== 'sync') return 4096
   // Count before structuredClone admission without allocating another full JSON copy.
   const queue: unknown[] = [command]
   const seen = new Set<object>()
@@ -41,16 +43,22 @@ export class TimelineCacheWorker implements TimelineCachePort {
   private queuedBytes = 0
   private nextId = 0
   private closed = false
+  private initialized = false
+  private readonly startupTimer: ReturnType<typeof setTimeout>
   constructor(directory: string, workerUrl = new URL('./timeline-cache-worker.js', import.meta.url)) {
     this.worker = new Worker(workerUrl, { workerData: { directory } })
     this.worker.unref()
-    this.worker.on('message', (reply: { id: number; value?: unknown; failed?: boolean }) => {
+    this.startupTimer = setTimeout(() => { this.fail(); void this.worker.terminate() }, 30000)
+    this.startupTimer.unref?.()
+    this.worker.on('message', (reply: { ready?: boolean; id: number; value?: unknown; failed?: boolean; code?: string }) => {
+      this.initialized = true; clearTimeout(this.startupTimer)
+      if (reply.ready) return
       const request = this.pending.get(reply.id)
       if (!request) return
       this.pending.delete(reply.id); clearTimeout(request.timer)
       this.queuedBytes -= request.bytes
       if (!this.pending.size) this.worker.unref()
-      if (reply.failed) request.reject(unavailable()); else request.resolve(reply.value)
+      if (reply.failed) request.reject(reply.code ? new Error(reply.code) : unavailable()); else request.resolve(reply.value)
     })
     this.worker.on('error', () => this.fail())
     this.worker.on('exit', () => this.fail())
@@ -62,7 +70,16 @@ export class TimelineCacheWorker implements TimelineCachePort {
     if (this.queuedBytes + bytes > 64 * 1024 * 1024) return Promise.reject(unavailable())
     const id = ++this.nextId
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => { this.fail(); void this.worker.terminate() }, 5000)
+      const timer = setTimeout(() => {
+        console.warn('arkme: timeline storage request timed out', { kind: command.kind, ...(command.kind === 'sync' ? { action: command.command.action } : {}), pending: this.pending.size })
+        if (!this.initialized) {
+          // Cold startup must not permanently disable offline reads. The caller
+          // still falls back at 5s; retain admission accounting until the queued
+          // reply arrives, or the bounded 30s startup deadline terminates it.
+          reject(unavailable()); return
+        }
+        this.fail(); void this.worker.terminate()
+      }, 5000)
       this.queuedBytes += bytes
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer, bytes })
       this.worker.ref()
@@ -70,7 +87,7 @@ export class TimelineCacheWorker implements TimelineCachePort {
     })
   }
   private fail(): void {
-    this.closed = true
+    this.closed = true; clearTimeout(this.startupTimer)
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(unavailable()) }
     this.pending.clear()
     this.queuedBytes = 0

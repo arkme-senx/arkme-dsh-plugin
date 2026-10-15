@@ -427,6 +427,8 @@ export class ServiceRuntime {
   }
 
   /** Only for composites whose child requests already pass through transport admission. */
+  async runBackgroundMessageProjection<T>(operation: () => Promise<T>): Promise<T> { return this.messageSyncLane.run('background-read', operation) }
+
   async runCompositeOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, lane: 'interactive-read' | 'background-read' = 'interactive-read'): Promise<T> {
     return await this.ownerRead(route, parameters, operation, signal, 'route-only', lane)
   }
@@ -618,7 +620,7 @@ export class ServiceRuntime {
   private registeredRead(baseUrl: string, path: string): boolean {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
-      '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
+      '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
       '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
@@ -652,7 +654,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)

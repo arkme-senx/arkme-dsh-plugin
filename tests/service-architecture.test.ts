@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'messageSyncStatus', 'retryMessageSync',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
@@ -103,6 +104,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'chat-message-sync-service.ts',
   'profile-image.ts',
   'team-codex-transport.ts',
   'reaction-service.ts',

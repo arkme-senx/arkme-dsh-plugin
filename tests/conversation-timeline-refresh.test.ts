@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { readConversationTimelineWindow } from '../src/client/conversation-timeline-refresh.js'
+import { readConversationTimelineEntry, readConversationTimelineWindow } from '../src/client/conversation-timeline-refresh.js'
 import type { ArkmeConversationTimelineSnapshot } from '../src/client/conversation-memory-cache.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 
@@ -113,4 +113,41 @@ it('accepts a read window without cache, pagination or AI enhancement metadata',
   const result = await readConversationTimelineWindow({ items: [record(2)] }, read, new AbortController().signal)
   expect(result.items.map(item => item.sequence)).toEqual([3, 2])
   expect(read).toHaveBeenCalledOnce()
+})
+
+
+describe('cold conversation entry preserves durable reading', () => {
+  const anchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'message:event-history', anchorOffset: -12,
+    messageAnchor: { itemUid: 'history', recordOwnerUserId: '9223372036854775806' } }
+  const history = { ...record(5), itemUid: 'history' }
+  const restored = { ...page([history]), unified: { protocolVersion: 1 as const,
+    events: [{ kind: 'message' as const, source: 'messages' as const, eventId: 'event-history', item: history }],
+    sources: [], windowTokens: ['confirmed'], complete: true, hasMore: true, olderHasMore: true, newerHasMore: true } } as ArkmeTimelinePage
+  it('locates old history in one bounded read after all message cache rows were removed', async () => {
+    const read = vi.fn().mockResolvedValue(restored)
+    expect(await readConversationTimelineEntry(anchor, read, new AbortController().signal)).toBe(restored)
+    expect(read).toHaveBeenCalledExactlyOnceWith({ unified: { mode: 'around', ...anchor.messageAnchor } })
+  })
+  it('restores a legacy geometry anchor when the first page still contains it', async () => {
+    const { messageAnchor: _, ...legacy } = anchor
+    const read = vi.fn().mockResolvedValue(restored)
+    expect(await readConversationTimelineEntry(legacy, read, new AbortController().signal)).toBe(restored)
+    expect(read).toHaveBeenCalledExactlyOnceWith(undefined)
+  })
+  it('never substitutes latest history or scans pages when an old anchor is gone', async () => {
+    const read = vi.fn().mockResolvedValue(page([record(99)]))
+    await expect(readConversationTimelineEntry(anchor, read, new AbortController().signal)).rejects.toThrow('已保留阅读位置')
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(anchor.stickToBottom).toBe(false)
+  })
+  it('does not restore an old account or navigation response after cancellation', async () => {
+    const controller = new AbortController()
+    const read = vi.fn(async () => { controller.abort(); return restored })
+    await expect(readConversationTimelineEntry(anchor, read, controller.signal)).rejects.toThrow()
+  })
+  it('continues to read the latest page for bottom-follow intent', async () => {
+    const read = vi.fn().mockResolvedValue(page([record(99)]))
+    await readConversationTimelineEntry({ ...anchor, stickToBottom: true }, read, new AbortController().signal)
+    expect(read).toHaveBeenCalledExactlyOnceWith(undefined)
+  })
 })

@@ -21,6 +21,27 @@ afterEach(() => {
 })
 
 describe('file send task polling', () => {
+  it('distinguishes restored sent receipts from active sends without extra polling or cross-scope retention', async () => {
+    vi.useFakeTimers()
+    const old = { ...task('sent'), taskRef: 'old' }
+    const uploading = { ...task('uploading'), taskRef: 'new' }
+    api.call.mockResolvedValueOnce([old, uploading]).mockResolvedValue([old, { ...uploading, state: 'sent' }])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness({ source = 'source-1' }: { source?: string }) { value = useArkmeFileSendTasks(source, 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      expect([...value.activeTaskKeys]).toEqual(['new'])
+      await act(async () => { await vi.advanceTimersByTimeAsync(750) })
+      expect([...value.activeTaskKeys]).toEqual(['new'])
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(api.call).toHaveBeenCalledTimes(2)
+      api.call.mockResolvedValue([])
+      act(() => { renderer.update(<Harness source="source-2" />) })
+      expect(value.activeTaskKeys.size).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
   it('keeps empty tasks stable across draft renders and source switches', async () => {
     api.call.mockResolvedValue([])
     let tasks: readonly ArkmeFileSendTask[] = []

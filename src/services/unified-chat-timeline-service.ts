@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { createHmac } from 'node:crypto'
+import type { ChatSyncCommand, ChatSyncLocalPage } from '../chat-message-sync.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import type { ArkmeTimelinePage } from '../types.js'
 import { CHAT_TIMELINE_SOURCES, compareUnifiedTimelineEvents, type ArkmeUnifiedTimelineEvent, type ArkmeUnifiedTimelineQuery, type ArkmeUnifiedTimelineWindow, type ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
@@ -67,6 +68,16 @@ export class UnifiedChatTimelineService {
       try { this.cache = this.createCache(join(this.runtime.config.fileStateDirectory, 'timeline')) } catch { /* Network remains available. */ }
     }
     return this.cache
+  }
+  async sync<T>(command: ChatSyncCommand): Promise<T> {
+    const storage = this.storage()
+    if (!storage) throw new Error('message-sync-storage')
+    return await storage.call<T>({ kind: 'sync', command })
+  }
+  async syncTicket(): Promise<number> {
+    const storage = this.storage()
+    if (!storage) throw new Error('message-sync-storage')
+    return await storage.call<number>({ kind: 'reserve' })
   }
 
   /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
@@ -177,6 +188,26 @@ export class UnifiedChatTimelineService {
       try { cached = await cache?.call<ArkmeTimelinePage | undefined>({ kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
         latest: mode === 'initial' && !query.anchorId }) } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+      if (!cached) {
+        const cacheMiss = () => new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
+        if (!['initial', 'around', 'older'].includes(mode)) throw cacheMiss()
+        let before: number | undefined
+        if (query.cursor) {
+          try { before = Number(codec.open(query.cursor, 'local-message')) }
+          catch { throw cacheMiss() } // A missing remote window must not become a local tail.
+        }
+        if (before !== undefined && (!Number.isSafeInteger(before) || before <= 0)) throw invalid()
+        const anchor = query.anchorId ?? (mode === 'around' ? query.itemUid : undefined)
+        const local = await this.sync<ChatSyncLocalPage | undefined>({ action: 'read', scope, limit: query.limit ?? 40, ...(anchor === undefined ? {} : { anchorId: anchor.replace(/^(message|moment|notice|external|world-public):/, '') }), ...(before ? { before } : {}) }).catch(() => undefined)
+        if (local?.events.length) {
+          const cursor = local.before ? codec.seal(String(local.before), 'local-message') : undefined
+          cached = { source: sourceItem, items: local.events.flatMap(e => e.kind === 'message' ? [e.item] : []),
+            cache: { origin: 'local', persistence: 'committed', revision: local.revision, stale: true },
+            unified: { protocolVersion: 1, events: local.events, sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'gap', itemCount: source === 'messages' ? local.events.length : 0 })),
+              complete: false, windowTokens: [], olderHasMore: Boolean(cursor), newerHasMore: false, hasMore: Boolean(cursor), ...(cursor ? { olderCursor: cursor, nextCursor: cursor } : {}) },
+            hasMore: Boolean(cursor), ...(cursor ? { nextCursor: { unified: { mode: 'older', cacheOnly: true, cursor } } } : {}) }
+        }
+      }
       if (!cached) throw new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
       await assertCurrent()
       return { ...cached, source: sourceItem, ...(cached.cache ? { cache: { ...cached.cache,

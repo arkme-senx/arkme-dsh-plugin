@@ -15,6 +15,7 @@ export async function readConversationTimelineWindow(
   readPage: (cursor?: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
   followsLatest?: () => boolean,
+  readingAnchor?: () => string | undefined,
 ): Promise<ArkmeTimelinePage> {
   // Following the live tail needs one bounded authoritative page. Re-reading
   // every previously visited page makes latency and response bytes grow forever.
@@ -27,7 +28,8 @@ export async function readConversationTimelineWindow(
     // A partial source must not erase known events; retain the ordinary atomic
     // reconciliation, also when the user changed their reading intent.
   }
-  if (snapshot.unified) return await refreshUnifiedTimelineWindow(snapshot.unified, readPage, signal, snapshot.mode !== 'around')
+  if (snapshot.unified) return await refreshUnifiedTimelineWindow(snapshot.unified, readPage, signal,
+    snapshot.mode !== 'around' && (snapshot.unified.windowTokens.length > 0 || followsLatest?.() !== false), readingAnchor)
   const records = snapshot.items.filter(item => item.status === 1 && item.awaitingTimelineProjection !== true)
   const aroundRange = snapshot.mode === 'around' ? snapshot.aroundSequenceRange : undefined
   const sequenced = aroundRange !== undefined || records.length > 0 && records.every(item => (item.sequence ?? 0) > 0)
@@ -71,4 +73,22 @@ export async function readConversationTimelineWindow(
     if (page.nextCursor === undefined) throw new Error('消息列表刷新缺少分页游标')
     cursor = page.nextCursor
   }
+}
+
+/** A missing disposable cache must not turn saved history into a latest-tail entry. */
+export async function readConversationTimelineEntry(
+  viewport: import('./conversation-memory-cache.js').ArkmeConversationViewportSnapshot,
+  readPage: (cursor?: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
+  signal: AbortSignal,
+): Promise<ArkmeTimelinePage> {
+  signal.throwIfAborted()
+  const anchor = !viewport.stickToBottom ? viewport.messageAnchor : undefined
+  const page = await readPage(anchor ? { unified: { mode: 'around', ...anchor } } : undefined)
+  signal.throwIfAborted()
+  if (!viewport.stickToBottom && viewport.anchorId && !page.unified?.events.some(event => {
+    const id = event.kind === 'message' ? `message:${event.eventId}`
+      : event.kind === 'moment' ? `moment:${event.item.momentId}` : event.eventId
+    return id === viewport.anchorId || event.kind === 'message' && `message:${event.item.timelineItemKey}` === viewport.anchorId
+  })) throw new Error('已保留阅读位置，暂时无法恢复该历史消息，请重试或重新定位')
+  return page
 }

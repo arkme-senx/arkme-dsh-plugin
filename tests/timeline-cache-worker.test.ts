@@ -17,6 +17,7 @@ it('bounds admission and isolates a worker failure from subsequent callers', asy
 it('rejects oversized writes before cloning them into the worker', async () => {
   const worker = new TimelineCacheWorker('unused', fixture("parentPort.on('message', ({id}) => parentPort.postMessage({id}));"))
   try {
+    await expect(worker.call({ kind: 'sync', command: { action: 'begin', account: 'x'.repeat(3 * 1024 * 1024) } })).rejects.toThrow('unavailable')
     await expect(worker.call({ kind: 'write', scope: 'scope', request: 'page', options: {},
       page: { source: {}, items: [], hasMore: false, large: 'x'.repeat(3 * 1024 * 1024) } as never })).rejects.toThrow('unavailable')
     await expect(worker.call({ kind: 'write', scope: 'scope', request: 'page',
@@ -24,3 +25,12 @@ it('rejects oversized writes before cloning them into the worker', async () => {
       page: { source: {}, items: [], hasMore: false } as never })).rejects.toThrow('unavailable')
   } finally { worker.close() }
 })
+
+it('keeps cold initialization recoverable after an individual caller deadline without releasing queued admission', async () => {
+  const worker = new TimelineCacheWorker('unused', fixture("const queued=[];let ready=false;parentPort.on('message',m=>{if(ready)parentPort.postMessage({id:m.id,value:17});else queued.push(m)});setTimeout(()=>{ready=true;parentPort.postMessage({ready:true});for(const m of queued)parentPort.postMessage({id:m.id,value:17})},5300);"))
+  try {
+    await expect(worker.call({kind:'reserve'})).rejects.toThrow('unavailable')
+    await expect(worker.call({kind:'reserve'})).resolves.toBe(17)
+    await expect(worker.call({kind:'reserve'})).resolves.toBe(17)
+  } finally {worker.close()}
+},10000)
