@@ -1,3 +1,4 @@
+import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
 import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
 import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
@@ -88,6 +89,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   return {
     jobId: source.jobId as string,
     ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
+    ...(validRecordingCreateRequestUID(source.createRequestUID) ? { createRequestUID: source.createRequestUID } : {}),
     userId: source.userId as number,
     revision: source.revision as number,
     phase: source.phase as RecordingImportPhase,
@@ -117,6 +119,10 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     ...(source.uploadCheckpoint !== null && typeof source.uploadCheckpoint === 'object'
       && !Array.isArray(source.uploadCheckpoint)
       ? { uploadCheckpoint: source.uploadCheckpoint as Record<string, unknown> }
+      : {}),
+    // Invalid persisted batch metadata must never silently become an ordinary upload.
+    ...(source.batch !== undefined && !validRecordingImportBatch(source.batch) && !['accepted', 'cancelled'].includes(source.phase)
+      ? { phase: 'failed' as const, retryable: false, errorCode: 'recording-import-batch-invalid', errorMessage: '导入批次数据无效，请重新选择未上传的文件', failedFromPhase: undefined }
       : {}),
   }
 }
@@ -651,7 +657,7 @@ export class ArkmeStateStore {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
         .filter(isUnresolvedRecordingImportJob)
-      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
+      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return

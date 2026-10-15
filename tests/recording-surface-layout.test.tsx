@@ -243,7 +243,7 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(summaryLoading).toContain('生成总结中...')
     expect(summaryLoading).not.toContain('>点击生成')
     expect(timelineFailure).toContain('时间轴生成失败，')
-    expect(timelineFailure).toContain('>点击生成时间轴</button>')
+    expect(timelineFailure).toContain('>选择模型并重试</button>')
   })
 
   it('formats transcript timestamps and durations with the desktop contract', () => {
@@ -301,7 +301,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(row.get('padding')).toBe('3px')
     expect(row.get('display')).toBe('grid')
-    expect(row.get('grid-template-columns')).toBe('minmax(0, min(128px, 45%)) minmax(0, 1fr)')
+    expect(row.get('grid-template-columns')).toBe('minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px')
     expect(row.get('border-radius')).toBe('6px')
     expect(row.get('background')).toContain('--dsw-specific-input-major')
     expect(markup).toContain(`aria-label="编辑说话人 ${speakerLabel}"`)
@@ -320,12 +320,13 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('display:inline-flex')
     expect(markup).not.toContain('width:88px')
     expect(markup).toContain('font-size:12px;line-height:22px;letter-spacing:.24px')
-    expect(markup).toContain('float:right')
-    expect(markup).toContain('>12:30:01 1分2秒</time>')
+    expect(markup).not.toContain('float:right')
+    expect(markup).toContain('class="arkme-recording-transcript-timestamp">12:30:01</span>')
+    expect(markup).toContain('class="arkme-recording-transcript-duration">1分2秒</span>')
     expect(markup).not.toContain('>背景音<')
   })
 
-  it('shows the supplied speaker avatar and the timeline speaker color in the transcript', () => {
+  it('shows only the supplied avatar for the viewer while retaining speaker editing and time', () => {
     const markup = renderToStaticMarkup(<recordingSurface.ArkmeRecordingTranscriptRow
       item={{
         itemId: 'self-item', itemRef: 'self-ref', startAtMillis: 1_000, endAtMillis: 2_000,
@@ -338,8 +339,9 @@ describe('ArkmeRecordingSurface layout', () => {
       onSelect={() => undefined}
     />)
     expect(markup).toContain('aria-label="HooXi头像"')
-    const name = matchStyle(markup, /<span style="([^"]+)">HooXi<\/span>/)
-    expect(name.get('color')).toBe('#ec7fa9')
+    expect(markup).not.toContain('>HooXi</span>')
+    expect(markup).toContain('aria-label="编辑说话人 HooXi"')
+    expect(markup).toContain('<time')
     expect(markup).not.toContain('background:#ec7fa9')
   })
 

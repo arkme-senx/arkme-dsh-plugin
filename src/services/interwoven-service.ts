@@ -81,7 +81,7 @@ export class InterwovenService {
     }
   }
 
-  async privateInteractionDirectory(options: Pick<ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal'> = {}): Promise<ArkmePrivateInteractionDirectoryPage> {
+  async privateInteractionDirectory(options: Pick<ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal' | 'background'> = {}): Promise<ArkmePrivateInteractionDirectoryPage> {
     const { data, userId, epoch, session } = await this.readPrivateInteractions('directory/query', options)
     const coverage = this.interactionCoverage(data)
     if (!Array.isArray(data.items) || data.items.length > (options.limit ?? 30) || typeof data.has_more !== 'boolean'
@@ -149,7 +149,7 @@ export class InterwovenService {
           ...(route === 'occurrences/query' ? { unread_only: options.unreadOnly ?? false } : {}),
           ...(options.expectedVersion === undefined ? {} : { expected_version: options.expectedVersion }),
         }, session, options.signal,
-        { lane: 'interactive-read', bypassCache: true },
+        { lane: options.background === true ? 'background-read' : 'interactive-read', bypassCache: true },
       )
     } catch (error) {
       const status = error instanceof ArkmeUpstreamResponseError ? stringValue(objectValue(error.responseData).status) : ''

@@ -15,6 +15,13 @@ function fixture(kind = 'private_chat') {
 }
 
 describe('mobile-compatible chat calendar statistics', () => {
+  it('keeps automatic statistics reads behind message bodies while sharing canonical cached data', async () => {
+    const { runtime, service, query } = fixture()
+    const background = await service.chatStatistics({ ...query, background: true })
+    expect(runtime.authenticatedChatPost.mock.calls[0]?.[4]).toMatchObject({ lane: 'background-read' })
+    expect(await service.chatStatistics(query)).toEqual(background)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledOnce()
+  })
   it.each(['private_chat', 'group_chat'])('normalizes production compact dates in %s and preserves navigation anchors', async kind => {
     const { runtime, service, query } = fixture(kind)
     runtime.authenticatedChatPost.mockResolvedValueOnce({ daily_data: [

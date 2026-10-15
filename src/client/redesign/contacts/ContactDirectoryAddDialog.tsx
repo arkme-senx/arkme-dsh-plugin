@@ -1,6 +1,7 @@
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useId, useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from '@phosphor-icons/react/X'
 import type { ArkmeSourceItem } from '../../../types.js'
 import { ArkmeContactAddSurface } from '../../ArkmeContactAddSurface.js'
 import { arkmeTheme } from '../../arkme-theme.js'
@@ -40,8 +41,8 @@ export function ContactDirectoryAddDialog({ shareWebsite, onClose, onAdded }: {
   </DirectoryActionDialog>
 }
 
-export function DirectoryActionDialog({ title, closeLabel, onClose, children }: {
-  title: string; closeLabel: string; onClose(): void; children: ReactNode
+export function DirectoryActionDialog({ title, closeLabel, onClose, children, appearance = 'directory', busy = false }: {
+  title: string; closeLabel: string; onClose(): void; children: ReactNode; appearance?: 'directory' | 'form'; busy?: boolean
 }) {
   useArkmeLocale()
   const id = useId()
@@ -54,7 +55,7 @@ export function DirectoryActionDialog({ title, closeLabel, onClose, children }: 
   }, [])
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); return }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const nodes = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]):not([type="file"]), [tabindex="0"]')
     const focusable = Array.from(nodes ?? []).filter(node => node.getClientRects().length > 0)
@@ -65,15 +66,17 @@ export function DirectoryActionDialog({ title, closeLabel, onClose, children }: 
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }
 
-  const dialog = <div style={styles.backdrop} role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) onClose()
+  // Small forms reuse the Contacts remark/guide recipe and its existing tokens.
+  const form = appearance === 'form'
+  const dialog = <div className={form ? 'arkme-contact-remark-backdrop' : undefined} style={form ? undefined : styles.backdrop} role="presentation" onMouseDown={event => {
+    if (event.target === event.currentTarget && !busy) onClose()
   }}>
-    <section ref={dialogRef} style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
-      <header style={styles.header}>
-        <h2 id={`${id}-title`} style={styles.title}>{title}</h2>
-        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={closeLabel} onClick={onClose}>×</button>
+    <section ref={dialogRef} className={form ? 'arkme-contact-remark-dialog' : undefined} style={form ? undefined : styles.dialog} role="dialog" aria-modal="true" aria-busy={busy || undefined} aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
+      <header className={form ? 'arkme-contact-remark-header' : undefined} style={form ? undefined : styles.header}>
+        <h2 id={`${id}-title`} style={form ? undefined : styles.title}>{title}</h2>
+        <button data-arkme-feedback="neutral" type="button" className={form ? 'arkme-contact-remark-close' : undefined} style={form ? undefined : styles.close} aria-label={closeLabel} disabled={busy} onClick={onClose}>{form ? <X size={20} aria-hidden /> : '×'}</button>
       </header>
-      <div style={styles.body}>
+      <div style={form ? undefined : styles.body}>
         {children}
       </div>
     </section>

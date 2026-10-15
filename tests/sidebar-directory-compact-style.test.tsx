@@ -33,6 +33,43 @@ afterEach(() => {
 })
 
 describe('compact conversation directory styles', () => {
+  it.each([
+    { compactDirectory: false, isMuted: false },
+    { compactDirectory: true, isMuted: false },
+    { compactDirectory: false, isMuted: true },
+    { compactDirectory: true, isMuted: true },
+  ])('keeps group attention out of private unread indicators (compact=$compactDirectory, muted=$isMuted)', ({ compactDirectory, isMuted }) => {
+    const interaction = { latest: { interactionRef: 'interaction', privateSourceRef: privateChat.sourceRef,
+      peerName: privateChat.displayName, groupSourceRef: 'group', groupName: '原群', sequence: 8,
+      occurredAtMillis: 80, senderIsMe: false, summary: '@ 我', unread: true, attention: true },
+      unreadCount: 2, attentionCount: 2, version: 'v1' }
+    // Unread arrivals and read-to-zero must behave identically with or without
+    // outstanding group mentions, including mute and 99+ display rules.
+    for (const directUnread of [0, 3, 103, 0]) {
+      const source = { ...privateChat, isMuted, unreadCount: directUnread }
+      arkmeChatDirectory.publish([])
+      arkmeChatDirectory.publish([source])
+      const baseline = new JSDOM(renderToStaticMarkup(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />))
+      arkmeChatDirectory.publish([])
+      arkmeChatDirectory.publish([{ ...source, privateInteraction: interaction }])
+      const dom = new JSDOM(renderToStaticMarkup(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />))
+      try {
+        const row = dom.window.document.querySelector('[data-arkme-directory-row="source"]')!
+        const baselineRow = baseline.window.document.querySelector('[data-arkme-directory-row="source"]')!
+        const avatar = row.querySelector('[data-arkme-conversation-content]')!.previousElementSibling!
+        const baselineAvatar = baselineRow.querySelector('[data-arkme-conversation-content]')!.previousElementSibling!
+        expect(avatar.outerHTML).toBe(baselineAvatar.outerHTML)
+        expect(row.getAttribute('aria-label')).toBe(baselineRow.getAttribute('aria-label'))
+        if (directUnread === 0) expect(row.getAttribute('aria-label')).toBe(privateChat.displayName)
+        else if (isMuted) expect(row.getAttribute('aria-label')).toContain('有未读消息，已免打扰')
+        else expect(row.getAttribute('aria-label')).toContain(`${directUnread} 条未读`)
+        expect(arkmeChatDirectory.getSnapshot().sources[0]).toMatchObject({ unreadCount: directUnread,
+          privateInteraction: { unreadCount: 2, attentionCount: 2 } })
+        expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(isMuted ? 0 : directUnread)
+      } finally { dom.window.close(); baseline.window.close() }
+    }
+  })
+
   it.each([false, true])('shares the rail marker and follows only the selected conversation (compact=%s)', compactDirectory => {
     const markerRules = css.match(/[^{}]*\[data-arkme-selection-marker\][^{}]*\{[^{}]*\}/g) ?? []
     for (const [label, select] of [

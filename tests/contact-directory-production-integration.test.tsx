@@ -199,13 +199,13 @@ describe('production sibling Contacts tab', () => {
       const request = params as { section?: string; countOnly?: boolean } | undefined
       return (operation === 'directory.list' || operation === 'team.app.directory') && request?.countOnly !== true
     }).map(([, params]) => (params as { section: string }).section)
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
 
     await act(async () => { button(renderer, '对话').props.onClick() })
     await act(async () => { button(renderer, '联系人').props.onClick() })
 
     expect(button(renderer, '选择联系人')).toBeDefined()
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
   })
 
 })

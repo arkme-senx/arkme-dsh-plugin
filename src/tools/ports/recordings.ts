@@ -5,6 +5,7 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 
 /** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort extends RecordingEntityPort {
+  recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]>
   recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence>
   recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers>

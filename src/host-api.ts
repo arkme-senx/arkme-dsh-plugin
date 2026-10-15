@@ -1,3 +1,5 @@
+import type { ArkmeRecordingWindow } from './types.js'
+import { objectValue } from './services/service.js'
 import type {ArkmeTeamProfileUpdate} from './team-profile-contract.js'
 import type { AppMigrationManager } from './app-migration.js'
 import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
@@ -37,6 +39,7 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
+import { measureConversationRead } from './conversation-read-diagnostics.js'
 import {
   arkmeExtensionShareRefFromLink,
   arkmeIsGenericLinkMetadataTitle,
@@ -955,7 +958,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.workflow', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.entities.start', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.entities.start', 'recordings.compare.start', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -976,7 +979,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         } finally { if (res.headersSent) res.end() }
         return
       }
-      const value = await dispatchArkmeHostOperation(
+      const value = await measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
         service,
         request.operation,
         params,
@@ -993,7 +996,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      )
+      ))
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
@@ -1294,6 +1297,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'voiceprint.restore': return await service.restoreVoiceprintPlayback()
     case 'contacts.search': return await service.searchContact(stringParam(params, 'identifier'))
+    case 'contacts.team-join': return await service.joinContactTeam(stringParam(params, 'jotmoId'), stringParam(params, 'requestUid'), requestSignal, stringParam(params, 'expectedAccountKey') || undefined)
     case 'contacts.add': return await service.addContact(stringParam(params, 'contactRef'), {
       ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
       ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
@@ -1311,6 +1315,7 @@ export async function dispatchArkmeHostOperation(
       const cursor = stringParam(params, 'cursor').trim()
       const expectedVersion = stringParam(params, 'expectedVersion').trim()
       return await service.privateInteractionDirectory({
+        ...(params?.background === true ? { background: true } : {}),
         limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 100)))),
         ...(cursor === '' ? {} : { cursor }),
         ...(expectedVersion === '' ? {} : { expectedVersion }),
@@ -1466,9 +1471,14 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.entities.occurrences': return await service.recordingEntityOccurrences({
       entityRef: stringParam(params, 'entityRef'), offset: numberParam(params, 'offset', 0), limit: numberParam(params, 'limit', 50),
     }, requestSignal)
-    case 'recordings.day': return await service.recordingDay(
-      numberParam(params, 'dateStamp', Number.NaN),
-      requestSignal,
+    case 'recordings.day': return params.window === undefined ? await service.recordingDay(numberParam(params, 'dateStamp', Number.NaN), requestSignal) : await service.recordingDay(
+      numberParam(params, 'dateStamp', Number.NaN), requestSignal,
+      params.window === undefined ? undefined : {
+        dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
+        endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
+        timeZone: stringParam(objectValue(params.window), 'timeZone'),
+        date: stringParam(objectValue(params.window), 'date'),
+      },
     )
     case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
@@ -1498,6 +1508,7 @@ export async function dispatchArkmeHostOperation(
       recordingProjectionKindParam(params),
       recordingSummaryModelRouteParam(params, false),
       requestSignal,
+      ...(params.window === undefined ? [] : [params.window as ArkmeRecordingWindow]),
     )
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
@@ -1550,6 +1561,7 @@ export async function dispatchArkmeHostOperation(
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'calendar.chat-statistics': return await service.calendarChatStatistics({
+      ...(params?.background === true ? { background: true } : {}),
       sourceRef: stringParam(params, 'sourceRef'),
       timezone: stringParam(params, 'timezone'),
       timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
@@ -1819,6 +1831,7 @@ export async function dispatchArkmeHostOperation(
         boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
       })
     }
+    case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
@@ -2014,6 +2027,7 @@ export async function dispatchArkmeHostOperation(
       return await service.readSource(
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
+          ...(params?.background === true ? { background: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }
@@ -2482,6 +2496,8 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'conversation.viewport.read': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), undefined, requestSignal)
+    case 'conversation.viewport.write': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), params.entries ?? [], requestSignal)
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)

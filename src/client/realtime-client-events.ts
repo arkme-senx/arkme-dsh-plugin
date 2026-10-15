@@ -279,6 +279,7 @@ export function useArkmeRealtimeClientEvents(
             update.sourceKey,
             update.effectiveReadSequence,
             update.unreadCount,
+            update.latestSequence,
           )
           return
         }
@@ -311,6 +312,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'read-receipts-invalidated') {
           arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
+          return
+        }
+        if (update.type === 'timeline-items') {
+          arkmeChatTimelineDelta.publish([{ source: update.source, items: update.items }])
           return
         }
         if (update.type === 'timeline-changed') {

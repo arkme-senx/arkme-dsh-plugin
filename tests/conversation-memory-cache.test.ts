@@ -304,7 +304,9 @@ describe('ArkmeConversationMemoryCache', () => {
     expect(source).toContain('}, 120)')
     const viewport = readFileSync(new URL('../src/client/conversation-viewport.ts', import.meta.url), 'utf8')
     expect(source.match(/\.scrollTop\s*=/g) ?? []).toHaveLength(0)
-    expect(viewport.match(/\.scrollTop\s*=/g)).toHaveLength(1)
+    // Restoration and pre-animation anchor compensation share this owner.
+    // Their behavior is covered by conversation-viewport.test, not a write count.
+    expect(viewport.match(/\.scrollTop\s*=/g)?.length ?? 0).toBeGreaterThan(0)
     expect(source).toContain('useConversationViewport')
     expect(viewport).toContain('arkmeConversationRestoredScrollTop')
   })

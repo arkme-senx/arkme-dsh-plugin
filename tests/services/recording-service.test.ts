@@ -35,6 +35,7 @@ describe('RecordingService', () => {
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
     const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }] as Array<{ speaker_id: string; nick_name: string; ref_usr_id?: number }>, failWrite: false,
       members: {} as Record<string, unknown>, presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
+      transcripts: undefined as Record<number, Record<string, unknown>> | undefined,
       presence: { state: 'fresh', version: 'v1', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
     const calls: string[] = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -53,6 +54,10 @@ describe('RecordingService', () => {
       if (path.endsWith('/one-day-trans')) data = {
         session_ls: [{ id: 'session', belong_usr: session.userId, start_at: 3600000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
         child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '内容' }] }],
+      }
+      if (state.transcripts && path.endsWith('/one-day-trans')) {
+        const request = JSON.parse(String(init?.body ?? '{}'))
+        data = state.transcripts[request.start_at] ?? { session_ls: [], child_ls: [] }
       }
       if (state.presenceMissing && path.endsWith('/one-day-trans')) {
         const request = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -88,6 +93,47 @@ describe('RecordingService', () => {
       ])
       expect(fixture.calls).toEqual(['/api/v1/audio/one-day-trans', '/api/v1/audio/one-day-trans'])
       expect(profiles).not.toHaveBeenCalled()
+    } finally { await fixture.close() }
+  })
+
+  it('validates original civil windows and retains them for transcript and version reads', async () => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    try {
+      const browserDate = Date.parse('2026-03-08T00:00:00+09:00')
+      const day = await fixture.service.recordingDay(browserDate, undefined, window)
+      expect(day.dateStamp).toBe(browserDate)
+      const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
+      expect(requests.find(call => call.path.endsWith('/one-day-trans'))?.body).toEqual({ start_at: window.dateStamp, end_at: window.endStamp, tz_offset: -5 * 3600_000 })
+      expect(requests.filter(call => call.path.endsWith('/list-timeline-by-range')).map(call => call.body)).toEqual([1, 2].map(kind => ({ from_stamp: window.dateStamp, to_stamp: window.endStamp, date_stamp: window.dateStamp, kind })).reverse())
+      for (const invalid of [{ ...window, timeZone: 'invalid-zone' }, { ...window, endStamp: window.dateStamp + 86400_000 }]) {
+        await expect(fixture.service.recordingDay(window.dateStamp, undefined, invalid)).rejects.toMatchObject({ code: 'recording-window-invalid' })
+      }
+    } finally { await fixture.close() }
+  })
+
+  it.each([['item', false], ['speaker', false], ['item', true], ['speaker', true]] as const)('keeps the notification civil day during speaker %s edits (different browser zone=%s)', async (scope, differentBrowserZone) => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    const browserDate = differentBrowserZone ? Date.parse('2026-03-08T00:00:00+09:00') : new Date(2026, 2, 8).getTime()
+    const start = window.endStamp - 3600_000 // Outside the browser's March 8, inside the original DST day.
+    fixture.state.transcripts = { [window.dateStamp]: {
+      session_ls: [{ id: 'session', belong_usr: 42, start_at: start, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '通知日的晚间录音' }] }],
+    } }
+    try {
+      const day = await fixture.service.recordingDay(browserDate, undefined, window)
+      expect(day.transcript.items).toHaveLength(1)
+      const options = await fixture.service.recordingSpeakerOptions()
+      const result = await fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })
+      expect(result).toMatchObject({ scope, affectedCount: 1, day: { dateStamp: browserDate, transcript: { items: [expect.objectContaining({ text: '通知日的晚间录音' })] } } })
+      const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
+      const reads = requests.filter(call => call.path.endsWith('/one-day-trans'))
+      expect(reads.length).toBeGreaterThan(0)
+      expect(reads.every(call => call.body.start_at === window.dateStamp && call.body.end_at === window.endStamp && call.body.tz_offset === -5 * 3600_000)).toBe(true)
+      expect(requests.some(call => call.path.endsWith(scope === 'item' ? '/assign-asr-item-to-spk' : '/batch-assign-session-num-to-spk'))).toBe(true)
+      // Refreshed items retain the same scope for a subsequent edit too.
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: result.day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })).resolves.toMatchObject({ affectedCount: 1 })
     } finally { await fixture.close() }
   })
 
@@ -311,12 +357,13 @@ describe('RecordingService', () => {
     return bytes
   }
 
-  it('starts summary generation with the desktop transcript contract and returns the owner processing projection', async () => {
+  it.each([false, true])('starts summary generation with the desktop transcript contract (original window=%s)', async (originalWindow) => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const dayStart = new Date(2026, 7, 31).getTime()
+    const window = originalWindow ? { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') } : undefined
+    const dayStart = window?.dateStamp ?? new Date(2026, 7, 31).getTime()
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
@@ -349,11 +396,11 @@ describe('RecordingService', () => {
       dependencies(),
     )
 
-    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max')).resolves.toMatchObject({
+    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max', undefined, window)).resolves.toMatchObject({
       state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
     })
     const create = requests.find(request => request.path.endsWith('/summary/create'))
-    const timezoneOffset = -new Date(dayStart).getTimezoneOffset() * 60_000
+    const timezoneOffset = window ? -5 * 3600_000 : -new Date(dayStart).getTimezoneOffset() * 60_000
     expect(create?.body).toMatchObject({
       date_stamp: dayStart,
       // JSON serialization normalizes UTC's negative zero to positive zero.
@@ -365,6 +412,10 @@ describe('RecordingService', () => {
       route_key: 'dashscope/qwen3-max',
       kind: 1,
     })
+    if (window) {
+      expect(create?.body.transcripts).toContain('2026-03-08 15:00:00')
+      expect(create?.body).toMatchObject({ time_zone: window.timeZone, day_end_stamp: window.endStamp })
+    }
     expect(create?.body.transcripts).toContain('说话人：我')
     expect(create?.body.transcripts).toContain('其中，我是我自己')
     expect(JSON.stringify(create?.body)).not.toContain('session-secret')
