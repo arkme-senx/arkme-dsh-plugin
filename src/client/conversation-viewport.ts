@@ -1,3 +1,4 @@
+import { recordOwnerId } from '../record-owner-id.js'
 import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
 import { useCallback, useLayoutEffect, type MutableRefObject, type RefObject } from 'react'
 import {
@@ -30,11 +31,17 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
     if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) continue
     const anchorId = row.dataset.arkmeConversationRow
     if (anchorId !== undefined) {
+      let messageAnchor: ArkmeConversationViewportSnapshot['messageAnchor']
+      if (anchorId.startsWith('message:') && row.dataset.arkmeMessageItemUid) {
+        const owner = recordOwnerId(row.dataset.arkmeMessageOwnerId)
+        if (owner) messageAnchor = { itemUid: row.dataset.arkmeMessageItemUid, recordOwnerUserId: owner }
+      }
       return {
         scrollTop: root.scrollTop,
         stickToBottom,
         anchorId,
         anchorOffset: rowRect.top - rootRect.top,
+        ...(messageAnchor ? { messageAnchor } : {}),
       }
     }
   }

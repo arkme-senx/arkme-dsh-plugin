@@ -9,7 +9,7 @@ interface DurableViewports {
 const PREFIX = 'arkme:reading:v1:'
 const MAX_BYTES = 64 * 1024
 const byteLength = (value: string) => new TextEncoder().encode(value).byteLength
-/** Only geometry and opaque row identities; no message bodies, credentials or server cursors. */
+/** Only geometry and stable row identities; no message bodies, credentials or server cursors. */
 export class ConversationViewportPersistence {
   private account: string | undefined
   private key = ''
@@ -37,15 +37,7 @@ export class ConversationViewportPersistence {
       if (raw && raw.length <= MAX_BYTES && byteLength(raw) <= MAX_BYTES) {
         const saved = JSON.parse(raw)
         if (saved.account === account && Array.isArray(saved.entries)) {
-          for (const [source, value] of saved.entries.slice(-40)) {
-            if (typeof source !== 'string' || source.length > 2048 || !value || typeof value.stickToBottom !== 'boolean'
-              || !Number.isFinite(value.scrollTop) || value.scrollTop < 0
-              || value.anchorId !== undefined && (typeof value.anchorId !== 'string' || value.anchorId.length > 1024)
-              || value.anchorOffset !== undefined && !Number.isFinite(value.anchorOffset)) continue
-            this.values.set(source, { scrollTop: value.scrollTop, stickToBottom: value.stickToBottom,
-              ...(value.anchorId === undefined ? {} : { anchorId: value.anchorId }),
-              ...(value.anchorOffset === undefined ? {} : { anchorOffset: value.anchorOffset }) })
-          }
+          for (const [source, value] of normalizeConversationViewports(saved.entries)) this.values.set(source, value)
         }
       }
       // Native conversation windows have one stable source-specific namespace.

@@ -1,3 +1,4 @@
+import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
@@ -2070,6 +2071,7 @@ export function ArkmeNavigation({
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
     {directory === 'root' && embeddedProductShell && directoryLead}
+    {directory === 'root' && embeddedProductShell && authenticated && <ArkmeMessageSyncBanner />}
     <ArkmeOverlayScrollArea
       ref={directoryScrollRef}
       {...arkmeHomeTourDirectoryAttributes({

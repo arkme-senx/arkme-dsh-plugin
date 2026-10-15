@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { securePrivateDirectorySync, securePrivateFileSync } from './private-filesystem.js'
 import type { ArkmeTimelinePage } from './types.js'
+import { ChatMessageSyncStore } from './chat-message-sync-store.js'
+import type { ChatSyncCommand } from './chat-message-sync.js'
 import { compareUnifiedTimelineEvents, type ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 export const TIMELINE_CACHE_FILE = 'chat-timeline-v2.sqlite3'
@@ -10,6 +12,8 @@ export const MAX_CACHED_WINDOWS = 256
 export const MAX_TIMELINE_WINDOW_EVENTS = 2000
 export const MAX_TIMELINE_WINDOW_BYTES = 4 * 1024 * 1024
 const MAX_CACHE_BYTES = 64 * 1024 * 1024
+const MAX_SYNC_BYTES = 192 * 1024 * 1024
+const MAX_SYNC_OCCUPIED_BYTES = 288 * 1024 * 1024
 // Coverage is also stored in entries and its indexes. Payload bytes alone do
 // not bound SQLite size. Leave 32 MiB below the 128 MiB file cap for one bounded
 // window, its indexes and transaction work; every committed write restores it.
@@ -21,6 +25,7 @@ type PageRow = { request: string; metadata: string; ticket: number }
 export class UnifiedTimelineCache {
   private readonly db: DatabaseSync
   private readonly statements = new Map<string, StatementSync>()
+  private readonly messageSync: ChatMessageSyncStore
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     securePrivateDirectorySync(directory)
@@ -29,7 +34,7 @@ export class UnifiedTimelineCache {
     securePrivateFileSync(path)
     this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL;
       PRAGMA journal_mode=WAL;
-      PRAGMA max_page_count=32768;
+      PRAGMA max_page_count=131072;
       PRAGMA busy_timeout=1000;
       PRAGMA journal_size_limit=8388608;
       PRAGMA wal_autocheckpoint=256;
@@ -43,6 +48,7 @@ export class UnifiedTimelineCache {
       CREATE INDEX IF NOT EXISTS pages_source_key ON pages(json_extract(metadata,'$.source.sourceKey'));
       CREATE TABLE IF NOT EXISTS contents (scope TEXT NOT NULL, event_id TEXT NOT NULL, source TEXT NOT NULL, payload TEXT NOT NULL, version INTEGER NOT NULL, ticket INTEGER NOT NULL, refs INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(scope,event_id));
       CREATE INDEX IF NOT EXISTS contents_orphans ON contents(scope) WHERE refs=0;
+      CREATE INDEX IF NOT EXISTS contents_message_record ON contents(scope,json_extract(payload,'$.item.itemUid')) WHERE source='messages';
       CREATE TABLE IF NOT EXISTS entries (scope TEXT NOT NULL, request TEXT NOT NULL, ordinal INTEGER NOT NULL, event_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(scope,request,ordinal));
       CREATE INDEX IF NOT EXISTS entries_content ON entries(scope,event_id);
       CREATE INDEX IF NOT EXISTS entries_token ON entries(scope,token);
@@ -56,6 +62,7 @@ export class UnifiedTimelineCache {
       CREATE TRIGGER IF NOT EXISTS content_removed AFTER DELETE ON contents BEGIN UPDATE cache_stats SET bytes=bytes-length(CAST(OLD.payload AS BLOB)) WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS page_added AFTER INSERT ON pages BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.metadata AS BLOB)) WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS page_removed AFTER DELETE ON pages BEGIN UPDATE cache_stats SET bytes=bytes-length(CAST(OLD.metadata AS BLOB)) WHERE id=1; END;`)
+    this.messageSync = new ChatMessageSyncStore(this.db, () => this.reserve(), () => this.enforceSyncBudget())
     // Older caches can already be at the file cap. Reclaim their least-recent
     // windows before the first write; no VACUUM or loss of authority fences.
     this.db.exec('BEGIN IMMEDIATE')
@@ -69,6 +76,18 @@ export class UnifiedTimelineCache {
   }
   reserve(): number {
     return Number(this.prepare('UPDATE clock SET ticket=ticket+1 WHERE id=1 RETURNING ticket').get()!.ticket)
+  }
+  sync(command: ChatSyncCommand): unknown { return this.messageSync.command(command) }
+  private syncBytes(): number {
+    return Number(this.prepare('SELECT metadata+bodies AS bytes FROM message_sync_stats WHERE id=1').get()!.bytes)
+  }
+  private enforceSyncBudget(): void {
+    // Background work never evicts a foreground reading window. Keep its full
+    // original 64 MiB logical / 96 MiB physical allowance available.
+    if (this.syncBytes() > MAX_SYNC_BYTES) throw new Error('message-sync-capacity')
+    const occupied = (Number(this.prepare('PRAGMA page_count').get()!.page_count) - Number(this.prepare('PRAGMA freelist_count').get()!.freelist_count))
+      * Number(this.prepare('PRAGMA page_size').get()!.page_size)
+    if (occupied > MAX_SYNC_OCCUPIED_BYTES) throw new Error('message-sync-capacity')
   }
   read(scope: string, request: string, anchorId?: string, latest = false): ArkmeTimelinePage | undefined {
     // An anchor selects an actual covered window; never fabricate coverage by concatenating disjoint pages.
@@ -130,6 +149,7 @@ export class UnifiedTimelineCache {
         const old = this.prepare('SELECT ticket,retired_ticket,status FROM sources WHERE scope=? AND source=?').get(scope, source.source)
         if (Number(old?.ticket ?? 0) > ticket) continue
         if (source.status === 'not_applicable' && old?.status !== 'not_applicable') {
+          if (source.source === 'messages') this.messageSync.invalidate(scope)
           removed = Number(this.prepare('DELETE FROM entries WHERE scope=? AND event_id IN (SELECT event_id FROM contents WHERE scope=? AND source=? AND ticket<=?)').run(scope, scope, source.source, ticket).changes) > 0 || removed
         }
         this.prepare('INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?)').run(scope, source.source, source.status, ticket,
@@ -145,6 +165,7 @@ export class UnifiedTimelineCache {
         for (const token of options.refreshTokens) for (const row of select.all(scope, token)) {
           if (Number(row.ticket) <= ticket && ready.has(String(row.source) as never) && !incoming.has(String(row.event_id))) {
             removed = Number(remove.run(scope, String(row.event_id)).changes) > 0 || removed
+            if (row.source === 'messages') this.messageSync.retire(scope, String(row.event_id))
           }
         }
       }
@@ -178,20 +199,21 @@ export class UnifiedTimelineCache {
       this.collect(scope)
       const oldest = this.prepare('SELECT scope,request FROM pages ORDER BY touched DESC LIMIT -1 OFFSET 256').all()
       for (const row of oldest) { this.remove(String(row.scope), String(row.request)); this.collect(String(row.scope)) }
-      while (Number(this.prepare('SELECT bytes FROM cache_stats WHERE id=1').get()!.bytes) > MAX_CACHE_BYTES) {
-        const row = this.prepare('SELECT scope,request FROM pages ORDER BY touched LIMIT 1').get()!
+      while (Number(this.prepare('SELECT bytes FROM cache_stats WHERE id=1').get()!.bytes) - this.syncBytes() > MAX_CACHE_BYTES) {
+        const row = this.prepare('SELECT scope,request FROM pages ORDER BY touched LIMIT 1').get()
+        if (!row) throw new Error('message-sync-capacity')
         this.remove(String(row.scope), String(row.request)); this.collect(String(row.scope))
       }
       this.trimPhysicalPages(scope, request)
       this.prepare('DELETE FROM sources WHERE NOT EXISTS (SELECT 1 FROM pages WHERE pages.scope=sources.scope)').run()
-      this.prepare('DELETE FROM scopes WHERE scope IN (SELECT scope FROM scopes ORDER BY fence DESC LIMIT -1 OFFSET 1024)').run()
+      this.prepare('DELETE FROM scopes WHERE scope NOT IN (SELECT scope FROM message_sync_sessions) AND scope IN (SELECT scope FROM scopes ORDER BY fence DESC LIMIT -1 OFFSET 1024)').run()
       this.db.exec('COMMIT')
       try { this.db.exec('PRAGMA incremental_vacuum(32)') } catch { /* Maintenance cannot roll back an already committed window. */ }
       return true
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   invalidateSource(sourceKey: string, timelineItemKey?: string, terminal = false, refreshOnly = false): void {
-    const rows = this.prepare("SELECT DISTINCT scope FROM pages WHERE json_extract(metadata,'$.source.sourceKey')=?").all(sourceKey)
+    const rows = this.prepare("SELECT DISTINCT scope FROM pages WHERE json_extract(metadata,'$.source.sourceKey')=? UNION SELECT scope FROM message_sync_sessions WHERE source_key=?").all(sourceKey, sourceKey)
     for (const row of rows) this.invalidate(String(row.scope), timelineItemKey, terminal, refreshOnly)
   }
   invalidate(scope: string, timelineItemKey?: string, terminal = false, refreshOnly = false): void {
@@ -203,7 +225,10 @@ export class UnifiedTimelineCache {
         // Keep freshness durable without rejecting every read during a busy conversation.
         this.prepare('INSERT OR REPLACE INTO refresh_hints VALUES (?,?)').run(scope, ticket)
         this.prepare('DELETE FROM refresh_hints WHERE scope IN (SELECT scope FROM refresh_hints ORDER BY ticket DESC LIMIT -1 OFFSET 1024)').run()
-      } else this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
+      } else {
+        this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
+        this.messageSync.invalidate(scope, timelineItemKey)
+      }
       if (terminal && timelineItemKey) {
         // Persist the authority fence even when the new response has not arrived yet.
         const rows = this.prepare("SELECT event_id,payload FROM contents WHERE scope=? AND json_extract(payload,'$.item.timelineItemKey')=?").all(scope, timelineItemKey)
@@ -218,12 +243,13 @@ export class UnifiedTimelineCache {
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   private collect(scope: string): void {
-    this.prepare('DELETE FROM contents WHERE scope=? AND refs=0').run(scope)
+    this.prepare('DELETE FROM contents WHERE scope=? AND refs=0 AND NOT EXISTS (SELECT 1 FROM message_sync_work w WHERE w.scope=contents.scope AND w.event_id=contents.event_id)').run(scope)
   }
   private trimPhysicalPages(scope?: string, request?: string): void {
     const size = Number(this.prepare('PRAGMA page_size').get()!.page_size)
     const pages = Number(this.prepare('PRAGMA page_count').get()!.page_count)
-    while ((pages - Number(this.prepare('PRAGMA freelist_count').get()!.freelist_count)) * size > MAX_OCCUPIED_BYTES) {
+    const budget = this.syncBytes() > 0 ? MAX_OCCUPIED_BYTES + MAX_SYNC_OCCUPIED_BYTES : MAX_OCCUPIED_BYTES
+    while ((pages - Number(this.prepare('PRAGMA freelist_count').get()!.freelist_count)) * size > budget) {
       const row = scope === undefined
         ? this.prepare('SELECT scope,request FROM pages ORDER BY touched LIMIT 1').get()
         : this.prepare('SELECT scope,request FROM pages WHERE scope<>? OR request<>? ORDER BY touched LIMIT 1').get(scope, request!)
