@@ -16,6 +16,8 @@ const local = { current: 'same', ids: ['same'], byId: { same: { id: 'same', disp
 const ws = { items: [{ workspaceId: 'workspace', path: '/repo', title: 'repo', sessionIds: ['same'], createdAt: 1 }], archivedSessionIds: [], phase: 'ready', state: 'idle', error: null }
 const cleanups: Array<() => void> = []
 it('publishes one source per container only after complete pagination, without deleting another device session', async () => {
+  let notify!: () => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: () => void) => { notify = changed; return () => {} } } as never)
   const nativeWindow = window as HarnessNativeWindow
   const original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
   const publish = vi.fn()
@@ -38,12 +40,12 @@ it('publishes one source per container only after complete pagination, without d
   expect(publish).toHaveBeenLastCalledWith([other, current], 'mac')
   expect(projectAccountWorkspaces(ws, publish.mock.lastCall![0]).items.flatMap(item => item.sessionIds)).not.toContain(accountSessionKey(old))
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [{ ...old }, { ...other }, { ...current }], localRuntimeRef: 'mac' })
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  notify()
   await Promise.resolve(); await Promise.resolve()
   expect(publish).toHaveBeenCalledTimes(1)
   // A failed/incomplete refresh must not briefly republish the old duplicates.
   vi.mocked(callArkme).mockRejectedValue(new Error('network unavailable'))
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  notify()
   await Promise.resolve(); await Promise.resolve()
   expect(publish).toHaveBeenCalledTimes(1)
 })
@@ -402,4 +404,16 @@ it('refreshes immediately on a committed directory event and retains an event re
   expect(stopObserve).toHaveBeenCalledOnce()
   notify()
   expect(callArkme).toHaveBeenCalledTimes(3)
+})
+
+it('retains verified copy coverage only while committed content revisions match', () => {
+  const old = row({ directoryVersion: [1, 1], canonicalIdentity: true, historyRevision: 'h1', contentRevision: 'c1',
+    coveredLocalHistory: { runtimeRef: 'local', updatedAt: 20, projectionAsOfSeq: 3, source: 'local' } })
+  const renamed = applyAccountSessionDelta([old], { version: 1, sessions: [committed({
+    canonical_identity: true, history_revision: 'h1', content_revision: 'c1', deduplicated_runtime_refs: ['local'], readable_runtime_refs: ['local'],
+  })] })!
+  expect(renamed[0]).toMatchObject({ canonicalIdentity: true, previousRuntimeRefs: ['local'], readableRuntimeRefs: ['local'], coveredLocalHistory: old.coveredLocalHistory })
+  const advanced = applyAccountSessionDelta(renamed, { version: 1, sessions: [committed({ projection_at: 3, history_revision: 'h1', content_revision: 'c2' })] })!
+  expect(advanced[0]?.coveredLocalHistory).toBeUndefined()
+  expect(advanced[0]?.contentRevision).toBe('c2')
 })

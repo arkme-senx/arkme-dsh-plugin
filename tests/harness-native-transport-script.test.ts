@@ -17,6 +17,7 @@ function fixture(search = '?arkme-harness-embed=1') {
   const attributes = new Map<string, string>([['data-arkme-account-id', '3016']])
   const listeners = new Map<string, () => void>()
   const window = { location: { search, href: 'http://localhost:3000/arkme-self/harness' }, frameElement: { parentElement: {
+    ownerDocument: { dispatchEvent: vi.fn(), defaultView: { CustomEvent } },
     getAttribute: (key: string) => attributes.get(key), setAttribute: (key: string, value: string) => attributes.set(key, value),
     removeAttribute: (key: string) => attributes.delete(key),
   } }, addEventListener: (name: string, fn: () => void) => listeners.set(name, fn) } as any
@@ -414,8 +415,6 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   await next.return()
 })
 
-
-})
 
 it('keeps an idle native local entry executable while its cloud metadata advances', async () => {
   const f = fixture(), dispatchEvent = vi.fn()

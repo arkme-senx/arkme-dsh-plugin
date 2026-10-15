@@ -690,7 +690,7 @@ it('keeps verified cloud history when a stable executor is absent and resumes on
   const f = fixture(false), original = f.post.getMockImplementation()!
   let online = false
   f.post.mockImplementation(async (path, body, signal) => {
-    if (path.endsWith('/sessions/list')) return { items: [{ session_ref: 'same-session', title: 'empty', source_updated_at: 1 }] } as never
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime-remote', session_ref: 'same-session', title: 'empty', source_updated_at: 1, history_complete_through_seq: -1 } as never
     if (path.endsWith('/session-events/list')) return { entries: [] } as never
     if (path.endsWith('/session-turn-objects/list')) return { items: [] } as never
     const result = await original(path, body, signal)
@@ -732,7 +732,7 @@ it('resumes an existing cloud-only page on canonical ready without a directory H
   const f = fixture(false), original = f.post.getMockImplementation()!
   let online = false
   f.post.mockImplementation(async (path, body, signal) => {
-    if (path.endsWith('/sessions/list')) return { items: [{ session_ref: 'same-session', title: 'empty', source_updated_at: 1 }] } as never
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime-remote', session_ref: 'same-session', title: 'empty', source_updated_at: 1, history_complete_through_seq: -1 } as never
     if (path.endsWith('/session-events/list')) return { entries: [] } as never
     if (path.endsWith('/session-turn-objects/list')) return { items: [] } as never
     const result = await original(path, body, signal)

@@ -11,6 +11,11 @@ export interface DshDirectorySession extends Record<string, unknown> {
   running: boolean
   blank: boolean
   archived: boolean
+  canonical_identity?: boolean
+  deduplicated_runtime_refs?: string[]
+  readable_runtime_refs?: string[]
+  history_revision?: string
+  content_revision?: string
   title?: string
   executor_runtime_ref?: string
   origin?: string
@@ -39,6 +44,11 @@ export function parseDshDirectoryDelta(value: unknown): DshDirectoryDelta | unde
     if (!ref(row.runtime_ref) || !ref(row.session_ref) || (row.workspace_ref !== '' && !ref(row.workspace_ref))
       || !integer(row.host_generation, 1) || !integer(row.projection_at, 1) || !integer(row.source_updated_at, 1)
       || typeof row.running !== 'boolean' || typeof row.blank !== 'boolean' || typeof row.archived !== 'boolean'
+      || (row.canonical_identity !== undefined && typeof row.canonical_identity !== 'boolean')
+      || (row.deduplicated_runtime_refs !== undefined && (!Array.isArray(row.deduplicated_runtime_refs) || !row.deduplicated_runtime_refs.every(ref)))
+      || (row.readable_runtime_refs !== undefined && (!Array.isArray(row.readable_runtime_refs) || !row.readable_runtime_refs.every(ref)))
+      || (row.history_revision !== undefined && typeof row.history_revision !== 'string')
+      || (row.content_revision !== undefined && typeof row.content_revision !== 'string')
       || (row.title !== undefined && typeof row.title !== 'string')
       || (row.origin !== undefined && typeof row.origin !== 'string')
       || (row.executor_runtime_ref !== undefined && !ref(row.executor_runtime_ref))
