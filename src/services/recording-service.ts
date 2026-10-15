@@ -2,6 +2,9 @@ import type { ArkmeRecordingWindow } from '../types.js'
 import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
 import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
+import { parseRecordingTotalMetrics } from '../recording-total-metrics.js'
+import type { RecordingTotalsIndexPage } from '../recording-total-metrics.js'
+import { projectRecordingTotalsBucket } from '../recording-total-projection.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
@@ -67,7 +70,7 @@ import type {
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
-import { projectRecordingCoverage, recordingBelongsToViewer } from '../recording-coverage.js'
+import { projectRecordingCoverage, recordingUploadedByViewer, recordingBelongsToViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
@@ -1565,6 +1568,43 @@ export class RecordingService {
     return parseRecordingPresence(data)
   }
 
+  async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal): Promise<RecordingTotalsIndexPage> {
+    this.assertWorkbenchEnabled()
+    if (!Number.isSafeInteger(toMillis) || toMillis <= 0 || toMillis > Date.now() + 60_000
+      || !Number.isSafeInteger(offset) || offset < 0 || offset > 500_000) throw new ArkmePluginError('recording-range-invalid', '录音统计范围无效', false)
+    const session = await this.runtime.requireSession()
+    if (account !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换', false)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/get-session-ls',
+      { to_stamp: toMillis, offset, limit: 50, query_new: false }, session, signal, { lane: 'background-read', bypassCache: true })
+    if (!Array.isArray(data.session_ls) || data.session_ls.length > 50) throw new ArkmePluginError('recording-totals-invalid', '录音列表不完整', true)
+    const items: RecordingTotalsIndexPage['items'] = []
+    for (const raw of data.session_ls) {
+      const row = objectValue(raw)
+      if (typeof row.id !== 'string' || !row.id || !Number.isSafeInteger(row.start_at) || (row.start_at as number) < 0
+        || (row.start_at as number) >= toMillis || !Number.isSafeInteger(row.user_id) || (row.user_id as number) <= 0) {
+        throw new ArkmePluginError('recording-totals-invalid', '录音日期或归属不完整', true)
+      }
+      if (!recordingUploadedByViewer(row, session.userId)) continue
+      const date = new Date(row.start_at as number); date.setHours(0, 0, 0, 0)
+      const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+      items.push({ key: hash(`${session.userId}:${row.id}`), dateStamp: date.getTime(),
+        revision: hash(JSON.stringify([row.id, row.update_at, row.start_at, row.end_at, row.duration, row.size, row.has_done_child, row.has_finish_spk])),
+        pending: row.has_done_child !== true })
+    }
+    return { items, nextOffset: data.session_ls.length === 50 ? offset + 50 : null }
+  }
+
+  async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    const day = this.recordingDayStart(dateStamp), end = new Date(day); end.setDate(end.getDate() + 1)
+    const session = await this.runtime.requireSession()
+    if (account !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换', false)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/one-day-trans',
+      { start_at: day.getTime(), end_at: end.getTime(), tz_offset: -day.getTimezoneOffset() * 60_000 }, session, signal,
+      { lane: 'background-read', bypassCache: true })
+    return projectRecordingTotalsBucket(data, session.userId, day.getTime(), end.getTime())
+  }
+
   async recordingCalendar(
     fromStamp: number,
     toStamp: number,
@@ -1599,7 +1639,8 @@ export class RecordingService {
       })
       cursor.setDate(cursor.getDate() + 1)
     }
-    return { fromStamp: from, toStamp: to, days }
+    const totals = parseRecordingTotalMetrics(data.recording_totals)
+    return { fromStamp: from, toStamp: to, days, ...(totals ? { totals } : {}) }
   }
 
   async recordingTranscript(

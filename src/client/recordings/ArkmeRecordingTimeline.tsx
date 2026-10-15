@@ -230,7 +230,7 @@ export function recordingTimelineTickTimes(windowStart: number, windowEnd: numbe
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { display: 'grid', gap: 8, padding: '12px 8px', boxSizing: 'border-box', background: desktop.base },
+  shell: { display: 'grid', gap: 8, padding: '4px 8px', boxSizing: 'border-box', background: desktop.base },
   overviewRow: { position: 'relative', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
   overviewColumn: { minWidth: 0, height: 36, position: 'relative' },
   overview: { position: 'relative', overflow: 'hidden', height: 18, marginTop: 2, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
