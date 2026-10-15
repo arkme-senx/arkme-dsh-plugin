@@ -105,7 +105,7 @@ describe('recording transcript speaker popover', () => {
     expect(stopPropagation).toHaveBeenCalledOnce()
     const editor = renderer.root.findByType(ArkmeRecordingSpeakerEditor)
     expect(editor.props.item.itemRef).toBe('sealed-item-2')
-    expect(editor.props.forceBatchUpdate).toBe(false)
+    expect(editor.props.initialBatchUpdate).toBe(false)
     expect(button.props['aria-expanded']).toBe(true)
   })
 
