@@ -17,6 +17,7 @@ export function ArkmeRecordTopicAssignmentDialog(props: {
   currentTopicKey?: string
   port?: RecordTopicAssignmentPort
   directory?: SelfTopicDirectoryCache
+  onSubmit?(target?: ArkmeSourceItem): void
   onCancel(): void
   onRefresh(): void
   onAssigned(result: ArkmeRecordTopicAssignmentResult, target?: ArkmeSourceItem): void
@@ -64,6 +65,7 @@ export function ArkmeRecordTopicAssignmentDialog(props: {
         setCreateOpen(false)
         setPendingLabel('正在指定主题…')
       }
+      if (props.onSubmit) { props.onSubmit(target); return }
       result = await port.assign({ sourceRef: props.source.sourceRef, assignmentRefs: props.assignmentRefs,
         ...(target === undefined ? {} : { targetSourceRef: target.sourceRef }),
       }, controller.signal)
