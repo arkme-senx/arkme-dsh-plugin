@@ -451,3 +451,59 @@ it('cancels manual start on day changes and drops its late completion', async ()
   expect(owner.starting).toBe(false)
   expect(mocks.call).toHaveBeenCalledTimes(count)
 })
+
+const clickLabel = async (label: string) => act(async () => {
+  const button = [...host.querySelectorAll('button')].find(item => item.textContent === label)
+  expect(button).toBeTruthy(); button!.click(); await tick()
+})
+it('preserves every legacy entity, disables unavailable feedback, and never invents relevance', async () => {
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'o', startAtMillis: 123, text: '武汉', observedText: '武汉' }] })
+  await act(async () => root.render(<RecordingEntityPanel data={day()} loading={false} error={false} paused={false} compact={false} onClose={() => {}} onRefresh={() => {}} onLocate={() => true} />))
+  expect(host.querySelector<HTMLButtonElement>('.arkme-entity-relevance button')!.disabled).toBe(true)
+  expect(host.querySelector('.arkme-entity-relevance [aria-pressed=true]')!.textContent).toBe('全部')
+  expect(host.textContent).toContain('暂未提供相关性信息')
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  await clickLabel('反馈')
+  expect(host.textContent).toContain('暂不支持保存反馈')
+  expect([...host.querySelectorAll<HTMLButtonElement>('.arkme-entity-feedback-actions button')].every(b => b.disabled)).toBe(true)
+  expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['recordings.entities.occurrences'])
+})
+it('prioritizes self and conversations, preserves other content, composes type filters and reveals background links', async () => {
+  const item = day().entities![0]!
+  const data = day({ personalization: { revision: 1, feedbackSupported: true }, entities: [
+    { ...item, key: 'background', name: '背景品牌', type: 8, relevance: 'background' },
+    { ...item, key: 'conversation', name: '交流地点', relevance: 'conversation' },
+    { ...item, key: 'self', name: '我的项目', type: 6, relevance: 'self' },
+    { ...item, key: 'unknown', name: '未知来源' },
+  ] })
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 0, hasMore: false, items: [] })
+  const render = (reveal?: { key: string; sequence: number }) => root.render(<RecordingEntityPanel data={data} reveal={reveal} loading={false} error={false} paused={false} compact={false} onClose={() => {}} onRefresh={() => {}} onLocate={() => true} />)
+  await act(async () => render())
+  const titles = () => [...host.querySelectorAll('.arkme-entity-item-title strong')].map(n => n.textContent)
+  expect(titles()).toEqual(['我的项目', '交流地点'])
+  await clickLabel('其他内容 · 2')
+  expect(titles()).toEqual(['我的项目', '交流地点', '未知来源', '背景品牌'])
+  await clickLabel('收起其他内容 · 2'); await clickLabel('地点')
+  expect(titles()).toEqual(['交流地点'])
+  await act(async () => { render({ key: 'background', sequence: 1 }); await tick() })
+  expect(host.querySelector('.arkme-entity-item-title[aria-expanded=true] strong')!.textContent).toBe('背景品牌')
+  expect(host.querySelector('.arkme-entity-types [aria-pressed=true]')!.textContent).toBe('全部')
+})
+it('keeps playback source visible on a relevant mention and persists only after feedback acknowledgment', async () => {
+  const refresh = vi.fn(), locate = vi.fn(() => true)
+  let resolve!: (value: unknown) => void
+  mocks.call.mockImplementation((op: string) => op === 'recordings.entities.occurrences' ? Promise.resolve({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'o', feedbackRef: 'opaque-feedback', startAtMillis: 123, text: '武汉', observedText: '武汉', target: { identityHash: 'hash' }, context: { relevance: 'concerned', soundSource: 'playback', accuracy: 'needs_confirmation' } }] }) : new Promise(done => { resolve = done }))
+  await act(async () => root.render(<RecordingEntityPanel data={day({ personalization: { revision: 1, feedbackSupported: true }, entities: [{ ...day().entities![0]!, relevance: 'concerned' }] })} loading={false} error={false} paused={false} compact={false} onClose={() => {}} onRefresh={refresh} onLocate={locate} />))
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  expect(host.querySelector('.arkme-entity-occurrence small')!.textContent).toBe('播放内容 · 待核实')
+  await clickLabel('反馈'); await clickLabel('与我有关')
+  expect(refresh).not.toHaveBeenCalled(); expect(locate).not.toHaveBeenCalled()
+  expect(host.textContent).not.toContain('反馈已保存')
+  expect([...host.querySelectorAll<HTMLButtonElement>('.arkme-entity-feedback-actions button')].every(b => b.disabled)).toBe(true)
+  await act(async () => { resolve({ undoRef: 'opaque-undo', undoExpiresAt: Date.now() + 60_000 }); await tick() })
+  expect(refresh).toHaveBeenCalledOnce(); expect(host.textContent).toContain('反馈已保存，仅影响这次提及')
+  await clickLabel('撤销反馈')
+  expect(mocks.call.mock.calls.at(-1)![0]).toBe('recordings.entities.feedback.undo')
+  await act(async () => { resolve({ status: 'undone' }); await tick() })
+  expect(host.textContent).toContain('已撤销这次反馈')
+})

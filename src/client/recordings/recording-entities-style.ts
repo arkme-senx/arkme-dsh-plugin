@@ -23,4 +23,15 @@ export const RECORDING_ENTITY_STYLE = `
 .arkme-entity-occurrences time { opacity: .65; font-variant-numeric: tabular-nums; font-size: 11px; }
 .arkme-entity-occurrences span { overflow-wrap: anywhere; line-height: 1.65; }
  .arkme-entity-more { text-align: center; padding: 8px; }
+.arkme-entity-relevance { display: flex; gap: 4px; padding: 0 10px 6px; }
+.arkme-entity-relevance button[aria-pressed=true] { background: color-mix(in srgb, currentColor 10%, transparent); font-weight: 600; }
+.arkme-entity-hint { margin: 0 18px 10px; font-size: 12px; opacity: .65; line-height: 1.5; }
+.arkme-entity-other { width: 100%; text-align: left; margin-top: 6px; }
+.arkme-entity-mention { border-bottom: 1px solid color-mix(in srgb, currentColor 7%, transparent); padding-bottom: 4px; }
+.arkme-entity-occurrence small { opacity: .7; font-size: 11px; }
+.arkme-entity-panel .arkme-entity-feedback-toggle { padding: 2px 9px; font-size: 11px; opacity: .7; }
+.arkme-entity-feedback-actions { padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, currentColor 4%, transparent); }
+.arkme-entity-feedback-actions p { font-size: 11px; opacity: .7; margin: 3px 0; }
+.arkme-entity-feedback-status { padding: 6px 18px; font-size: 12px; background: color-mix(in srgb, currentColor 5%, transparent); }
+.arkme-entity-feedback-status p { margin: 3px 0; }
 `

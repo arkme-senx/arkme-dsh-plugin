@@ -7,6 +7,8 @@ import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEn
 import { recordingEntityDisplayRange } from '../recording-entity-range.js'
 import { recordingSearchIdentityHash, recordingSearchVersion } from '../recording-search-version.js'
 import { ArkmePluginError, ServiceRuntime, objectValue } from './service.js'
+import { entityAccuracy, entityOccurrenceContext, entityPersonalization, entityRelevance } from './recording-entity-personalization.js'
+import type { RecordingEntityFeedbackInput, RecordingEntityFeedbackResult, RecordingEntityFeedbackUndoInput } from '../recording-entity-contract.js'
 
 const PREFIX = 'arkme-recording-entity-v1'
 const invalid = () => new ArkmePluginError('recording-entities-invalid', '实体数据无效，请刷新重试', true, 502)
@@ -57,10 +59,11 @@ export class RecordingEntityService implements RecordingEntityPort {
     return this.runtime.authenticatedRelationPost('/api/v1/entity/audio-day/list', {
       day_stamp: dateStamp, transcript_source: source, active_transcript_source: source,
       known_state_revision: integer(query.knownStateRevision), known_projection_revision: integer(query.knownProjectionRevision),
+      ...(query.knownPersonalizationRevision === undefined ? {} : { known_personalization_revision: integer(query.knownPersonalizationRevision) }),
     }, session, signal, { bypassCache: true, cacheMs: 0 })
   }
   private identity(raw: Record<string, unknown>): unknown[] {
-    return [raw.day_stamp, raw.transcript_source, raw.job_id ?? '', raw.view_mode, raw.projection_revision ?? 0, raw.result_version ?? '']
+    return [raw.day_stamp, raw.transcript_source, raw.job_id ?? '', raw.view_mode, raw.projection_revision ?? 0, raw.result_version ?? '', entityPersonalization(raw.personalization)?.revision ?? null]
   }
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
     const { dateStamp, source } = this.query(query)
@@ -90,6 +93,11 @@ export class RecordingEntityService implements RecordingEntityPort {
       pollable: raw.pollable, stage: typeof progress.stage === 'string' ? string(progress.stage, 100) : 'not_started',
       completedUnits: integer(progress.completed_units), totalUnits: integer(progress.total_units),
     }
+    const personalization = entityPersonalization(raw.personalization)
+    if (personalization) {
+      if (raw.entities === undefined && query.knownPersonalizationRevision !== personalization.revision) throw invalid()
+      result.personalization = personalization
+    }
     if (raw.can_start !== undefined && typeof raw.can_start !== 'boolean') throw invalid()
     result.canStart = raw.can_start === true || (raw.can_start === undefined && result.status === 'not_started')
     if (raw.transcript_health !== undefined) {
@@ -114,10 +122,13 @@ export class RecordingEntityService implements RecordingEntityPort {
           viewMode: result.viewMode, projectionRevision: result.projectionRevision,
           resultVersion: typeof raw.result_version === 'string' ? string(raw.result_version) : '',
           entityId: string(result.viewMode === 'official' ? entity.official_entity_id : entity.projection_entity_id),
+          ...(personalization ? { personalizationRevision: personalization.revision, feedbackSupported: personalization.feedbackSupported } : {}),
         }
         if (!ref.jobId || !ref.entityId || (ref.viewMode === 'official' ? !ref.resultVersion : !ref.projectionRevision)) throw invalid()
         result.entities.push({ key: await this.hash([session.userId, entity.entity_key]), entityRef: await this.codec.seal(PREFIX, ref),
-          name, type, typeLabel: typeof entity.llm_type === 'string' ? string(entity.llm_type, 100) : '', occurrenceCount: integer(entity.occurrence_count) })
+          name, type, typeLabel: typeof entity.llm_type === 'string' ? string(entity.llm_type, 100) : '', occurrenceCount: integer(entity.occurrence_count),
+          ...(personalization && entity.relevance !== undefined ? { relevance: entityRelevance(entity.relevance) } : {}),
+          ...(personalization && entity.accuracy !== undefined ? { accuracy: entityAccuracy(entity.accuracy) } : {}) })
       }
     } else if (!query.knownStateRevision && !query.knownProjectionRevision || ['not_started', 'source_mismatch'].includes(result.status) || !raw.job_id) {
       result.entities = []
@@ -150,7 +161,8 @@ export class RecordingEntityService implements RecordingEntityPort {
     ]).finally(() => controller.abort())
     if (raw.replaced_by || raw.job_id !== ref.jobId || raw.view_mode !== ref.viewMode
       || (ref.viewMode === 'official' ? raw.result_version !== ref.resultVersion || raw.official_entity_id !== ref.entityId
-        : raw.projection_revision !== ref.projectionRevision || raw.projection_entity_id !== ref.entityId)) throw stale()
+        : raw.projection_revision !== ref.projectionRevision || raw.projection_entity_id !== ref.entityId)
+      || (ref.personalizationRevision !== undefined && entityPersonalization(raw.personalization)?.revision !== ref.personalizationRevision)) throw stale()
     const occurrences = array(raw.occurrences, 10000)
     const page = occurrences.slice(offset, offset + limit)
     const byIdentity = new Map(rows.map(row => [`${row.sessionId}:${row.childId}:${row.asrItemIndex}:${row.transcriptSource}`, row]))
@@ -168,11 +180,51 @@ export class RecordingEntityService implements RecordingEntityPort {
         transcriptVersion: recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
       } : undefined
       const excerpt = row && range ? Array.from(row.text).slice(Math.max(0, range.start - 30), range.start + range.length + 60).join('') : observedText
+      const context = ref.personalizationRevision !== undefined ? entityOccurrenceContext(occurrence.context) : undefined
+      const feedbackRef = target && ref.feedbackSupported === true && typeof occurrence.feedback_version === 'string' && occurrence.feedback_version.length > 0
+        ? await this.codec.seal(`${PREFIX}-feedback`, { ...ref, occurrenceId: string(occurrence.occurrence_id), feedbackVersion: string(occurrence.feedback_version) }) : undefined
       items.push({ key: await this.hash([ref.version, occurrence.occurrence_id, rowId, start, end]), startAtMillis, observedText, text: excerpt,
-        ...(target ? { target } : {}) })
+        ...(target ? { target } : {}), ...(context ? { context } : {}), ...(feedbackRef ? { feedbackRef } : {}) })
     }
     await check()
     await this.assertCurrent(session, revision, signal)
     return { version: string(ref.version), items, total: occurrences.length, offset, hasMore: offset + limit < occurrences.length }
+  }
+  private requestId(value: string): string {
+    if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(value)) throw invalid()
+    return value
+  }
+  async recordingEntityFeedback(input: RecordingEntityFeedbackInput, signal?: AbortSignal): Promise<RecordingEntityFeedbackResult> {
+    if (!['relevant', 'playback', 'incorrect'].includes(input.action)) throw invalid()
+    const requestId = this.requestId(input.requestId)
+    const session = await this.runtime.requireSession(), revision = this.revision
+    const ref = await this.codec.open(`${PREFIX}-feedback`, input.feedbackRef)
+    if (ref.viewerUserId !== session.userId || ref.environment !== this.runtime.config.environment) throw stale()
+    if (ref.feedbackSupported !== true || !ref.occurrenceId || !ref.feedbackVersion) throw invalid()
+    // The owner resolves the idempotency receipt before checking stale versions. A retry
+    // after an unknown outcome must recover the first operation, never create a new one.
+    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/feedback', {
+      job_id: ref.jobId, view_mode: ref.viewMode, projection_revision: ref.projectionRevision, result_version: ref.resultVersion,
+      occurrence_id: ref.occurrenceId, expected_feedback_version: ref.feedbackVersion,
+      expected_personalization_revision: ref.personalizationRevision, action: input.action, scope: 'occurrence', idempotency_key: requestId,
+    }, session, signal, { lane: 'write', bypassCache: true, cacheMs: 0 })
+    await this.assertCurrent(session, revision, signal)
+    if (raw.status === 'rejected') throw new ArkmePluginError('recording-entity-feedback-rejected', '这次操作未生效，请刷新后再操作。', false, 409)
+    if (raw.status !== 'applied' || !string(raw.receipt_id) || !integer(raw.undo_expires_at)) throw invalid()
+    return { undoRef: await this.codec.seal(`${PREFIX}-undo`, { viewerUserId: session.userId, environment: this.runtime.config.environment,
+      receiptId: raw.receipt_id, expiresAt: raw.undo_expires_at }), undoExpiresAt: Number(raw.undo_expires_at) }
+  }
+  async undoRecordingEntityFeedback(input: RecordingEntityFeedbackUndoInput, signal?: AbortSignal): Promise<{ status: 'undone' }> {
+    const requestId = this.requestId(input.requestId)
+    const session = await this.runtime.requireSession(), revision = this.revision
+    const ref = await this.codec.open(`${PREFIX}-undo`, input.undoRef)
+    if (ref.viewerUserId !== session.userId || ref.environment !== this.runtime.config.environment) throw stale()
+    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/feedback/undo', {
+      receipt_id: string(ref.receiptId), idempotency_key: requestId,
+    }, session, signal, { lane: 'write', bypassCache: true, cacheMs: 0 })
+    await this.assertCurrent(session, revision, signal)
+    if (raw.status === 'rejected') throw new ArkmePluginError('recording-entity-feedback-rejected', '这次操作未生效，请刷新后再操作。', false, 409)
+    if (raw.status !== 'undone') throw invalid()
+    return { status: 'undone' }
   }
 }

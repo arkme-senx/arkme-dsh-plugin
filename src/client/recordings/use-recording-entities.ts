@@ -57,6 +57,7 @@ export function useRecordingEntities(account: string, dateStamp: number, active:
       try {
         const incoming = await withArkmeReadDeadline(signal => callArkme<RecordingEntityDay>('recordings.entities', {
           dateStamp, transcriptSource: 'system', knownStateRevision: previous?.stateRevision ?? 0, knownProjectionRevision: previous?.projectionRevision ?? 0,
+          ...(previous?.personalization ? { knownPersonalizationRevision: previous.personalization.revision } : {}),
         }, signal), controller.signal)
         if (controller.signal.aborted) return
         const data = { ...incoming, entities: incoming.entities ?? (incoming.version === previous?.version ? previous.entities ?? [] : []) }

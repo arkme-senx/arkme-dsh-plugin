@@ -4379,6 +4379,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
   | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
