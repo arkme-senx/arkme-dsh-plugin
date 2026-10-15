@@ -47,6 +47,7 @@ export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 个月前|{v0} months ago
 {v0} 年前|{v0} years ago
 今天 {v0}|Today {v0}
+今年 {v0}|This year, {v0}
 昨天 {v0}|Yesterday {v0}
 前天 {v0}|Two days ago {v0}
 {v0}月{v1}日|{v0}/{v1}

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
 import { formatConversationDate } from './conversation-date-format.js'
+import { tr } from './locale.js'
 
 /** Shared conversation geometry; business state and permissions stay with each owner. */
 export const arkmeConversationMessageLayout = {
@@ -42,7 +43,16 @@ export function dayKey(value: number): string {
 export function dayLabel(value: number, nowMillis = Date.now()): string {
   const date = new Date(value)
   if (!Number.isFinite(value) || value <= 0 || Number.isNaN(date.getTime())) return ''
-  return formatConversationDate(date, date.getFullYear() === new Date(nowMillis).getFullYear() ? 'calendarDay' : 'calendarDate')
+  const now = new Date(nowMillis)
+  // Compare calendar dates, not 24-hour intervals: DST days may be 23 or 25 hours.
+  const calendarDay = (at: Date) => Date.UTC(at.getFullYear(), at.getMonth(), at.getDate())
+  const daysAgo = (calendarDay(now) - calendarDay(date)) / 86_400_000
+  if (daysAgo === 0) return tr('今天')
+  if (daysAgo === 1) return tr('昨天')
+  if (daysAgo === 2) return tr('前天')
+  return date.getFullYear() === now.getFullYear()
+    ? tr('今年 {v0}', { v0: formatConversationDate(date, 'calendarDay') })
+    : formatConversationDate(date, 'calendarDate')
 }
 
 export function timeLabel(value: number): string {

@@ -345,7 +345,7 @@ function LongText({
       </div>
       : <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}), ...(collapsible && collapsed ? styles.collapsedText : {}) }}>{content}</p>}
     {collapsible && collapsed && <span aria-hidden style={styles.textFade} />}
-    {collapsible && <button type="button" style={styles.collapseToggle} aria-expanded={!collapsed} onClick={event => {
+    {collapsible && <button data-arkme-text-toggle type="button" style={styles.collapseToggle} aria-expanded={!collapsed} onClick={event => {
       preserveTextTogglePosition(event.currentTarget, () => { setCollapsed(value => !value) })
     }}>
       {collapsed ? tr("展开") : tr("收起")}
@@ -458,7 +458,7 @@ export function ArkmeFileCard({ alwaysPreview = false, block, fallback = false, 
   }
   return <><button type="button" aria-busy={opening} disabled={opening} onClick={event => { event.stopPropagation(); void activate() }} style={{ ...styles.file, border: 0, textAlign: 'left', cursor: opening ? 'progress' : 'pointer', position: 'relative' }} data-arkme-file-card={fallback ? 'fallback' : 'file'}>
     <span style={{ ...styles.fileIconBox, position: 'relative' }}><ArkmeFileIcon fileName={block.fileName} mimeType={block.mimeType} /><UploadProgress block={block} /></span>
-    <span style={{ minWidth: 0, flex: '1 1 auto' }}><span style={styles.fileName} title={block.fileName || '未知文件'}>{block.fileName || '未知文件'}</span><small style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: arkmeTheme.tertiary }}>{arkmeFileSize(block.size)}{downloadLabel && ` · ${downloadLabel}`}</small></span>
+    <span style={{ minWidth: 0, flex: '1 1 auto' }}><span style={styles.fileName} title={block.fileName || '未知文件'}>{block.fileName || '未知文件'}</span><small data-arkme-file-meta style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: arkmeTheme.tertiary }}>{arkmeFileSize(block.size)}{downloadLabel && ` · ${downloadLabel}`}</small></span>
     {downloading && <progress aria-label={`下载 ${block.fileName}`} max={100} value={percent} style={{ position: 'absolute', left: 0, bottom: 0, height: 3, width: '100%' }} />}
   </button>{open && <ArkmeFileViewer block={block} openLocalFile onClose={() => setOpen(false)} />}</>
 }
@@ -492,7 +492,7 @@ function ArticleCard({ title, text, onOpen }: { title: string; text: string; onO
       <h3 style={styles.articleTitle}><ArkmeRichText text={heading} presentation="preview" /></h3>
     </div>
     {hasTitle && text.trim() !== '' && <p style={{ ...styles.articlePreview, WebkitLineClamp: 2 }}><ArkmeRichText text={text} presentation="preview" /></p>}
-    <span style={styles.articleMeta}><LongArticleWordCountIcon />{String(count)}{tr("字")}</span>
+    <span data-arkme-article-meta style={styles.articleMeta}><LongArticleWordCountIcon />{String(count)}{tr("字")}</span>
   </button>
 }
 

@@ -1,3 +1,4 @@
+import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
@@ -13,7 +14,7 @@ export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
-import { arkmeConversationMessageLayout, dayKey, dayLabel, timeLabel } from './conversation-message-presentation.js'
+import { arkmeConversationMessageLayout, dayKey, timeLabel } from './conversation-message-presentation.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { askDshNotesWithLocalNames } from './ask-dsh-notes.js'
 import { useAskDsh } from './use-ask-dsh.js'
@@ -8039,7 +8040,7 @@ export function ArkmeSurface({
                 const startsDay = previous === undefined
                   || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
                 if (row.kind === 'community-welcome') return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
                   <li data-arkme-conversation-row={row.id}>
                   <ArkmeBetaCommunityWelcome title={row.title}
                     disabled={composerFilesDisabled || timelineReediting || archiveReadOnly}
@@ -8077,16 +8078,16 @@ export function ArkmeSurface({
                   onOpenMember={(...args) => timelineActions.current.openMemberProfile(...args)}
                 />
                 if (row.kind === 'world-public') return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
                   <li data-arkme-conversation-row={row.id} style={{ listStyle: 'none' }}><ArkmeTimelinePublicNote recordRef={row.recordRef} authorName={row.authorName} isGroup={source?.kind === 'group_chat'} /></li>
                 </Fragment>
                 if (row.kind === 'notice') return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
                   <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
                 </Fragment>
                 if (row.kind === 'moment') {
                   return <Fragment key={row.id}>
-                    {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                    {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
                     <ArkmeInterwovenMentionCard moment={row.item} rowId={row.id} onOpen={(...args) => timelineActions.current.openMomentDetail(...args)}
                       highlighted={highlightedTargetUid === row.id} />
                   </Fragment>
@@ -8141,7 +8142,7 @@ export function ArkmeSurface({
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
                 const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={row.id}>
-                  {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
+                  {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
                     data-arkme-width-avatar={avatarRef}
                     data-arkme-width-sender={role?.name ?? arkmeTimelineSenderName(item, selfProfile)}

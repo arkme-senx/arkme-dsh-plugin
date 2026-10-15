@@ -13,8 +13,7 @@
   user-select: none;
   cursor: default;
 }
-/* Only the content and timestamp remain in this case. Reactions, errors and
-   agent badges automatically use the normal footer without overlapping. */
+/* Reserve the end of the final text line, without creating a footer row. */
 .arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > .arkme-message-timestamp,
 .arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:not([data-arkme-text-collapsible]):only-child):has(.arkme-markdown > p:last-child) > .arkme-message-timestamp {
   position: absolute;
@@ -30,6 +29,42 @@
   display: inline-block;
   width: 42px;
   height: 1px;
+}
+/* Existing controls/metadata already supply a final row. Keep their hit areas
+   clear of the clock; these rules only apply when that content is last. */
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-reactions]:nth-last-child(2)) > .arkme-message-timestamp {
+  position: absolute;
+  right: 13px;
+  bottom: 10px;
+  margin: 0;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child > [data-arkme-text-toggle] {
+  margin-right: 42px;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child {
+  width: 100% !important;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child [data-arkme-file-meta],
+.arkme-timed-bubble > [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child [data-arkme-article-meta] {
+  padding-right: 42px;
+}
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp {
+  bottom: 18px;
+}
+/* A flex spacer participates in wrapping so reactions never cover the time.
+   Full width overrides the reaction component's standalone fit-to-chip width. */
+.arkme-timed-bubble > [data-arkme-message-reactions]:nth-last-child(2) {
+  width: 100% !important;
+}
+.arkme-timed-bubble > [data-arkme-message-reactions]:nth-last-child(2)::after {
+  content: '';
+  flex: 0 0 38px;
+  height: 14px;
+  margin-left: auto;
+  align-self: flex-end;
 }
 .arkme-timed-bubble:has(> [data-arkme-message-media-only="true"]:first-child:nth-last-child(2)) > .arkme-message-timestamp {
   position: absolute;
