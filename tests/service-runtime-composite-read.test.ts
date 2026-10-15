@@ -311,3 +311,20 @@ describe('isolated message synchronization admission', () => {
     expect(signals[1]!.aborted).toBe(true)
   })
 })
+it('keeps live tail admission available during two account body reads and bounds background concurrency', async () => {
+  const waiting = gate(), starts: string[] = []
+  const f=fixture(async(input, init)=>{
+    const path=new URL(String(input)).pathname; starts.push(path)
+    if(path==='/api/v1/chat/sync/account') await waiting.promise
+    init?.signal?.throwIfAborted()
+    return ok({items:[]},200)
+  })
+  const reads=Array.from({length:3},(_,i)=>f.runtime.authenticatedChatPost('/api/v1/chat/sync/account',{mode:'bodies',i},undefined,undefined,{lane:'background-read'}))
+  try {
+    await vi.waitFor(()=>expect(starts).toHaveLength(2))
+    const before=performance.now()
+    await f.runtime.authenticatedChatPost('/api/v1/chat/timeline/tail',{},undefined,undefined,{lane:'interactive-read'})
+    expect(starts).toEqual(['/api/v1/chat/sync/account','/api/v1/chat/sync/account','/api/v1/chat/timeline/tail'])
+    process.stdout.write(`ACCOUNT_SYNC_FOREGROUND_ADMISSION ${JSON.stringify({backgroundActive:2,liveTailMillis:performance.now()-before})}\n`)
+  } finally {waiting.resolve();await Promise.all(reads)}
+})

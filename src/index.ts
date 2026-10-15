@@ -115,6 +115,7 @@ export interface Config {
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  memoryCoreBaseUrl?: string
   audioBaseUrl: string
   openApiBaseUrl: string
   openApiMcpEnabled: boolean
@@ -173,6 +174,7 @@ export const Config: Schema<Config> = Schema.object({
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
+  memoryCoreBaseUrl: Schema.string().default(''),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   openApiBaseUrl: Schema.string().default(''),
   openApiMcpEnabled: Schema.boolean().default(true),
@@ -1030,6 +1032,7 @@ export function resolveArkmeConfig(ctx: Context, config: Config): Config {
     teamBaseUrl: config.teamBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
       : config.teamBaseUrl,
+    memoryCoreBaseUrl: config.memoryCoreBaseUrl?.trim() || (config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me'),
     dataBaseUrl: config.dataBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
       : config.dataBaseUrl,
@@ -1059,6 +1062,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.worldBaseUrl,
       config.relationBaseUrl,
       config.intelligentBaseUrl,
+      ...(config.memoryCoreBaseUrl ? [config.memoryCoreBaseUrl] : []),
       config.audioBaseUrl,
       config.openApiBaseUrl,
       ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
@@ -1097,6 +1101,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['worldBaseUrl', config.worldBaseUrl],
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
+    ...(config.memoryCoreBaseUrl ? [['memoryCoreBaseUrl', config.memoryCoreBaseUrl] as const] : []),
     ['audioBaseUrl', config.audioBaseUrl],
     ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],

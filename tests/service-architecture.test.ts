@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
+  'messageSyncStatus', 'retryMessageSync',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
@@ -42,13 +44,15 @@ const expectedPublicMethods = [
   'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
-  'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
+  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTranscript', 'recordingProjection',
+  'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording',
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
+  'recordingEntities', 'recordingEntityOccurrences', 'recordingEntityFeedback', 'undoRecordingEntityFeedback',
   'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
+  'unassignRecordingSpeaker', 'recordingSpeakerCorrectionContext', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
   'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
@@ -101,9 +105,12 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'explore-projection.ts', 'explore-service.ts',
+  'chat-message-sync-service.ts',
   'profile-image.ts',
   'team-codex-transport.ts',
   'reaction-service.ts',
+  'reaction-notification-context.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
   'archive-service.ts',
   'chat-policy.ts',
@@ -125,7 +132,7 @@ const expectedServiceFiles = [
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'member-event-service.ts', 'official-notification-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-entity-personalization.ts', 'recording-entity-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
   'recording-presence-writer.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
@@ -401,14 +408,17 @@ describe('Arkme service architecture', () => {
     expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(1)
   })
 
-  it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {
+  it('uses the verified item-unassign contract without widening cancellation to session tracks', () => {
     const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
     const hostApi = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
     const clientApi = readFileSync(join(root, 'src/client/api.ts'), 'utf8')
 
-    expect(recordingService).not.toContain('/api/v1/audio/unassign-asr-item-spk')
+    // Audio now exposes conditional item cancellation with explicit indices.
+    // Keep bulk UI cancellation on that exact-item path, including deep pages.
+    expect(recordingService).toContain('/api/v1/audio/unassign-asr-item-spk')
+    expect(recordingService).toContain('expected_spk_id: item.formalSpeakerId')
     expect(recordingService).not.toContain('/api/v1/audio/batch-unassign-session-num-spk')
-    expect(hostApi).not.toContain('recordings.speaker.unassign-item')
-    expect(clientApi).not.toContain('recordings.speaker.unassign-item')
+    expect(hostApi).toContain('recordings.speaker.unassign-item')
+    expect(clientApi).toContain('recordings.speaker.unassign-item')
   })
 })

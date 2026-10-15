@@ -1,3 +1,8 @@
+import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+import { connectArkmeRealtime } from '../client/realtime-connection.js'
 export { recordingImportBatchID } from '../recording-workflow-contract.js'
 import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
 export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
@@ -492,6 +497,24 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  /** Explicit user command; idempotently starts recognition for the current account/day. */
+  async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
+    if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
+    return this.call('recordings.entities.start', { ...query }, signal)
+  }
+
+  /** Existing recognition for one recording day. Does not start an extraction job. */
+  async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities', { ...query }, signal)
+  }
+
+  /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities.occurrences', { ...query }, signal)
   }
 
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
@@ -1819,6 +1842,59 @@ export class ArkmeSdk {
     }
     return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
   }
+
+  async messageSyncStatus(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.status', {}, signal)
+  }
+
+  async retryMessageSync(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.retry', {}, signal)
+  }
+
+  /** One bounded subscription per SDK instance; returned dispose/AbortSignal releases it. No polling. */
+  observeMessageSync(changed: (progress: ArkmeMessageSyncProgress) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    if (this.syncObservers.size >= 64) throw new Error('Message sync observer capacity exceeded')
+    const controller = new AbortController()
+    let active = true
+    const listener = (progress: ArkmeMessageSyncProgress) => { if (active) changed(progress) }
+    this.syncObservers.add(listener)
+    const stop = () => {
+      if (!active) return
+      active = false; controller.abort(); options.signal?.removeEventListener('abort', stop); this.syncObservers.delete(listener)
+      if (!this.syncObservers.size) { this.syncConnection?.close(); this.syncConnection = undefined; this.syncSequence++ }
+    }
+    options.signal?.addEventListener('abort', stop, { once: true })
+    if (options.signal?.aborted) { stop(); return stop }
+    const sequence = this.syncSequence
+    void this.messageSyncStatus(controller.signal).then(progress => {
+      if (!active) return
+      if (sequence === this.syncSequence) listener(progress)
+      if (!this.syncConnection) this.syncConnection = connectArkmeRealtime({
+        onOpen: () => {}, onDisconnect: () => {},
+        onMessage: event => {
+          try {
+            const update = JSON.parse(event.data) as import('../types.js').ArkmeChatClientEvent
+            if (update.type === 'message-sync-progress') {
+              this.syncSequence++
+              for (const notify of this.syncObservers) { try { notify(update.progress) } catch { /* A consumer cannot disrupt another listener. */ } }
+            } else if (update.type === 'reconcile') {
+              const sequence = ++this.syncSequence
+              void this.messageSyncStatus().then(progress => {
+                if (!this.syncConnection || sequence !== this.syncSequence) return
+                for (const notify of this.syncObservers) { try { notify(progress) } catch { /* Consumer isolation. */ } }
+              }).catch(error => options.onError?.(error))
+            }
+          } catch (error) { options.onError?.(error) }
+        },
+      }, `${this.route}/events`)
+    }).catch(error => { if (active) { options.onError?.(error); stop() } })
+    return stop
+  }
+  private syncObservers = new Set<(progress: ArkmeMessageSyncProgress) => void>()
+  private syncConnection: { close(): void } | undefined
+  private syncSequence = 0
 
   async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
     const features = (await this.capabilities(signal)).features

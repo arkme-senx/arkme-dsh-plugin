@@ -146,6 +146,8 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -177,6 +179,12 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.home-visibility'
@@ -278,6 +286,10 @@ export async function callArkme<T>(
   const socialAction = socialWriteAction(operation, params)
   if (socialAction !== undefined) {
     const { requirePhoneForSocialAction } = await import('./social-action-guard.js')
+    const before = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (before?.status !== 'authenticated' || before.environment !== auth.environment || before.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
     await requirePhoneForSocialAction(socialAction, signal)
     const current = arkmeAuthStore.getSnapshot().auth
     if (auth?.status === 'authenticated' && (current?.status !== 'authenticated' || current.environment !== auth.environment || current.userId !== auth.userId)) {

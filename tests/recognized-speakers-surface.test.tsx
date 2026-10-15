@@ -19,6 +19,27 @@ async function render(api = loaders(), extra = {}) {
 const click = (view: ReactTestRenderer, label: string) => view.root.findAllByType('button').find(button => text(button) === label)!.props.onClick()
 
 describe('server-backed recognized speaker surface', () => {
+  it('automatically replaces merged rows and their counts together when a new snapshot arrives', async () => {
+    let merged = false
+    const incoming = deferred<ReturnType<typeof page>>()
+    const api = loaders({
+      summary: vi.fn(async () => merged ? summary({ snapshotVersion: 'v2', totalCount: 1, markedCount: 1, unmarkedCount: 0 }) : summary()),
+      list: vi.fn(async input => input.snapshotVersion === 'v2' ? incoming.promise : page({ items: [person('old-1'), person('old-2')] })),
+    })
+    const { view, directory } = await render(api)
+    expect(rows(view)).toHaveLength(2)
+    merged = true
+    await act(async () => { directory.invalidate('a'); await flush() })
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ snapshotVersion: 'v2', cursor: '' }), expect.any(AbortSignal))
+    expect(text(view.root)).toContain('全部 43')
+    expect(text(view.root)).toContain('正在同步最新人物与统计')
+    await act(async () => { incoming.resolve(page({ snapshotVersion: 'v2', throughCursor: 'seen-v2', items: [person('merged', { type: 'marked', displayName: '同一个人' })] })); await flush() })
+    expect(rows(view)).toHaveLength(1)
+    expect(rows(view).map(text)[0]).toContain('同一个人')
+    expect(text(view.root)).toContain('全部 1')
+    expect(text(view.root)).not.toContain('old-1')
+    expect(text(view.root)).not.toContain('正在同步最新人物与统计')
+  })
   it('renders the directory before avatars arrive and preserves default/number avatars', async () => {
     const pending = deferred<Array<{ detailRef: string; avatarRef?: string }>>()
     const api = loaders({ list: vi.fn(async () => page({ items: [person('me', { type: 'marked', isSelf: true }), person('manual', { type: 'marked' }), person('12')] })), avatars: vi.fn(async () => pending.promise) })

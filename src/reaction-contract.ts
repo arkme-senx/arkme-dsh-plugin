@@ -36,7 +36,8 @@ export type ReactionRequest = { accountKey: string; traceId?: string } & (
  | { action: 'library-set'; items: ReactionExpression[]; expected_revision: number; request_id: string }
 )
 
-export interface ReactionNotification {
+export interface ReactionNotificationContext { actorName?: string; source?: import('./types.js').ArkmeSourceItem }
+export interface ReactionNotification extends ReactionNotificationContext {
  unread?: boolean; id: string; revision: number; actorUserId: number; sourceKey: string; itemUid: string; recordOwnerUserId: number; sendAtMillis: number; text: string; selections: ReactionSelection[]
 }
 export interface ReactionNotificationPage { items: ReactionNotification[]; after_id: string; has_more: boolean }

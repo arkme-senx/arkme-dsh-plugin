@@ -1488,10 +1488,13 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    recordingEntities?: true
+    recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
+    accountMessageSync?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -3141,6 +3144,7 @@ export interface ArkmeRecordingCalendarMonth {
   fromStamp: number
   toStamp: number
   days: ArkmeRecordingCalendarDay[]
+  totals?: import('./recording-total-metrics.js').RecordingTotalMetrics
 }
 
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
@@ -3185,6 +3189,8 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** User-confirmed source, independent of the speaker identity. */
+  soundSource?: ArkmeRecordingSoundSource
   /** Read-only precise search locator; never an authorization reference. */
   searchIdentityHash?: string
   searchVersion?: string
@@ -3260,6 +3266,44 @@ export interface ArkmeRecordingSpeakerMutationResult {
   scope: 'item' | 'speaker'
   affectedCount: number
   day: ArkmeRecordingDay
+  warning?: string
+}
+
+export type ArkmeRecordingSoundSource = 'unknown' | 'in_person' | 'playback'
+
+export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
+  supported: true
+  version: string
+  maxItems: number
+  soundSource: ArkmeRecordingSoundSource
+  excludedSpeakers: Array<{ optionKey: string; label: string }>
+  undoRef?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionInput {
+  itemRef: string
+  itemRefs: string[]
+  expectedVersion: string
+  idempotencyKey: string
+  rejectedSpeakerRef?: string
+  rejectCurrent?: boolean
+  soundSource?: ArkmeRecordingSoundSource
+  detach: boolean
+}
+
+export interface ArkmeRecordingSpeakerCorrectionUndoInput {
+  itemRef: string
+  undoRef: string
+  expectedVersion: string
+  idempotencyKey: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResult {
+  affectedCount: number
+  version: string
+  undoRef?: string
+  day?: ArkmeRecordingDay
+  warning?: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -3321,14 +3365,29 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
+export interface ArkmeRecordingStorageMetrics {
+  /** Recorded VAD archive + playback clip bytes, not live OSS retained-object inventory. */
+  bytes: number
+  archiveBytes: number
+  clipBytes: number
+  state: 'ready' | 'partial' | 'processing' | 'unavailable'
+  confirmedCount: number
+  pendingCount: number
+  unknownCount: number
+}
+
 export interface ArkmeRecordingDailyMetrics {
-  /** System ASR input in owned recordings, clipped to the day; includes recorded retries. */
+  /** New upload-scoped storage contract; old hosts cannot supply it. */
+  storage?: ArkmeRecordingStorageMetrics
+  /** System ASR input in uploaded recordings, clipped to the day; includes recorded retries. */
   asrInputDurationMillis: number
   asrInputState: 'ready' | 'partial' | 'processing' | 'unavailable'
   asrInputEstimatedCount: number
   asrInputConfirmedCount: number
   asrInputPendingCount: number
   asrInputUnknownCount: number
+  /** Completed children whose API explicitly lacks historical input telemetry. */
+  asrInputMissingHistoryCount?: number
   /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
@@ -3820,6 +3879,12 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'message-sync-progress'
+  revision: number
+  progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
+  /** Bounded committed-body hints; no read positions or complete window coverage. */
+  sourceKeys?: string[]
+} | {
   type: 'team-invalidated'
   revision: number
 } | {
@@ -3939,6 +4004,11 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'explore.settings' | 'explore.settings.save'
+  | 'explore.list' | 'explore.detail' | 'explore.mutate' | 'explore.source'
+  | 'recordings.entities.start'
+  | 'recordings.entities'
+  | 'recordings.entities.occurrences'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
   | 'speaker-directory.summary'
@@ -4125,6 +4195,8 @@ export type ArkmePluginOperation =
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'
   | 'source.directory.policy.set'
+  | 'chat.sync.status'
+  | 'chat.sync.retry'
   | 'source.timeline'
   | 'source.timeline-around'
   | 'source.members'
@@ -4311,6 +4383,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -4333,6 +4407,12 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'search.locations'
   | 'search.scene'
   | 'search.recordings'

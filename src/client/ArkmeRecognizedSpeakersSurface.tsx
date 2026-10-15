@@ -69,7 +69,7 @@ function statusText(status: SpeakerDirectoryStatus | undefined): string {
   if (status?.state === 'disabled') return tr('说话人目录暂不可用，请稍后再试。')
   if (status?.coverage === 'unknown') return status.state === 'failed' ? tr('说话人目录暂不可用，请稍后刷新。') : tr('正在整理说话人目录…')
   if (status?.state === 'failed') return tr('更新暂未完成，当前显示上次整理的目录。')
-  if (status?.state === 'stale') return tr('正在更新，当前显示已整理的目录。')
+  if (status?.state === 'stale') return tr('统计待更新，当前显示上次整理的目录。')
   if (status && (status.processingSessionCount > 0 || status.pendingIdentityAggregationCount > 0 || status.insufficientEvidenceCount > 0 || status.scanTruncated)) return tr('部分录音仍在整理，人物可能继续更新。')
   return ''
 }
@@ -166,7 +166,10 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
       busy = true; setLoading(true)
       try {
         const result = await directory.first(accountKey, query, controller.signal, force.current)
-        if (!controller.signal.aborted) { force.current = false; setList(result); setError('') }
+        if (!controller.signal.aborted) {
+          force.current = false; setList(result); setError('')
+          setSelected(previous => previous && result.items.find(item => item.personKey === previous.personKey))
+        }
       } catch (error) {
         if (controller.signal.aborted) return
         setError(failureMessage(error))
@@ -178,7 +181,8 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     const unwatch = directory.watch(accountKey, () => {
       if (controller.signal.aborted) return
       const current = listRef.current
-      if (!current || current.coverage === 'unknown' || directory.needsReload(accountKey, current)) void load()
+      if (!current || current.coverage === 'unknown' || directory.needsReload(accountKey, current)
+        || current.snapshotVersion !== directory.get(accountKey).summary?.snapshotVersion) void load()
     })
     return () => { controller.abort(); clearTimeout(retry); unwatch() }
   }, [accountKey, directory, query, revision])
@@ -207,7 +211,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     const controller = controllerRef.current
     if (!list || !controller || moreLoading || queryPending) return
     setMoreLoading(true); setError('')
-    try { const next = await directory.more(accountKey, list, controller.signal); if (!controller.signal.aborted) setList(next) }
+    try { const next = await directory.more(accountKey, list, controller.signal); if (!controller.signal.aborted && next.snapshotVersion === directory.get(accountKey).summary?.snapshotVersion) setList(next) }
     catch (error) { if (!controller.signal.aborted) setError(failureMessage(error)) }
     finally { if (!controller.signal.aborted) setMoreLoading(false) }
   }
@@ -241,8 +245,10 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     if (typeof window !== 'undefined') window.addEventListener('online', wake)
     return () => { controller.abort(); clearTimeout(retry); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake); if (typeof window !== 'undefined') window.removeEventListener('online', wake) }
   }, [accountKey, directory, avatarBatch])
-  const state = disabled ? tr('说话人目录暂不可用，请稍后再试。') : statusText(summary?.snapshotVersion === list?.snapshotVersion ? summary : list?.coverage === 'complete' ? list : summary)
+  const state = disabled ? tr('说话人目录暂不可用，请稍后再试。') : snapshot.refreshPending && list?.coverage === 'complete'
+    ? tr('统计待更新，当前显示上次整理的目录。') : statusText(summary?.snapshotVersion === list?.snapshotVersion ? summary : list?.coverage === 'complete' ? list : summary)
   const hasNewVersion = list?.coverage === 'complete' && summary?.snapshotVersion && summary.snapshotVersion !== list.snapshotVersion
+  const displayedSummary = hasNewVersion && listMatches ? list.summary : summary
   const mainFirst = listMatches && filter === 'all' && queryText === '' && !queryPending && list?.coverage === 'complete' && list.state === 'fresh'
   const selfMissing = mainFirst && !list.items.some(row => row.isSelf)
   return <div ref={rootRef} style={styles.root} data-arkme-owned="recognized-speakers-surface">
@@ -264,7 +270,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
         <button type="button" style={{ ...styles.button, marginLeft: 'auto' }} onClick={refresh} disabled={loading}>{tr('刷新')}</button>
       </header>
       <div style={styles.filters}>
-        {([['all', '全部', summary?.totalCount], ['marked', '已标记', summary?.markedCount], ['unmarked', '未标记', summary?.unmarkedCount]] as const).map(([kind, label, count]) => <button key={kind} type="button" aria-pressed={filter === kind} style={{ ...styles.filter, ...(filter === kind ? styles.selectedFilter : {}) }} onClick={() => setFilter(kind)}>{tr(label)}{!disabled && count != null ? ` ${count}` : ''}</button>)}
+        {([['all', '全部', displayedSummary?.totalCount], ['marked', '已标记', displayedSummary?.markedCount], ['unmarked', '未标记', displayedSummary?.unmarkedCount]] as const).map(([kind, label, count]) => <button key={kind} type="button" aria-pressed={filter === kind} style={{ ...styles.filter, ...(filter === kind ? styles.selectedFilter : {}) }} onClick={() => setFilter(kind)}>{tr(label)}{!disabled && count != null ? ` ${count}` : ''}</button>)}
         <input aria-label={tr('搜索说话人')} placeholder={tr('搜索名称或编号')} value={input} onChange={event => setInput(event.target.value)} style={styles.search} />
         <select aria-label={tr('说话人排序')} value={sort} onChange={event => { const next = event.target.value === 'recent' ? 'recent' : 'frequent'; setSort(next); writeRecognizedSpeakerOrder(accountKey, next) }} style={styles.sort}>
           <option value="frequent">{tr('经常出现')}</option><option value="recent">{tr('最近出现')}</option>
@@ -272,7 +278,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
       </div>
       {!queryValid && <p role="alert" style={styles.error}>{tr('搜索内容过长，请缩短至 256 字节以内。')}</p>}
       {selfMissing && <SpeakerSelfGuide key={accountKey} onOpenRecordings={onBack} />}
-      {hasNewVersion && <p role="status" style={styles.note}>{tr('目录有更新，刷新后查看最新人物。')}</p>}
+      {hasNewVersion && <p role="status" style={styles.note}>{tr(error ? '目录更新暂未完成，请刷新重试。' : '正在同步最新人物与统计…')}</p>}
       {state && <p role="status" style={styles.note}>{state}</p>}
       {seenError && <p role="status" style={styles.note}>{seenError}</p>}
       {error && <div role="alert" style={styles.error}>{error}</div>}

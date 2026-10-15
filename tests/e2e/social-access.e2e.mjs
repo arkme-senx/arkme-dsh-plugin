@@ -123,13 +123,20 @@ describe('packed social access on the target Harness', () => {
       expect(frames.partial).toBe(0)
       await input.fill('资格变化期间保留的个人草稿')
       await input.evaluate(node => { window.socialComposerBeforeRefresh = node })
+      const revalidateAfterExpiry = async () => {
+        // A focus/navigation event no longer forces a fresh profile read. Wait
+        // for the real cache TTL (or failure cooldown) instead of bypassing it.
+        const refresh = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
+          && response.request().postDataJSON()?.operation === 'user.profile.refresh', { timeout: 75_000 })
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+        const response = await refresh
+        await response.finished()
+        return response
+      }
       for (const state of [true, null, false, true]) {
         allowed = state
         if (state !== null) await service.refreshProfile()
-        const refresh = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
-          && response.request().postDataJSON()?.operation === 'user.profile')
-        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-        const response = await refresh
+        const response = await revalidateAfterExpiry()
         expect(response.status()).toBe(state === null ? 503 : 200)
         for (const name of ['联系人', '通话', '世界']) {
           await navigation(name).waitFor({ state: 'visible' })
@@ -142,16 +149,11 @@ describe('packed social access on the target Harness', () => {
         }
 
       }
-      const callsProfileRead = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
-        && response.request().postDataJSON()?.operation === 'user.profile')
       await navigation('通话').click()
-      await (await callsProfileRead).finished()
-      // Let the navigation refresh publish before simulating a later account update.
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
       await page.locator('[data-arkme-retained-call-page="true"]').waitFor({ state: 'visible' })
       allowed = false
       await service.refreshProfile()
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      expect((await revalidateAfterExpiry()).status()).toBe(200)
       await navigation('通话').waitFor({ state: 'visible' })
       await page.locator('[data-arkme-retained-call-page="true"]').waitFor({ state: 'visible' })
       await navigation('世界').click()
@@ -188,7 +190,7 @@ describe('packed social access on the target Harness', () => {
       // event, another click, or remounting the personal composer.
       allowed = false
       await service.refreshProfile()
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      expect((await revalidateAfterExpiry()).status()).toBe(200)
       await navigation('世界').waitFor({ state: 'visible' })
       await navigation('个人资料').click()
       const profileMenu = page.getByRole('dialog', { name: '个人菜单', exact: true })
@@ -219,7 +221,7 @@ describe('packed social access on the target Harness', () => {
       await cleanup(() => rm(root, { recursive: true, force: true }))
       if (failures.length) throw new AggregateError(failures, 'Social access acceptance or cleanup failed')
     }
-  })
+  }, 600_000)
 })
 
 describe('packed account registration policy', () => {

@@ -10,8 +10,25 @@ export async function refreshUnifiedTimelineWindow(
   read: (cursor: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
   followTail: boolean,
+  readingAnchor?: () => string | undefined,
 ): Promise<ArkmeTimelinePage> {
   signal.throwIfAborted()
+  if (previous.windowTokens.length === 0) {
+    // Message-only slices carry no remote coverage. Locate the same history.
+    const messages = previous.events.filter(event => event.kind === 'message')
+    const matches = (event: ArkmeUnifiedTimelineWindow['events'][number], id: string) => id === `message:${event.eventId}`
+      || event.kind === 'message' && id === `message:${event.item.timelineItemKey}`
+    const requestedAnchor = readingAnchor?.()
+    const anchor = requestedAnchor ? messages.find(event => matches(event, requestedAnchor)) : messages[Math.floor(messages.length / 2)]
+    const item = anchor?.kind === 'message' ? anchor.item : undefined
+    if (!followTail && !item) throw new Error('已保留当前阅读位置，暂时无法恢复线上窗口')
+    const page = await read({ unified: !followTail && item?.recordOwnerUserId && item.itemUid
+      ? { mode: 'around', itemUid: item.itemUid, recordOwnerUserId: item.recordOwnerUserId } : { mode: 'initial' } })
+    signal.throwIfAborted()
+    const currentAnchor = readingAnchor?.()
+    if (currentAnchor && !page.unified?.events.some(event => matches(event, currentAnchor))) throw new Error('阅读位置已变化，已保留当前窗口')
+    return page
+  }
   if (previous.windowTokens.length > MAX_ACTIVE_TIMELINE_TOKENS) throw new Error('已加载历史较多，请重新定位后继续')
   const page = await read({ unified: { mode: 'refresh', windowTokens: previous.windowTokens, reconcile: true,
     ...(followTail && previous.newerCursor ? { newerCursor: previous.newerCursor } : {}) } })

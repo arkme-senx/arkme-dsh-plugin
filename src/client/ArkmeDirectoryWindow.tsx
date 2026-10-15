@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, isValidElement, type ReactNode, type RefOb
 import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 
 /** Keep nearby directory chunks mounted; measured spacers preserve the scroll range. */
-function DirectoryChunk({ children, count, initial, selected, scrollRootRef }: { children: ReactNode; count: number; initial: boolean; selected: boolean; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
+function DirectoryChunk({ children, count, initial, selected, scrollRootRef, active }: { children: ReactNode; count: number; initial: boolean; selected: boolean; active: boolean; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
   const element = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(initial || typeof IntersectionObserver === 'undefined')
   const [focused, setFocused] = useState(false)
@@ -10,7 +10,7 @@ function DirectoryChunk({ children, count, initial, selected, scrollRootRef }: {
   const height = useRef(count * (ARKME_CONVERSATION_ROW_HEIGHT + 2))
   useEffect(() => {
     const target = element.current
-    if (target === null || typeof IntersectionObserver === 'undefined') return
+    if (!active || target === null || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(([entry]) => {
       if (entry === undefined || target.getClientRects().length === 0) return
       // A hidden retained panel is not a scroll-away event; keep its visible rows mounted.
@@ -23,7 +23,7 @@ function DirectoryChunk({ children, count, initial, selected, scrollRootRef }: {
     }, { root: scrollRootRef?.current ?? target.closest('[role="tree"]'), rootMargin: '600px' })
     observer.observe(target)
     return () => { observer.disconnect() }
-  }, [scrollRootRef])
+  }, [scrollRootRef, active])
   return <div ref={element} role="none" onFocusCapture={() => { setFocused(true) }}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false) }}
     style={visible || selected || focused ? undefined : { height: height.current }} data-arkme-directory-chunk>
@@ -31,11 +31,11 @@ function DirectoryChunk({ children, count, initial, selected, scrollRootRef }: {
   </div>
 }
 
-export function ArkmeDirectoryWindow({ children, activeKey, revealKey, scrollRootRef }: { children: ReactNode[]; activeKey?: string | undefined; revealKey?: string | undefined; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
+export function ArkmeDirectoryWindow({ children, activeKey, revealKey, scrollRootRef, active = true }: { children: ReactNode[]; active?: boolean; activeKey?: string | undefined; revealKey?: string | undefined; scrollRootRef?: RefObject<HTMLElement> | undefined }) {
   const chunks: ReactNode[] = []
   for (let offset = 0; offset < children.length; offset += 20) {
     const items = children.slice(offset, offset + 20)
-    chunks.push(<DirectoryChunk key={offset} count={items.length} initial={offset === 0} scrollRootRef={scrollRootRef} selected={items.some(item => isValidElement(item) && (item.key === activeKey || item.key === revealKey))}>{items}</DirectoryChunk>)
+    chunks.push(<DirectoryChunk key={offset} active={active} count={items.length} initial={offset === 0} scrollRootRef={scrollRootRef} selected={items.some(item => isValidElement(item) && (item.key === activeKey || item.key === revealKey))}>{items}</DirectoryChunk>)
   }
   return <>{chunks}</>
 }

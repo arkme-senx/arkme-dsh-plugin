@@ -1,6 +1,7 @@
 import type { ArkmeRecordingDailyMetrics } from './types.js'
 import { recordingBelongsToViewer } from './recording-coverage.js'
 import { projectRecordingAsrInputMetrics } from './recording-asr-input-metrics.js'
+import { projectRecordingStorageMetrics } from './recording-storage-metrics.js'
 
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : []
@@ -58,6 +59,7 @@ export function projectRecordingDailyMetrics(response: unknown, items: readonly 
     if (!Number.isFinite(start) || !Number.isFinite(end) || (start < dayEnd && end > dayStart)) unknownCount++
   }
   return {
+    storage: projectRecordingStorageMetrics(response, viewerUserId, dayStart, dayEnd),
     ...projectRecordingAsrInputMetrics(response, viewerUserId, dayStart, dayEnd),
     archiveBytes, confirmedCount, pendingCount, unknownCount,
     archiveState: unknownCount > 0 ? confirmedCount > 0 ? 'partial' : 'unavailable' : pendingCount > 0 ? 'processing' : 'ready',

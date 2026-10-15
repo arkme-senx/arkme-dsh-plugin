@@ -1,7 +1,7 @@
-import { recordingBelongsToViewer } from './recording-coverage.js'
+import { recordingUploadedByViewer } from './recording-coverage.js'
 import type { ArkmeRecordingDailyMetrics } from './types.js'
 
-type AsrInputMetrics = Pick<ArkmeRecordingDailyMetrics, 'asrInputEstimatedCount' | 'asrInputDurationMillis' | 'asrInputState' | 'asrInputConfirmedCount' | 'asrInputPendingCount' | 'asrInputUnknownCount'>
+type AsrInputMetrics = Pick<ArkmeRecordingDailyMetrics, 'asrInputMissingHistoryCount' | 'asrInputEstimatedCount' | 'asrInputDurationMillis' | 'asrInputState' | 'asrInputConfirmedCount' | 'asrInputPendingCount' | 'asrInputUnknownCount'>
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const validTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const id = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
@@ -24,8 +24,8 @@ function clippedInputDuration(child: Record<string, unknown>, duration: number, 
 }
 
 export function projectRecordingAsrInputMetrics(response: unknown, viewerUserId: number, dayStart: number, dayEnd: number): AsrInputMetrics {
-  let asrInputEstimatedCount = 0, asrInputDurationMillis = 0, asrInputConfirmedCount = 0, asrInputPendingCount = 0, asrInputUnknownCount = 0
-  const result = (): AsrInputMetrics => ({ asrInputEstimatedCount, asrInputDurationMillis, asrInputConfirmedCount, asrInputPendingCount, asrInputUnknownCount,
+  let asrInputMissingHistoryCount = 0, asrInputEstimatedCount = 0, asrInputDurationMillis = 0, asrInputConfirmedCount = 0, asrInputPendingCount = 0, asrInputUnknownCount = 0
+  const result = (): AsrInputMetrics => ({ asrInputMissingHistoryCount, asrInputEstimatedCount, asrInputDurationMillis, asrInputConfirmedCount, asrInputPendingCount, asrInputUnknownCount,
     asrInputState: asrInputUnknownCount > 0 ? asrInputConfirmedCount > 0 ? 'partial' : 'unavailable' : asrInputPendingCount > 0 ? 'processing' : 'ready' })
   const data = object(response), rawSessions = data.session_ls ?? data.sessions, rawChildren = data.child_ls ?? data.children
   if (!Array.isArray(rawSessions) || !Array.isArray(rawChildren) || !Number.isSafeInteger(viewerUserId) || viewerUserId <= 0
@@ -44,8 +44,8 @@ export function projectRecordingAsrInputMetrics(response: unknown, viewerUserId:
   const represented = new Set<string>()
   for (const child of children.values()) {
     const sessionId = id(child.session_id), session = sessions.get(sessionId)
-    if (!session || !validTime(session.belong_usr)) { asrInputUnknownCount++; continue }
-    if (!recordingBelongsToViewer(session, viewerUserId)) continue
+    if (!session || (!validTime(session.user_id) || session.user_id === 0)) { asrInputUnknownCount++; continue }
+    if (!recordingUploadedByViewer(session, viewerUserId)) continue
     represented.add(sessionId)
     const offset = child.start_at, duration = child.duration
     if (!validTime(offset) || (offset < 100_000_000_000 && !validTime(session.start_at))) { asrInputUnknownCount++; continue }
@@ -73,6 +73,7 @@ export function projectRecordingAsrInputMetrics(response: unknown, viewerUserId:
       // observed input. Keep that known total visible until the receipt arrives.
       if (input.basis == null && input.duration_ms == null && input.spans == null) continue
     }
+    if (child.has_asr === true && (state === 'unavailable' || child.asr_input_metrics == null)) asrInputMissingHistoryCount++
     const value = validTime(duration) && duration > 0 ? clippedInputDuration(child, duration, dayStart - start, dayEnd - start) : undefined
     if (value === undefined || !Number.isSafeInteger(asrInputDurationMillis + value)) { asrInputUnknownCount++; continue }
     asrInputDurationMillis += value
@@ -81,8 +82,8 @@ export function projectRecordingAsrInputMetrics(response: unknown, viewerUserId:
     if (state === 'partial') asrInputUnknownCount++
   }
   for (const [sessionId, session] of sessions) {
-    if (!sessionId || !validTime(session.belong_usr)) { asrInputUnknownCount++; continue }
-    if (!recordingBelongsToViewer(session, viewerUserId) || represented.has(sessionId)) continue
+    if (!sessionId || (!validTime(session.user_id) || session.user_id === 0)) { asrInputUnknownCount++; continue }
+    if (!recordingUploadedByViewer(session, viewerUserId) || represented.has(sessionId)) continue
     const start = session.start_at
     const end = validTime(session.end_at) ? session.end_at : validTime(start) && validTime(session.duration) ? start + session.duration : undefined
     if (!validTime(start) || !validTime(end) || end <= start || (start < dayEnd && end > dayStart)) asrInputUnknownCount++

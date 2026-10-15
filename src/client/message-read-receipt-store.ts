@@ -32,6 +32,8 @@ export type ArkmeMessageReadReceiptEntryStatus =
 export interface ArkmeMessageReadReceiptEntry {
   target: ArkmeMessageReadReceiptTarget
   status: ArkmeMessageReadReceiptEntryStatus
+  /** Local send feedback survives transport state changes until receipt truth arrives. */
+  provisionalUnread?: true
   summary?: ArkmeMessageReadReceiptSummary
 }
 
@@ -207,7 +209,12 @@ export class ArkmeMessageReadReceiptStore {
   provision(target: ArkmeMessageReadReceiptTarget): void {
     if (!validTarget(target) || this.accountUserId === undefined) return
     const key = targetKey(target)
-    this.entries.set(key, { target, status: 'provisional' })
+    const current = this.entries.get(key)
+    if (current?.provisionalUnread || (current?.summary?.totalMemberCount ?? 0) > 0) return
+    // This presentation hint must not invalidate an in-flight authoritative read.
+    // Keep its entry identity, which flush uses to fence obsolete responses.
+    if (current) current.provisionalUnread = true
+    else this.entries.set(key, { target, status: 'provisional', provisionalUnread: true })
     this.trimCache()
     this.publish()
   }
@@ -445,14 +452,16 @@ export class ArkmeMessageReadReceiptStore {
             if (generation !== this.generation || controller.signal.aborted) return
             const summaries = new Map(result.items.map(item => [JSON.stringify([item.itemUid, item.sequence]), item]))
             for (const item of chunk) {
-              if (this.entries.get(item.key) !== loadingEntries.get(item.key)) continue
+              const current = loadingEntries.get(item.key)
+              if (current === undefined || this.entries.get(item.key) !== current) continue
               const target = item.tracked.target
               const summary = result.sourceRef === target.sourceRef
                 ? summaries.get(JSON.stringify([target.itemUid, target.sequence]))
                 : undefined
               this.entries.set(item.key, summary === undefined
-                ? { ...item.entry, status: 'error' }
-                : { target, status: 'ready', summary })
+                ? { ...current, status: 'error' }
+                : summary.totalMemberCount > 0 ? { target, status: 'ready', summary }
+                  : { ...current, target, status: 'stale', summary: current.summary ?? summary })
               if (summary !== undefined && item.entry.summary !== undefined
                 && (summary.readCount !== item.entry.summary.readCount || summary.totalMemberCount !== item.entry.summary.totalMemberCount)) {
                 this.invalidateDetail(item.key)
@@ -463,7 +472,8 @@ export class ArkmeMessageReadReceiptStore {
             if (generation !== this.generation || controller.signal.aborted) return
             failed = true
             for (const item of chunk) {
-              if (this.entries.get(item.key) === loadingEntries.get(item.key)) this.entries.set(item.key, { ...item.entry, status: 'error' })
+              const current = loadingEntries.get(item.key)
+              if (current !== undefined && this.entries.get(item.key) === current) this.entries.set(item.key, { ...current, status: 'error' })
             }
           }
         }

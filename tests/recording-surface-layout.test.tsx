@@ -301,7 +301,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(row.get('padding')).toBe('3px')
     expect(row.get('display')).toBe('grid')
-    expect(row.get('grid-template-columns')).toBe('minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px')
+    expect(row.get('grid-template-columns')).toBe('fit-content(min(128px, 45%)) minmax(0, 1fr) 24px')
     expect(row.get('border-radius')).toBe('6px')
     expect(row.get('background')).toContain('--dsw-specific-input-major')
     expect(markup).toContain(`aria-label="编辑说话人 ${speakerLabel}"`)
