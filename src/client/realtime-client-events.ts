@@ -228,7 +228,13 @@ export function useArkmeRealtimeClientEvents(
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
         diagnoseAttention('accepted', update)
-        if (update.type === 'message-sync-progress') { arkmeMessageSync.apply(update.progress); return }
+        if (update.type === 'message-sync-progress') {
+          arkmeMessageSync.apply(update.progress)
+          if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
+            arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
+          }
+          return
+        }
         if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ArkmeTimelineItem } from '../src/types.js'
 import type { ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
-import { mergeTimelineSendRows, unifiedTimelineSendOverlay } from '../src/client/unified-timeline-send-overlay.js'
+import { mergeTimelineSendRows, unifiedTimelineMessageSequence, unifiedTimelineSendOverlay } from '../src/client/unified-timeline-send-overlay.js'
+import { arkmeShouldRefreshChatTimeline } from '../src/client/conversation-memory-cache.js'
 import { fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
 import type { ArkmeFileSendTask } from '../src/file-transfer-contract.js'
 
@@ -17,6 +18,12 @@ function window(items = [item(1843), item(1882)]): ArkmeUnifiedTimelineWindow {
 }
 
 describe('unified timeline local sends', () => {
+  it('does not let a newer send receipt suppress catch-up for an unseen incoming message', () => {
+    const canonical = window([item(8), item(11, { status: 0 })])
+    expect(unifiedTimelineMessageSequence(canonical)).toBe(8)
+    expect(arkmeShouldRefreshChatTimeline({ unified: canonical, items: [item(8), item(10)],
+      latestSequence: 10, fetchedAtMillis: 1000, aiPolishNotices: [], hasMore: false }, 1001, 9)).toBe(true)
+  })
   it('does not append a successful historical receipt missing from the current page', () => {
     expect(unifiedTimelineSendOverlay(window(), [item(1834), item(1843), item(1882)])).toEqual([])
   })

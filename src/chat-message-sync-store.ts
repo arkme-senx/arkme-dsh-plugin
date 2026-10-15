@@ -186,7 +186,8 @@ export class ChatMessageSyncStore {
     if (!scope || !sourceKey) throw new Error('message-sync-scope-missing')
     const oldSession = this.prepare('SELECT * FROM message_sync_sessions WHERE account=? AND uid=?').get(account, session.uid)
     const readThrough = Number(this.prepare('SELECT through FROM message_sync_acks WHERE account=? AND source_key=?').get(account, sourceKey)?.through ?? 0)
-    const fence = Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0)
+    const fence = Math.max(Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0),
+      Number(this.prepare('SELECT fence FROM cache_recovery WHERE id=1').get()!.fence))
     if (ticket < fence) throw new Error('message-sync-stale')
     if (command.action === 'commit' && !oldSession) throw new Error('message-sync-membership-changed')
     if (command.action === 'commit' && oldSession?.membership !== session.membership) session = { ...session, accessible: false, work: [] }

@@ -48,6 +48,39 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('routes committed-body hints only to bounded source caches in the active account without changing unread facts', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    const before = arkmeChatDirectory.getSnapshot()
+    const progress = { accountKey: 'test:42', cycle: 1, revision: 1, phase: 'syncing', total: 100, completed: 50, pending: 50, terminal: 0 }
+    const emit = async (revision: number, accountKey: string) => {
+      await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'message-sync-progress', revision,
+        progress: { ...progress, accountKey }, sourceKeys: Array.from({ length: 60 }, (_, i) => `source-${i}`) }) } as MessageEvent<string>) })
+    }
+    await emit(1, 'prod:42')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBeUndefined()
+    await emit(2, 'test:42')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBe(1)
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-49').localCacheRevision).toBe(1)
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-50').localCacheRevision).toBeUndefined()
+    expect(arkmeChatDirectory.getSnapshot()).toBe(before)
+    arkmeChatTimelineDelta.activateAccount('test:43')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBeUndefined()
+  } finally { await act(async () => renderer?.unmount()) }
+})
+
 it.each([
   { visibilityState: 'hidden', focused: true },
   { visibilityState: 'visible', focused: false },

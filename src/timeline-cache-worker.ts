@@ -10,6 +10,7 @@ parentPort!.on('message', ({ id, command }: { id: number; command: TimelineCache
     switch (command.kind) {
       case 'sync': value = store.sync(command.command); break
       case 'reserve': value = store.reserve(); break
+      case 'invalidate-all': store.invalidateAll(); break
       case 'read': value = store.read(command.scope, command.request, command.anchorId, command.latest); break
       case 'write': value = store.write(command.scope, command.request, command.page, command.options); break
       case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break

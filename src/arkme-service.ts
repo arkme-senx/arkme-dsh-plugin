@@ -611,8 +611,9 @@ export class ArkmeService {
       this.callHistory,
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
-    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, progress => {
-      this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress })
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
+      this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
+        ...(sourceKeys?.length ? { sourceKeys } : {}) })
     })
     this.realtime.subscribeChatRealtime(event => this.messageSync.accept(event))
     this.realtime.subscribeChatRealtime(event => {

@@ -1092,6 +1092,7 @@ export interface ArkmeChatTimelineDeltaSnapshot {
 
 export interface ArkmeChatTimelineSourceDeltaSnapshot {
   revision: number
+  localCacheRevision?: number
   items: import('../types.js').ArkmeTimelineItem[]
   removedItemKeys: string[]
   invalidationRevision: number
@@ -1149,6 +1150,18 @@ export class ArkmeChatTimelineDeltaStore {
     this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
     for (const listener of this.listeners) listener()
   }
+  localCacheUpdated(sourceKeys: readonly string[]): void {
+    for (const sourceKey of new Set(sourceKeys.slice(0, 50))) {
+      if (!sourceKey) continue
+      const previous = this.getSnapshotForSource(sourceKey)
+      this.sourceSnapshots.delete(sourceKey)
+      this.sourceSnapshots.set(sourceKey, { ...previous, localCacheRevision: (previous.localCacheRevision ?? 0) + 1 })
+    }
+    retainNewestMapEntries(this.sourceSnapshots)
+    this.retainChangeCursorsForKnownSources()
+    this.snapshot = { ...this.snapshot, revision: this.snapshot.revision + 1 }
+    for (const listener of this.listeners) listener()
+  }
   publish(updates: Array<{
     source: Pick<ArkmeSourceItem, 'sourceRef' | 'sourceKey' | 'latestSequence'>
     items: import('../types.js').ArkmeTimelineItem[]
@@ -1169,6 +1182,7 @@ export class ArkmeChatTimelineDeltaStore {
       this.sourceSnapshots.delete(sourceKey)
       this.sourceSnapshots.set(sourceKey, {
         revision: (previous?.revision ?? 0) + 1,
+        ...(previous?.localCacheRevision ? { localCacheRevision: previous.localCacheRevision } : {}),
         items: [...visibleItems],
         removedItemKeys,
         invalidationRevision: previous?.invalidationRevision ?? 0,
@@ -1222,6 +1236,7 @@ export class ArkmeChatTimelineDeltaStore {
     this.sourceSnapshots.delete(sourceKey)
     this.sourceSnapshots.set(sourceKey, {
       revision: previous.revision + 1,
+      ...(previous.localCacheRevision ? { localCacheRevision: previous.localCacheRevision } : {}),
       items: previous.items.filter(item => !boundedRemovedItemKeySet.has(item.timelineItemKey ?? '')),
       removedItemKeys: boundedRemovedItemKeys,
       invalidationRevision: previous.invalidationRevision
