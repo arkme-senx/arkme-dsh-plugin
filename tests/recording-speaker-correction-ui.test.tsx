@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
+import { ArkmeClientError } from '../src/sdk/index.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -89,6 +90,29 @@ describe('speaker correction interaction', () => {
     await mount(); await click('保存纠错')
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }); resolve({ affectedCount: 1, version: 'v2', day: { transcript: { items: [] } } }); await tick() })
     expect(onClose).toHaveBeenCalledOnce(); expect(onUpdated).not.toHaveBeenCalled()
+  })
+
+  it('distinguishes an explicit owner rejection from an uncertain outcome', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.apply'
+      ? Promise.reject(new ArkmeClientError({ code: 'recording-correction-rejected', message: '片段已变化', retryable: false })) : original(op, ...args))
+    await mount(); await click('保存纠错')
+    expect(button('确认这次提交结果')).toBeUndefined()
+    expect(JSON.stringify(renderer.toJSON())).toContain('本次操作未保存')
+    expect(onUpdated).not.toHaveBeenCalled()
+  })
+
+  it('confirms a lost response using the identical command and idempotency key', async () => {
+    const original = mocks.call.getMockImplementation()!
+    let lost = false
+    mocks.call.mockImplementation((op, ...args) => {
+      if (op === 'recordings.speaker.correction.apply' && !lost) { lost = true; return Promise.reject(new Error('连接中断')) }
+      return original(op, ...args)
+    })
+    await mount(); await click('保存纠错'); await click('确认这次提交结果')
+    expect(writes()).toHaveLength(2)
+    expect(writes()[1]![1]).toEqual(writes()[0]![1])
+    expect(onUpdated).toHaveBeenCalledOnce()
   })
 })
 

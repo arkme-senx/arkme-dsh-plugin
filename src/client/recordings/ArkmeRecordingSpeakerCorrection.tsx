@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeRecordingDay, ArkmeRecordingSoundSource, ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { callArkme } from '../api.js'
+import { ArkmeClientError } from '../../sdk/index.js'
 import { arkmeAuthStore } from '../auth-store.js'
 import { arkmeTheme as color } from '../arkme-theme.js'
 import { tr } from '../locale.js'
@@ -47,6 +48,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const locked = useRef(false)
   const autoStarted = useRef(false)
   const attempt = useRef<{ signature: string; key: string }>()
+  const unresolved = useRef<{ action: 'apply' | 'undo'; input: Record<string, unknown> }>()
   const initialAccount = useRef(arkmeAuthStore.getSnapshot().auth)
   useEffect(() => {
     mounted.current = true
@@ -62,6 +64,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const canSave = context?.supported === true && !pending && !outcomeUnknown && selected.size > 0 && selected.size <= maxItems
     && ((exclude && !!personLabel) || source !== '' || detach)
   const finish = (result: ArkmeRecordingSpeakerCorrectionResult, undo = false) => {
+    unresolved.current = undefined; setOutcomeUnknown(false)
     resetRecordingSpeakerCaches()
     setReceipt(result)
     setNotice(undo ? tr('已撤销这次纠错') : tr('已保存 {v0} 段纠错', { v0: result.affectedCount }))
@@ -71,6 +74,13 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
       setCurrentItem(result.day.transcript.items.find(row => row.itemId === item.itemId) ?? currentItem)
     }
     correction.reload()
+  }
+  const fail = (reason: unknown, fallback: string) => {
+    if (!mounted.current) return
+    const rejected = reason instanceof ArkmeClientError && reason.body.code === 'recording-correction-rejected'
+    if (rejected) unresolved.current = undefined
+    setError(reason instanceof Error ? reason.message : fallback)
+    setOutcomeUnknown(!rejected)
   }
   const save = async () => {
     if (!canSave || locked.current || !context?.supported) return
@@ -85,10 +95,12 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     if (attempt.current?.signature !== signature) attempt.current = { signature, key: crypto.randomUUID() }
     locked.current = true; setPending(true); setError('')
     try {
-      const result = await callArkme<ArkmeRecordingSpeakerCorrectionResult>('recordings.speaker.correction.apply', { ...input, idempotencyKey: attempt.current.key } satisfies ArkmeRecordingSpeakerCorrectionInput)
+      const command = { ...input, idempotencyKey: attempt.current.key } satisfies ArkmeRecordingSpeakerCorrectionInput
+      unresolved.current = { action: 'apply', input: command }
+      const result = await callArkme<ArkmeRecordingSpeakerCorrectionResult>('recordings.speaker.correction.apply', command)
       if (mounted.current) finish(result)
     } catch (reason) {
-      if (mounted.current) { setError(reason instanceof Error ? reason.message : tr('纠错保存失败')); setOutcomeUnknown(true) }
+      fail(reason, tr('纠错保存失败'))
     } finally { locked.current = false; if (mounted.current) setPending(false) }
   }
   const undo = async () => {
@@ -97,13 +109,23 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     if (!undoRef || !version || pending || locked.current || outcomeUnknown) return
     locked.current = true; setPending(true); setError('')
     try {
-      const result = await callArkme<ArkmeRecordingSpeakerCorrectionResult>('recordings.speaker.correction.undo', {
-        itemRef: currentItem.itemRef, undoRef, expectedVersion: version, idempotencyKey: crypto.randomUUID(),
-      })
+      const command = { itemRef: currentItem.itemRef, undoRef, expectedVersion: version, idempotencyKey: crypto.randomUUID() }
+      unresolved.current = { action: 'undo', input: command }
+      const result = await callArkme<ArkmeRecordingSpeakerCorrectionResult>('recordings.speaker.correction.undo', command)
       if (mounted.current) finish(result, true)
     } catch (reason) {
-      if (mounted.current) { setError(reason instanceof Error ? reason.message : tr('撤销失败')); setOutcomeUnknown(true) }
+      fail(reason, tr('撤销失败'))
     } finally { locked.current = false; if (mounted.current) setPending(false) }
+  }
+  const confirmOutcome = async () => {
+    const command = unresolved.current
+    if (!command || pending || locked.current) return
+    locked.current = true; setPending(true)
+    try {
+      const result = await callArkme<ArkmeRecordingSpeakerCorrectionResult>(`recordings.speaker.correction.${command.action}`, command.input)
+      if (mounted.current) { setError(''); finish(result, command.action === 'undo') }
+    } catch (reason) { fail(reason, tr('暂时无法确认保存结果')) }
+    finally { locked.current = false; if (mounted.current) setPending(false) }
   }
   useEffect(() => {
     // Only a click made while the capability was already known ready can submit automatically.
@@ -166,8 +188,9 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
         <button type="button" style={{ ...button, background: canSave ? color.text : color.layer2, color: canSave ? color.base : color.tertiary }} disabled={!canSave || correction.loading} onClick={() => { void save() }}>{pending ? tr('保存中…') : tr('保存纠错')}</button>
       </div>
     </>}
-    {error && <div role="alert" style={{ color: color.danger, lineHeight: 1.6 }}>{error}<div>{tr('请先重新读取状态，确认是否已保存。')}</div>
-      <button style={button} disabled={pending || correction.loading} onClick={() => { correction.reload(); setOutcomeUnknown(false); setError(''); setReceipt(undefined); setNotice('') }}>{tr('重新读取状态')}</button>
+    {error && <div role="alert" style={{ color: color.danger, lineHeight: 1.6 }}>{error}<div>{tr(outcomeUnknown ? '请先重新读取状态，确认是否已保存。' : '本次操作未保存，请重新打开录音，再核对所选片段。')}</div>
+      <button style={button} disabled={pending || correction.loading} onClick={correction.reload}>{tr('重新读取状态')}</button>
+      {outcomeUnknown && <button style={button} disabled={pending} onClick={() => { void confirmOutcome() }}>{tr('确认这次提交结果')}</button>}
     </div>}
   </section>
 }
