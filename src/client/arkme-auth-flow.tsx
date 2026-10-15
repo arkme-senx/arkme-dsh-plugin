@@ -9,6 +9,7 @@ import { ArkmeLogin, type ArkmeLoginMode, type ArkmeLoginProps } from './ArkmeLo
 import { arkmeAuthStore, type ArkmeAuthStoreSnapshot } from './auth-store.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { arkmeUi } from './ui-controller.js'
+import { confirmPhoneBinding } from './social-access-store.js'
 import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
@@ -429,6 +430,7 @@ export function useArkmeAuthFlow(
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       acceptAuthSnapshot(snapshot)
+      confirmPhoneBinding(snapshot, true)
     } catch (caught) {
       setError(arkmeLoginErrorMessage(caught, t))
     } finally {

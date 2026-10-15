@@ -34,6 +34,7 @@ import type {
 import { callArkme } from './api.js'
 import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
 import { publishProfileChange } from './profile-change-store.js'
+import { confirmPhoneBinding } from './social-access-store.js'
 import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -631,6 +632,7 @@ export function PhoneBindDialog({
       const auth = await callArkme<ArkmeAuthSnapshot>(unbind ? 'auth.phone.unbind' : 'auth.phone.verify', unbind ? { code } : { phone, code })
       if (!mountedRef.current) return
       arkmeAuthStore.setAuth(auth)
+      confirmPhoneBinding(auth, !unbind)
       if (unbind && auth.status === 'binding-required') {
         onClose()
         return

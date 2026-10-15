@@ -2134,10 +2134,12 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(730)
   })
 
-  it.each([false, true])('preserves the composer while phone checking completes (edited=%s)', async edited => {
+  it.each([false, true])('preserves the composer while the first phone check completes without cache (edited=%s)', async edited => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
     const pending = deferred<unknown>()
     const base = mocks.callArkme.getMockImplementation()!
-    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile' || operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     const key = arkmeSourceComposerDraftKey(42, target)!
     act(() => arkmeComposerDraftStore.setText(key, '准备发送的草稿'))
@@ -2147,6 +2149,25 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ profile: { userId: 42, contact: { phoneMasked: edited ? '138****0000' : undefined } } }) })
     expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(false)
     expect(arkmeComposerDraftStore.get(key).text).toBe(edited ? '检查过程中修改的内容' : '准备发送的草稿')
+    socialAccessStore.activate(undefined)
+  })
+
+  it('sends from the confirmed phone cache while a background profile request is still pending', async () => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
+    socialAccessStore.confirm('test:42', true)
+    const pending = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    const refreshing = socialAccessStore.refresh()
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const key = arkmeSourceComposerDraftKey(42, target)!
+    act(() => arkmeComposerDraftStore.setText(key, '无需等待资料的消息'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(true)
+    expect(arkmeComposerDraftStore.get(key).text).toBe('')
+    socialAccessStore.activate(undefined)
+    await refreshing
   })
 
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {

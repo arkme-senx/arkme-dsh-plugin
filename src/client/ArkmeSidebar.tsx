@@ -21,7 +21,8 @@ import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { AskDshIcon } from './AskDshIcon.js'
 import { isSocialSource } from './social-access-store.js'
-import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
+import { confirmPhoneBinding } from './social-access-store.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layout.js'
@@ -5099,6 +5100,7 @@ export function ArkmeSurface({
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       acceptAuthSnapshot(snapshot)
+      confirmPhoneBinding(snapshot, true)
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setSubmitBusy(false); setBusy(false) }
   }
 
@@ -5280,19 +5282,26 @@ export function ArkmeSurface({
   const send = async () => {
     const scope = captureComposerAsyncScope()
     const roleAtSendStart = source !== undefined && isArkmeSelfWorkspaceSource(source) ? selectedSelfRole : undefined
-    try { await withConversationSend(composerDraftKey, async consumed => {
+    const checkSocialAccess = async () => {
       if (isSocialSource(source)) {
         const draft = composerDraftKey ? arkmeComposerDraftStore.get(composerDraftKey) : undefined
         const article = composerArticleStore.get(articleDraftKey)
         await requirePhoneForSocialAction('发送消息')
-        if (!sameComposerAsyncScope(scope)) return
+        if (!sameComposerAsyncScope(scope)) return false
         if ((composerDraftKey && arkmeComposerDraftStore.get(composerDraftKey) !== draft) || composerArticleStore.get(articleDraftKey) !== article) {
           throw new Error(tr('内容已更新，请再次发送'))
         }
       }
-      if (sameComposerAsyncScope(scope)) await sendCore(consumed, roleAtSendStart)
-    }) }
-    catch (caught) { setError(errorMessage(caught)) }
+      return sameComposerAsyncScope(scope)
+    }
+    try {
+      // Prompt before acquiring the shared sending state; recheck after draft sync.
+      if (!await checkSocialAccess()) return
+      await withConversationSend(composerDraftKey, async consumed => {
+        if (await checkSocialAccess()) await sendCore(consumed, roleAtSendStart)
+      })
+    }
+    catch (caught) { if (!isSocialBindingRequired(caught)) setError(errorMessage(caught)) }
   }
   const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return

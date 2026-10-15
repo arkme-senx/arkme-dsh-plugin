@@ -1,5 +1,5 @@
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
-import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeClipboardFiles } from './clipboard-files.js'
 import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -390,7 +390,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
     sendBusy.current = true
     try { await requirePhoneForSocialAction('发送消息', ctrl.current.signal) }
-    catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)); return }
+    catch (e) { if (!ctrl.current.signal.aborted && !isSocialBindingRequired(e)) setError(errorText(e)); return }
     finally { sendBusy.current = false }
     if (ctrl.current.signal.aborted || latest.current?.conversation.ref !== timeline.conversation.ref || draftRef.current !== draft) return
     const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
