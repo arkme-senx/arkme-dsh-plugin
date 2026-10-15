@@ -6,11 +6,13 @@ it('bounds admission and isolates a worker failure from subsequent callers', asy
   try {
     const requests = Array.from({ length: 32 }, () => worker.call<number>({ kind: 'reserve' }))
     await expect(worker.call({ kind: 'reserve' })).rejects.toThrow('unavailable')
+    expect(worker.isClosed).toBe(false)
     expect(await Promise.all(requests)).toEqual(Array(32).fill(17))
     expect(await worker.call({ kind: 'reserve' })).toBe(17)
   } finally { worker.close() }
   const broken = new TimelineCacheWorker('unused', fixture("parentPort.on('message', () => { throw new Error('private disk detail'); });"))
   await expect(broken.call({ kind: 'reserve' })).rejects.toThrow('Timeline storage unavailable')
+  expect(broken.isClosed).toBe(true)
   await expect(broken.call({ kind: 'reserve' })).rejects.toThrow('Timeline storage unavailable')
   broken.close()
 })

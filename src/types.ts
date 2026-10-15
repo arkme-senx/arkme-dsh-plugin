@@ -3866,6 +3866,8 @@ export type ArkmeChatClientEvent = {
   type: 'message-sync-progress'
   revision: number
   progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
+  /** Bounded committed-body hints; no read positions or complete window coverage. */
+  sourceKeys?: string[]
 } | {
   type: 'team-invalidated'
   revision: number

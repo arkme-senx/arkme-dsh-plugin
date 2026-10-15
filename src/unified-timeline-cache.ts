@@ -42,6 +42,8 @@ export class UnifiedTimelineCache {
       INSERT OR IGNORE INTO clock VALUES (1,0);
       CREATE TABLE IF NOT EXISTS refresh_hints (scope TEXT PRIMARY KEY, ticket INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS scopes (scope TEXT PRIMARY KEY, fence INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS cache_recovery (id INTEGER PRIMARY KEY, fence INTEGER NOT NULL);
+      INSERT OR IGNORE INTO cache_recovery VALUES (1,0);
       CREATE TABLE IF NOT EXISTS pages (scope TEXT NOT NULL, request TEXT NOT NULL, metadata TEXT NOT NULL, touched INTEGER NOT NULL, ticket INTEGER NOT NULL, latest INTEGER NOT NULL, PRIMARY KEY(scope,request));
       CREATE INDEX IF NOT EXISTS pages_recency ON pages(touched);
       CREATE INDEX IF NOT EXISTS pages_scope_latest ON pages(scope,latest,ticket DESC);
@@ -140,7 +142,8 @@ export class UnifiedTimelineCache {
     const ticket = options.ticket ?? this.reserve()
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      const fence = Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0)
+      const fence = Math.max(Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0),
+        Number(this.prepare('SELECT fence FROM cache_recovery WHERE id=1').get()!.fence))
       const existing = Number(this.prepare('SELECT ticket FROM pages WHERE scope=? AND request=?').get(scope, request)?.ticket ?? 0)
       if (ticket < fence || ticket < existing) { this.db.exec('ROLLBACK'); return false }
       let removed = false
@@ -210,6 +213,20 @@ export class UnifiedTimelineCache {
       this.db.exec('COMMIT')
       try { this.db.exec('PRAGMA incremental_vacuum(32)') } catch { /* Maintenance cannot roll back an already committed window. */ }
       return true
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
+  }
+  /** Lost revocations discard projections, keeping sync identities for bounded recovery. */
+  invalidateAll(): void {
+    const ticket = this.reserve()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      // Fence also covers late writes for scopes that had no cached rows yet.
+      this.prepare('UPDATE cache_recovery SET fence=? WHERE id=1').run(ticket)
+      this.prepare('INSERT OR REPLACE INTO scopes SELECT scope,? FROM contents GROUP BY scope').run(ticket)
+      this.prepare('UPDATE scopes SET fence=?').run(ticket)
+      this.db.exec(`DELETE FROM entries; DELETE FROM pages; DELETE FROM contents;
+        UPDATE message_sync_work SET pending=1,stored_revision=-1,retry_at=0;`)
+      this.db.exec('COMMIT')
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   invalidateSource(sourceKey: string, timelineItemKey?: string, terminal = false, refreshOnly = false): void {

@@ -1,6 +1,18 @@
 import type { ArkmeTimelineItem } from '../types.js'
 import type { ArkmeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
 
+/** Displayed message coverage excludes composer receipts and unavailable bodies. */
+export function unifiedTimelineMessageSequence(window: ArkmeUnifiedTimelineWindow): number {
+  return Math.max(0, ...window.events.flatMap(event => event.kind === 'message' && event.contentStatus === 'available'
+    && event.item.status === 1 ? [event.item.sequence ?? 0] : []))
+}
+
+/** A refresh replaces history, but cannot settle an in-flight composer send. */
+export function pendingUnifiedTimelineSends(items: readonly ArkmeTimelineItem[]): ArkmeTimelineItem[] {
+  return items.filter(item => item.isMe && item.timelineEventId === undefined
+    && (item.status !== 1 || item.awaitingTimelineProjection === true))
+}
+
 /** Sending tasks are receipts, not another source of chat history. */
 export function unifiedTimelineSendOverlay(
   window: ArkmeUnifiedTimelineWindow,

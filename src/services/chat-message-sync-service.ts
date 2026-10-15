@@ -25,12 +25,12 @@ export class ChatMessageSyncService {
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
     private readonly source: SourceService, private readonly chat: ChatService,
-    private readonly publish: (progress: ArkmeMessageSyncProgress) => void) {
+    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[]) => void) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => { this.reset(); if (this.started) this.wake(0) })
   }
-  private update(progress: ArkmeMessageSyncProgress): void {
+  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[]): void {
     this.progress = { ...progress, revision: ++this.revision }
-    this.publish(this.progress)
+    this.publish(this.progress, sourceKeys)
   }
   start(): () => void {
     if (!this.started && !this.disposed) { this.started = true; this.wake(0) }
@@ -198,7 +198,10 @@ export class ChatMessageSyncService {
             this.assert(generation, signal)
             const { bodies: _bodies, ...stored } = page
             plan = await this.timeline.sync<ChatSyncPlan>({ action: 'commit', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket: flight.ticket, now: Date.now() })
-            this.assert(generation, signal); this.update(plan.progress)
+            this.assert(generation, signal)
+            // Notify only after commit. Consumers reread durable bodies, never
+            // publish the HTTP payload that may have lost an invalidation race.
+            this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []))
           }
         } finally { await Promise.allSettled(flights.map(f => f.response)) }
       }
