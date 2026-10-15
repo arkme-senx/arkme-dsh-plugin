@@ -196,6 +196,61 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  it.each([['background-read', 'private'], ['previous-realtime', 'private'], ['background-read', 'group'], ['previous-realtime', 'group']] as const)('keeps an in-flight send visible through %s in %s chat', async (trigger, kind) => {
+    const selected = kind === 'group' ? { ...group, latestSequence: 8 } : target
+    activeSource = selected; arkmeUi.selectSource(selected)
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<unknown>()
+    const old = { itemUid: 'diag-existing', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, textContent: 'existing', status: 1 }
+    let reads = 0
+    let sentUid = ''
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline') {
+        if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({code:'chat-timeline-cache-miss',message:'empty',retryable:false}))
+        reads++
+        return Promise.resolve(unifiedFixture(selected, [old])) as any
+      }
+      if (operation === 'source.send-text' || operation === 'source.send-rich') {
+        sentUid = (params as any).recordUid
+        return pending.promise as any
+      }
+      return base(operation, params, signal)
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({top:0,bottom:600}),querySelectorAll:()=>[],scrollTo:vi.fn() }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    act(() => arkmeComposerDraftStore.setText(arkmeSourceComposerDraftKey(42, selected)!, 'in-place send'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(sentUid).not.toBe('')
+    const visible = () => renderer!.root.findAllByProps({'data-arkme-message-item-uid':sentUid}).length
+    const originalRow = renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})
+    const originalBubble = originalRow.findByProps({'aria-label':'打开快记详情'})
+    const before = visible()
+    expect(before).toBe(1)
+    await act(async () => {
+      if (trigger === 'background-read') {
+        arkmeChatTimelineDelta.applyTimelineChange({sourceKey:selected.sourceKey!,timelineItemKey:'diag-existing-key',changeKind:'reedited',changeVersion:1,relationTerminal:false,throughSequence:8})
+        await new Promise(resolve=>setTimeout(resolve,350))
+      } else {
+        arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:9},items:[{...old,itemUid:'previous-arrival',sequence:9,sendAtMillis:9,timelineEventId:'previous-arrival',timelineOrderTie:'9',timelineItemKey:'previous-key'}]}])
+      }
+    })
+    const afterRefresh = visible()
+    const ownSequence = trigger === 'background-read' ? 9 : 10
+    await act(async () => { pending.resolve({sourceRef:selected.sourceRef,itemUid:sentUid,status:1,localState:'synced',sequence:ownSequence}) })
+    const afterAck = visible()
+    await act(async () => { arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:ownSequence},items:[{...old,itemUid:sentUid,sequence:ownSequence,sendAtMillis:48,textContent:'in-place send',isMe:true,timelineEventId:`canonical:${sentUid}`,timelineOrderTie:'9',timelineItemKey:'diag-new-key',messageActionRef:'diag-action'}]}]) })
+    const afterLive = visible()
+    expect(afterAck).toBe(1)
+    expect(afterLive).toBe(1)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})).toBe(originalRow)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid}).findByProps({'aria-label':'打开快记详情'})).toBe(originalBubble)
+    expect(afterRefresh).toBe(1)
+  })
+
   it.each(['stale-bottom', 'offline-history', 'timeout-history', 'browser-timeout-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
     const api = await import('../src/client/api.js')
     const { ArkmeClientError } = api
@@ -2134,10 +2189,12 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(730)
   })
 
-  it.each([false, true])('preserves the composer while phone checking completes (edited=%s)', async edited => {
+  it.each([false, true])('preserves the composer while the first phone check completes without cache (edited=%s)', async edited => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
     const pending = deferred<unknown>()
     const base = mocks.callArkme.getMockImplementation()!
-    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile' || operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     const key = arkmeSourceComposerDraftKey(42, target)!
     act(() => arkmeComposerDraftStore.setText(key, '准备发送的草稿'))
@@ -2147,6 +2204,25 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ profile: { userId: 42, contact: { phoneMasked: edited ? '138****0000' : undefined } } }) })
     expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(false)
     expect(arkmeComposerDraftStore.get(key).text).toBe(edited ? '检查过程中修改的内容' : '准备发送的草稿')
+    socialAccessStore.activate(undefined)
+  })
+
+  it('sends from the confirmed phone cache while a background profile request is still pending', async () => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
+    socialAccessStore.confirm('test:42', true)
+    const pending = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    const refreshing = socialAccessStore.refresh()
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const key = arkmeSourceComposerDraftKey(42, target)!
+    act(() => arkmeComposerDraftStore.setText(key, '无需等待资料的消息'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(true)
+    expect(arkmeComposerDraftStore.get(key).text).toBe('')
+    socialAccessStore.activate(undefined)
+    await refreshing
   })
 
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {
@@ -9748,7 +9824,8 @@ describe('conversation send directory projection', () => {
       if (outcome === 'synced') sent.resolve({sourceRef:target.sourceRef,itemUid:'record-new',status:1,sequence:9,localState:'synced'})
       else sent.reject(new Error('send failed'))
     })
-    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'synced' ? 1 : 0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    if (outcome === 'rejected') expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认')
     if (outcome === 'synced') {
       await act(async () => { arkmeInterwovenInvalidation.invalidate(target.sourceKey!) })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })

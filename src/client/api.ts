@@ -284,6 +284,10 @@ export async function callArkme<T>(
   const socialAction = socialWriteAction(operation, params)
   if (socialAction !== undefined) {
     const { requirePhoneForSocialAction } = await import('./social-action-guard.js')
+    const before = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (before?.status !== 'authenticated' || before.environment !== auth.environment || before.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
     await requirePhoneForSocialAction(socialAction, signal)
     const current = arkmeAuthStore.getSnapshot().auth
     if (auth?.status === 'authenticated' && (current?.status !== 'authenticated' || current.environment !== auth.environment || current.userId !== auth.userId)) {

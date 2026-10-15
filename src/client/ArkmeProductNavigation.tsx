@@ -300,7 +300,7 @@ export function ArkmeProductNavigation({
             ...(active ? styles.activeButton : {}),
             ...(showsRecording ? recordingBreathStyle : {}),
           }}
-          onClick={() => { void socialAccessStore.refresh(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
+          onClick={() => { void socialAccessStore.refreshIfStale(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
           onMouseEnter={event => {
             if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
             else navigationHint.show(event.currentTarget, item.id, hint)

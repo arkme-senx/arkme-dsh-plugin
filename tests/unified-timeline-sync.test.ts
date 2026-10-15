@@ -297,6 +297,77 @@ it('keeps healthy admission failures recoverable without restarting the worker',
   expect(created).toBe(1)
 })
 
+it.each([false, true])('retains a congested worker and replays terminal invalidations before concurrent reads (unknown source: %s)', async unknownSource => {
+  let congested = false, created = 0
+  const close = vi.fn()
+  const commands: string[] = []
+  const { owner, store, post } = setup(false, false, port => {
+    created++
+    return { isClosed: false, close, async call<T>(command: TimelineCacheCommand): Promise<T> {
+      commands.push(command.kind)
+      if (congested && command.kind.startsWith('invalidate')) throw new Error('Timeline storage unavailable')
+      return port.call<T>(command)
+    } }
+  })
+  const first = await owner.read('ref')
+  const item: ArkmeTimelineItem = { itemUid: 'record', timelineItemKey: 'relation', sequence: 1, senderName: 'peer', isMe: false,
+    sendAtMillis: 1, title: '', textContent: 'revoked body', status: 1 }
+  store.write(JSON.stringify(['test', 1, 'chat']), 'seed', { ...first, items: [item], unified: { ...first.unified!,
+    events: [{ kind: 'message', source: 'messages', eventId: 'event', occurredAtMillis: 1, orderTie: '1', contentStatus: 'available', item }] } }, { latest: true })
+  if (unknownSource) owner.reset()
+  congested = true
+  commands.length = 0
+  await owner.invalidate('source-key', 'relation', true)
+  // Repeated callers must not bypass an undelivered revocation or restart a live worker.
+  await Promise.all(Array.from({ length: 20 }, () => expect(owner.syncTicket()).rejects.toThrow('message-sync-storage')))
+  await expect(owner.read('ref', { cacheOnly: true })).rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+  const invalidation = unknownSource ? 'invalidate-source' : 'invalidate'
+  expect(commands.length).toBeGreaterThan(1)
+  expect(commands.every(command => command === invalidation)).toBe(true)
+  expect(close).not.toHaveBeenCalled()
+
+  congested = false
+  commands.length = 0
+  const pages = await Promise.all(Array.from({ length: 3 }, () => owner.read('ref', { cacheOnly: true })))
+  expect(commands[0]).toBe(invalidation)
+  expect(commands.filter(command => command === invalidation)).toHaveLength(1)
+  for (const page of pages) {
+    expect(page.items).toEqual([])
+    expect(JSON.stringify(page)).not.toContain('revoked body')
+  }
+  expect(created).toBe(1)
+  expect(close).not.toHaveBeenCalled()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+it('retains the overflow invalidation fence through healthy worker congestion', async () => {
+  let congested = false, created = 0
+  const close = vi.fn()
+  const commands: string[] = []
+  const { owner, store } = setup(false, false, port => {
+    created++
+    return { isClosed: false, close, async call<T>(command: TimelineCacheCommand): Promise<T> {
+      commands.push(command.kind)
+      if (congested && command.kind.startsWith('invalidate')) throw new Error('Timeline storage unavailable')
+      return port.call<T>(command)
+    } }
+  })
+  const page = await owner.read('ref')
+  const oldTicket = store.reserve()
+  congested = true
+  await Promise.all(Array.from({ length: 600 }, (_, i) => owner.invalidate(`source-${i}`, `key-${i}`, true)))
+  await expect(owner.read('ref', { cacheOnly: true })).rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+  expect(close).not.toHaveBeenCalled()
+  congested = false
+  commands.length = 0
+  await expect(owner.read('ref', { cacheOnly: true })).rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+  expect(commands[0]).toBe('invalidate-all')
+  expect(store.write('previously-uncached-scope', 'late', page, { ticket: oldTicket })).toBe(false)
+  expect((await owner.read('ref')).cache?.persistence).toBe('committed')
+  expect(created).toBe(1)
+  expect(close).not.toHaveBeenCalled()
+})
+
 it('replays a failed terminal invalidation before any read after worker recovery and account reset', async () => {
   let now = 0, fail = false, created = 0
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
