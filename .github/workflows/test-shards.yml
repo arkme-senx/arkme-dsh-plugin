@@ -26,15 +26,15 @@ env:
 
 jobs:
   test:
-    name: 测试分片 ${{ matrix.shard }}/4（4 路）
+    name: 测试分片 ${{ matrix.shard }}/8（4 路）
     if: inputs.enabled
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,7 +65,7 @@ jobs:
           zstd --version
       - name: 执行全量测试分片
         run: >-
-          pnpm exec vitest run --shard=${{ matrix.shard }}/4 --maxWorkers=4
+          pnpm exec vitest run --shard=${{ matrix.shard }}/8 --maxWorkers=4
           --reporter=default --reporter=json
           --outputFile.json=test-results/shard-${{ matrix.shard }}.json
       - name: 保存分片报告
