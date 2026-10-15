@@ -196,6 +196,61 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  it.each([['background-read', 'private'], ['previous-realtime', 'private'], ['background-read', 'group'], ['previous-realtime', 'group']] as const)('keeps an in-flight send visible through %s in %s chat', async (trigger, kind) => {
+    const selected = kind === 'group' ? { ...group, latestSequence: 8 } : target
+    activeSource = selected; arkmeUi.selectSource(selected)
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<unknown>()
+    const old = { itemUid: 'diag-existing', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, textContent: 'existing', status: 1 }
+    let reads = 0
+    let sentUid = ''
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline') {
+        if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({code:'chat-timeline-cache-miss',message:'empty',retryable:false}))
+        reads++
+        return Promise.resolve(unifiedFixture(selected, [old])) as any
+      }
+      if (operation === 'source.send-text' || operation === 'source.send-rich') {
+        sentUid = (params as any).recordUid
+        return pending.promise as any
+      }
+      return base(operation, params, signal)
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({top:0,bottom:600}),querySelectorAll:()=>[],scrollTo:vi.fn() }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    act(() => arkmeComposerDraftStore.setText(arkmeSourceComposerDraftKey(42, selected)!, 'in-place send'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(sentUid).not.toBe('')
+    const visible = () => renderer!.root.findAllByProps({'data-arkme-message-item-uid':sentUid}).length
+    const originalRow = renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})
+    const originalBubble = originalRow.findByProps({'aria-label':'打开快记详情'})
+    const before = visible()
+    expect(before).toBe(1)
+    await act(async () => {
+      if (trigger === 'background-read') {
+        arkmeChatTimelineDelta.applyTimelineChange({sourceKey:selected.sourceKey!,timelineItemKey:'diag-existing-key',changeKind:'reedited',changeVersion:1,relationTerminal:false,throughSequence:8})
+        await new Promise(resolve=>setTimeout(resolve,350))
+      } else {
+        arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:9},items:[{...old,itemUid:'previous-arrival',sequence:9,sendAtMillis:9,timelineEventId:'previous-arrival',timelineOrderTie:'9',timelineItemKey:'previous-key'}]}])
+      }
+    })
+    const afterRefresh = visible()
+    const ownSequence = trigger === 'background-read' ? 9 : 10
+    await act(async () => { pending.resolve({sourceRef:selected.sourceRef,itemUid:sentUid,status:1,localState:'synced',sequence:ownSequence}) })
+    const afterAck = visible()
+    await act(async () => { arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:ownSequence},items:[{...old,itemUid:sentUid,sequence:ownSequence,sendAtMillis:48,textContent:'in-place send',isMe:true,timelineEventId:`canonical:${sentUid}`,timelineOrderTie:'9',timelineItemKey:'diag-new-key',messageActionRef:'diag-action'}]}]) })
+    const afterLive = visible()
+    expect(afterAck).toBe(1)
+    expect(afterLive).toBe(1)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})).toBe(originalRow)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid}).findByProps({'aria-label':'打开快记详情'})).toBe(originalBubble)
+    expect(afterRefresh).toBe(1)
+  })
+
   it.each(['stale-bottom', 'offline-history', 'timeout-history', 'browser-timeout-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
     const api = await import('../src/client/api.js')
     const { ArkmeClientError } = api
