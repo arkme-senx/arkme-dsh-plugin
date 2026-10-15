@@ -31,6 +31,7 @@ describe('Arkme tool catalog', () => {
       'arkme_directory_list', 'arkme_team_profile', 'arkme_team_profile_update',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_device_lock_status', 'arkme_device_lock', 'arkme_device_unlock_request',
       'arkme_ai_points',
       'arkme_ai_points_consumption',
       'arkme_background_sound_status',
@@ -156,6 +157,7 @@ describe('Arkme tool catalog', () => {
     expect(writes.map(module => module.meta.toolName)).toEqual([
       'arkme_self_roles_write',
       'arkme_official_notifications_read', 'arkme_team_profile_update',
+      'arkme_device_lock', 'arkme_device_unlock_request',
       'arkme_background_sound_disable', 'arkme_id_set', 'arkme_contact_add', 'arkme_contact_private_chat_open', 'arkme_team_join', 'arkme_group_create', 'arkme_group_rename', 'arkme_arko_session', 'arkme_arko_ask', 'arkme_arko_cancel',
       'arkme_record_create', 'arkme_record_reedit', 'arkme_bot_create', 'arkme_bot_openclaw_connect', 'arkme_bot_chat_open', 'arkme_group_bot_add', 'arkme_group_bot_remove',
       'arkme_world_voiceprint_invite', 'arkme_world_private_chat_open', 'arkme_voiceprint_recognized_person_invite', 'arkme_voiceprint_invite', 'arkme_voiceprint_revoke', 'arkme_voiceprint_restore_playback',

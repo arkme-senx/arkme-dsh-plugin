@@ -114,6 +114,7 @@ export interface StateStore extends RecentEmojiStore {
 
 export interface ArkmeServiceConfig {
   environment: ArkmeEnvironment
+  dshRemoteRealtimeBaseUrl?: string
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string

@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_team_profile_update',
   'arkme_reactions_write',
   'arkme_bot_conversation_pin',
@@ -83,6 +84,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
+  if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'

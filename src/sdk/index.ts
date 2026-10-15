@@ -1,3 +1,5 @@
+import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
+export type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 export { recordingImportBatchID } from '../recording-workflow-contract.js'
@@ -813,6 +815,11 @@ export class ArkmeSdk {
     if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId: extensionId.trim() }, signal)
   }
+
+  async deviceLockStatus(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.status', undefined, signal) }
+  async lockDevice(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.lock', undefined, signal) }
+  /** Requests the ordinary phone/native flow; never accepts authentication proof from callers. */
+  async requestDeviceUnlock(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.unlock', undefined, signal) }
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)

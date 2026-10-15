@@ -127,7 +127,8 @@ describe('Arkme product navigation', () => {
     expect(footerDropdownSource).not.toContain('totalUnreadCount')
   })
 
-  it('moves voiceprint into recordings and keeps only data/settings menu rows', () => {
+  it('keeps existing profile rows and inserts lock immediately above data management', () => {
+    expect(productNavigationSource.indexOf('<LockSimple size={19}')).toBeLessThan(productNavigationSource.indexOf('<Database size={19}'))
     expect(productNavigationSource).not.toContain('arkmeUi.showVoiceprint()')
     expect(productNavigationSource).not.toContain('<strong>声纹管理</strong>')
     expect(productNavigationSource).toContain('<strong>数据管理</strong>')

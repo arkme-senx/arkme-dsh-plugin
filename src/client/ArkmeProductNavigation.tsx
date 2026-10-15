@@ -1,3 +1,5 @@
+import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
+import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
@@ -153,6 +155,22 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const [lockAvailable, setLockAvailable] = useState(false)
+  const [lockBusy, setLockBusy] = useState(false)
+  const [lockError, setLockError] = useState('')
+  useEffect(() => {
+    if (!profileOpen || authState.auth?.status !== 'authenticated') { setLockAvailable(false); return }
+    let active = true
+    void callArkme<ArkmeDeviceLockSnapshot>('device.lock.status').then(value => { if (active) setLockAvailable(value.available) }).catch(() => { if (active) setLockAvailable(false) })
+    return () => { active = false }
+  }, [profileOpen, authState.auth?.userId])
+  const lockCurrentDevice = async () => {
+    if (lockBusy) return
+    setLockBusy(true); setLockError('')
+    try { await callArkme('device.lock.lock'); setProfileOpen(false) }
+    catch (error) { setLockError(error instanceof Error ? error.message : '锁定失败，请重试') }
+    finally { setLockBusy(false) }
+  }
   const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
@@ -370,6 +388,8 @@ export function ArkmeProductNavigation({
           </button>
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
+            {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><LockSimple size={19} /><span><strong>{tr(lockBusy ? '正在锁定' : '锁定')}</strong></span><CaretRight size={15} /></button>}
+            {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>

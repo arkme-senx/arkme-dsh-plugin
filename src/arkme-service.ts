@@ -1,3 +1,4 @@
+import { DeviceLockService } from './services/device-lock-service.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
 import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -369,6 +370,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
   private readonly media: MediaService
@@ -654,6 +656,7 @@ export class ArkmeService {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
       new BackgroundSoundMembershipService(this.runtime),
@@ -897,8 +900,13 @@ export class ArkmeService {
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async deviceLockStatus() { return await this.deviceLock.refresh() }
+  async lockDevice() { return await this.deviceLock.lock() }
+  async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
+
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     const snapshot = await this.auth.authStatus()
+    void this.deviceLock.refresh().catch(() => undefined)
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
   }
@@ -1122,6 +1130,7 @@ export class ArkmeService {
     this.unmarkedSpeaker.dispose()
     this.realtime.dispose()
     this.arko.dispose()
+    this.deviceLock.dispose()
     this.auth.dispose()
     this.bot.dispose()
     this.extensionReview.dispose()
@@ -2537,7 +2546,11 @@ export class ArkmeService {
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.logoutFeedback.run(async () => {
       this.recordingPresenceWriter.revoke()
-      return await this.auth.logout()
+      const expected = await this.runtime.accountScopedSession()
+      const revoke = await this.deviceLock.beforeLogout(expected)
+      const result = await this.auth.logout(expected)
+      if (revoke) await this.deviceLock.afterLogout()
+      return result
     })
   }
 

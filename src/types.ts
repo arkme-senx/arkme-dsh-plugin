@@ -3984,6 +3984,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.preview'
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
+  | 'device.lock.status' | 'device.lock.lock' | 'device.lock.unlock'
   | 'auth.logout'
   | 'auth.logout.feedback'
   | 'user-ban.status'
