@@ -1,3 +1,4 @@
+import { messageSyncToolModules } from './message-sync.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
 import { archiveToolModules } from './archive.js'
 import { memberPageToolModules } from './member-pages.js'
@@ -21,6 +22,7 @@ import { startCallToolModule } from './start-call.js'
 import { conversationMarkReadToolModule, unreadConversationsToolModule } from './unread.js'
 
 export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
+  ...messageSyncToolModules,
   listSourcesToolModule,
   topicHomeVisibilityToolModule,
   ...archiveToolModules,

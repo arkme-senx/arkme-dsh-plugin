@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { createHmac } from 'node:crypto'
+import type { ChatSyncCommand, ChatSyncLocalPage } from '../chat-message-sync.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import type { ArkmeTimelinePage } from '../types.js'
 import { CHAT_TIMELINE_SOURCES, compareUnifiedTimelineEvents, type ArkmeUnifiedTimelineEvent, type ArkmeUnifiedTimelineQuery, type ArkmeUnifiedTimelineWindow, type ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
@@ -50,6 +51,9 @@ export class UnifiedChatTimelineService {
   private cache: TimelineCachePort | undefined
   private epoch = 0
   private disposed = false
+  private storageRetryAt = 0
+  private storageFailures = 0
+  private invalidateAll = 0
   private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number; refreshRevision: number }>()
   private readonly pendingInvalidations = new Map<string, TimelineCacheCommand>()
   private invalidating: Promise<void> | undefined
@@ -63,10 +67,45 @@ export class UnifiedChatTimelineService {
   }
 
   private storage(): TimelineCachePort | undefined {
-    if (!this.cache && !this.disposed && this.runtime.config.fileStateDirectory) {
-      try { this.cache = this.createCache(join(this.runtime.config.fileStateDirectory, 'timeline')) } catch { /* Network remains available. */ }
+    if (this.cache?.isClosed) this.failedStorage(this.cache)
+    if (!this.cache && !this.disposed && Date.now() >= this.storageRetryAt && this.runtime.config.fileStateDirectory) {
+      try { this.cache = this.createCache(join(this.runtime.config.fileStateDirectory, 'timeline')) }
+      catch { this.backoffStorage() }
     }
     return this.cache
+  }
+  private backoffStorage(): void {
+    this.storageRetryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(5, this.storageFailures++))
+  }
+  private failedStorage(cache: TimelineCachePort): void {
+    // An old request must never tear down its replacement.
+    if (this.cache !== cache) return
+    this.cache = undefined; cache.close(); this.backoffStorage()
+  }
+  private async callStorage<T>(cache: TimelineCachePort, command: TimelineCacheCommand): Promise<T> {
+    try {
+      const value = await cache.call<T>(command)
+      if (this.cache === cache) this.storageFailures = 0
+      return value
+    } catch (error) {
+      if (cache.isClosed !== false) this.failedStorage(cache)
+      throw error
+    }
+  }
+  private async readyStorage(): Promise<TimelineCachePort | undefined> {
+    await this.drainInvalidations()
+    // No offline projection may bypass an undelivered revocation.
+    return this.invalidateAll || this.pendingInvalidations.size ? undefined : this.storage()
+  }
+  async sync<T>(command: ChatSyncCommand): Promise<T> {
+    const storage = await this.readyStorage()
+    if (!storage) throw new Error('message-sync-storage')
+    return await this.callStorage<T>(storage, { kind: 'sync', command })
+  }
+  async syncTicket(): Promise<number> {
+    const storage = await this.readyStorage()
+    if (!storage) throw new Error('message-sync-storage')
+    return await this.callStorage<number>(storage, { kind: 'reserve' })
   }
 
   /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
@@ -88,22 +127,44 @@ export class UnifiedChatTimelineService {
     }
     const key = JSON.stringify([sourceKey, timelineItemKey ?? '', terminal, refreshOnly])
     if (!this.pendingInvalidations.has(key) && this.pendingInvalidations.size >= 512) {
-      // Never serve potentially revoked data when a bounded hint backlog overflows.
-      this.pendingInvalidations.clear(); this.storage()?.close()
-      return
+      // Arrival hints can be coalesced away; they must not erase durable bodies
+      // during a large directory burst. Revocations always take precedence.
+      if (refreshOnly) return
+      const hint = [...this.pendingInvalidations].find(([, command]) => 'refreshOnly' in command && command.refreshOnly)
+      if (hint) this.pendingInvalidations.delete(hint[0])
+      else {
+        // Never serve potentially revoked data when revocations alone overflow.
+        this.pendingInvalidations.clear(); this.invalidateAll++; this.epoch++
+      }
     }
     this.pendingInvalidations.set(key, { ...(known ? { kind: 'invalidate' as const, scope: known.scope } : { kind: 'invalidate-source' as const, sourceKey }),
       ...(timelineItemKey ? { timelineItemKey } : {}), terminal, ...(refreshOnly ? { refreshOnly: true } : {}) })
     // A sessions delta can contain hundreds of sources. Coalesce duplicate hints
     // and drain sequentially instead of overflowing the shared Worker admission queue.
+    await this.drainInvalidations()
+  }
+
+  private async drainInvalidations(): Promise<void> {
+    if (!this.invalidateAll && !this.pendingInvalidations.size) return
     this.invalidating ??= Promise.resolve().then(async () => {
       try {
-        while (this.pendingInvalidations.size && !this.disposed) {
+        while ((this.invalidateAll || this.pendingInvalidations.size) && !this.disposed) {
+          const cache = this.storage()
+          if (!cache) return
+          if (this.invalidateAll) {
+            const invalidation = this.invalidateAll
+            await this.callStorage(cache, { kind: 'invalidate-all' })
+            if (this.invalidateAll === invalidation) this.invalidateAll = 0
+            continue
+          }
           const [id, command] = this.pendingInvalidations.entries().next().value!
-          this.pendingInvalidations.delete(id)
-          await this.storage()?.call(command)
+          await this.callStorage(cache, command)
+          if (this.pendingInvalidations.get(id) === command) this.pendingInvalidations.delete(id)
         }
-      } catch { this.pendingInvalidations.clear(); this.cache?.close() }
+      } catch {
+        // callStorage owns failure/replacement of the exact worker. A healthy
+        // admission rejection keeps this backlog fenced until the next owner call.
+      }
       finally { this.invalidating = undefined }
     })
     await this.invalidating
@@ -166,7 +227,7 @@ export class UnifiedChatTimelineService {
       })
       if (signal.aborted) abort()
     })
-    const cache = this.storage()
+    const cache = await this.readyStorage()
     const assertCurrent = async () => {
       signal.throwIfAborted()
       const currentSession = await this.runtime.requireSession()
@@ -174,16 +235,41 @@ export class UnifiedChatTimelineService {
     }
     if (query.cacheOnly) {
       let cached: ArkmeTimelinePage | undefined
-      try { cached = await cache?.call<ArkmeTimelinePage | undefined>({ kind: 'read', scope, request: requestKey,
+      try { cached = cache ? await this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
-        latest: mode === 'initial' && !query.anchorId }) } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+        latest: mode === 'initial' && !query.anchorId }) : undefined } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+      // Window coverage and synced bodies have independent commit clocks. An old
+      // latest window must not hide a newer, already durable local message tail.
+      const latestLocal = mode === 'initial' && !query.anchorId && !query.cursor
+      if (!cached || latestLocal) {
+        const cacheMiss = () => new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
+        if (!['initial', 'around', 'older'].includes(mode)) throw cacheMiss()
+        let before: number | undefined
+        if (query.cursor) {
+          try { before = Number(codec.open(query.cursor, 'local-message')) }
+          catch { throw cacheMiss() } // A missing remote window must not become a local tail.
+        }
+        if (before !== undefined && (!Number.isSafeInteger(before) || before <= 0)) throw invalid()
+        const anchor = query.anchorId ?? (mode === 'around' ? query.itemUid : undefined)
+        const local = await this.sync<ChatSyncLocalPage | undefined>({ action: 'read', scope, limit: query.limit ?? 40, ...(anchor === undefined ? {} : { anchorId: anchor.replace(/^(message|moment|notice|external|world-public):/, '') }), ...(before ? { before } : {}) }).catch(() => undefined)
+        const sequence = (events: ArkmeUnifiedTimelineEvent[]) => Math.max(0, ...events.flatMap(event => event.kind === 'message' ? [event.item.sequence ?? 0] : []))
+        if (local?.events.length && (!cached || sequence(local.events) > sequence(cached.unified?.events ?? [])
+          || !cached.items.length && local.revision > (cached.cache?.revision ?? 0))) {
+          const cursor = local.before ? codec.seal(String(local.before), 'local-message') : undefined
+          cached = { source: sourceItem, items: local.events.flatMap(e => e.kind === 'message' ? [e.item] : []),
+            cache: { origin: 'local', persistence: 'committed', revision: local.revision, stale: true },
+            unified: { protocolVersion: 1, events: local.events, sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'gap', itemCount: source === 'messages' ? local.events.length : 0 })),
+              complete: false, windowTokens: [], olderHasMore: Boolean(cursor), newerHasMore: false, hasMore: Boolean(cursor), ...(cursor ? { olderCursor: cursor, nextCursor: cursor } : {}) },
+            hasMore: Boolean(cursor), ...(cursor ? { nextCursor: { unified: { mode: 'older', cacheOnly: true, cursor } } } : {}) }
+        }
+      }
       if (!cached) throw new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
       await assertCurrent()
       return { ...cached, source: sourceItem, ...(cached.cache ? { cache: { ...cached.cache,
         stale: cached.cache.stale === true || state.refreshRevision !== refreshRevision } } : {}) }
     }
     let ticket: number | undefined
-    try { ticket = await cache?.call<number>({ kind: 'reserve' }) } catch { /* Explicit unavailable persistence below. */ }
+    try { ticket = cache ? await this.callStorage<number>(cache, { kind: 'reserve' }) : undefined } catch { /* Explicit unavailable persistence below. */ }
     await assertCurrent()
     const readPage = async (pageQuery: ArkmeUnifiedTimelineQuery): Promise<ArkmeTimelinePage> => {
     const mode = pageQuery.mode ?? 'initial'
@@ -291,7 +377,7 @@ export class UnifiedChatTimelineService {
     let committed = false
     if (durable && ticket !== undefined) {
       let accepted: boolean | undefined
-      try { accepted = await cache!.call<boolean>({ kind: 'write', scope, request: requestKey, page: result,
+      try { accepted = await this.callStorage<boolean>(cache!, { kind: 'write', scope, request: requestKey, page: result,
         options: { ticket, latest: (mode === 'initial' || query.reconcile === true && !!query.newerCursor) && !result.unified!.newerHasMore,
           ...(query.reconcile ? { refreshTokens: query.windowTokens! } : {}) } }) } catch { /* The previous committed window survives. */ }
       if (accepted === false) throw new ArkmePluginError('chat-timeline-stale', '会话已有更新，请重试', true, 409)
@@ -301,7 +387,7 @@ export class UnifiedChatTimelineService {
       // Publish exactly the committed canonical projection, including a newer version
       // already written by another window. A failed readback is not a persisted success.
       try {
-        const persisted = await cache!.call<ArkmeTimelinePage | undefined>({ kind: 'read', scope, request: requestKey })
+        const persisted = await this.callStorage<ArkmeTimelinePage | undefined>(cache!, { kind: 'read', scope, request: requestKey })
         if (persisted) result = persisted
         else committed = false
       }

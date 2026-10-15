@@ -2,7 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 import type { ArkmeRecordingSpeakerOption, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { arkmeAuthStore } from '../auth-store.js'
 import { useResource } from '../use-resource.js'
-import { assignRecordingSpeaker, recordingSpeakerAccount, recordingSpeakerOptions, recordingSpeakerItemContexts } from './recording-speaker-options-store.js'
+import { assignRecordingSpeaker, unassignRecordingSpeaker, recordingSpeakerAccount, recordingSpeakerOptions, recordingSpeakerItemContexts } from './recording-speaker-options-store.js'
 
 export type RecordingSpeakerChoice = { optionKey: string; newSpeakerName?: never } | { newSpeakerName: string; optionKey?: never }
 
@@ -34,6 +34,8 @@ export function useRecordingSpeakerOptions(item: ArkmeRecordingWorkbenchItem) {
   }
   return {
     contextKey: key, options, ready, error, save,
+    unassign: async (scope: 'item' | 'speaker') => key === undefined || !item.assignedSpeakerOptionKey
+      ? undefined : await unassignRecordingSpeaker(key, binding, scope, scope === 'item' ? 1 : item.sameSpeakerItemCount),
     pending: itemContext.snapshot.mutating,
     loading: directory.snapshot.value === undefined && directory.snapshot.error === undefined,
     refresh: directory.refresh,

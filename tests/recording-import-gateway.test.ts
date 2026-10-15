@@ -1211,3 +1211,57 @@ it('never retries a batch admission as an ordinary upload when the backend route
   expect(post).toHaveBeenCalledOnce()
   expect(post.mock.calls[0]![0]).toBe('/api/v1/audio/import-batches/new-session')
 })
+
+describe('owner scan continuation', () => {
+  function fixture() {
+    let viewer = 42
+    const rows = Array.from({ length: 205 }, (_, i) => ownerRow(`session-${i}`, true, true))
+    const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path.endsWith('/get-session-ls')) return { session_ls: rows.slice(Number(body.offset), Number(body.offset) + Number(body.limit)) }
+      return { item_ls: [] }
+    })
+    const gateway = new AudioRecordingImportGateway({
+      async requireSession() { return { userId: viewer, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost: post,
+    } as unknown as ServiceRuntime)
+    const read = (offset: number) => gateway.listOwnerTasks({ viewerUserId: 42, scope: 'completed', toMillis: 1_725_100_000_000, limit: 50, offset })
+    const offsets = () => post.mock.calls.filter(([path]) => path.endsWith('/get-session-ls')).map(([, body]) => body.offset)
+    return { rows, gateway, read, offsets, setViewer: (value: number) => { viewer = value } }
+  }
+
+  it('fetches each raw page once across sequential filtered pages', async () => {
+    const f = fixture()
+    f.rows[5].source = 1
+    const ids: string[] = []
+    let offset = 0
+    while (true) {
+      const page = await f.read(offset)
+      ids.push(...page.tasks.map(task => task.session.sessionId))
+      offset += page.tasks.length
+      if (!page.hasMore) break
+    }
+    expect(ids).toHaveLength(204)
+    expect(new Set(ids).size).toBe(204)
+    expect(ids).not.toContain('session-5')
+    expect(f.offsets()).toEqual([0, 100, 200])
+  })
+
+  it('invalidates a scan after deletion so an adjusted offset cannot skip a file', async () => {
+    const f = fixture()
+    await f.read(0)
+    await f.gateway.deleteOwnerSession({ viewerUserId: 42, sessionId: 'session-0' })
+    f.rows.shift()
+    const page = await f.read(49)
+    expect(page.tasks[0].session.sessionId).toBe('session-50')
+    expect(f.offsets()).toEqual([0, 0])
+  })
+
+  it('checks account ownership even when a page is entirely cached', async () => {
+    const f = fixture()
+    await f.read(0)
+    await f.read(50)
+    f.setViewer(43)
+    await expect(f.read(100)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+    expect(f.offsets()).toEqual([0, 100])
+  })
+})

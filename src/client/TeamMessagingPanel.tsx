@@ -1,4 +1,5 @@
-import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { ArkmeConversationDate } from './ArkmeConversationDate.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeClipboardFiles } from './clipboard-files.js'
 import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -37,7 +38,7 @@ import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamI
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
-import { arkmeConversationMessageLayout as messageLayout, dayKey, dayLabel } from './conversation-message-presentation.js'
+import { arkmeConversationMessageLayout as messageLayout, dayKey } from './conversation-message-presentation.js'
 import { arkmeConversationComposerLayout as composerLayout, arkmeConversationComposerBorder } from './conversation-composer-presentation.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
@@ -389,7 +390,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
     sendBusy.current = true
     try { await requirePhoneForSocialAction('发送消息', ctrl.current.signal) }
-    catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)); return }
+    catch (e) { if (!ctrl.current.signal.aborted && !isSocialBindingRequired(e)) setError(errorText(e)); return }
     finally { sendBusy.current = false }
     if (ctrl.current.signal.aborted || latest.current?.conversation.ref !== timeline.conversation.ref || draftRef.current !== draft) return
     const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
@@ -541,7 +542,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {visibleMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
-        {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
+        {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
         <TeamConversationMessage message={m} avatar={<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}

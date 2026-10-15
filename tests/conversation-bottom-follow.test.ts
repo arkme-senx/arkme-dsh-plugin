@@ -106,7 +106,8 @@ it('retargets delayed layout continuously and stops when the reader scrolls into
     observe() {}
     disconnect() {}
   })
-  const content = { getBoundingClientRect: () => ({ height: f.body.scrollHeight }) } as HTMLElement
+  const content = document.createElement('ul')
+  content.getBoundingClientRect = () => ({ height: f.body.scrollHeight }) as DOMRect
   const dispose = observeConversationResize(f.body, undefined, content)
   try {
     f.body.scrollTop = 1000

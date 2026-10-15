@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn(), cached: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.correction.context' ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
@@ -30,6 +30,36 @@ describe('recording speaker editor failure recovery', () => {
     vi.restoreAllMocks()
   })
 
+
+  it('keeps actions inside the viewport when child content grows without an editor render', async () => {
+    let resize!: () => void
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    vi.stubGlobal('window', { innerWidth: 1024, innerHeight: 800, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    let height = 120
+    const popover = { style: { top: '600px' }, getBoundingClientRect: () => ({ top: Number.parseFloat(popover.style.top), bottom: Number.parseFloat(popover.style.top) + height, height }) }
+    mocks.callArkme.mockResolvedValue([])
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSpeakerEditor item={{
+        itemId: 'growth', itemRef: 'growth-ref', speakerLabel: '说话人', speakerColorIndex: 1,
+        speakerNumber: 1, speakerKey: 'growth-key', sameSpeakerItemCount: 1,
+        text: '内容', startAtMillis: 1000, endAtMillis: 2000, isBackground: false, isSelf: false,
+      }} onUpdated={() => {}} onClose={() => {}} />, {
+        createNodeMock: element => element.props.role === 'dialog' ? popover : null,
+      })
+      await tick()
+    })
+    height = 650
+    resize()
+    expect(popover.getBoundingClientRect().bottom).toBe(792)
+    expect(popover.style.top).toBe('142px')
+    await act(async () => { renderer.unmount(); await tick() })
+    expect(disconnect).toHaveBeenCalled()
+  })
 
   it('opens without programmatic focus and preserves manual input through candidate refresh', async () => {
     const focus = vi.fn()

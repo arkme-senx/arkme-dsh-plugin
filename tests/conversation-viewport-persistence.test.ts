@@ -33,7 +33,7 @@ it('restores across different origins and does not persist each bottom-follow fr
   const durable = { read: vi.fn(async () => saved), write: vi.fn(async (_account, _surface, entries) => { saved = entries }) }
   const first = new ConversationViewportPersistence(() => undefined, durable); first.setScope('test:1')
   await first.hydrate()
-  const anchor = { scrollTop: 800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12 }
+  const anchor = { scrollTop: 800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12, messageAnchor: { itemUid: 'old-history', recordOwnerUserId: 3020 } }
   first.storeViewport('A', anchor); first.flush(); await first.settle()
   const newOrigin = new ConversationViewportPersistence(() => undefined, durable); newOrigin.setScope('test:1')
   await newOrigin.hydrate(); expect(newOrigin.getViewport('A')).toEqual(anchor)
@@ -71,7 +71,7 @@ it('restores anchors after memory eviction/restart and separates account and nat
   const storage = new ConversationViewportPersistence()
   storage.setScope('test:1')
   const cache = new ArkmeConversationMemoryCache(1, storage)
-  const viewport = { scrollTop: 800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12 }
+  const viewport = { scrollTop: 800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12, messageAnchor: { itemUid: 'old-history', recordOwnerUserId: 3020 } }
   cache.storeViewport('A', viewport); cache.storeViewport('B', { scrollTop: 0, stickToBottom: true })
   expect(cache.getViewport('A')).toEqual(viewport)
   storage.flush()

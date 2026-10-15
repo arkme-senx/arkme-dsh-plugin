@@ -7,6 +7,8 @@ import type { ArkmeRecordingDay, ArkmeRecordingSpeakerOption, ArkmeRecordingWork
 import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { useRecordingSpeakerOptions } from './use-recording-speaker-options.js'
 import { arkmeTheme } from '../arkme-theme.js'
+import { useRecordingSpeakerCorrection } from './use-recording-speaker-correction.js'
+import { ArkmeRecordingSpeakerCorrection } from './ArkmeRecordingSpeakerCorrection.js'
 
 const desktop = {
   base: arkmeTheme.base, hover: arkmeTheme.hover, border: arkmeTheme.border, text: arkmeTheme.text,
@@ -16,15 +18,16 @@ const desktop = {
 
 const styles: Record<string, CSSProperties> = {
   backdrop: { position: 'fixed', zIndex: 1_019, inset: 0, padding: 0, border: 0, background: 'transparent', cursor: 'default' },
-  popover: { position: 'fixed', zIndex: 1_020, width: 278, padding: 8, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 8, background: desktop.base, boxShadow: '0 4px 16px rgba(0,0,0,.1)', color: desktop.text },
-  field: { width: '100%', height: 30, boxSizing: 'border-box', padding: '6px 10px', border: `1px solid ${desktop.tertiary}`, borderRadius: 4, background: desktop.base, color: desktop.text, outline: 0, font: 'inherit', fontSize: 12, lineHeight: '16px' },
-  list: { maxHeight: 288, marginTop: 6, overflowY: 'auto' },
+  popover: { position: 'fixed', zIndex: 1_020, width: 278, maxHeight: 'calc(100vh - 16px)', display: 'flex', flexDirection: 'column', padding: 8, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 8, background: desktop.base, boxShadow: '0 4px 16px rgba(0,0,0,.1)', color: desktop.text },
+  current: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, minHeight: 32, padding: '0 4px 8px', marginBottom: 8, borderBottom: `1px solid ${desktop.border}`, fontSize: 12 },
+  field: { width: '100%', flexShrink: 0, height: 30, boxSizing: 'border-box', padding: '6px 10px', border: `1px solid ${desktop.tertiary}`, borderRadius: 4, background: desktop.base, color: desktop.text, outline: 0, font: 'inherit', fontSize: 12, lineHeight: '16px' },
+  list: { maxHeight: 288, minHeight: 0, marginTop: 6, overflowY: 'auto' },
   title: { height: 23, padding: '4px 8px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 1, background: desktop.base, color: desktop.tertiary, fontSize: 10, lineHeight: '15px' },
   option: { width: '100%', minHeight: 32, marginBottom: 4, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 4, background: 'transparent', color: desktop.text, cursor: 'pointer', textAlign: 'left', font: 'inherit', fontSize: 14, lineHeight: '16px' },
   avatar: { width: 24, height: 24, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: '50%', background: desktop.avatar, color: desktop.secondary, fontSize: 12, fontWeight: 600 },
   optionLabel: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   add: { width: '100%', minHeight: 28, padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 4, background: 'transparent', color: desktop.blue, cursor: 'pointer', textAlign: 'left', fontSize: 12 },
-  bottom: { minHeight: 42, marginTop: 2, paddingTop: 6, display: 'flex', alignItems: 'center', gap: 5, borderTop: `1px solid ${desktop.border}` },
+  bottom: { minHeight: 42, flexShrink: 0, marginTop: 2, paddingTop: 6, display: 'flex', alignItems: 'center', gap: 5, borderTop: `1px solid ${desktop.border}` },
   batchText: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontSize: 12 },
   confirm: { padding: '6px 14px', border: 0, borderRadius: 10, background: desktop.text, color: desktop.base, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '16px' },
   unassign: { padding: '5px 0', border: 0, background: 'transparent', color: desktop.danger, cursor: 'pointer', fontSize: 11 },
@@ -95,15 +98,38 @@ function SpeakerSection({ title, options, selected, onSelect }: {
   return <section><div style={styles.title}><span>{title}</span><span>{options.length}</span></div>{options.map(option => <SpeakerOptionRow key={option.optionKey} option={option} selected={selected === option.optionKey} onClick={() => { onSelect(option) }} />)}</section>
 }
 
-export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = false, onUpdated, onClose }: {
+export interface RecordingSpeakerUpdateFeedback {
+  itemId: string
+  scope: 'item' | 'speaker'
+  count: number
+  warning?: string
+}
+
+export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forceBatchUpdate = false, onUpdated, onClose, onPlay }: {
+  items?: readonly ArkmeRecordingWorkbenchItem[]
+  onPlay?(item: ArkmeRecordingWorkbenchItem): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
   forceBatchUpdate?: boolean
-  onUpdated(day: ArkmeRecordingDay): void
+  onUpdated(day: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback): void
   onClose(): void
 }) {
   useArkmeLocale()
-  const { contextKey: key, options, loading, error: optionsError, ready: optionsReady, pending, refresh, save } = useRecordingSpeakerOptions(item)
+  const { contextKey: key, options: allOptions, loading, error: optionsError, ready: optionsReady, pending, refresh, save, unassign } = useRecordingSpeakerOptions(item)
+  const correction = useRecordingSpeakerCorrection(item.itemRef)
+  const excludedKeys = correction.context?.supported ? correction.context.excludedSpeakers.map(person => person.optionKey) : []
+  const options = useMemo(() => allOptions.map(option => ({ ...option, recommended: option.recommended && !correction.loading && !correction.error && !excludedKeys.includes(option.optionKey) })), [allOptions, correction.context, correction.loading, correction.error])
+  const correctionTarget = item.assignedSpeakerOptionKey ? options.find(option => option.currentAssignment) : options.find(option => option.recommended)
+  const correctionPersonLabel = item.assignedSpeakerOptionKey ? item.speakerLabel : correctionTarget?.label
+  const [correctionIntent, setCorrectionIntent] = useState<'reject' | 'source' | 'review'>()
+  const [autoReject, setAutoReject] = useState(false)
+  const correctionChoice = useRef<{ target: typeof correctionTarget; rejectCurrent: boolean }>({ target: undefined, rejectCurrent: false })
+  const openCorrection = (intent: 'reject' | 'source' | 'review') => {
+    correctionChoice.current = { target: correctionTarget, rejectCurrent: !!item.assignedSpeakerOptionKey && !correctionTarget }
+    setAutoReject(intent === 'reject' && correction.context?.supported === true)
+    setCorrectionIntent(intent)
+  }
+  const popoverRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef(typeof document === 'undefined' ? null : document.activeElement)
@@ -113,6 +139,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
   const [query, setQuery] = useState('')
   const [batch, setBatch] = useState(forceBatchUpdate)
   const [mutationError, setMutationError] = useState('')
+  const [removing, setRemoving] = useState(false)
   const categories = useMemo(() => categorizeRecordingSpeakerOptions(options, query), [options, query])
   const newSpeakerName = query.trim()
   const normalizedNewSpeakerName = newSpeakerName.toLocaleLowerCase('zh-CN')
@@ -122,7 +149,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
 
   useEffect(() => {
     selectionTouched.current = false
-    setSelected(''); setQuery(''); setBatch(forceBatchUpdate); setMutationError('')
+    setSelected(''); setQuery(''); setBatch(forceBatchUpdate); setMutationError(''); setRemoving(false)
     return () => { viewGeneration.current += 1 }
   }, [forceBatchUpdate, key])
 
@@ -145,9 +172,27 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     }
   }, [selected, query, loading])
 
+  useLayoutEffect(() => {
+    const popover = popoverRef.current
+    if (!popover || typeof window === 'undefined') return
+    const keepInViewport = () => {
+      const bounds = popover.getBoundingClientRect()
+      if (bounds.bottom > window.innerHeight - 8) {
+        popover.style.top = `${Math.max(8, window.innerHeight - bounds.height - 8)}px`
+      }
+    }
+    keepInViewport()
+    // Child-only updates (nearby review, async status) can grow the popover
+    // without rendering this editor again.
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(keepInViewport)
+    observer?.observe(popover)
+    window.addEventListener('resize', keepInViewport)
+    return () => { observer?.disconnect(); window.removeEventListener('resize', keepInViewport) }
+  })
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !pending) onClose()
+      if (event.key === 'Escape' && !pending && !correctionIntent) onClose()
       if (event.key === 'Tab' && !event.shiftKey && !event.defaultPrevented
         && event.target === triggerRef.current && inputRef.current !== null) {
         event.preventDefault()
@@ -156,7 +201,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown) }
-  }, [onClose, pending])
+  }, [onClose, pending, correctionIntent])
 
   const mutate = async () => {
     if (key === undefined || !canSubmit) return
@@ -181,6 +226,24 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     setSelected(current => current === option.optionKey ? '' : option.optionKey)
     setQuery('')
   }
+  const removeAssignment = async () => {
+    if (key === undefined || pending || removing || !item.assignedSpeakerOptionKey) return
+    const generation = viewGeneration.current
+    setRemoving(true); setMutationError('')
+    try {
+      const result = await unassign(forceBatchUpdate || batch ? 'speaker' : 'item')
+      if (result === undefined || viewGeneration.current !== generation) return
+      onUpdated(result.day, { itemId: item.itemId, scope: result.scope,
+        count: result.scope === 'speaker' ? item.sameSpeakerItemCount : 1,
+        ...(result.warning ? { warning: result.warning } : {}) })
+      if (result.warning) setMutationError(result.warning)
+      else onClose()
+    } catch (reason) {
+      if (viewGeneration.current === generation) setMutationError(reason instanceof Error ? reason.message : '取消标记失败')
+    } finally {
+      if (viewGeneration.current === generation) setRemoving(false)
+    }
+  }
   const canBatch = forceBatchUpdate || item.sameSpeakerItemCount > 1
   const selectedCurrent = options.some(option => option.currentAssignment && option.optionKey === selected)
   const canSubmit = optionsReady && !pending && !selectedCurrent
@@ -190,10 +253,30 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     typeof window === 'undefined' ? { width: 1_024, height: 768 } : { width: window.innerWidth, height: window.innerHeight },
   )
 
-  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending) onClose() }} />
-  <div style={{ ...styles.popover, left: position.left, top: position.top }} role="dialog" aria-label={tr("编辑说话人")}>
+  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent) onClose() }} />
+  <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}) }} role="dialog" aria-label={tr("编辑说话人")}>
+    {correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
+      autoReject={autoReject} rejectCurrent={correctionChoice.current.rejectCurrent}
+      {...(correctionChoice.current.target?.kind === 'speaker' ? { target: correctionChoice.current.target } : {})}
+      onUpdated={day => { onUpdated(day) }} onClose={onClose} {...(onPlay ? { onPlay } : {})} /> : <>
+    {item.assignedSpeakerOptionKey && <div style={styles.current}>
+      <span style={{ color: desktop.secondary }}>{tr("当前标记")}</span>
+      {item.speakerAvatarRef && <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={20} label={tr("{v0}的头像", { v0: item.speakerLabel })} />}
+      <span style={styles.optionLabel} title={item.speakerLabel}>{item.speakerLabel}</span>
+      <button type="button" data-arkme-feedback="neutral" aria-label={tr("取消说话人标记")}
+        disabled={pending || removing || key === undefined}
+        style={{ ...styles.unassign, flexShrink: 0, fontSize: 12, ...(pending || removing ? { opacity: .5, cursor: 'default' } : {}) }}
+        onClick={() => { void removeAssignment() }}>
+        {removing ? tr("取消中…") : forceBatchUpdate || batch ? tr("取消 {v0} 处标记", { v0: item.sameSpeakerItemCount }) : tr("取消标记")}
+      </button>
+    </div>}
+    <div style={{ display: 'flex', flexShrink: 0, flexWrap: 'wrap', gap: 8, padding: '2px 4px 9px', fontSize: 12 }}>
+      {correctionPersonLabel && <button type="button" style={{ ...styles.unassign, fontSize: 12 }} disabled={pending}
+        onClick={() => { openCorrection('reject') }}>{tr('不是 {v0}', { v0: correctionPersonLabel })}</button>}
+      <button type="button" style={{ ...styles.unassign, fontSize: 12, color: desktop.secondary }} disabled={pending} onClick={() => { openCorrection('source') }}>{tr('声音来源 / 纠错')}</button>
+    </div>
     <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected('') }} placeholder={tr("输入名称")} />
-    {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={styles.list} data-speaker-options-list>
+    {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={{ ...styles.list, ...(item.assignedSpeakerOptionKey ? { maxHeight: 248 } : {}) }} data-speaker-options-list>
       <SpeakerSection title={tr("推荐说话人")} options={categories.recommended} selected={selected} onSelect={choose} />
       <SpeakerSection title={tr("已添加说话人")} options={categories.speakers} selected={selected} onSelect={choose} />
       <SpeakerSection title={tr("Arkme 用户")} options={categories.users} selected={selected} onSelect={choose} />
@@ -205,6 +288,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
       {canBatch ? <><input aria-label={tr("批量修改")} type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>{tr("批量修改")} {item.sameSpeakerItemCount} {tr("处“")}{item.speakerLabel}”</span></> : <span style={styles.batchText}>{tr("仅修改当前片段")}</span>}
       <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? tr("保存中…") : tr("确认")}</button>
     </div>
+    </>}
   </div></>
   return typeof document === 'undefined' || document.body === undefined ? layer : createPortal(layer, document.body)
 }

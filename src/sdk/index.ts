@@ -2,6 +2,9 @@ import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 export type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+import { connectArkmeRealtime } from '../client/realtime-connection.js'
 export { recordingImportBatchID } from '../recording-workflow-contract.js'
 import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
 export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
@@ -1846,6 +1849,59 @@ export class ArkmeSdk {
     }
     return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
   }
+
+  async messageSyncStatus(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.status', {}, signal)
+  }
+
+  async retryMessageSync(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.retry', {}, signal)
+  }
+
+  /** One bounded subscription per SDK instance; returned dispose/AbortSignal releases it. No polling. */
+  observeMessageSync(changed: (progress: ArkmeMessageSyncProgress) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    if (this.syncObservers.size >= 64) throw new Error('Message sync observer capacity exceeded')
+    const controller = new AbortController()
+    let active = true
+    const listener = (progress: ArkmeMessageSyncProgress) => { if (active) changed(progress) }
+    this.syncObservers.add(listener)
+    const stop = () => {
+      if (!active) return
+      active = false; controller.abort(); options.signal?.removeEventListener('abort', stop); this.syncObservers.delete(listener)
+      if (!this.syncObservers.size) { this.syncConnection?.close(); this.syncConnection = undefined; this.syncSequence++ }
+    }
+    options.signal?.addEventListener('abort', stop, { once: true })
+    if (options.signal?.aborted) { stop(); return stop }
+    const sequence = this.syncSequence
+    void this.messageSyncStatus(controller.signal).then(progress => {
+      if (!active) return
+      if (sequence === this.syncSequence) listener(progress)
+      if (!this.syncConnection) this.syncConnection = connectArkmeRealtime({
+        onOpen: () => {}, onDisconnect: () => {},
+        onMessage: event => {
+          try {
+            const update = JSON.parse(event.data) as import('../types.js').ArkmeChatClientEvent
+            if (update.type === 'message-sync-progress') {
+              this.syncSequence++
+              for (const notify of this.syncObservers) { try { notify(update.progress) } catch { /* A consumer cannot disrupt another listener. */ } }
+            } else if (update.type === 'reconcile') {
+              const sequence = ++this.syncSequence
+              void this.messageSyncStatus().then(progress => {
+                if (!this.syncConnection || sequence !== this.syncSequence) return
+                for (const notify of this.syncObservers) { try { notify(progress) } catch { /* Consumer isolation. */ } }
+              }).catch(error => options.onError?.(error))
+            }
+          } catch (error) { options.onError?.(error) }
+        },
+      }, `${this.route}/events`)
+    }).catch(error => { if (active) { options.onError?.(error); stop() } })
+    return stop
+  }
+  private syncObservers = new Set<(progress: ArkmeMessageSyncProgress) => void>()
+  private syncConnection: { close(): void } | undefined
+  private syncSequence = 0
 
   async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
     const features = (await this.capabilities(signal)).features

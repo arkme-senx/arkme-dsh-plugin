@@ -10,7 +10,7 @@ vi.mock('../src/sdk/index.js', async original => ({
 }))
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
-import { socialAccessStore } from '../src/client/social-access-store.js'
+import { socialAccessStore, SOCIAL_ACCESS_TTL_MS, SOCIAL_ACCESS_READ_TIMEOUT_MS, confirmPhoneBinding } from '../src/client/social-access-store.js'
 import { requirePhoneForSocialAction, socialBindingPrompt } from '../src/client/social-action-guard.js'
 import { ArkmeSocialBindingDialog } from '../src/client/ArkmeSocialBindingDialog.js'
 import { PublishDialog, ArkmeWorldContent } from '../src/client/ArkmeWorldSurface.js'
@@ -22,7 +22,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
   socialAccessStore.activate('test:42')
-  provider.call.mockReset().mockImplementation(async operation => operation === 'user.profile.refresh' ? profile() : { ok: true })
+  provider.call.mockReset().mockImplementation(async operation => operation.startsWith('user.profile') ? profile() : { ok: true })
   provider.upload.mockReset(); provider.publish.mockReset()
 })
 afterEach(async () => {
@@ -30,6 +30,7 @@ afterEach(async () => {
   socialBindingPrompt.close(); socialAccessStore.activate(undefined)
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
   document.body.innerHTML = ''; localStorage.clear()
+  vi.useRealTimers()
 })
 const mount = async (content: React.ReactNode) => {
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -45,8 +46,9 @@ describe('browse without binding; prompt only on social writes', () => {
     expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
   })
   it.each(['world.publish-text', 'world.publish-file-assets', 'world.interactions.create-text', 'contacts.add', 'group.create', 'calls.outgoing.prepare', 'team.app.send.enqueue', 'team.app.join', 'team.app.create'] as const)('blocks unbound %s before the provider write', async operation => {
+    socialAccessStore.confirm('test:42', false)
     await expect(callArkme(operation, { textContent: '保留草稿' })).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
-    expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['user.profile.refresh'])
+    expect(provider.call).not.toHaveBeenCalled()
     expect(socialBindingPrompt.getSnapshot()?.accountKey).toBe('test:42')
   })
   it('keeps world reaction reads and removals available, gates adding a reaction', async () => {
@@ -56,17 +58,52 @@ describe('browse without binding; prompt only on social writes', () => {
     await expect(callArkme('reactions', { action: 'set', active: true, target: { worldRecordRef: 'post' } })).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
     expect(provider.call.mock.calls.filter(([op]) => op === 'reactions')).toHaveLength(2)
   })
-  it('refreshes stale unbound state and lets a newly bound account submit without a prompt', async () => {
+  it('uses the old denial while refreshing, then lets a remotely bound account submit', async () => {
+    vi.useFakeTimers()
     socialAccessStore.confirm('test:42', false)
-    provider.call.mockImplementation(async operation => operation === 'user.profile.refresh' ? profile('138****0000') : { ok: true })
+    vi.advanceTimersByTime(SOCIAL_ACCESS_TTL_MS)
+    let finish!: (value: unknown) => void
+    provider.call.mockImplementation(operation => operation === 'user.profile.refresh' ? new Promise(resolve => { finish = resolve }) : Promise.resolve({ ok: true }))
+    await expect(callArkme('world.interactions.create-text')).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
+    socialBindingPrompt.close()
+    finish(profile('138****0000'))
+    await socialAccessStore.refresh()
     await expect(callArkme('world.interactions.create-text', { textContent: '评论' })).resolves.toEqual({ ok: true })
     expect(socialAccessStore.getSnapshot().allowed).toBe(true)
     expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
   })
-  it('does not authorize a write from a previously bound display cache after remote unbinding', async () => {
+  it('immediately uses a successful binding without another profile request', async () => {
+    socialAccessStore.confirm('test:42', false)
+    confirmPhoneBinding(arkmeAuthStore.getSnapshot().auth!, true)
+    provider.call.mockImplementation(async operation => operation === 'user.profile.refresh' ? profile('138****0000') : { ok: true })
+    await expect(callArkme('world.interactions.create-text', { textContent: '评论' })).resolves.toEqual({ ok: true })
+    expect(socialAccessStore.getSnapshot().allowed).toBe(true)
+    expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
+    expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['world.interactions.create-text'])
+  })
+  it('does not prefetch a profile for a confirmed bound account', async () => {
     socialAccessStore.confirm('test:42', true)
+    await expect(callArkme('world.publish-text')).resolves.toEqual({ ok: true })
+    expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['world.publish-text'])
+  })
+  it('lets repeated bound sends finish while an expired refresh hangs, including after timeout', async () => {
+    vi.useFakeTimers()
+    socialAccessStore.confirm('test:42', true)
+    vi.advanceTimersByTime(SOCIAL_ACCESS_TTL_MS)
+    provider.call.mockImplementation(operation => operation === 'user.profile.refresh' ? new Promise(() => {}) : Promise.resolve({ ok: true }))
+    for (let i = 0; i < 3; i++) await expect(callArkme('world.interactions.create-text')).resolves.toEqual({ ok: true })
+    expect(provider.call.mock.calls.filter(([op]) => op === 'user.profile.refresh')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(SOCIAL_ACCESS_READ_TIMEOUT_MS)
+    await expect(callArkme('world.interactions.create-text')).resolves.toEqual({ ok: true })
+    expect(socialAccessStore.getSnapshot().allowed).toBe(true)
+    expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
+  })
+  it('adopts a confirmed remote unbinding for the next action', async () => {
+    socialAccessStore.confirm('test:42', true)
+    await socialAccessStore.refresh()
+    provider.call.mockClear()
     await expect(callArkme('world.publish-text')).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
-    expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['user.profile.refresh'])
+    expect(provider.call).not.toHaveBeenCalled()
   })
   it('renders a world post and its comments without binding and retains a rejected comment draft', async () => {
     socialAccessStore.confirm('test:42', false)
@@ -96,15 +133,40 @@ describe('browse without binding; prompt only on social writes', () => {
   })
   it('does not treat unavailable profile data as bound or as an unbound prompt', async () => {
     provider.call.mockRejectedValue(new Error('offline'))
-    await expect(callArkme('world.publish-text')).rejects.toThrow('offline')
-    expect(provider.call).toHaveBeenCalledOnce()
+    await expect(callArkme('world.publish-text')).rejects.toThrow('暂时无法确认手机号绑定状态')
+    expect(provider.call.mock.calls.map(([op]) => op)).toEqual(['user.profile', 'user.profile.refresh'])
     expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
+  })
+  it('bounds a cold read and allows a later retry without showing a false binding prompt', async () => {
+    vi.useFakeTimers()
+    provider.call.mockReturnValue(new Promise(() => {}))
+    const rejected = expect(callArkme('world.publish-text')).rejects.toThrow('暂时无法确认手机号绑定状态')
+    await vi.advanceTimersByTimeAsync(SOCIAL_ACCESS_READ_TIMEOUT_MS)
+    await rejected
+    expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
+    expect(socialAccessStore.getSnapshot().allowed).toBeNull()
+    vi.advanceTimersByTime(5_000)
+    provider.call.mockImplementation(async operation => operation.startsWith('user.profile') ? profile('138****0000') : { ok: true })
+    await expect(callArkme('world.publish-text')).resolves.toEqual({ ok: true })
+  })
+  it('detaches a cancelled cold caller without cancelling another caller sharing its read', async () => {
+    let finish!: (value: unknown) => void
+    provider.call.mockImplementation(operation => operation.startsWith('user.profile') ? new Promise(resolve => { finish = resolve }) : Promise.resolve({ ok: true }))
+    const controller = new AbortController()
+    const first = requirePhoneForSocialAction('发送消息', controller.signal)
+    const rejected = expect(first).rejects.toBeDefined()
+    const second = requirePhoneForSocialAction('发送消息')
+    controller.abort(); await rejected
+    finish(profile('138****0000'))
+    await expect(second).resolves.toBeUndefined()
+    expect(socialAccessStore.getSnapshot().allowed).toBe(true)
   })
   it('rejects a late profile after switching accounts without prompting or sending as the new user', async () => {
     let finish!: (value: unknown) => void
     provider.call.mockReturnValue(new Promise(resolve => { finish = resolve }))
     const pending = callArkme('world.publish-text')
     const rejected = expect(pending).rejects.toBeDefined()
+    await vi.waitFor(() => expect(provider.call).toHaveBeenCalledOnce())
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 })
     finish(profile('138****0000'))
     await rejected

@@ -83,6 +83,7 @@ describe('social UI without service restrictions', () => {
     })
     expect(api.calls).toHaveBeenCalledWith('user.profile.refresh')
     expectSocial(true)
+    expect(socialAccessStore.getSnapshot().allowed).toBe(true)
     expect(renderer!.root.findAllByType('input')[0]).toBe(input)
   })
   it('uses the existing cache and fetches only when no profile exists', async () => {
@@ -91,5 +92,8 @@ describe('social UI without service restrictions', () => {
     api.calls.mockClear(); api.stale = true
     await loadSocialAccess(new AbortController().signal)
     expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile', 'user.profile.refresh'])
+    api.calls.mockClear()
+    await loadSocialAccess(new AbortController().signal, true)
+    expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile.refresh'])
   })
 })

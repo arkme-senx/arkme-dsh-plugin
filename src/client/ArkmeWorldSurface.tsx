@@ -29,7 +29,7 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../ex
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
@@ -1461,10 +1461,10 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
       if (current?.status !== owner?.status || current?.environment !== owner?.environment || current?.userId !== owner?.userId) controller.abort()
     })
     sendingRef.current = true
-    setSending(true)
-    setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
     try {
       await requirePhoneForSocialAction('发布到世界', controller.signal)
+      setSending(true)
+      setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
       const cachedUploads = uploadedAssetsRef.current
       let assets: ArkmeUploadedAsset[] = []
       if (files.length > 0) {
@@ -1506,7 +1506,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
       resetMutationId()
       onPublished(result)
       onClose()
-    } catch (error) { setMessage(messageOf(error, '发布失败，请稍后重试')) }
+    } catch (error) { if (!isSocialBindingRequired(error)) setMessage(messageOf(error, '发布失败，请稍后重试')) }
     finally { stopAccount(); controller.abort(); sendingRef.current = false; setSending(false) }
   }
   return <div role="dialog" aria-modal="true" aria-label={tr("发世界")} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
@@ -1654,7 +1654,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
       setReplyTarget(undefined)
       onCountResolved(state.items.length + 1, state.hasMore)
       onInteractionCreated(item.recordRef)
-    } catch (error) { setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
+    } catch (error) { if (!isSocialBindingRequired(error)) setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
   return <section id={interactionRegionId(item.recordRef)} aria-label={tr("{v0}的评论区", { v0: item.authorName })} style={styles.interactionPanel} data-world-comment-panel="inline">

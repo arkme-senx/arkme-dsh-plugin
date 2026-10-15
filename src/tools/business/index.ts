@@ -1,3 +1,4 @@
+import { messageSyncToolModules } from './conversation/message-sync.js'
 import {teamProfileTools} from './contacts/team-profile.js'
 import { officialNotificationToolModules } from './account/official-notifications.js'
 import { selfRoleToolModules } from './records/self-roles.js'
@@ -58,6 +59,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  ...messageSyncToolModules,
   ...selfRoleToolModules,
   ...officialNotificationToolModules,
   directoryReadToolModule,

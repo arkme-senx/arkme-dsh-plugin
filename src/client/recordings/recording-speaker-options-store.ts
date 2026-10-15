@@ -60,13 +60,31 @@ arkmeAuthStore.subscribe(() => {
 export async function assignRecordingSpeaker(
   key: string,
   binding: RecordingSpeakerItemBinding,
-  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string },
+  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; expectedCount?: number },
+): Promise<ArkmeRecordingSpeakerMutationResult | undefined> {
+  return await mutateRecordingSpeaker(key, binding, 'recordings.speaker.assign-item', input)
+}
+
+export async function unassignRecordingSpeaker(
+  key: string,
+  binding: RecordingSpeakerItemBinding,
+  scope: 'item' | 'speaker',
+  expectedCount: number,
+): Promise<ArkmeRecordingSpeakerMutationResult | undefined> {
+  return await mutateRecordingSpeaker(key, binding, 'recordings.speaker.unassign-item', { scope, expectedCount })
+}
+
+async function mutateRecordingSpeaker(
+  key: string,
+  binding: RecordingSpeakerItemBinding,
+  operation: 'recordings.speaker.assign-item' | 'recordings.speaker.unassign-item',
+  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; expectedCount?: number },
 ): Promise<ArkmeRecordingSpeakerMutationResult | undefined> {
   return await recordingSpeakerItemContexts.mutate(key, binding, async context => {
     try {
       if (!currentAccount(binding.account)) throw resourceCancelled()
       const value = await callArkme<ArkmeRecordingSpeakerMutationResult>(
-        'recordings.speaker.assign-item', { itemRef: binding.itemRef, ...input }, context.signal,
+        operation, { itemRef: binding.itemRef, ...input }, context.signal,
       )
       if (!context.current()) return undefined
       return value

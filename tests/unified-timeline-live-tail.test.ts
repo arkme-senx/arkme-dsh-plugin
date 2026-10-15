@@ -39,13 +39,24 @@ describe('confirmed live tail', () => {
       if (!base.complete || base.newerHasMore) expect(owner.receive(base, [item(2)])).toBe(base)
     }
   })
-  it('never revives a deleted arrival or retains an omission confirmed by a later read', () => {
+  it('requires sequence coverage or an explicit deletion to retire a delivered body', () => {
     const owner = new UnifiedTimelineLiveTail()
     owner.receive(window([1]), [item(2)])
     owner.remove(new Set(['relation-2']))
     expect(owner.reconcile(window([1]), 0).events).toHaveLength(1)
     owner.receive(window([1]), [item(2)])
-    expect(owner.reconcile(window([1]), owner.readRevision).events).toHaveLength(1)
+    expect(owner.reconcile(window([1]), owner.readRevision).events).toHaveLength(2)
+    expect(owner.reconcile(window([1, 3]), owner.readRevision).events).toHaveLength(2)
+    expect(owner.hasPending).toBe(false)
+  })
+  it('does not infer deletion from partial or historical sequence frontiers', () => {
+    for (const partial of [{ ...window([1, 3]), complete: false }, { ...window([1, 3]), newerHasMore: true }]) {
+      const owner = new UnifiedTimelineLiveTail()
+      owner.receive(window([1]), [item(2)])
+      owner.reconcile(partial, owner.readRevision)
+      expect(owner.hasPending).toBe(true)
+      expect(owner.reconcile(window([1]), owner.readRevision).events.map(event => event.eventId)).toEqual(['event-1', 'event-2'])
+    }
   })
   it('caps the active window and keeps same-record occurrences distinct', () => {
     const owner = new UnifiedTimelineLiveTail()

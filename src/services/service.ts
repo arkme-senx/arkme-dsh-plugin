@@ -127,6 +127,7 @@ export interface ArkmeServiceConfig {
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  memoryCoreBaseUrl?: string
   routePath: string
   audioBaseUrl: string
   extensionPublishBaseUrl?: string
@@ -427,6 +428,8 @@ export class ServiceRuntime {
   }
 
   /** Only for composites whose child requests already pass through transport admission. */
+  async runBackgroundMessageProjection<T>(operation: () => Promise<T>): Promise<T> { return this.messageSyncLane.run('background-read', operation) }
+
   async runCompositeOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, lane: 'interactive-read' | 'background-read' = 'interactive-read'): Promise<T> {
     return await this.ownerRead(route, parameters, operation, signal, 'route-only', lane)
   }
@@ -618,7 +621,7 @@ export class ServiceRuntime {
   private registeredRead(baseUrl: string, path: string): boolean {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
-      '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
+      '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
       '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
@@ -652,7 +655,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)
@@ -1276,6 +1279,29 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedRelationGet<T>(path: string, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'relation', 'interactive-read', { bypassCache: true, cacheMs: 0 })
+    try { return await this.get<T>(this.config.relationBaseUrl, path, session.accessToken, [200], signal, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.get<T>(this.config.relationBaseUrl, path, session.accessToken, [200], signal, options())
+    }
+  }
+
+  async authenticatedMemoryCorePost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, write = false): Promise<T> {
+    const origin = this.config.memoryCoreBaseUrl || (this.config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me')
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'other', write ? 'write' : 'interactive-read', { bypassCache: true, cacheMs: 0 })
+    try { return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
     }
   }
 
