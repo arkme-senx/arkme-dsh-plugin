@@ -281,6 +281,7 @@ AI 额度|AI allowance
 充值 {v0}|Purchased {v0}
 查看赠送额度说明|View gift allowance details
 DSH 对话|DSH chat
+录音实体识别|Recording entity recognition
 AI 调用|AI usage
 （赠送）| (Gift)
 （充值）| (Purchased)

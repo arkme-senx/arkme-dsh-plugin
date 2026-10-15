@@ -6,11 +6,11 @@ const MAX_MOUNTED_ROWS = 200
 
 /** Variable-height chunks share one observer. Off-screen media/reaction subtrees are unmounted. */
 export const WindowedTimelineRows = memo(function WindowedTimelineRows({ children, rowIds, scrollport, anchorId }: {
-  children: ReactNode[]; rowIds: readonly { id: string }[]; scrollport: RefObject<HTMLDivElement>; anchorId?: string | undefined
+  children: ReactNode[]; rowIds: readonly { id: string; renderKey?: string }[]; scrollport: RefObject<HTMLDivElement>; anchorId?: string | undefined
 }) {
   const previousChunks = useRef<TimelineRowChunk[]>([])
   const chunks = useMemo(() => {
-    const partition = timelineRowChunks(rowIds, previousChunks.current, CHUNK_SIZE)
+    const partition = timelineRowChunks(rowIds.map(row => ({ id: row.renderKey ?? row.id })), previousChunks.current, CHUNK_SIZE)
     let offset = 0
     return partition.map(chunk => {
       const rows = children.slice(offset, offset + chunk.rowIds.length)
@@ -20,7 +20,9 @@ export const WindowedTimelineRows = memo(function WindowedTimelineRows({ childre
   }, [children, rowIds])
   useLayoutEffect(() => { previousChunks.current = chunks }, [chunks])
   const chunkIdentity = chunks.map(chunk => chunk.id).join('\0')
-  const target = anchorId ? chunks.findIndex(chunk => chunk.rowIds.includes(anchorId)) : -1
+  const anchor = rowIds.find(row => row.id === anchorId)
+  const targetKey = anchor?.renderKey ?? anchorId
+  const target = targetKey ? chunks.findIndex(chunk => chunk.rowIds.includes(targetKey)) : -1
   const [visible, setVisible] = useState<Set<string>>(() => new Set())
   const elements = useRef(new Map<string, HTMLLIElement>())
   const heights = useRef(new Map<string, number>())

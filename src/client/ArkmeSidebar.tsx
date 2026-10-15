@@ -12,7 +12,8 @@ import { MAX_ACTIVE_TIMELINE_EVENTS, MAX_ACTIVE_TIMELINE_TOKENS } from './unifie
 import { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
-import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
+import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
+export { ArkmeConversationMessageMergeOwner as ArkmeConfirmedSendRetentionOwner } from './conversation-message-merge.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { arkmeConversationMessageLayout, dayKey, timeLabel } from './conversation-message-presentation.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
@@ -21,7 +22,8 @@ import { useAskDsh } from './use-ask-dsh.js'
 import { useProfileRevision } from './profile-change-store.js'
 import { AskDshIcon } from './AskDshIcon.js'
 import { isSocialSource } from './social-access-store.js'
-import { requirePhoneForSocialAction } from './social-action-guard.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
+import { confirmPhoneBinding } from './social-access-store.js'
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
 import { ArkmeCommonGroupsPanel } from './ArkmeCommonGroupsPanel.js'
 import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layout.js'
@@ -52,7 +54,7 @@ import { arkmeConversationTargetRow } from './conversation-viewport.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
-import { mergeTimelineSendRows, pendingUnifiedTimelineSends, unifiedTimelineMessageSequence, unifiedTimelineSendOverlay } from './unified-timeline-send-overlay.js'
+import { mergeTimelineSendRows, unifiedTimelineMessageSequence, unifiedTimelineSendOverlay } from './unified-timeline-send-overlay.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
 import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { recordOwnerId } from '../record-owner-id.js'
@@ -95,7 +97,6 @@ import {
   ConversationActionsMenu, conversationExportActionItem, privateChatActionItems, usePrivateChatActions,
 } from './PrivateChatActions.js'
 import qrcode from 'qrcode-generator'
-import { retainPartialTimelineMedia } from './timeline-media.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { ArkmeArticlePicker } from './ArkmeArticlePicker.js'
 import { composerArticleKey, composerArticleStore, useComposerArticle } from './composer-article-store.js'
@@ -1300,37 +1301,6 @@ export function arkmeSendToSelfRootSource(sources: readonly ArkmeSourceItem[]): 
   return sources.find(source => source.kind === 'send_to_self')
 }
 
-function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[]): ArkmeTimelineItem[] {
-  const map = new Map(current.map(item => [item.itemUid, item]))
-  for (const item of incoming) {
-    const previous = map.get(item.itemUid)
-    const version = item.recordVersion ?? item.version ?? 0
-    const previousVersion = previous?.recordVersion ?? previous?.version ?? 0
-    // Live deltas and reads may arrive out of order. Keep the authoritative
-    // record snapshot and its matching action reference together.
-    if (previous?.status === 1 && item.status === 1 && version > 0 && previousVersion > 0
-      && previousVersion > version) continue
-    map.set(item.itemUid, {
-      ...retainPartialTimelineMedia(previous, item),
-      ...(previous?.aiPolish !== undefined && item.aiPolish === undefined ? { aiPolish: previous.aiPolish } : {}),
-      ...(previous?.recordDurationMillis !== undefined && item.recordDurationMillis === undefined
-        ? { recordDurationMillis: previous.recordDurationMillis } : {}),
-      ...(previous?.editDurationMillis !== undefined && item.editDurationMillis === undefined
-        ? { editDurationMillis: previous.editDurationMillis } : {}),
-      ...(previous?.captureContext !== undefined && item.captureContext === undefined
-        ? { captureContext: previous.captureContext } : {}),
-      ...(previous?.locationCapture !== undefined && item.locationCapture === undefined
-        ? { locationCapture: previous.locationCapture } : {}),
-      ...(previous?.messageActionRef !== undefined && item.messageActionRef === undefined
-        ? { messageActionRef: previous.messageActionRef } : {}),
-      ...(previous?.mentions !== undefined && item.mentions === undefined
-        ? { mentions: previous.mentions } : {}),
-      ...(previous?.selfRole !== undefined && item.selfRole === undefined
-        ? { selfRole: previous.selfRole } : {}),
-    })
-  }
-  return [...map.values()].sort(compareTimelineMessages)
-}
 
 function reconcileTimelinePage(
   cachedItems: ArkmeTimelineItem[],
@@ -1387,61 +1357,6 @@ function extensionConversationPreview(extension: ArkmeMessageCopyLinkExtensionIt
     || '非文本内容'
 }
 
-export class ArkmeConfirmedSendRetentionOwner extends ConfirmedSendRetentionOwner<ArkmeTimelineItem> {
-  constructor(maxItems = 64) {
-    super({
-      maxItems, ttlMillis: ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4,
-      key: item => item.itemUid,
-      canRetain: item => item.isMe && item.status >= 0,
-      isAuthoritative: item => item.messageActionRef !== undefined,
-      merge: mergeItems,
-    })
-  }
-}
-
-function applySourceSendResult(
-  current: ArkmeTimelineItem[],
-  optimisticItemUid: string,
-  result: ArkmeSourceSendResult,
-  fallback?: ArkmeTimelineItem,
-): ArkmeTimelineItem[] {
-  const returned = current.find(item => item.itemUid === result.itemUid)
-  const optimistic = current.find(item => item.itemUid === optimisticItemUid)
-  const candidate = returned ?? optimistic ?? fallback
-  if (candidate === undefined) return current
-  const { aiPolish: _optimisticAiPolish, ...candidateBase } = candidate
-  const base = {
-    ...candidateBase,
-    ...(candidate.recordDurationMillis === undefined && optimistic?.recordDurationMillis !== undefined
-      ? { recordDurationMillis: optimistic.recordDurationMillis } : {}),
-    ...(candidate.editDurationMillis === undefined && optimistic?.editDurationMillis !== undefined
-      ? { editDurationMillis: optimistic.editDurationMillis } : {}),
-    ...(candidate.captureContext === undefined && optimistic?.captureContext !== undefined
-      ? { captureContext: optimistic.captureContext } : {}),
-    ...(candidate.mentions === undefined && optimistic?.mentions !== undefined
-      ? { mentions: optimistic.mentions } : {}),
-    ...(candidate.selfRole === undefined && optimistic?.selfRole !== undefined
-      ? { selfRole: optimistic.selfRole } : {}),
-  }
-  const confirmed: ArkmeTimelineItem = {
-    ...base,
-    itemUid: result.itemUid,
-    status: result.status,
-    ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
-    ...(result.recordTopicAssignmentRef === undefined ? {} : { recordTopicAssignmentRef: result.recordTopicAssignmentRef }),
-    ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
-    ...(result.aiPolish === undefined ? {} : {
-      aiPolish: result.aiPolish,
-      ...(result.aiPolish.state === 'polished' && result.aiPolish.polishedText !== undefined
-        ? { textContent: result.aiPolish.polishedText }
-        : {}),
-    }),
-  }
-  return mergeItems(
-    current.filter(item => item.itemUid !== optimisticItemUid && item.itemUid !== result.itemUid),
-    [confirmed],
-  )
-}
 
 function optimisticTimelineMentionTargets(
   mentions: readonly ArkmeComposerMention[],
@@ -2763,7 +2678,9 @@ export function ArkmeSurface({
   const setItems = useCallback((action: SetStateAction<ArkmeTimelineItem[]>) => {
     setTimelineView(current => {
       const next = resolveStateAction(action, current.items)
-      return sameStateValue(current.items, next) ? current : { ...current, items: next }
+      return sameStateValue(current.items, next)
+        && current.items.every((item, index) => conversationMessageSendFailure(item) === conversationMessageSendFailure(next[index]!))
+        ? current : { ...current, items: next }
     })
   }, [])
   const setAiPolishNotices = useCallback((action: SetStateAction<ArkmeGroupAiPolishNotice[]>) => {
@@ -3226,8 +3143,8 @@ export function ArkmeSurface({
     window.addEventListener('pagehide', viewportPersistence.flush)
     return () => { window.removeEventListener('pagehide', viewportPersistence.flush); viewportPersistence.flush() }
   }, [viewportPersistence])
-  const confirmedSendRetention = useMemo(
-    () => new ArkmeConfirmedSendRetentionOwner(),
+  const messageMerge = useMemo(
+    () => new ArkmeConversationMessageMergeOwner(),
     [authenticatedAccountKey],
   )
   const cacheAccountKeyRef = useRef<string>()
@@ -3262,7 +3179,7 @@ export function ArkmeSurface({
   const pendingViewportRestoreRef = useRef<ArkmeConversationViewportRestore>()
   useEffect(() => longArticleWindowBridge()?.onCreated(receipt => {
     if (receipt.accountKey !== authenticatedAccountKey) return
-    if (!receipt.article) confirmedSendRetention.retain(receipt.sourceKey, receipt.item)
+    if (!receipt.article) messageMerge.retain(receipt.sourceKey, receipt.item)
     if (receipt.sourceKey === conversationKey) {
       pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }
       setItems(current => receipt.article?.mode === 'existing'
@@ -3271,7 +3188,7 @@ export function ArkmeSurface({
     }
     arkmeUi.recordChanged()
     void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => {})
-  }), [authenticatedAccountKey, conversationKey, confirmedSendRetention, setItems])
+  }), [authenticatedAccountKey, conversationKey, messageMerge, setItems])
   const viewportRestoreIntentRef = useRef<boolean>()
   const pendingConversationTargetLocateRef = useRef<{
     sourceKey: string
@@ -3952,14 +3869,14 @@ export function ArkmeSurface({
             const removedKeys = new Set(arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).removedItemKeys)
             const localWindow = removeUnifiedTimelineItems(local.unified, removedKeys)
             const snapshot: ArkmeConversationTimelineSnapshot = { cache: local.cache, mode: localMode, unified: localWindow,
-              items: confirmedSendRetention.merge(sourceKey, localWindow.events.flatMap(event => event.kind === 'message' ? [event.item] : [])),
+              items: messageMerge.merge(sourceKey, localWindow.events.flatMap(event => event.kind === 'message' ? [event.item] : []), Date.now(), undefined, localWindow),
               aiPolishNotices: [], hasMore: local.unified.olderHasMore, newerHasMore: local.unified.newerHasMore,
               ...(local.unified.olderCursor ? { nextCursor: { unified: { mode: 'older', ...(!local.unified.windowTokens.length ? { cacheOnly: true } : {}), cursor: local.unified.olderCursor } } } : {}),
               ...(local.unified.newerCursor ? { newerCursor: { unified: { mode: 'newer', cursor: local.unified.newerCursor } } } : {}) }
             conversationCacheRef.current.storeTimeline(sourceKey, snapshot)
             refreshWindow = snapshot
             setTimelineView(current => ({ ...snapshot, sourceKey, mode: localMode, aroundSequenceRange: undefined,
-              items: mergeItems(pendingUnifiedTimelineSends(current.sourceKey === sourceKey ? current.items : []).filter(item => !removedKeys.has(item.timelineItemKey ?? '')), snapshot.items),
+              items: messageMerge.merge(sourceKey, snapshot.items, Date.now(), current.sourceKey === sourceKey ? current.items : []),
               aiPolishSettings: undefined, nextCursor: snapshot.nextCursor, newerCursor: snapshot.newerCursor, newerHasMore: snapshot.newerHasMore ?? false }))
             setTimelineLoadingKey(current => current === sourceKey ? '' : current)
             setTimelineSkeletonKey(current => current === sourceKey ? '' : current)
@@ -4056,8 +3973,9 @@ export function ArkmeSurface({
         && unifiedTimelineMessageSequence(cached.unified) > unifiedTimelineMessageSequence(canonical)
       if (keepingLocalTail) canonical = cached.unified!
       const removedKeys = new Set(arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).removedItemKeys)
+      messageMerge.removeOccurrences(sourceKey, removedKeys)
       liveTimelineTail.remove(removedKeys)
-      confirmedSendRetention.forget(sourceKey, (cached?.items ?? []).filter(item => removedKeys.has(item.timelineItemKey ?? '')).map(item => item.itemUid))
+      messageMerge.forget(sourceKey, (cached?.items ?? []).filter(item => removedKeys.has(item.timelineItemKey ?? '')).map(item => item.itemUid))
       if (cached?.mode === 'latest' && (direction === 'initial' || direction === 'refresh')) {
         // A previously confirmed tail can also lead a later structure read.
         // Reuse the bounded contiguous overlay instead of letting rows regress.
@@ -4074,8 +3992,7 @@ export function ArkmeSurface({
         ? 'latest' as const : cached?.mode ?? 'latest'
       const snapshot: ArkmeConversationTimelineSnapshot = {
         cache: keepingLocalTail ? cached.cache : !liveTimelineTail.hasPending ? page.cache : { origin: 'network', persistence: 'deferred', stale: true },
-        unified, mode, items: confirmedSendRetention.merge(sourceKey, mergeItems(
-          pendingUnifiedTimelineSends(cached?.items ?? []).filter(item => !removedKeys.has(item.timelineItemKey ?? '')), nativeItems)), aiPolishNotices: [],
+        unified, mode, items: messageMerge.merge(sourceKey, nativeItems, Date.now(), cached?.items, unified), aiPolishNotices: [],
         fetchedAtMillis: Date.now(), latestSequence: Math.max(cached?.latestSequence ?? 0, ...nativeItems.map(item => item.sequence ?? 0)),
         hasMore: unified.olderHasMore, newerHasMore: unified.newerHasMore,
         ...(unified.olderCursor ? { nextCursor: { unified: { mode: 'older', ...(!unified.windowTokens.length ? { cacheOnly: true } : {}), cursor: unified.olderCursor } } } : {}),
@@ -4104,7 +4021,7 @@ export function ArkmeSurface({
           ? { scrollTop: 0, stickToBottom: true } : !hadCachedTimeline && !restoredLocalTimeline ? initialSavedViewport
             : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history', intent === 'refresh' || intent === 'background') }
         setTimelineView(current => ({ ...snapshot, sourceKey, mode, aroundSequenceRange: undefined,
-          items: mergeItems(pendingUnifiedTimelineSends(current.sourceKey === sourceKey ? current.items : []).filter(item => !removedKeys.has(item.timelineItemKey ?? '')), snapshot.items),
+          items: messageMerge.merge(sourceKey, snapshot.items, Date.now(), current.sourceKey === sourceKey ? current.items : []),
           aiPolishSettings: snapshot.aiPolishSettings, nextCursor: snapshot.nextCursor,
           newerCursor: snapshot.newerCursor, newerHasMore: snapshot.newerHasMore ?? false }))
         setInterwovenMoments(unified.events.flatMap(event => event.kind === 'moment' ? [event.item] : []))
@@ -4152,7 +4069,7 @@ export function ArkmeSurface({
       .map(item => item.itemUid))
     const snapshot: ArkmeConversationTimelineSnapshot = refreshWindow !== undefined && cached !== undefined ? {
       ...cached,
-      items: confirmedSendRetention.merge(sourceKey, mergeItems(cached.items.filter(item => !refreshedIds.has(item.itemUid)
+      items: messageMerge.merge(sourceKey, mergeItems(cached.items.filter(item => !refreshedIds.has(item.itemUid)
         && !removedKeys.has(item.timelineItemKey ?? '')), authoritativeItems)),
       fetchedAtMillis: Date.now(),
       aiPolishNotices: page.aiPolishNotices ?? cached.aiPolishNotices,
@@ -4166,7 +4083,7 @@ export function ArkmeSurface({
         : loadingNewerPage && !page.hasMore ? 'latest' : cached?.mode ?? 'latest',
       ...(nextAroundSequenceRange === undefined ? {} : { aroundSequenceRange: nextAroundSequenceRange }),
       items: cursor === undefined
-        ? confirmedSendRetention.merge(sourceKey, authoritativeItems)
+        ? messageMerge.merge(sourceKey, authoritativeItems, Date.now(), cached?.items)
         : mergeItems(cached?.items ?? [], authoritativeItems),
       aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
       hasMore: loadingNewerPage ? cached?.hasMore ?? false : page.hasMore,
@@ -4236,7 +4153,7 @@ export function ArkmeSurface({
       })
       else await refresh
     }
-  }, [acknowledgeRead, confirmedSendRetention, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, liveTimelineTail, recordMutations])
+  }, [acknowledgeRead, messageMerge, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, liveTimelineTail, recordMutations])
   useLayoutEffect(() => {
     scheduledTimelineRefreshRef.current = () => {
       if (!activeConversation || !authenticated) return
@@ -4254,7 +4171,7 @@ export function ArkmeSurface({
     for (const task of fileTasks.tasks) {
       if (task.state !== 'sent' || notifiedFileTasks.current.has(task.taskRef)) continue
       notifiedFileTasks.current.add(task.taskRef); changed = true
-      confirmedSendRetention.retain(arkmeSourceIdentityKey(source), fileTaskTimelineItem(task))
+      messageMerge.retain(arkmeSourceIdentityKey(source), fileTaskTimelineItem(task))
       if ((task.result?.warningText ?? '') !== '') warningText = task.result?.warningText ?? ''
       if (notifiedFileTasks.current.size > 200) {
         const oldest = notifiedFileTasks.current.values().next().value as string | undefined
@@ -4275,7 +4192,7 @@ export function ArkmeSurface({
       task.content.textContent === serializeArkmeComposerDraft(current).text.trim() && JSON.stringify(task.fileRefs) === JSON.stringify(refs))) {
       arkmeComposerDraftStore.clear(composerDraftKey)
     }
-  }, [activeConversation, confirmedSendRetention, fileTasks.tasks, source, authenticatedUserId, loadTimeline, composerDraftKey])
+  }, [activeConversation, messageMerge, fileTasks.tasks, source, authenticatedUserId, loadTimeline, composerDraftKey])
 
   useEffect(() => {
     const target = ui.conversationTarget
@@ -4663,16 +4580,15 @@ export function ArkmeSurface({
     const cached = conversationCacheRef.current.getTimeline(conversationKey)
     if (!cached?.unified) return
     const removedKeys = new Set(chatDelta.removedItemKeys)
+    messageMerge.removeOccurrences(conversationKey, removedKeys)
     liveTimelineTail.remove(removedKeys)
-    confirmedSendRetention.forget(conversationKey, cached.items.filter(item => removedKeys.has(item.timelineItemKey ?? '')).map(item => item.itemUid))
+    messageMerge.forget(conversationKey, cached.items.filter(item => removedKeys.has(item.timelineItemKey ?? '')).map(item => item.itemUid))
     const delta = conversationCacheRef.current.unappliedTimelineDeltaItems(conversationKey, chatDelta.items)
     const visible = removeUnifiedTimelineItems(cached.unified, removedKeys)
     const unified = timelineMode === 'latest' ? liveTimelineTail.receive(visible, delta) : visible
     if (unified === cached.unified) return
     if (unified !== visible) conversationCacheRef.current.consumeTimelineDeltaItems(conversationKey, delta)
-    const nextItems = confirmedSendRetention.merge(conversationKey, mergeItems(
-      pendingUnifiedTimelineSends(cached.items).filter(item => !removedKeys.has(item.timelineItemKey ?? '')),
-      unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])))
+    const nextItems = messageMerge.merge(conversationKey, unified.events.flatMap(event => event.kind === 'message' ? [event.item] : []), Date.now(), cached.items)
     const snapshot = { ...cached, unified, items: nextItems,
       latestSequence: Math.max(cached.latestSequence ?? 0, ...nextItems.map(item => item.sequence ?? 0)),
       cache: { origin: 'network' as const, persistence: 'deferred' as const, stale: true } }
@@ -4683,10 +4599,10 @@ export function ArkmeSurface({
     // Rendering is immediate; coalesce only the durable all-source checkpoint.
     timelineRefreshScheduler.request(1000)
     setTimelineView(current => current.sourceKey !== conversationKey ? current : { ...current, ...snapshot,
-      items: mergeItems(pendingUnifiedTimelineSends(current.items).filter(item => !removedKeys.has(item.timelineItemKey ?? '')), snapshot.items) })
+      items: messageMerge.merge(conversationKey, snapshot.items, Date.now(), current.items) })
     if (viewport?.stickToBottom === false) setNewMessageCount(count => count + Math.max(0, nextItems.length - cached.items.length))
   }, [activeConversation, authenticated, source, timelineStateKey, conversationKey, unifiedWindow, timelineMode,
-    chatDelta, liveTimelineTail, confirmedSendRetention, timelineRefreshScheduler])
+    chatDelta, liveTimelineTail, messageMerge, timelineRefreshScheduler])
 
   useLayoutEffect(() => {
     if (!activeConversation || !authenticated || timelineStateKey !== conversationKey) return
@@ -4723,7 +4639,7 @@ export function ArkmeSurface({
       const next = unified === projected ? cached.nextCursor : local.nextCursor
       const snapshot: ArkmeConversationTimelineSnapshot = { ...cachedBase,
         cache: unified === projected ? { origin: 'local', persistence: 'deferred', stale: true } : local.cache, unified,
-        items: confirmedSendRetention.merge(conversationKey, mergeItems(pendingUnifiedTimelineSends(cached.items), nativeItems)),
+        items: messageMerge.merge(conversationKey, nativeItems, Date.now(), cached.items, unified),
         latestSequence: Math.max(0, ...nativeItems.map(item => item.sequence ?? 0)), hasMore: unified.olderHasMore,
         ...(next ? { nextCursor: next } : {}), newerHasMore: unified.newerHasMore }
       pendingViewportRestoreRef.current = { sourceKey: conversationKey, followLatest: true,
@@ -4732,11 +4648,11 @@ export function ArkmeSurface({
       timelineRefreshScheduler.request(1000)
       setTimelineView(current => current.sourceKey === conversationKey ? { ...current, ...snapshot,
         nextCursor: snapshot.nextCursor, newerCursor: undefined,
-        items: mergeItems(pendingUnifiedTimelineSends(current.items).filter(item => !removedKeys.has(item.timelineItemKey ?? '')), snapshot.items) } : current)
+        items: messageMerge.merge(conversationKey, snapshot.items, Date.now(), current.items) } : current)
     }).catch(() => undefined)
     return () => controller.abort()
   }, [activeConversation, authenticated, sourceIsChat, source?.sourceRef, chatDelta.localCacheRevision,
-    timelineStateKey, timelineMode, conversationKey, confirmedSendRetention, liveTimelineTail, timelineRefreshScheduler])
+    timelineStateKey, timelineMode, conversationKey, messageMerge, liveTimelineTail, timelineRefreshScheduler])
 
   useEffect(() => {
     if (!activeConversation || !authenticated || source === undefined) return
@@ -4849,7 +4765,8 @@ export function ArkmeSurface({
       timelineMode, aroundSequenceRange, retainedItems, deltaItems,
     )
     if (applicableDeltaItems.length === 0 && retainedItems.length === items.length) return
-    const nextItems = mergeItems(retainedItems, applicableDeltaItems)
+    messageMerge.removeOccurrences(conversationKey, removedItemKeys)
+    const nextItems = messageMerge.merge(conversationKey, mergeItems(retainedItems, applicableDeltaItems), Date.now(), retainedItems)
     conversationCacheRef.current.consumeTimelineDeltaItems(conversationKey, applicableDeltaItems)
     if (JSON.stringify(nextItems) === JSON.stringify(items)) return
     const body = bodyRef.current
@@ -4862,7 +4779,7 @@ export function ArkmeSurface({
       const retained = removedItemKeys.size === 0
         ? current.items
         : current.items.filter(item => !removedItemKeys.has(item.timelineItemKey ?? ''))
-      const mergedItems = mergeItems(retained, applicableDeltaItems)
+      const mergedItems = messageMerge.merge(conversationKey, mergeItems(retained, applicableDeltaItems), Date.now(), retained)
       return sameStateValue(current.items, mergedItems) ? current : { ...current, items: mergedItems }
     })
     if (viewport?.stickToBottom === false && incomingCount > 0) {
@@ -5099,6 +5016,7 @@ export function ArkmeSurface({
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       acceptAuthSnapshot(snapshot)
+      confirmPhoneBinding(snapshot, true)
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setSubmitBusy(false); setBusy(false) }
   }
 
@@ -5280,19 +5198,26 @@ export function ArkmeSurface({
   const send = async () => {
     const scope = captureComposerAsyncScope()
     const roleAtSendStart = source !== undefined && isArkmeSelfWorkspaceSource(source) ? selectedSelfRole : undefined
-    try { await withConversationSend(composerDraftKey, async consumed => {
+    const checkSocialAccess = async () => {
       if (isSocialSource(source)) {
         const draft = composerDraftKey ? arkmeComposerDraftStore.get(composerDraftKey) : undefined
         const article = composerArticleStore.get(articleDraftKey)
         await requirePhoneForSocialAction('发送消息')
-        if (!sameComposerAsyncScope(scope)) return
+        if (!sameComposerAsyncScope(scope)) return false
         if ((composerDraftKey && arkmeComposerDraftStore.get(composerDraftKey) !== draft) || composerArticleStore.get(articleDraftKey) !== article) {
           throw new Error(tr('内容已更新，请再次发送'))
         }
       }
-      if (sameComposerAsyncScope(scope)) await sendCore(consumed, roleAtSendStart)
-    }) }
-    catch (caught) { setError(errorMessage(caught)) }
+      return sameComposerAsyncScope(scope)
+    }
+    try {
+      // Prompt before acquiring the shared sending state; recheck after draft sync.
+      if (!await checkSocialAccess()) return
+      await withConversationSend(composerDraftKey, async consumed => {
+        if (await checkSocialAccess()) await sendCore(consumed, roleAtSendStart)
+      })
+    }
+    catch (caught) { if (!isSocialBindingRequired(caught)) setError(errorMessage(caught)) }
   }
   const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
@@ -5313,7 +5238,7 @@ export function ArkmeSurface({
       if (page && sameComposerAsyncScope(scope)) {
         setItems(current => mergeItems(current, page.items))
         const sent = page.items.find(item => item.itemUid === result.itemUid)
-        if (sent) confirmedSendRetention.retain(conversationKey, sent)
+        if (sent) messageMerge.retain(conversationKey, sent)
       }
       if (sameComposerAsyncScope(scope)) { arkmeUi.recordChanged(); textareaRef.current?.focus() }
       return
@@ -5343,6 +5268,7 @@ export function ArkmeSurface({
     if (sameTargetComposer()) messagePreparing.stop()
     const inputStartedAtMillis = recordInputCaptureOwner.getStartedAtMillis(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
+    messageMerge.assertCanBegin()
     const { recordUid, relationUid } = arkmeComposerDraftStore.beginFileSend(
       targetDraftKey,
       extensionTarget === undefined
@@ -5428,6 +5354,15 @@ export function ArkmeSurface({
       if (mention.botRef === undefined) return []
       return [{ botRef: mention.botRef, startIndex: mention.startIndex, length: mention.length }]
     })
+    const sendingSourceKey = arkmeSourceIdentityKey(targetSource)
+    try { optimistic = messageMerge.begin(sendingSourceKey, optimistic, relationUid) } catch (caught) {
+      const capture = await capturePromise.catch(() => undefined)
+      if (sameTargetAccount()) {
+        if (capture !== undefined) recordInputCaptureOwner.restoreForRetry(targetDraftKey, capture)
+        restorePendingDraft()
+      } else releaseArkmeComposerDraft(pendingDraft)
+      throw caught
+    }
     if (sameTargetComposer()) {
       setItems(current => mergeItems(current, [optimistic]))
     }
@@ -5446,7 +5381,8 @@ export function ArkmeSurface({
         if (sameTargetComposer()) setItems(current => current.map(item => item.itemUid === recordUid
           ? { ...item, selfRole: snapshot } : item))
       } catch (caught) {
-        if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
+        messageMerge.releasePending(sendingSourceKey, recordUid)
+      if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
         const capture = await capturePromise.catch(() => undefined)
         if (sameTargetAccount()) {
           if (capture !== undefined) recordInputCaptureOwner.restoreForRetry(targetDraftKey, capture)
@@ -5471,6 +5407,7 @@ export function ArkmeSurface({
           await callArkme('self-roles.unbind', { expectedUserId: targetUserId, recordUid, roleId: roleAtSendStart.roleId })
         } catch { roleCleanupFailed = true }
       }
+      messageMerge.releasePending(sendingSourceKey, recordUid)
       if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
       if (sameTargetAccount()) restorePendingDraft()
       else releaseArkmeComposerDraft(pendingDraft)
@@ -5522,26 +5459,27 @@ export function ArkmeSurface({
         providerWriteSucceeded = true
         if (!sameTargetAccount()) throw new Error('账号已切换，本次延展结果已丢弃')
         await rebindRole(result.recordUid)
-        const applyExtensionResult = (current: ArkmeTimelineItem[]) => applySourceSendResult(
-          current,
-          recordUid,
+        const targetSourceKey = arkmeSourceIdentityKey(targetSource)
+        const cachedTimeline = conversationCacheRef.current.getTimeline(targetSourceKey)
+        const extensionItems = messageMerge.confirm(
+          sendingSourceKey, recordUid,
           {
             sourceRef: targetSource.sourceRef,
             itemUid: result.recordUid,
             status: result.status,
             localState: result.localState,
             ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
-          },
+          }, optimistic, cachedTimeline?.items ?? [],
         ).map(item => item.itemUid === result.recordUid
           ? { ...item, awaitingTimelineProjection: true as const }
           : item)
-        if (sameTargetComposer()) setItems(applyExtensionResult)
-        const targetSourceKey = arkmeSourceIdentityKey(targetSource)
-        const cachedTimeline = conversationCacheRef.current.getTimeline(targetSourceKey)
+        const extensionItem = extensionItems.find(item => item.itemUid === result.recordUid)
+        if (sameTargetComposer() && extensionItem) setItems(current => mergeItems(
+          current.filter(item => item.timelineEventId || item.itemUid !== recordUid), [extensionItem]))
         if (cachedTimeline !== undefined) {
           conversationCacheRef.current.storeTimeline(targetSourceKey, {
             ...cachedTimeline,
-            items: applyExtensionResult(mergeItems(cachedTimeline.items, [optimistic])),
+            items: extensionItems,
             ...(result.sequence === undefined ? {} : {
               latestSequence: Math.max(cachedTimeline.latestSequence ?? 0, result.sequence),
             }),
@@ -5730,15 +5668,18 @@ export function ArkmeSurface({
       if (result.localState !== 'failed') {
         rememberSentHashTags(targetAccountKey, result.itemUid, rawTextContent, now, textFormat)
       }
-      const confirmedItem = applySourceSendResult([optimistic], recordUid, result)[0]
+      const confirmedItems = messageMerge.confirm(sendingSourceKey, recordUid, result, optimistic,
+        conversationCacheRef.current.getTimeline(sendingSourceKey)?.items ?? [])
+      const confirmedItem = confirmedItems.find(item => item.itemUid === result.itemUid)
       const targetSourceKey = arkmeSourceIdentityKey(targetSource)
       if (result.localState === 'synced' && confirmedItem !== undefined) {
-        confirmedSendRetention.retain(targetSourceKey, confirmedItem)
+        messageMerge.retain(targetSourceKey, confirmedItem)
         if (targetSource.kind === 'group_chat' && pendingHumanMentions.length > 0) {
           arkmeInterwovenInvalidation.invalidate(targetSourceKey)
         }
       }
-      if (sameTargetComposer()) setItems(current => applySourceSendResult(current, recordUid, result, optimistic))
+      if (sameTargetComposer() && confirmedItem) setItems(current => mergeItems(
+        current.filter(item => item.timelineEventId || item.itemUid !== recordUid), [confirmedItem]))
       if (result.localState !== 'failed' && locationCaptureRequested) {
         if (sameTargetAccount()) void locationCapturePromise.then(locationCapture => {
           if (!sameTargetAccount()) return
@@ -5767,7 +5708,7 @@ export function ArkmeSurface({
               })
             }
             if (confirmedItem !== undefined) {
-              confirmedSendRetention.retain(targetSourceKey, { ...confirmedItem, locationCapture: selectedLocation })
+              messageMerge.retain(targetSourceKey, { ...confirmedItem, locationCapture: selectedLocation })
             }
             if (sameTargetComposer()) {
               setSnapshot(current => current?.item.itemUid === result.itemUid
@@ -5795,7 +5736,7 @@ export function ArkmeSurface({
         if (cachedTimeline !== undefined) {
           conversationCacheRef.current.storeTimeline(targetSourceKey, {
             ...cachedTimeline,
-            items: applySourceSendResult(mergeItems(cachedTimeline.items, [optimistic]), recordUid, result),
+            items: confirmedItems,
             latestSequence: Math.max(cachedTimeline.latestSequence ?? 0, result.sequence),
           })
         }
@@ -5840,7 +5781,11 @@ export function ArkmeSurface({
           await callArkme('self-roles.unbind', { expectedUserId: targetUserId, recordUid, roleId: roleAtSendStart.roleId })
         } catch { roleCleanupFailed = true }
       }
-      if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
+      const failedItems = durableFileSendUncertain ? []
+        : messageMerge.fail(sendingSourceKey, recordUid, errorMessage(caught), !definitelyNotWritten, [])
+      if (sameTargetComposer()) setItems(current => durableFileSendUncertain
+        ? current.filter(item => item.itemUid !== recordUid)
+        : mergeItems(current, failedItems))
       if (caught instanceof ArkmeClientError && caught.body.directMessageAdmission !== undefined) invalidateDirectMessageAdmission()
       if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
@@ -5859,6 +5804,8 @@ export function ArkmeSurface({
             ? `${errorMessage(caught)}。发送结果尚未确认，请先检查历史消息；重试时保持原角色。`
             : errorMessage(caught))
       }
+    } finally {
+      messageMerge.releasePending(sendingSourceKey, recordUid)
     }
   }
 
@@ -6749,7 +6696,7 @@ export function ArkmeSurface({
             && timelineMode !== 'around' ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
               occurredAtMillis: communityWelcome.occurredAtMillis, title: source.displayName }] : []),
           ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || !source || recordMutations.project(event.item, source, selfSources) !== undefined).map(event => event.kind === 'message'
-            ? { kind: 'message' as const, id: `message:${event.eventId}`, occurredAtMillis: event.occurredAtMillis,
+            ? { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(messageByEvent.get(event.eventId) ?? event.item), occurredAtMillis: event.occurredAtMillis,
               item: messageByEvent.get(event.eventId) ?? (source ? recordMutations.project(event.item, source, selfSources)! : event.item) }
             : event.kind === 'world-public' ? { ...event, id: event.eventId }
             : event.kind === 'moment' ? { kind: 'moment' as const, id: `moment:${event.item.momentId}`, occurredAtMillis: event.occurredAtMillis, item: event.item }
@@ -6761,10 +6708,10 @@ export function ArkmeSurface({
           unifiedTimelineSendOverlay(unifiedWindow, displayItems, new Set(fileTasks.tasks
             .filter(task => task.state === 'sent' && !fileTasks.activeTaskKeys.has(task.taskRef))
             .map(task => task.result?.itemUid ?? task.recordUid)))
-            .map(item => ({ kind: 'message' as const, id: `message:${item.itemUid}`, occurredAtMillis: item.sendAtMillis, item }))),
+            .map(item => ({ kind: 'message' as const, id: `message:${item.itemUid}`, renderKey: conversationMessageRenderKey(item), occurredAtMillis: item.sendAtMillis, item }))),
         ]
       }
-      return sourceIsChat ? displayItems.map(item => ({ kind: 'message' as const, id: `message:${item.itemUid}`, occurredAtMillis: item.sendAtMillis, item })) : [
+      return sourceIsChat ? displayItems.map(item => ({ kind: 'message' as const, id: `message:${item.itemUid}`, renderKey: conversationMessageRenderKey(item), occurredAtMillis: item.sendAtMillis, item })) : [
       ...(communityWelcome !== undefined && source !== undefined && welcomeMatchesSource(communityWelcome, authenticatedAccountKey, source)
         && timelineMode !== 'around'
         ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
@@ -8286,7 +8233,7 @@ export function ArkmeSurface({
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
                 const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
-                return <Fragment key={row.id}>
+                return <Fragment key={conversationMessageRenderKey(item)}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
                     data-arkme-width-avatar={avatarRef}
@@ -8435,12 +8382,17 @@ export function ArkmeSurface({
                                   .catch(caught => setError(errorMessage(caught)))
                               }}>{tr("清除")}</button></>}
                             </ArkmeSendTaskStatus>)
+                          const sendFailure = conversationMessageSendFailure(item)
+                          const textSendStatus = sendFailure && <ArkmeSendTaskStatus label={tr('消息发送状态')} state={sendFailure.state} own={presentationIsMe}>
+                            {sendFailure.state === 'uncertain' ? '发送结果待确认' : '发送失败'}：{sendFailure.message}
+                          </ArkmeSendTaskStatus>
                           const messageContentLine = isSharedRecordingCard
                             ? messageBubble
                             : <ArkmeMessageReadReceiptLine
                               key={`read-receipt:${conversationOverlayKey}`}
                               source={source}
                               item={item}
+                              defaultUnread={conversationMessageDefaultUnread(item)}
                               wide={isStructuredMessageCard}
                             >
                               {messageBubble}
@@ -8452,9 +8404,10 @@ export function ArkmeSurface({
                                 {...(selfTopicPresentation.displayLabel === undefined ? {} : { displayLabel: selfTopicPresentation.displayLabel })}
                                 onSelect={(...args) => timelineActions.current.activateSelfSource(...args)}
                               />
-                          const reactionMessageLine = canReact && authenticatedAccountKey && activeSelectMode === undefined
+                          const reactionMessageLine = authenticatedAccountKey
                               ? <ArkmeReactionPreview
-                                key={`reaction:${conversationKey}:${item.itemUid}`}
+                                key={`reaction:${conversationKey}:${conversationMessageRenderKey(item)}`}
+                                enabled={canReact && activeSelectMode === undefined}
                                 isMe={presentationIsMe}
                                 scope={authenticatedAccountKey}
                                 openRequested={reactionMenuRequest?.scope === authenticatedAccountKey && reactionMenuRequest?.occurrenceKey === arkmeTimelineOccurrenceKey(item)}
@@ -8464,6 +8417,7 @@ export function ArkmeSurface({
                           if (!isExtensionMessage || item.extensionParent === undefined) return <>
                             {reactionMessageLine}
                             {fileSendStatus}
+                            {textSendStatus}
                             {topicBadge}
                           </>
                           return <div
@@ -8495,6 +8449,7 @@ export function ArkmeSurface({
                                 {messageHeader}
                                 {reactionMessageLine}
                                 {fileSendStatus}
+                                {textSendStatus}
                                 {topicBadge}
                               </div>
                             </div>
@@ -8704,7 +8659,7 @@ export function ArkmeSurface({
       }}
       onCancel={() => { setTopicAssignment(undefined) }}
       onRefresh={() => {
-        if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, topicAssignment.itemUids)
+        if (topicAssignment.source.kind !== 'send_to_self') messageMerge.forget(conversationKey, topicAssignment.itemUids)
         exitMessageSelectMode()
         setTopicAssignment(undefined)
         setSelfSourcesRetryRevision(value => value + 1)
@@ -9911,7 +9866,7 @@ export function ArkmeSurface({
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }
-            confirmedSendRetention.retain(conversationKey, item)
+            messageMerge.retain(conversationKey, item)
             setItems(current => mergeItems(current, [item]))
             if (isArkmeSelfWorkspaceSource(source)) arkmeUi.recordChanged()
           }}
