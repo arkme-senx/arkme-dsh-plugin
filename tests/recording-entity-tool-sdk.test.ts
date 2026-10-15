@@ -63,3 +63,22 @@ it('requires an allowed Origin before HTTP manual recognition can write', async 
     expect(accepted.status).toBe(200); expect(service.startRecordingEntities).toHaveBeenCalledOnce()
   } finally { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())) }
 })
+
+it.each([
+  ['recordings.entities.feedback', 'recordingEntityFeedback', { feedbackRef: 'ref', action: 'playback', requestId: 'request-1234567890' }],
+  ['recordings.entities.feedback.undo', 'undoRecordingEntityFeedback', { undoRef: 'ref', requestId: 'request-1234567890' }],
+])('requires an allowed Origin for %s', async (operation, method, params) => {
+  const service = { [method]: vi.fn(async () => ({})) }
+  const server = createServer(createArkmeHostApi(service as unknown as ArkmeService, { expectedPort: 3080, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address() as { port: number }, body = JSON.stringify({ operation, params })
+  try {
+    const endpoint = `http://127.0.0.1:${address.port}/arkme-self/api`
+    for (const Origin of [undefined, 'https://untrusted.example']) {
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(Origin ? { Origin } : {}) }, body })
+      expect(response.status).toBe(403); expect(service[method]).not.toHaveBeenCalled()
+    }
+    const accepted = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:3080' }, body })
+    expect(accepted.status).toBe(200); expect(service[method]).toHaveBeenCalledWith(params, expect.any(AbortSignal))
+  } finally { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())) }
+})

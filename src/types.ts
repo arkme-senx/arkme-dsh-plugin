@@ -3986,6 +3986,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'explore.settings' | 'explore.settings.save'
+  | 'explore.list' | 'explore.detail' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
@@ -4386,6 +4388,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
   | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'

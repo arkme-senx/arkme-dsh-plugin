@@ -3840,7 +3840,7 @@ describe('conversation send directory projection', () => {
     })
   })
 
-  it('hides sender and time metadata for a self-authored quick note', async () => {
+  it('hides the own sender header but retains the original time inside the message bubble', async () => {
     timeline = [{
       itemUid: 'own-message-without-metadata', senderName: '狗才', isMe: true,
       sendAtMillis: 1, title: '', textContent: '自己的快记', status: 1,
@@ -3856,9 +3856,12 @@ describe('conversation send directory projection', () => {
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'own-message-without-metadata' })
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const bubble = row.findByProps({ className: 'arkme-timed-bubble' })
+    expect(bubble.findAllByType('time')).toHaveLength(1)
+    expect(bubble.findByType('time').props.dateTime).toBe(new Date(1).toISOString())
   })
 
-  it('hides sender and time metadata for a received private-chat message', async () => {
+  it('hides the private-chat sender header but retains the original time inside the message bubble', async () => {
     timeline = [{
       itemUid: 'private-message-without-metadata', senderName: '1D3E', isMe: false,
       sendAtMillis: 1, title: '', textContent: '那我就不管了', status: 1,
@@ -3874,6 +3877,9 @@ describe('conversation send directory projection', () => {
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'private-message-without-metadata' })
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const bubble = row.findByProps({ className: 'arkme-timed-bubble' })
+    expect(bubble.findAllByType('time')).toHaveLength(1)
+    expect(bubble.findByType('time').props.dateTime).toBe(new Date(1).toISOString())
   })
 
   it.each([0, 500])('preserves long drafts while forwarding with distance %s from bottom', async distance => {

@@ -3,8 +3,48 @@ import { RecognizedSpeakerDirectory, SpeakerReadDeferred } from '../src/client/r
 import { loaders, page, person, query, summary, deferred } from './helpers/speaker-directory.js'
 afterEach(() => { vi.useRealTimers() })
 const signal = () => new AbortController().signal
+const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
 
 describe('server speaker directory', () => {
+  it('immediately rechecks after marking, shares consumers, and accepts a 100-to-1 merge', async () => {
+    vi.useFakeTimers()
+    let merged = false
+    const pending = deferred<ReturnType<typeof summary>>()
+    const api = loaders({ summary: vi.fn(async () => merged ? pending.promise : summary({ totalCount: 100, markedCount: 0, unmarkedCount: 100 })) })
+    const store = new RecognizedSpeakerDirectory(api)
+    const stopEntry = store.watch('a'), stopList = store.watch('a')
+    await flush()
+    expect(api.summary).toHaveBeenCalledTimes(1)
+    merged = true; store.invalidate('a'); await flush()
+    expect(api.summary).toHaveBeenCalledTimes(2)
+    expect(store.get('a').refreshPending).toBe(true)
+    expect(store.get('a').summary?.totalCount).toBe(100)
+    pending.resolve(summary({ snapshotVersion: 'v2', totalCount: 1, markedCount: 1, unmarkedCount: 0 }))
+    await flush()
+    expect(store.get('a').summary?.totalCount).toBe(1)
+    expect(store.get('a').refreshPending).toBeUndefined()
+    stopEntry(); stopList()
+    store.invalidate('a'); await flush()
+    expect(api.summary).toHaveBeenCalledTimes(2)
+  })
+  it('does not let old in-flight pages reappear after a merged version is published', async () => {
+    const late = deferred<ReturnType<typeof page>>()
+    let merged = false
+    const api = loaders({
+      summary: vi.fn(async () => summary({ snapshotVersion: merged ? 'v2' : 'v1' })),
+      list: vi.fn(async input => input.cursor ? late.promise : input.snapshotVersion === 'v2'
+        ? page({ snapshotVersion: 'v2', throughCursor: 'seen-v2', items: [person('merged')] })
+        : page({ hasMore: true, nextCursor: 'old-page', items: [person('old')] })),
+    })
+    const store = new RecognizedSpeakerDirectory(api)
+    const old = await store.first('a', query, signal())
+    const more = store.more('a', old, signal()); await flush()
+    merged = true; await store.summary('a', true)
+    late.resolve(page({ items: [person('another-old')] }))
+    const result = await more
+    expect(result.snapshotVersion).toBe('v2')
+    expect(result.items.map(row => row.personKey)).toEqual(['merged'])
+  })
   it('shares lightweight summary, reads only the first page, and preserves server ordering', async () => {
     const api = loaders({ list: vi.fn(async () => page({ items: [person('2'), person('1')], hasMore: true, nextCursor: 'next' })) })
     const store = new RecognizedSpeakerDirectory(api)

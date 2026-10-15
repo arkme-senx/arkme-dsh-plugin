@@ -126,6 +126,7 @@ export interface ArkmeServiceConfig {
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  memoryCoreBaseUrl?: string
   routePath: string
   audioBaseUrl: string
   extensionPublishBaseUrl?: string
@@ -1277,6 +1278,29 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedRelationGet<T>(path: string, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'relation', 'interactive-read', { bypassCache: true, cacheMs: 0 })
+    try { return await this.get<T>(this.config.relationBaseUrl, path, session.accessToken, [200], signal, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.get<T>(this.config.relationBaseUrl, path, session.accessToken, [200], signal, options())
+    }
+  }
+
+  async authenticatedMemoryCorePost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, write = false): Promise<T> {
+    const origin = this.config.memoryCoreBaseUrl || (this.config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me')
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'other', write ? 'write' : 'interactive-read', { bypassCache: true, cacheMs: 0 })
+    try { return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
     }
   }
 

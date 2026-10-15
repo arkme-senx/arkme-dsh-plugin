@@ -34,8 +34,8 @@ export const normalizeDirectoryQuery = (query: string) => query.trim().toLowerCa
 export function directoryQueryValid(query: string) { return new TextEncoder().encode(normalizeDirectoryQuery(query)).length <= 256 }
 const queryKey = (query: SpeakerDirectoryQuery) => JSON.stringify([query.filter, query.sort, normalizeDirectoryQuery(query.query)])
 const empty = Object.freeze({})
-export interface DirectorySnapshot { summary?: SpeakerDirectorySummary; error?: string }
-export interface DirectoryList extends SpeakerDirectoryPage { query: SpeakerDirectoryQuery; requestedCursors: string[] }
+export interface DirectorySnapshot { summary?: SpeakerDirectorySummary; error?: string; refreshPending?: boolean }
+export interface DirectoryList extends SpeakerDirectoryPage { query: SpeakerDirectoryQuery; requestedCursors: string[]; summary: SpeakerDirectorySummary }
 interface Account {
   controller: AbortController
   snapshot: DirectorySnapshot
@@ -48,6 +48,7 @@ interface Account {
   confirmedSeen: Set<string>
   expiredSeen: Set<string>
   revision: number
+  wake: Set<() => void>
 }
 
 /** Shared summary and immutable same-version pages. No traversal or local new-person inference. */
@@ -62,7 +63,7 @@ export class RecognizedSpeakerDirectory {
     let found = this.accounts.get(key)
     if (!found) {
       found = { controller: new AbortController(), snapshot: empty, summaryAt: 0, retryAt: 0, failures: 0,
-        flights: new Map(), lists: new Map(), pendingSeen: new Set(), confirmedSeen: new Set(), expiredSeen: new Set(), revision: 0 }
+        flights: new Map(), lists: new Map(), pendingSeen: new Set(), confirmedSeen: new Set(), expiredSeen: new Set(), revision: 0, wake: new Set() }
       this.accounts.set(key, found)
     }
     return found
@@ -128,6 +129,7 @@ export class RecognizedSpeakerDirectory {
       : await this.request(account, `list:${JSON.stringify(input)}`, inner => this.api.list(input, inner))
     signal.throwIfAborted(); this.current(account, state)
     if (revision !== state.revision) throw new DOMException('目录已更新', 'AbortError')
+    if (state.snapshot.summary?.snapshotVersion !== summary.snapshotVersion) return this.first(account, query, signal)
     if (page.state === 'snapshot_expired') {
       state.summaryAt = 0; state.lists.delete(key)
       if (page.retryAfterMs > 0) { state.retryAt = Math.max(state.retryAt, this.now() + page.retryAfterMs); throw new SpeakerReadDeferred(state.retryAt, new Error('目录正在更新，请稍后重试')) }
@@ -135,7 +137,7 @@ export class RecognizedSpeakerDirectory {
       return this.first(account, query, signal, true)
     }
     if (page.state === 'disabled') { state.snapshot = { summary: { ...summary, state: 'disabled' } }; this.emit() }
-    const result: DirectoryList = { ...page, query: { ...query, query: input.query }, requestedCursors: [''] }
+    const result: DirectoryList = { ...page, query: { ...query, query: input.query }, requestedCursors: [''], summary }
     if (page.coverage === 'complete' && page.state !== 'disabled') {
       state.lists.delete(key); state.lists.set(key, result)
       // Cache a bounded number of queries, with no cap on an individual directory's pagination.
@@ -152,6 +154,7 @@ export class RecognizedSpeakerDirectory {
     const page = await this.request(account, `list:${JSON.stringify(input)}`, inner => this.api.list(input, inner))
     signal.throwIfAborted(); this.current(account, state)
     if (revision !== state.revision) throw new DOMException('目录已更新', 'AbortError')
+    if (state.snapshot.summary?.snapshotVersion !== previous.snapshotVersion) return this.first(account, previous.query, signal)
     if (page.state === 'snapshot_expired') {
       state.lists.delete(queryKey(previous.query)); state.summaryAt = 0
       if (page.retryAfterMs > 0) { state.retryAt = Math.max(state.retryAt, this.now() + page.retryAfterMs); throw new SpeakerReadDeferred(state.retryAt, new Error('目录正在更新，请稍后刷新')) }
@@ -165,7 +168,7 @@ export class RecognizedSpeakerDirectory {
     if (page.snapshotVersion !== previous.snapshotVersion || page.coverage !== 'complete'
       || (page.hasMore && (page.nextCursor === previous.nextCursor || previous.requestedCursors.includes(page.nextCursor)))) throw new Error('目录版本已变化，请刷新列表')
     const keys = new Set(previous.items.map(item => item.personKey))
-    const result = { ...page, query: previous.query, requestedCursors: [...previous.requestedCursors, previous.nextCursor], items: [...previous.items, ...page.items.filter(item => { if (keys.has(item.personKey)) return false; keys.add(item.personKey); return true })] }
+    const result = { ...page, summary: previous.summary, query: previous.query, requestedCursors: [...previous.requestedCursors, previous.nextCursor], items: [...previous.items, ...page.items.filter(item => { if (keys.has(item.personKey)) return false; keys.add(item.personKey); return true })] }
     state.lists.set(queryKey(previous.query), result)
     return result
   }
@@ -216,9 +219,10 @@ export class RecognizedSpeakerDirectory {
   }
   /** Visible consumers share one lightweight summary request, including online/focus recovery. */
   watch(account: string, changed: () => void = () => {}): () => void {
-    let disposed = false, busy = false, timer: ReturnType<typeof setTimeout> | undefined
+    const watched = this.account(account)
+    let disposed = false, busy = false, wakePending = false, timer: ReturnType<typeof setTimeout> | undefined
     const run = async () => {
-      if (disposed || busy || !directoryVisible()) return
+      if (disposed || busy || !directoryVisible() || this.accounts.get(account) !== watched) return
       busy = true
       let delay = 30_000
       try {
@@ -230,23 +234,32 @@ export class RecognizedSpeakerDirectory {
       finally {
         busy = false
         if (!disposed && delay > 0 && this.get(account).summary?.state !== 'disabled') {
-          clearTimeout(timer); timer = setTimeout(() => { void run() }, Math.max(1_000, delay))
+          clearTimeout(timer); timer = setTimeout(() => { void run() }, wakePending ? 0 : Math.max(1_000, delay))
+          wakePending = false
         }
       }
     }
-    const wake = () => { if (directoryVisible()) { const value = this.account(account); value.summaryAt = 0; void run() } }
+    const wake = () => {
+      if (!directoryVisible() || this.accounts.get(account) !== watched) return
+      watched.summaryAt = 0; clearTimeout(timer)
+      if (busy) wakePending = true
+      else void run()
+    }
+    watched.wake.add(wake)
     void run()
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
     if (typeof window !== 'undefined') { window.addEventListener('online', wake); window.addEventListener('focus', wake) }
-    return () => { disposed = true; clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
+    return () => { disposed = true; watched.wake.delete(wake); clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
       if (typeof window !== 'undefined') { window.removeEventListener('online', wake); window.removeEventListener('focus', wake) } }
   }
   invalidate(account: string) {
     const state = this.accounts.get(account)
     if (!state) return
     state.revision += 1; state.summaryAt = 0; state.lists.clear()
+    state.snapshot = { ...state.snapshot, refreshPending: true }
     // Keep server cooldown and pending confirmations for versions actually displayed.
     this.emit()
+    state.wake.forEach(wake => wake())
   }
   clear() { this.accounts.forEach(state => state.controller.abort()); this.accounts.clear(); this.emit() }
 }
