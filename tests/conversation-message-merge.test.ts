@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ArkmeSourceSendResult, ArkmeTimelineItem } from '../src/types.js'
 import type { ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
-import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, mergeConversationMessages } from '../src/client/conversation-message-merge.js'
+import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, mergeConversationMessages } from '../src/client/conversation-message-merge.js'
 import { unifiedTimelineSendOverlay } from '../src/client/unified-timeline-send-overlay.js'
 
 const source = 'chat:one'
@@ -25,17 +25,32 @@ describe('conversation message merge ownership', () => {
   ])('keeps one stable message across %s / %s / %s', (...events) => {
     const owner = new ArkmeConversationMessageMergeOwner()
     const local = owner.begin(source, pending(), 'relation:local')
+    expect(conversationMessageDefaultUnread(local)).toBe(true)
     let rows = [local]
     for (const event of events) {
       rows = event === 'ack' ? owner.confirm(source, 'local', ack(), local, rows)
         : owner.merge(source, event === 'live' ? [canonical()] : [], Date.now(), rows, event === 'read' ? page([]) : undefined)
       expect(rows).toHaveLength(1)
       expect(conversationMessageRenderKey(rows[0]!)).toBe('message:local')
+      expect(conversationMessageDefaultUnread(rows[0]!)).toBe(true)
     }
     rows = owner.merge(source, [canonical()], Date.now(), rows, page([canonical()]))
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ status: 1, sequence: 9, timelineEventId: 'event:local' })
     expect(conversationMessageRenderKey(rows[0]!)).toBe('message:local')
+  })
+
+  it('defaults only a local submission to unread and clears that fallback on failure', () => {
+    const owner = new ArkmeConversationMessageMergeOwner()
+    expect(conversationMessageDefaultUnread(canonical())).toBe(false)
+    const local = owner.begin(source, pending())
+    expect(conversationMessageDefaultUnread(JSON.parse(JSON.stringify(local)))).toBe(false)
+    const failed = owner.fail(source, 'local', 'offline', false, [local])
+    expect(conversationMessageDefaultUnread(failed[0]!)).toBe(false)
+    const retry = owner.begin(source, pending())
+    expect(conversationMessageDefaultUnread(retry)).toBe(true)
+    const rejected = owner.confirm(source, 'local', { ...ack(), status: 0, localState: 'failed' }, retry, [])
+    expect(conversationMessageDefaultUnread(rejected[0]!)).toBe(false)
   })
 
   it('upserts an ACK after the current view lost its candidate and maps a returned ID in place', () => {
