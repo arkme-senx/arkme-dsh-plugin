@@ -14,7 +14,7 @@ export function clampNoteDetailWidth(width: number, available: number, defaultWi
 }
 
 /** Shared local-only layout preference for right-hand quick-note drawers. */
-export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preferenceKey = NOTE_DETAIL_WIDTH_KEY, label = '调整快记详情宽度', defaultWidth = DEFAULT_NOTE_DETAIL_WIDTH) {
+export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preferenceKey = NOTE_DETAIL_WIDTH_KEY, label = '调整快记详情宽度', defaultWidth = DEFAULT_NOTE_DETAIL_WIDTH, active = true) {
   const [preferred, setPreferred] = useState(() => {
     try {
       const stored = window.localStorage.getItem(preferenceKey)
@@ -38,7 +38,7 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preference
     setPreferred(latest.current)
   }
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (!active || typeof window === 'undefined') return
     const parent = panel.current?.parentElement
     const measure = () => setAvailable(parent?.clientWidth || window.innerWidth)
     measure()
@@ -46,14 +46,15 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preference
     if (parent) observer?.observe(parent)
     window.addEventListener('resize', measure)
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure) }
-  }, [panel])
+  }, [panel, active])
   useEffect(() => {
+    if (!active) { drag.current = undefined; setDragging(false); return }
     if (!dragging) return
     const { cursor, userSelect } = document.body.style
     document.body.style.cursor = 'ew-resize'
     document.body.style.userSelect = 'none'
     return () => { document.body.style.cursor = cursor; document.body.style.userSelect = userSelect }
-  }, [dragging])
+  }, [dragging, active])
   const finish = (id: number) => {
     if (drag.current?.id !== id) return
     drag.current = undefined

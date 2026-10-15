@@ -1488,6 +1488,8 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    recordingEntities?: true
+    recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
     unifiedChatTimeline?: true
@@ -3939,6 +3941,9 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.entities.start'
+  | 'recordings.entities'
+  | 'recordings.entities.occurrences'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
   | 'speaker-directory.summary'
