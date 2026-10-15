@@ -68,8 +68,8 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
   }
   const visibleSettings = loadedScope === accountScope ? settings : undefined
   const profile = visibleSettings?.find(item => item.key === 'personal_profile' && item.enabled)
-  return <section className="arkme-automatic-ai" aria-label={tr('AI 自动分析')}>
-    <h3>{tr('AI 自动分析')}</h3>
+  return <section className="arkme-automatic-ai" aria-label={tr('自动使用额度')}>
+    <h3>{tr('自动使用额度')}</h3>
     <p>{tr('开启后自动分析，消耗 AI 额度。')}</p>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">{tr('正在读取设置…')}</p>}

@@ -8,6 +8,8 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
+自动使用额度|Automatic allowance usage
+目标|Goals
 自动识别设置|Automatic recognition settings
 开启功能|Enable feature
 自动整理个人档案|Automatically organize personal profile
