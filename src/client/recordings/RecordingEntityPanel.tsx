@@ -94,13 +94,14 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
         if (event.target instanceof Element && event.target.closest('[data-recording-entity-trigger], [data-recording-entity-key]')) return
         onClose()
       }}>
+      <p className="arkme-entity-hint">{tr('仅手动识别，识别会消耗 AI 积分。请选择日期后开始。')}</p>
       {showStatus && <div className="arkme-entity-status">
         <div className="arkme-entity-status-row">
           <span role="status" aria-live="polite" aria-atomic="true">
             {data ? tr(recordingEntityStatus(data)) : loading ? tr('正在读取实体…') : tr('暂时无法显示实体列表')}
             {data?.status === 'processing' && ['discovering', 'reviewing'].includes(data.stage) && data.totalUnits > 0 && <span> · {data.completedUnits}/{data.totalUnits}</span>}
           </span>
-          {data?.status === 'not_started' && data.canStart !== false && onStart && <button type="button" disabled={starting} onClick={onStart}>{tr(starting ? '正在提交…' : '开始识别')}</button>}
+          {(data?.status === 'not_started' || data?.status === 'failed') && data.canStart !== false && onStart && <button type="button" disabled={starting} onClick={onStart}>{tr(starting ? '正在提交…' : data.status === 'failed' ? '重试识别' : '开始识别')}</button>}
           <button type="button" disabled={starting} onClick={() => { if (mentions.error) mentions.loadMore(); onRefresh() }}>{tr('刷新实体')}</button>
         </div>
         {startError && <p role="alert">{tr('未能确认识别已开始，请刷新后重试')}</p>}

@@ -57,7 +57,7 @@ describe('packaged recording entities', () => {
         if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: token, refresh_token: 'fixture-refresh' }
         else if (req.url === '/api/v1/auth/get-user-info') data = { user_id: userID, nick_name: '实体页面验收', phone: '13800000000' }
         else if (req.url.endsWith('/audio-day/list')) data = { ...result, day_stamp: body.day_stamp, ...(body.day_stamp !== stamp ? { status: startedDays.has(body.day_stamp) ? 'processing' : 'not_started', can_start: !startedDays.has(body.day_stamp), pollable: startedDays.has(body.day_stamp), recognition_progress: { stage: startedDays.has(body.day_stamp) ? 'queued' : 'not_started' }, entities: [] } : {}) }
-        else if (req.url.endsWith('/audio-day/ensure')) { startedDays.add(body.day_stamp); data = { status: 'accepted', job_id: 'internal-job' } }
+        else if (req.url.endsWith('/audio-day/start')) { startedDays.add(body.day_stamp); data = { status: 'accepted', job_id: 'internal-job' } }
         else if (req.url.endsWith('/audio-day/occurrences')) data = { job_id: body.job_id, view_mode: 'official', result_version: body.result_version, official_entity_id: body.official_entity_id,
           occurrences: [{ occurrence_id: 'mention', row_id: 'session:child:0:system', session_id: 'session', child_id: 'child', item_index: 0,
             transcript_source: 'system', start_ms: speechStart, end_ms: speechStart + 10000, rune_start: 9, rune_end: 11, observed_text: '武汉' }] }
@@ -94,8 +94,10 @@ describe('packaged recording entities', () => {
         expect(output.isError).toBe(false); expect(JSON.stringify(output)).toContain('武汉')
       }
       expect(scaffold.ctx.tools.get('arkme_recording_entities_start', handle.agent)).toBeDefined()
-      const started = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_entities_start', arguments: { date_stamp: stamp }, agent: handle.agent, signal: new AbortController().signal })
+      const requestedDate = new Date(stamp); requestedDate.setDate(requestedDate.getDate() - 2)
+      const started = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_entities_start', arguments: { date_stamp: requestedDate.getTime() }, agent: handle.agent, signal: new AbortController().signal })
       expect(started.isError).toBe(false); expect(JSON.stringify(started)).toContain('accepted')
+      expect([...startedDays].sort()).toEqual([requestedDate.getTime(), stamp].sort())
       phase('tools-ready')
       browser = await chromium.launch({ channel: 'chrome', headless: true }); page = await browser.newPage({ viewport: { width: 1680, height: 1050 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' })
       phase('browser-ready')
@@ -142,10 +144,12 @@ describe('packaged recording entities', () => {
       await page.getByRole('button', { name: '查看录音实体' }).click()
       await expect.poll(() => panel.innerText(), { timeout: 15000 }).toContain('尚未识别实体')
       expect(await panel.locator('.arkme-entity-item').count()).toBe(0)
-      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(2)
+      expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(2)
+      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(0)
+      expect(await panel.innerText()).toContain('仅手动识别，识别会消耗 AI 积分')
       await panel.getByRole('button', { name: '开始识别', exact: true }).click()
       await expect.poll(() => panel.innerText()).toContain('等待实体识别')
-      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(3)
+      expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(3)
       phase('ui-manual-start-ready')
       if (artifacts) await page.screenshot({ path: join(artifacts, 'manual-start-queued.png') })
     } catch (error) {

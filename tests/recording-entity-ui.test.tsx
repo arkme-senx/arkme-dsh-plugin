@@ -531,3 +531,17 @@ it('summarizes everyone in one entity, filters only its mentions and resets on o
   expect(mocks.call.mock.calls.at(-1)![1]).not.toHaveProperty('participantKey')
   expect(host.textContent).toContain('所有人的原文')
 })
+
+it('keeps opening, refreshing and changing days read-only; only an explicit retry starts recognition', async () => {
+  mocks.call.mockResolvedValue(day({status:'not_started',canStart:true,pollable:false}))
+  await act(async()=>{root.render(<Harness />);await tick()})
+  await act(async()=>{owner.setOpen(true);owner.refresh();await tick()})
+  await act(async()=>{root.render(<Harness date={456}/>);await tick()})
+  expect(mocks.call.mock.calls.filter(([operation])=>operation.endsWith('.start'))).toHaveLength(0)
+  const start=vi.fn()
+  await act(async()=>{root.render(<RecordingEntityPanel data={day({status:'failed',canStart:true})} loading={false} error={false} paused={false} compact={false} onStart={start} onClose={()=>{}} onRefresh={()=>{}} onLocate={()=>true}/>)})
+  expect(host.textContent).toContain('仅手动识别，识别会消耗 AI 积分')
+  expect(start).not.toHaveBeenCalled()
+  await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='重试识别')!.click()})
+  expect(start).toHaveBeenCalledOnce()
+})

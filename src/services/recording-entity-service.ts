@@ -72,7 +72,7 @@ export class RecordingEntityService implements RecordingEntityPort {
     const { dateStamp, source } = this.query(query)
     signal?.throwIfAborted()
     const session = await this.runtime.requireSession(), revision = this.revision
-    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/ensure', {
+    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/start', {
       day_stamp: dateStamp, transcript_source: source,
     }, session, signal, { lane: 'write', bypassCache: true, cacheMs: 0 })
     await this.assertCurrent(session, revision, signal)

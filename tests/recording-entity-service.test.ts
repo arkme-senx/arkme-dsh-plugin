@@ -27,7 +27,7 @@ function fixture() {
       const path = new URL(String(url)).pathname; paths.push(path)
       if (state.fail) throw new Error('offline')
       const body = JSON.parse(String(init?.body)); requests.push({ path, body })
-      const data = path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/ensure') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
+      const data = path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/start') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
         official_entity_id: body.official_entity_id, result_version: body.result_version, projection_entity_id: body.projection_entity_id,
         projection_revision: body.projection_revision, personalization: state.day.personalization, occurrences: state.occurrences }
       if (path.endsWith('/occurrences')) state.afterOccurrences()
@@ -70,7 +70,7 @@ describe('recording entity Host owner', () => {
     const mentions = await f.service.recordingEntityOccurrences(refs)
     expect(mentions.items[0]).toMatchObject({ observedText: '武汉', text: '🙂武汉', target: { start: 1, length: 2, transcriptSource: 'system' } })
     expect(JSON.stringify(mentions)).not.toMatch(/private-mention|session:child/)
-    expect(f.paths.every(path => !path.endsWith('/ensure'))).toBe(true)
+    expect(f.paths.every(path => !path.endsWith('/start'))).toBe(true)
   })
   it('rejects cross-account, tampered and obsolete projection references', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date }), ref = initial.entities![0]!.entityRef
@@ -134,7 +134,7 @@ it('starts explicitly through an uncached owner command and hides internal IDs',
   const f = fixture()
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
-  expect(f.paths).toEqual(['/api/v1/entity/audio-day/ensure', '/api/v1/entity/audio-day/ensure'])
+  expect(f.paths).toEqual(['/api/v1/entity/audio-day/start', '/api/v1/entity/audio-day/start'])
   f.state.start = { status: 'failed', retryable: true, error_code: 'private-detail' }
   await expect(f.service.startRecordingEntities({ dateStamp: date })).rejects.toMatchObject({ code: 'recording-entities-start-failed', retryable: true })
   await expect(f.service.startRecordingEntities({ dateStamp: date }, AbortSignal.abort())).rejects.toThrow()
