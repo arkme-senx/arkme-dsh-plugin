@@ -1900,6 +1900,13 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 加载更多提及|Load more mentions
 正在提交反馈…|Submitting feedback…
 实体相关性|Entity relevance
+当前显示全部实体，提及者汇总待补充。|Showing all entities. Speaker summaries are not available yet.
+{name}的提及者|Speakers mentioning {name}
+{name} {count} 次|{name}: {count} mentions
+含 {count} 次播放|{count} from playback
+另 {count} 位说话人|{count} more speakers
+{count} 次说话人待确认|{count} mentions with unknown speaker
+查看所有人的提及|Show everyone's mentions
 与你相关|Relevant to you
 暂未提供相关性信息，当前显示全部实体。|Relevance information is not available yet. Showing all entities.
 暂未发现与你相关的实体，可展开其他内容。|No related entities yet. Expand other content to see more.

@@ -7,7 +7,7 @@ import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEn
 import { recordingEntityDisplayRange } from '../recording-entity-range.js'
 import { recordingSearchIdentityHash, recordingSearchVersion } from '../recording-search-version.js'
 import { ArkmePluginError, ServiceRuntime, objectValue } from './service.js'
-import { entityAccuracy, entityOccurrenceContext, entityPersonalization, entityRelevance } from './recording-entity-personalization.js'
+import { entityAccuracy, entityOccurrenceContext, entityParticipation, entityPersonalization, entityRelevance } from './recording-entity-personalization.js'
 import type { RecordingEntityFeedbackInput, RecordingEntityFeedbackResult, RecordingEntityFeedbackUndoInput } from '../recording-entity-contract.js'
 
 const PREFIX = 'arkme-recording-entity-v1'
@@ -43,6 +43,9 @@ export class RecordingEntityService implements RecordingEntityPort {
   dispose(): void { this.revision += 1; this.unsubscribe() }
   private key(): Promise<string> { return this.seed ??= this.runtime.stateStore.uniqueCode() }
   private async hash(value: unknown): Promise<string> { return createHmac('sha256', await this.key()).update(JSON.stringify(value)).digest('hex') }
+  private participantKey(session: ArkmeSessionCredentials, version: string, id: string): Promise<string> {
+    return this.hash(['entity-participant', session.userId, this.runtime.config.environment, version, id])
+  }
   private async assertCurrent(session: ArkmeSessionCredentials, revision: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId || revision !== this.revision) throw stale()
@@ -125,9 +128,11 @@ export class RecordingEntityService implements RecordingEntityPort {
           ...(personalization ? { personalizationRevision: personalization.revision, feedbackSupported: personalization.feedbackSupported } : {}),
         }
         if (!ref.jobId || !ref.entityId || (ref.viewMode === 'official' ? !ref.resultVersion : !ref.projectionRevision)) throw invalid()
+        const participation = personalization ? await entityParticipation(entity.participation, integer(entity.occurrence_count), id => this.participantKey(session, version, id)) : undefined
         result.entities.push({ key: await this.hash([session.userId, entity.entity_key]), entityRef: await this.codec.seal(PREFIX, ref),
           name, type, typeLabel: typeof entity.llm_type === 'string' ? string(entity.llm_type, 100) : '', occurrenceCount: integer(entity.occurrence_count),
           ...(personalization && entity.relevance !== undefined ? { relevance: entityRelevance(entity.relevance) } : {}),
+          ...(participation ? { participation } : {}),
           ...(personalization && entity.accuracy !== undefined ? { accuracy: entityAccuracy(entity.accuracy) } : {}) })
       }
     } else if (!query.knownStateRevision && !query.knownProjectionRevision || ['not_started', 'source_mismatch'].includes(result.status) || !raw.job_id) {
@@ -138,7 +143,8 @@ export class RecordingEntityService implements RecordingEntityPort {
   }
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
     const offset = integer(query.offset), limit = integer(query.limit, 50)
-    if (offset > 10000 || limit < 1 || limit > 50 || typeof query.entityRef !== 'string') throw invalid()
+    if (offset > 10000 || limit < 1 || limit > 50 || typeof query.entityRef !== 'string'
+      || (query.participantKey !== undefined && !/^[a-f0-9]{64}$/.test(query.participantKey))) throw invalid()
     const session = await this.runtime.requireSession(), revision = this.revision
     const ref = await this.codec.open(PREFIX, query.entityRef)
     if (ref.viewerUserId !== session.userId || ref.environment !== this.runtime.config.environment) throw stale()
@@ -163,7 +169,17 @@ export class RecordingEntityService implements RecordingEntityPort {
       || (ref.viewMode === 'official' ? raw.result_version !== ref.resultVersion || raw.official_entity_id !== ref.entityId
         : raw.projection_revision !== ref.projectionRevision || raw.projection_entity_id !== ref.entityId)
       || (ref.personalizationRevision !== undefined && entityPersonalization(raw.personalization)?.revision !== ref.personalizationRevision)) throw stale()
-    const occurrences = array(raw.occurrences, 10000)
+    const allOccurrences = array(raw.occurrences, 10000)
+    const participantKeys = new Map<Record<string, unknown>, string>()
+    if (ref.personalizationRevision !== undefined) {
+      await Promise.all(allOccurrences.map(async occurrence => {
+        const id = objectValue(occurrence.context).speaker_key
+        if (id !== undefined) participantKeys.set(occurrence, await this.participantKey(session, string(ref.version), string(id)))
+      }))
+    }
+    // Filter the full owner result before paginating; later pages must not lose a participant's mentions.
+    const occurrences = allOccurrences.filter(value => !query.participantKey || participantKeys.get(value) === query.participantKey)
+      .sort((a, b) => integer(a.start_ms) - integer(b.start_ms))
     const page = occurrences.slice(offset, offset + limit)
     const byIdentity = new Map(rows.map(row => [`${row.sessionId}:${row.childId}:${row.asrItemIndex}:${row.transcriptSource}`, row]))
     const items: RecordingEntityOccurrences['items'] = []
@@ -180,7 +196,7 @@ export class RecordingEntityService implements RecordingEntityPort {
         transcriptVersion: recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
       } : undefined
       const excerpt = row && range ? Array.from(row.text).slice(Math.max(0, range.start - 30), range.start + range.length + 60).join('') : observedText
-      const context = ref.personalizationRevision !== undefined ? entityOccurrenceContext(occurrence.context) : undefined
+      const context = ref.personalizationRevision !== undefined ? entityOccurrenceContext(occurrence.context, participantKeys.get(occurrence)) : undefined
       const feedbackRef = target && ref.feedbackSupported === true && typeof occurrence.feedback_version === 'string' && occurrence.feedback_version.length > 0
         ? await this.codec.seal(`${PREFIX}-feedback`, { ...ref, occurrenceId: string(occurrence.occurrence_id), feedbackVersion: string(occurrence.feedback_version) }) : undefined
       items.push({ key: await this.hash([ref.version, occurrence.occurrence_id, rowId, start, end]), startAtMillis, observedText, text: excerpt,

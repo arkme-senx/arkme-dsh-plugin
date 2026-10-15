@@ -224,3 +224,36 @@ it('rejects an omitted snapshot after personalization changes, instead of hiding
   await expect(f.service.recordingEntities({ dateStamp: date, knownPersonalizationRevision: 3 })).rejects.toMatchObject({ code: 'recording-entities-invalid' })
   expect((await f.service.recordingEntities({ dateStamp: date, knownStateRevision: 3, knownProjectionRevision: 2, knownPersonalizationRevision: 4 })).entities).toBeUndefined()
 })
+
+it('projects complete participant counts without raw IDs and filters all mentions before pagination', async () => {
+  const f = fixture(); personalize(f)
+  f.state.day.entities = [{ ...day().entities[0], occurrence_count: 62, participation: { contract_version: 1,
+    participants: [
+      { speaker_key: 'private-self', speaker_label: 'Tison', is_self: true, occurrence_count: 60, playback_count: 0 },
+      { speaker_key: 'private-other', speaker_label: '周鹏', is_self: false, occurrence_count: 2, playback_count: 1 },
+    ], unattributed_count: 0, conversation_count: 1, meaningful_count: 61 } }]
+  f.state.occurrences = Array.from({ length: 62 }, (_, i) => ({ ...occurrence(), occurrence_id: String(i), start_ms: date + 1000 + i,
+    context: { speaker_key: i < 60 ? 'private-self' : 'private-other', speaker_label: i < 60 ? 'Tison' : '周鹏', relevance: 'other', accuracy: 'unverified', sound_source: i === 61 ? 'playback' : 'in_person' } }))
+  const result = await f.service.recordingEntities({ dateStamp: date }), item = result.entities![0]!
+  expect(item.participation!.participants.map(p => p.occurrenceCount)).toEqual([60, 2])
+  expect(JSON.stringify(result)).not.toMatch(/private-self|private-other/)
+  const filtered = await f.service.recordingEntityOccurrences({ entityRef: item.entityRef, participantKey: item.participation!.participants[1]!.key })
+  expect(filtered).toMatchObject({ total: 2, offset: 0, hasMore: false })
+  expect(filtered.items).toHaveLength(2)
+  expect(filtered.items[0]!.startAtMillis).toBe(date + 1060)
+  expect(filtered.items.every(o => o.context?.participantKey === item.participation!.participants[1]!.key)).toBe(true)
+  expect(filtered.items[1]!.context?.soundSource).toBe('playback')
+  expect(JSON.stringify(filtered)).not.toContain('private-other')
+})
+it('rejects incomplete counts and duplicate speaker identities instead of presenting partial totals', async () => {
+  const f = fixture(); personalize(f)
+  const participant = { speaker_key: 'speaker', speaker_label: '同名', is_self: false, occurrence_count: 1, playback_count: 0 }
+  const participation = { contract_version: 1, participants: [participant], unattributed_count: 1, conversation_count: 0, meaningful_count: 1 }
+  f.state.day.entities = [{ ...day().entities[0], participation }]
+  await expect(f.service.recordingEntities({ dateStamp: date })).rejects.toThrow()
+  participation.unattributed_count = 0; participation.participants.push(participant)
+  f.state.day.entities = [{ ...day().entities[0], occurrence_count: 2, participation }]
+  await expect(f.service.recordingEntities({ dateStamp: date })).rejects.toThrow()
+  participation.participants[1] = { ...participant, speaker_key: 'distinct-speaker' }
+  expect((await f.service.recordingEntities({ dateStamp: date })).entities![0]!.participation?.participants).toHaveLength(2)
+})

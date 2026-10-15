@@ -21,6 +21,21 @@ export interface RecordingEntityItem {
   occurrenceCount: number
   relevance?: RecordingEntityRelevance
   accuracy?: RecordingEntityAccuracy
+  /** Complete, versioned aggregation across all mentions, never just a loaded page. */
+  participation?: RecordingEntityParticipation
+}
+export interface RecordingEntityParticipant {
+  key: string
+  label: string
+  isSelf: boolean
+  occurrenceCount: number
+  playbackCount: number
+}
+export interface RecordingEntityParticipation {
+  participants: RecordingEntityParticipant[]
+  unattributedCount: number
+  conversationCount: number
+  meaningfulCount: number
 }
 export interface RecordingEntityDay {
   dateStamp: number
@@ -64,6 +79,7 @@ export interface RecordingEntityOccurrenceContext {
   relevance: RecordingEntityRelevance
   soundSource: 'unknown' | 'in_person' | 'playback'
   speakerLabel?: string
+  participantKey?: string
   accuracy: RecordingEntityAccuracy
 }
 export type RecordingEntityFeedbackAction = 'relevant' | 'playback' | 'incorrect'
@@ -77,7 +93,7 @@ export interface RecordingEntityOccurrences {
   offset: number
   hasMore: boolean
 }
-export interface RecordingEntityOccurrenceQuery { entityRef: string; offset?: number; limit?: number }
+export interface RecordingEntityOccurrenceQuery { entityRef: string; offset?: number; limit?: number; participantKey?: string }
 export interface RecordingEntityPort {
   startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult>
   recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay>

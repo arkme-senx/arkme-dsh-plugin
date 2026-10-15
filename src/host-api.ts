@@ -1471,6 +1471,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'recordings.entities.occurrences': return await service.recordingEntityOccurrences({
       entityRef: stringParam(params, 'entityRef'), offset: numberParam(params, 'offset', 0), limit: numberParam(params, 'limit', 50),
+      ...(params.participantKey === undefined ? {} : { participantKey: stringParam(params, 'participantKey') }),
     }, requestSignal)
     case 'recordings.entities.feedback': return await service.recordingEntityFeedback({
       feedbackRef: stringParam(params, 'feedbackRef'), requestId: stringParam(params, 'requestId'),
