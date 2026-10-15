@@ -26,8 +26,8 @@ describe('speaker removal interaction', () => {
     })
   })
   afterEach(async () => { await act(async () => { renderer?.unmount(); await tick() }); vi.unstubAllGlobals() })
-  const open = async (value = item, forceBatchUpdate = false) => {
-    await act(async () => { renderer = create(<ArkmeRecordingSpeakerEditor item={value} forceBatchUpdate={forceBatchUpdate} onUpdated={onUpdated} onClose={onClose} />); await tick() })
+  const open = async (value = item, initialBatchUpdate = false) => {
+    await act(async () => { renderer = create(<ArkmeRecordingSpeakerEditor item={value} initialBatchUpdate={initialBatchUpdate} onUpdated={onUpdated} onClose={onClose} />); await tick() })
   }
   const remove = () => renderer.root.findByProps({ 'aria-label': '取消说话人标记' })
 
@@ -42,10 +42,18 @@ describe('speaker removal interaction', () => {
 
   it.each([false, true])('shows the exact bulk count and uses that scope (timeline=%s)', async forced => {
     await open(item, forced)
-    if (!forced) await act(async () => { renderer.root.findByProps({ 'aria-label': '批量修改' }).props.onChange({ target: { checked: true } }); await tick() })
+    if (!forced) await act(async () => { renderer.root.findAllByType('button').find(button => button.children.join('') === '当天同组 3 处')!.props.onClick(); await tick() })
     expect(remove().children.join('')).toBe('取消 3 处标记')
     await act(async () => { remove().props.onClick(); await tick() })
     expect(mocks.call).toHaveBeenCalledWith('recordings.speaker.unassign-item', { itemRef: 'sealed', scope: 'speaker', expectedCount: 3 }, expect.any(AbortSignal))
+  })
+
+  it('can remove just one segment after opening from the whole-day speaker entry', async () => {
+    await open(item, true)
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.join('') === '仅此片段')!.props.onClick(); await tick() })
+    expect(remove().children).toEqual(['取消标记'])
+    await act(async () => { remove().props.onClick(); await tick() })
+    expect(mocks.call).toHaveBeenCalledWith('recordings.speaker.unassign-item', { itemRef: 'sealed', scope: 'item', expectedCount: 1 }, expect.any(AbortSignal))
   })
 
   it('keeps the dialog and error on failure, and never sends duplicate writes', async () => {
