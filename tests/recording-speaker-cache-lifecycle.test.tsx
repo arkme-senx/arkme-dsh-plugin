@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingSpeakerOption, ArkmeRecordingWorkbenchItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.cached-options' ? Promise.resolve(null) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args), ArkmeClientError: class extends Error {} }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.correction.context' ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? Promise.resolve(null) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args), ArkmeClientError: class extends Error {} }))
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
 import { recordingSpeakerOptions, recordingSpeakerItemContexts } from '../src/client/recordings/recording-speaker-options-store.js'

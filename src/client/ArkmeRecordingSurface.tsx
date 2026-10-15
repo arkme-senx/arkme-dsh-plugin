@@ -9,7 +9,7 @@ import { ArkmeRecordingFiles, type RecordingFilesCount } from './recordings/Arkm
 import { ArkmeRecordingPresence } from './recordings/ArkmeRecordingPresence.js'
 import { resolveRecordingSearchTarget } from './recordings/recording-search-target.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
@@ -46,7 +46,8 @@ import { ArkmeRecordingImportTrigger, type RecordingImportButtonStatus } from '.
 import { ArkmeRecordingMobileGuideDialog } from './recordings/ArkmeRecordingMobileGuideDialog.js'
 import { ArkmeDirectRecordingButton, ArkmeDirectRecordingStatus } from './recordings/ArkmeDirectRecording.js'
 import { useLocalRecordingCoverage } from './recordings/recording-coverage.js'
-import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor } from './recordings/ArkmeRecordingSpeakerEditor.js'
+import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor, type RecordingSpeakerUpdateFeedback } from './recordings/ArkmeRecordingSpeakerEditor.js'
+import { captureRecordingScrollAnchor } from './recordings/recording-scroll-anchor.js'
 import { recordingDayIsEmpty } from './recordings/recording-day-empty.js'
 import { RecordingTranscriptTimeline } from './recordings/RecordingTranscriptTimeline.js'
 import { RecordingDayArrangements } from './recordings/RecordingDayArrangements.js'
@@ -135,7 +136,7 @@ const styles: Record<string, CSSProperties> = {
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { padding: '12px 14px', borderRadius: 10, background: colors.dangerSoft, color: colors.danger, fontSize: 13 },
   transcriptList: { width: '100%', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: '10px 12px 0', boxSizing: 'border-box', listStyle: 'none' },
-  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'fit-content(min(128px, 45%)) minmax(0, 1fr) 24px', columnGap: 4, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '34px' },
+  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'fit-content(min(128px, 45%)) minmax(0, 1fr) 24px', columnGap: 4, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' },
   transcriptContent: { minWidth: 0, minHeight: 22, width: 'fit-content', maxWidth: '100%', justifySelf: 'start', padding: '6px 10px', boxSizing: 'border-box', borderRadius: '4px 12px 12px', background: arkmeTheme.messageOther, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
   transcriptTime: { display: 'inline-block', marginLeft: 8, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
   transcriptSpeaker: { position: 'relative', maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
@@ -349,13 +350,14 @@ export function recordingTranscriptDurationLabel(startAtMillis: number, endAtMil
   return tr("{v0}小时{v1}分", { v0: Math.floor(durationSeconds / 3_600), v1: Math.floor((durationSeconds % 3_600) / 60) })
 }
 
-export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false, searchHighlighted = false, repeatedSpeaker = false, speakerEditing = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
+export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false, searchHighlighted = false, repeatedSpeaker = false, speakerEditing = false, speakerUpdated = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
   item: ArkmeRecordingWorkbenchItem
   selected: boolean
   isPlaying?: boolean
   searchHighlighted?: boolean
   repeatedSpeaker?: boolean
   speakerEditing?: boolean
+  speakerUpdated?: boolean
   readOnly?: boolean
   onEditSpeaker?(event: MouseEvent<HTMLButtonElement>): void
   onSelect?(): void
@@ -384,10 +386,12 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
     data-recording-speaker-self={item.isSelf || undefined}
     data-recording-search-highlight={searchHighlighted || undefined}
     data-recording-playing={isPlaying || undefined}
+    data-recording-speaker-updated={speakerUpdated || undefined}
     style={{
       ...styles.transcript,
       ...(readOnly ? { gridTemplateColumns:'fit-content(min(64px, 45%)) minmax(0,1fr) 24px', contentVisibility:'visible' as const } : {}),
       ...(selected ? { background: colors.input } : {}),
+      ...(speakerUpdated ? { background: `color-mix(in srgb, ${colors.base} 92%, ${colors.accent} 8%)` } : {}),
       ...(searchHighlighted ? { background: `color-mix(in srgb, ${colors.base} 88%, ${colors.text} 12%)` } : {}),
       ...(isPlaying ? { background: `color-mix(in srgb, ${colors.base} 92%, ${colors.accent} 8%)`, boxShadow: `inset 2px 0 ${colors.accent}` } : {}),
       ...(selectionControl ? { paddingLeft: 27 } : {}),
@@ -418,6 +422,7 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
       ...(item.isSelf ? { gridColumn: '1 / 3', gridRow: 1, justifySelf: 'end', maxWidth: 'calc(100% - 24px)', borderRadius: '12px 4px 12px 12px', background: arkmeTheme.messageOwn, textAlign: 'left' } : {}),
       ...(isPlaying ? { boxShadow: `inset 0 0 0 1px ${colors.accent}` } : {}),
     }}>
+      {item.soundSource === 'playback' && <span title={tr('用户确认来自手机或电视播放')} style={{ display: 'inline-block', marginRight: 6, padding: '0 4px', borderRadius: 3, fontSize: 11, color: colors.tertiary, border: `1px solid ${colors.border}` }}>{tr('播放内容')}</span>}
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
         <span style={{ position: 'relative', display: 'inline-block' }}>
@@ -752,6 +757,39 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [transcriptSearch, setTranscriptSearch] = useState('')
   const [transcriptMatchIndex, setTranscriptMatchIndex] = useState(0)
   const transcriptRootRef = useRef<HTMLDivElement>(null)
+  const speakerMutationRevision = useRef(0)
+  const speakerScrollAnchor = useRef<ReturnType<typeof captureRecordingScrollAnchor>>()
+  const [speakerFeedback, setSpeakerFeedback] = useState<{ itemId: string; message: string; visible: boolean }>()
+  useEffect(() => { setSpeakerFeedback(undefined); speakerScrollAnchor.current = undefined }, [selectedDate, auth.auth?.environment, auth.auth?.userId])
+  useEffect(() => {
+    if (!speakerFeedback?.visible) return
+    const timer = setTimeout(() => { setSpeakerFeedback(current => current ? { ...current, visible: false } : current) }, 4_000)
+    return () => { clearTimeout(timer) }
+  }, [speakerFeedback])
+  useLayoutEffect(() => {
+    const anchor = speakerScrollAnchor.current
+    speakerScrollAnchor.current = undefined
+    if (!anchor) return
+    anchor.restore()
+    const scrollTop = anchor.pane.scrollTop
+    if (typeof requestAnimationFrame === 'undefined') return
+    // content-visibility may finish layout in the next frame. Respect any intervening user scroll.
+    const frame = requestAnimationFrame(() => { if (anchor.pane.scrollTop === scrollTop) anchor.restore() })
+    return () => { cancelAnimationFrame(frame) }
+  }, [day])
+  const applySpeakerUpdate = (next: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback) => {
+    if (next.dateStamp !== (notificationWindow?.dateStamp ?? selectedDateRef.current)) return
+    speakerMutationRevision.current += 1
+    speakerScrollAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current, removal?.itemId ?? editingSpeaker?.item.itemId)
+    setDay(next)
+    setSpeakerFeedback(undefined)
+    if (removal && !removal.warning) {
+      const item = next.transcript.items.find(candidate => candidate.itemId === removal.itemId)
+      if (item && !item.assignedSpeakerOptionKey) setSpeakerFeedback({ itemId: item.itemId, visible: true,
+        message: removal.scope === 'speaker' ? tr('已取消 {v0} 处标记', { v0: removal.count })
+          : tr('已取消标记，恢复为「{v0}」', { v0: item.speakerLabel }) })
+    }
+  }
   const [comparison, setComparison] = useState<PreparedRecordingComparison>()
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const comparisonRequest = useRef<AbortController>()
@@ -844,10 +882,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   useEffect(() => {
     const controller = new AbortController()
     setDay(undefined); setDayLoading(true); setDayError('')
+    const mutationRevision = speakerMutationRevision.current
     setSummaryVersionId(''); setTimelineVersionId('')
     void callArkme<ArkmeRecordingDay>('recordings.day', { dateStamp: selectedDate.getTime(), ...(notificationWindow ? { window: notificationWindow } : {}) }, controller.signal)
       .then(value => {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || mutationRevision !== speakerMutationRevision.current) return
         setDay(value)
         setSummaryVersionId(notificationWindow && ui.recordingTarget?.summary?.versionId ? ui.recordingTarget.summary.versionId : value.summary.items.find(version => version.selectable)?.id ?? '')
         setTimelineVersionId(notificationWindow && ui.recordingTarget?.timeline?.versionId ? ui.recordingTarget.timeline.versionId : value.timeline.items.find(version => version.selectable)?.id ?? '')
@@ -865,6 +904,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const poll = async () => {
       if (controller.signal.aborted) return
       attempts += 1
+      const mutationRevision = speakerMutationRevision.current
       try {
         const next = await callArkme<ArkmeRecordingDay>(
           'recordings.day',
@@ -872,6 +912,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           controller.signal,
         )
         if (controller.signal.aborted) return
+        if (mutationRevision !== speakerMutationRevision.current) {
+          timer = setTimeout(() => { void poll() }, 1_500)
+          return
+        }
         setDay(next)
         setSummaryVersionId(current => notificationWindow && current === ui.recordingTarget?.summary?.versionId ? current : reconcileRecordingVersionId(current, next.summary.items))
         setTimelineVersionId(current => notificationWindow && current === ui.recordingTarget?.timeline?.versionId ? current : reconcileRecordingVersionId(current, next.timeline.items))
@@ -1121,6 +1165,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       const editSpeaker = (event: MouseEvent<HTMLButtonElement>) => {
         if (!workbenchEnabled) return
         const rect = event.currentTarget.getBoundingClientRect()
+        if (speakerFeedback?.itemId !== item.itemId) setSpeakerFeedback(undefined)
         setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : {
           item,
           anchor: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
@@ -1130,7 +1175,8 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       return <ArkmeRecordingTranscriptRow
         key={item.itemId}
         item={item}
-        repeatedSpeaker={recordingTranscriptContinuesSpeaker(section.items[index - 1], item)}
+        repeatedSpeaker={speakerFeedback?.itemId !== item.itemId && recordingTranscriptContinuesSpeaker(section.items[index - 1], item)}
+        speakerUpdated={speakerFeedback?.itemId === item.itemId && speakerFeedback.visible}
         speakerEditing={editingSpeaker?.item.itemRef === item.itemRef}
         isPlaying={playback.isPlaying && playback.activeItemRef === item.itemRef}
         selected={preciseItem?.itemId === item.itemId || selected}
@@ -1344,7 +1390,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
             <button data-arkme-feedback="neutral" type="button" aria-label={tr('导出')} style={styles.actionButton} onClick={downloadCurrent}><RecordingDesktopIcon name="export" size={20} /></button>
           </Tooltip>
         </span>
-      </div>}<div ref={transcriptRootRef} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}<div hidden={activeTab !== 'files'}><ArkmeRecordingFiles
+      </div>}{activeTab === 'transcript' && speakerFeedback?.visible && <div role="status" aria-live="polite" data-recording-speaker-feedback style={{ position: 'absolute', right: 18, bottom: 12, zIndex: 3, maxWidth: 'calc(100% - 36px)', padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.base, color: colors.text, boxShadow: '0 2px 8px rgba(0,0,0,.08)', fontSize: 12, pointerEvents: 'none' }}>{speakerFeedback.message}</div>}<div ref={transcriptRootRef} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}<div hidden={activeTab !== 'files'}><ArkmeRecordingFiles
         accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined}
         dateStamp={selectedDate.getTime()} active={active && activeTab === 'files'} refreshRevision={recordingRefreshRevision}
         onCountChange={setAudioFileCount}
@@ -1358,9 +1404,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     {workbenchEnabled && forwardOpen && <RecordingTranscriptForward attempt={forwardAttempt} onClose={() => { setForwardOpen(false) }} onComplete={message => { setForwardOpen(false); setSelectionMode(false); setExportNotice(message) }} />}
     {workbenchEnabled && editingSpeaker !== undefined && <ArkmeRecordingSpeakerEditor
       item={editingSpeaker.item}
+      items={transcriptItems}
+      onPlay={item => { void playback.playItem(item) }}
       anchor={editingSpeaker.anchor}
       forceBatchUpdate={editingSpeaker.forceBatchUpdate}
-      onUpdated={setDay}
+      onUpdated={applySpeakerUpdate}
       onClose={() => { setEditingSpeaker(undefined) }}
     />}
     {workbenchEnabled && timelineDetailEvent !== undefined && <RecordingTimelineDetailDialog event={timelineDetailEvent} onClose={() => { setTimelineDetailEvent(undefined) }} />}

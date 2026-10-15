@@ -181,6 +181,37 @@ describe('recording UI-only host operations', () => {
     }, undefined)
   })
 
+  it('validates correction selectors and never forwards caller-supplied owner ids', async () => {
+    const applyRecordingSpeakerCorrection = vi.fn(async () => ({ affectedCount: 1 }))
+    const service = { applyRecordingSpeakerCorrection } as unknown as ArkmeService
+    await expect(dispatchArkmeHostOperation(service, 'recordings.speaker.correction.apply', {
+      itemRef: 'sealed', itemRefs: ['sealed', 42], detach: true,
+    })).rejects.toMatchObject({ code: 'invalid-params' })
+    expect(applyRecordingSpeakerCorrection).not.toHaveBeenCalled()
+    await dispatchArkmeHostOperation(service, 'recordings.speaker.correction.apply', {
+      itemRef: 'sealed', itemRefs: ['sealed'], detach: true, rejectCurrent: true,
+      expectedVersion: 'version', idempotencyKey: 'request-id', soundSource: 'playback',
+      user_id: 99, rejected_speaker_id: 'forged', child_id: 'forged',
+    })
+    expect(applyRecordingSpeakerCorrection).toHaveBeenCalledWith({
+      itemRef: 'sealed', itemRefs: ['sealed'], detach: true, rejectCurrent: true,
+      expectedVersion: 'version', idempotencyKey: 'request-id', soundSource: 'playback',
+    }, undefined)
+  })
+
+  it('dispatches removal using only the sealed item, count and supported scope', async () => {
+    const unassignRecordingSpeaker = vi.fn(async () => ({ affectedCount: 1 }))
+    const service = { unassignRecordingSpeaker } as unknown as ArkmeService
+    await dispatchArkmeHostOperation(service, 'recordings.speaker.unassign-item', {
+      itemRef: 'item-opaque', scope: 'item', expectedCount: 1, expected_spk_id: 'untrusted', child_id: 'untrusted',
+    })
+    expect(unassignRecordingSpeaker).toHaveBeenCalledWith({ itemRef: 'item-opaque', scope: 'item', expectedCount: 1 }, undefined)
+    await expect(dispatchArkmeHostOperation(service, 'recordings.speaker.unassign-item', {
+      itemRef: 'item-opaque', scope: 'all', expectedCount: 1,
+    })).rejects.toMatchObject({ code: 'recording-speaker-scope-invalid' })
+    expect(unassignRecordingSpeaker).toHaveBeenCalledOnce()
+  })
+
   it('rejects an unknown speaker mutation scope instead of silently treating it as one item', async () => {
     const assignRecordingSpeaker = vi.fn()
     const service = { assignRecordingSpeaker } as unknown as ArkmeService
