@@ -241,6 +241,10 @@ AI识别中…|AI recognition in progress…
 安排提醒|Arrangement reminder
 表态|Reactions
 收到表态|Received a reaction
+收到{name}的表态|Received a reaction from {name}
+会话暂不可用|Conversation temporarily unavailable
+私聊|Direct chat
+群聊|Group chat
 新通知|New notification
 点击查看原消息|Click to view the original message
 世界互动暂时无法加载|World interactions are temporarily unavailable
@@ -562,6 +566,14 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+音频文件列表|Audio files
+当天暂无音频文件|No audio files for this day
+暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
+共 {v0} 个文件|{v0} files
+已找到 {v0} 个文件|{v0} files found so far
+文件列表未能继续加载，请重试|Could not load more files. Please retry.
+部分未完成文件暂未同步，请重试|Some unfinished files could not be synced. Please retry.
+未完成文件加载失败，请重试|Could not load unfinished files. Please retry.
 重试加载|Retry loading
 仅筛选已确认地点的活动。列表自动补读最多 8 个可见活动的地点，其他活动可展开后手动查看；没有地点标签不代表当时没有位置。|Shows confirmed locations only. Locations load for up to 8 visible activities; expand others to check manually. No label does not mean no location was recorded.
 正在加载原始记录…|Loading original records…

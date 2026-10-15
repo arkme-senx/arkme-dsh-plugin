@@ -116,7 +116,7 @@ export type PublicRecordingImportCurrentItem = PublicRecordingImportJob | Public
 export interface PublicRecordingImportCurrentSnapshot {
   items: PublicRecordingImportCurrentItem[]
   owner:
-    | { state: 'available' }
+    | { state: 'available'; hasMore?: boolean; nextOffset?: number }
     | { state: 'unavailable'; message: string }
 }
 

@@ -3187,6 +3187,8 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** User-confirmed source, independent of the speaker identity. */
+  soundSource?: ArkmeRecordingSoundSource
   /** Read-only precise search locator; never an authorization reference. */
   searchIdentityHash?: string
   searchVersion?: string
@@ -3262,6 +3264,44 @@ export interface ArkmeRecordingSpeakerMutationResult {
   scope: 'item' | 'speaker'
   affectedCount: number
   day: ArkmeRecordingDay
+  warning?: string
+}
+
+export type ArkmeRecordingSoundSource = 'unknown' | 'in_person' | 'playback'
+
+export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
+  supported: true
+  version: string
+  maxItems: number
+  soundSource: ArkmeRecordingSoundSource
+  excludedSpeakers: Array<{ optionKey: string; label: string }>
+  undoRef?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionInput {
+  itemRef: string
+  itemRefs: string[]
+  expectedVersion: string
+  idempotencyKey: string
+  rejectedSpeakerRef?: string
+  rejectCurrent?: boolean
+  soundSource?: ArkmeRecordingSoundSource
+  detach: boolean
+}
+
+export interface ArkmeRecordingSpeakerCorrectionUndoInput {
+  itemRef: string
+  undoRef: string
+  expectedVersion: string
+  idempotencyKey: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResult {
+  affectedCount: number
+  version: string
+  undoRef?: string
+  day?: ArkmeRecordingDay
+  warning?: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -4338,6 +4378,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'recordings.speaker.unassign-item'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
