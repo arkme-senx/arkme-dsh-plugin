@@ -1837,6 +1837,41 @@ export class RecordingService {
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
   }
 
+  /** Resolve an Explore audio anchor against the owned original ASR version, including historical Doubao sources. */
+  async exploreRecordingEvidence(owner: Record<string, unknown>, quote: string, signal?: AbortSignal): Promise<Extract<import('../explore-contract.js').ExploreSource, {kind:'recording'}>> {
+    const session = await this.runtime.requireSession()
+    const start = Number(owner.start_at)
+    const source = owner.transcript_source
+    if (!Number.isFinite(start) || start <= 0 || !['system', 'doubao'].includes(String(source)) || typeof owner.container_id !== 'string' || typeof owner.child_id !== 'string' || !Number.isSafeInteger(owner.item_ordinal)) {
+      throw new ArkmePluginError('explore-source-unavailable', '这条录音缺少精确定位信息', false, 404)
+    }
+    const dayStart = new Date(start)
+    dayStart.setHours(0, 0, 0, 0)
+    const date = this.recordingDayStart(dayStart.getTime()).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal, undefined, true)
+    const rows = data.section(source as ArkmeRecordingTranscriptSource).items
+    const index = rows.findIndex(row => row.sessionId === owner.container_id && row.childId === owner.child_id && row.asrItemIndex === owner.item_ordinal)
+    const row = rows[index]
+    if (!row || Math.abs(row.startAtMillis - start) > 2000 || quote.trim() && ![row.text, row.rawTranscriptText ?? ''].some(value => value.includes(quote.trim()))) {
+      throw new ArkmePluginError('explore-source-changed', '原转写已更新或不可访问，未跳转到其他相似内容', false, 409)
+    }
+    const refKey = await this.recordingRefKey('arkme-recording-item-v1'), speakerKey = await this.recordingRefKey('arkme-recording-speaker-v1')
+    const context = rows.slice(Math.max(0, index - 2), index + 3).filter(item => item.sessionId === row.sessionId)
+    // Doubao timestamps do not name the physical FLAC slices. Only use a system
+    // slice from the same child that actually contains this source instant.
+    const playbackTargets = context.flatMap(item => {
+      const target = source === 'system' ? item : data.section('system').items.find(candidate =>
+        candidate.sessionId === item.sessionId && candidate.childId === item.childId
+        && candidate.startAtMillis <= item.startAtMillis && candidate.endAtMillis > item.startAtMillis)
+      return target ? [{itemId:item.itemId,item:this.workbenchItem(date,target,1,session.userId,refKey,speakerKey)}] : []
+    })
+    return { kind: 'recording', dateStamp: date, focusItemId: row.itemId,
+      items: context.map(item => this.workbenchItem(date, item, 1, session.userId, refKey, speakerKey)),
+      playbackTargets,
+      ...(source === 'system' ? { segment: { sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: 'system' as const, transcriptVersion: recordingSearchVersion({...row, text:row.rawTranscriptText ?? row.text}) } } : {}),
+    }
+  }
+
   /** Host-only evidence reader: never expose Audio owner IDs through a consumer DTO. */
   async entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
     const dayStart = this.recordingDayStart(dateStamp), dayEnd = new Date(dayStart)

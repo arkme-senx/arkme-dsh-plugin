@@ -1,3 +1,4 @@
+import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
@@ -46,7 +47,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'explore' | 'extensions'
   label: string
   icon: Icon
 }
@@ -58,7 +59,7 @@ const items: NavigationItem[] = [
   { id: 'recordings', get label() { return tr("录音") }, icon: Waveform },
   { id: 'calendar', get label() { return tr("日历") }, icon: CalendarBlank },
   { id: 'arrangements', get label() { return tr("安排") }, icon: ListChecks },
-  { id: 'world', get label() { return tr("世界") }, icon: GlobeHemisphereWest },
+  { id: 'explore', get label() { return tr("探索") }, icon: GlobeHemisphereWest },
   { id: 'extensions', get label() { return tr("市集") }, icon: PuzzlePiece },
 ]
 
@@ -207,7 +208,7 @@ export function ArkmeProductNavigation({
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
-    : ui.mode === 'world' ? 'world'
+    : ui.mode === 'world' || ui.mode === 'explore' ? 'explore'
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'voiceprint' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
@@ -240,7 +241,7 @@ export function ArkmeProductNavigation({
     if (id === 'contacts') arkmeUi.showContacts()
     else if (id === 'calls') arkmeUi.showCalls()
     else if (id === 'recordings') arkmeUi.showRecordings()
-    else if (id === 'world') arkmeUi.showWorld()
+    else if (id === 'explore') arkmeUi.showExplore('profile')
     else if (id === 'calendar') arkmeUi.showCalendar()
     else if (id === 'arrangements') arkmeUi.showArrangements()
     else arkmeUi.showConversations()
@@ -276,6 +277,7 @@ export function ArkmeProductNavigation({
       {navigationItems.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
+        if (item.id === 'explore') return <ExploreNavigation key={item.id} active={active} current={ui.mode === 'world' ? 'world' : ui.exploreModule} locked={locked} compact={compact} style={{...styles.button, ...(compact ? styles.compactButton : {}), ...(hosted ? styles.hostedButton : {}), ...(active ? styles.activeButton : {})}} />
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         const showsRecording = item.id === 'recordings' && isRecording
         const hint = item.id === 'conversations' && !locked

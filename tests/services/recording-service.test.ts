@@ -96,6 +96,28 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
+  it('opens Explore evidence on the original ASR source and rejects mismatched anchors', async () => {
+    const fixture = await speakerCacheFixture()
+    const date = new Date(2026, 7, 12).getTime(), start = date + 9 * 3600000
+    fixture.state.transcripts = { [date]: {
+      session_ls: [{ id: 's', belong_usr: 42, start_at: start, end_at: start + 3000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
+        asr: [{ s: 1000, e: 2000, n: 1, t: '系统原文' }],
+        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '生日是十月二十八日' }] }],
+    } }
+    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
+    try {
+      const source = await fixture.service.exploreRecordingEvidence(owner, '十月二十八日')
+      expect(source.dateStamp).toBe(date)
+      expect(source.items).toMatchObject([{ text: '生日是十月二十八日', transcriptSource: 'doubao' }])
+      expect(source.segment).toBeUndefined()
+      expect(source.playbackTargets?.[0]?.item).toMatchObject({text:'系统原文',transcriptSource:'system'})
+      await expect(fixture.service.exploreRecordingEvidence({...owner, transcript_source:'system'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, child_id:'wrong'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, start_at:start+5000}, '十月二十八日')).rejects.toThrow('原转写已更新')
+    } finally { await fixture.close() }
+  })
+
   it('validates original civil windows and retains them for transcript and version reads', async () => {
     const fixture = await speakerCacheFixture()
     const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }

@@ -12,6 +12,21 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('publishes each Explore module change while retaining the conversation return target', () => {
+    const controller = new ArkmeUiController(), listener = vi.fn()
+    controller.showConversations()
+    controller.subscribe(listener)
+    controller.showExplore('anniversaries')
+    const previous = controller.getViewSnapshot()
+    controller.showExplore('goals')
+    expect(controller.getViewSnapshot()).not.toBe(previous)
+    expect(controller.getViewSnapshot()).toMatchObject({mode:'explore',exploreModule:'goals'})
+    expect(listener).toHaveBeenCalledTimes(2)
+    controller.showExplore('goals')
+    expect(listener).toHaveBeenCalledTimes(2)
+    controller.showConversations()
+    expect(controller.getViewSnapshot().mode).not.toBe('explore')
+  })
   it('opens a notification reply and clears that target on a new World navigation', () => {
     const controller = new ArkmeUiController()
     controller.showNotifications()

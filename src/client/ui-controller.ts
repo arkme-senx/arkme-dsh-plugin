@@ -1,3 +1,4 @@
+import type { ExploreModule } from '../explore-contract.js'
 import type { TeamMessageIntent } from './team-messaging-events.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
@@ -46,7 +47,8 @@ export interface ArkmeUiState {
   recordRevision: number
   topicDirectoryRevision: number
   mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'harness' | 'codex' | 'team'
+    | 'harness' | 'codex' | 'team' | 'explore'
+  exploreModule?: ExploreModule
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
@@ -280,6 +282,12 @@ export class ArkmeUiController {
       return
     }
     this.showWorld()
+  }
+
+  showExplore(module: ExploreModule): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'explore', exploreModule: module })
   }
 
   showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity, window?: import('../types.js').ArkmeRecordingWindow): void {
@@ -543,6 +551,7 @@ export class ArkmeUiController {
     }
     const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
+      && next.exploreModule === this.state.exploreModule
       && next.codexTarget === this.state.codexTarget
       && next.teamIntent === this.state.teamIntent
       && next.productMode === this.state.productMode

@@ -1,3 +1,5 @@
+import { ExploreService } from './services/explore-service.js'
+import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
 import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -367,6 +369,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
@@ -430,6 +433,12 @@ export class ArkmeService {
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
   }
+  async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
+  async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
+  async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
+  async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal) { return this.explore.detail(ref, cursor, signal) }
+  async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
+  async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
   private readonly interwoven: InterwovenService
   private readonly linkMetadata: ArkmeLinkMetadataService
@@ -643,6 +652,7 @@ export class ArkmeService {
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
@@ -1128,6 +1138,7 @@ export class ArkmeService {
     this.extensionReview.dispose()
     this.media.dispose()
     this.recordingEntitiesOwner.dispose()
+    this.explore.dispose()
     this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()

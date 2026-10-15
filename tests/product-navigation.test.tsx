@@ -175,7 +175,8 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('aria-label="录音"')
     expect(markup).not.toContain('>搜索<')
     expect(markup).toContain('aria-label="日历"')
-    expect(markup).toContain('aria-label="世界"')
+    expect(markup).toContain('aria-label="探索"')
+    expect(markup).not.toContain('aria-label="世界"')
     expect(markup).toContain('aria-label="市集"')
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain(`background:${arkmeTheme.active}`)
@@ -187,7 +188,7 @@ describe('Arkme product navigation', () => {
 
   it('keeps every product entry visible in the locked Web workspace and routes restricted entries to login', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} hosted locked />)
-    for (const label of ['对话', '联系人', '通话', '录音', '日历', '世界', '市集']) {
+    for (const label of ['对话', '联系人', '通话', '录音', '日历', '探索', '市集']) {
       expect(markup).toContain(`aria-label="${label}"`)
     }
     expect(markup).toContain('aria-current="page"')

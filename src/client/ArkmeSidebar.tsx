@@ -1,3 +1,4 @@
+import { ExploreSurface } from './explore/ExploreSurface.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
@@ -7781,6 +7782,7 @@ export function ArkmeSurface({
     : ui.mode === 'arrangements' ? tr('安排')
     : ui.mode === 'recognized-speakers' ? '已识别说话人'
     : ui.mode === 'calls' ? '通话'
+    : ui.mode === 'explore' ? '探索'
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '市集'
@@ -7791,7 +7793,7 @@ export function ArkmeSurface({
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
+    && (ui.mode === 'explore' || ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
@@ -8830,6 +8832,7 @@ export function ArkmeSurface({
             accountKey={`${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onBack={() => { const dateStamp = ui.recordingReturnDateStamp; if (dateStamp === undefined) arkmeUi.showRecordings(); else arkmeUi.showRecordingTarget(dateStamp, dateStamp) }}
           />
+          : ui.mode === 'explore' ? <ExploreSurface key={`explore:${auth?.environment}:${auth?.userId}:${ui.exploreModule}`} module={ui.exploreModule ?? 'profile'} accountScope={`${auth?.environment}:${auth?.userId}`} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}

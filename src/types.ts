@@ -3981,6 +3981,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'explore.settings' | 'explore.settings.save'
+  | 'explore.list' | 'explore.detail' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
