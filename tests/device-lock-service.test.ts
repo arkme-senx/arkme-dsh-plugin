@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DeviceLockService } from '../src/services/device-lock-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
+import { DeviceControlRealtime } from '../src/services/device-control-realtime.js'
 const owners: DeviceLockService[] = []
-afterEach(() => { for (const owner of owners.splice(0)) owner.dispose() })
+afterEach(() => { for (const owner of owners.splice(0)) owner.dispose(); vi.restoreAllMocks(); vi.useRealTimers() })
 const sid = 'session_00000000000001'
 const token = (sessionId = sid) => `e30.${Buffer.from(JSON.stringify({user_id: 1, client_id: 2, session_id: sessionId})).toString('base64url')}.signature`
 function fixture() {
@@ -26,6 +27,31 @@ function fixture() {
   return { owner, fetchImpl, logout, native, getSession: () => session, legacy: () => { legacy = true }, failRevoke: () => { fail = true }, replace: () => { session = {...session!, accessToken: token('replacement_session_001')} }, locks: () => locks, cleanups: () => cleanups }
 }
 describe('device lock Host lifecycle', () => {
+  it('reconciles an idle healthy realtime connection once a minute', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(DeviceControlRealtime.prototype, 'connected', 'get').mockReturnValue(true)
+    const f = fixture(); await f.owner.refresh()
+    const count = f.fetchImpl.mock.calls.length
+    await vi.advanceTimersByTimeAsync(59000)
+    expect(f.fetchImpl).toHaveBeenCalledTimes(count)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.fetchImpl.mock.calls.length).toBeGreaterThan(count)
+  })
+  it('does not reconnect after disposal while a native response is pending', async () => {
+    const connect = vi.spyOn(DeviceControlRealtime.prototype, 'connect')
+    const f = fixture(); const original = f.fetchImpl.getMockImplementation()!
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    let started = false
+    f.fetchImpl.mockImplementation(async (url, init) => {
+      if (JSON.parse(String(init?.body)).action === 'device.lock.sync') { started = true; await pending }
+      return original(url, init)
+    })
+    const work = f.owner.refresh()
+    while (!started) await new Promise(resolve => setTimeout(resolve, 1))
+    f.owner.dispose(); release(); await work
+    expect(connect).not.toHaveBeenCalled()
+  })
   it('coalesces concurrent snapshot refreshes and delegates locking only to native authority', async () => {
     const f = fixture(); await Promise.all([f.owner.refresh(), f.owner.refresh(), f.owner.refresh()]);
     expect(f.fetchImpl.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).action === 'device.lock.bind')).toHaveLength(1)

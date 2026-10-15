@@ -25,10 +25,15 @@ export class DeviceLockService {
   private disposed = false
   private boundToken = ''
   private supported: boolean | undefined
+  private refreshAgain = false
   private readonly realtime: DeviceControlRealtime
   constructor(private readonly runtime: ServiceRuntime, private readonly localLogout: (expected: ArkmeSessionCredentials) => Promise<unknown>,
     private readonly config: ArkmeDesktopBridgeConfig | undefined = arkmeDesktopBridgeConfigFromEnv(process.env)) {
-    this.realtime = new DeviceControlRealtime(runtime.config.dshRemoteRealtimeBaseUrl, () => { void this.refresh().catch(() => undefined) })
+    this.realtime = new DeviceControlRealtime(runtime.config.dshRemoteRealtimeBaseUrl, () => {
+      if (this.disposed) return
+      if (this.task !== undefined) this.refreshAgain = true
+      else void this.refresh().catch(() => undefined)
+    })
   }
   peek(): ArkmeDeviceLockSnapshot { return this.state }
   private async bridge(action: ArkmeDesktopBridgeAction, payload: object = {}): Promise<NativeSnapshot> {
@@ -49,7 +54,12 @@ export class DeviceLockService {
     }).finally(() => {
       if (this.task === task) this.task = undefined
       clearTimeout(this.timer)
-      if (!this.disposed) { this.timer = setTimeout(() => { void this.refresh().catch(() => undefined) }, this.state.available ? 5000 : 30000); this.timer.unref() }
+      if (!this.disposed) {
+        const pending = this.state.operationState !== undefined && !['completed', 'closed'].includes(this.state.operationState)
+        const delay = this.refreshAgain ? 0 : this.realtime.connected && !pending ? 60000 : this.state.available ? 5000 : 30000
+        this.refreshAgain = false
+        this.timer = setTimeout(() => { void this.refresh().catch(() => undefined) }, delay); this.timer.unref()
+      }
     })
     this.task = task; return task
   }
@@ -62,10 +72,11 @@ export class DeviceLockService {
     return this.supported
   }
   private async refreshCurrent(): Promise<ArkmeDeviceLockSnapshot> {
-    if (!await this.nativeSupported()) return this.state
+    if (!await this.nativeSupported() || this.disposed) return this.state
     let native = await this.bridge('device.lock.status')
     if (!native.supported && !native.locked) return this.project(native, false)
     let session = await this.runtime.accountScopedSession()
+    if (this.disposed) return this.state
     if (native.sessionEnded && session !== undefined && sameLogin(session, native)) {
       await this.localLogout(session); session = undefined
     }
@@ -89,6 +100,9 @@ export class DeviceLockService {
       this.realtime.close(); await this.localLogout(session)
       native = await this.bridge('device.lock.cleanup'); this.boundToken = ''; return this.project(native, false)
     }
+    // A stopped Host or replaced login must not start a late orphan transport.
+    const current = await this.runtime.accountScopedSession()
+    if (this.disposed || current?.userId !== session.userId || current?.refreshToken !== session.refreshToken) return this.project(native, false)
     if (native.sessionId !== undefined) this.realtime.connect(session.userId, native.sessionId, session.accessToken)
     return this.project(native, this.boundToken !== '')
   }

@@ -8,6 +8,8 @@ export class DeviceControlRealtime {
   private identity = ''
   private retryAt = 0
   private timer: ReturnType<typeof setTimeout> | undefined
+  private active = false
+  get connected(): boolean { return this.active }
   constructor(private readonly origin: string | undefined, private readonly changed: () => void) {}
   connect(userId: number, sessionId: string, accessToken: string): void {
     if (!this.origin) return
@@ -44,7 +46,7 @@ export class DeviceControlRealtime {
         } else if (frame.type === 'channel.subscribed' && frame.request_id === subscribeId && stage === 'subscribing') {
           stage = 'registering'; send({ type: 'service.register', module: 'device_control', namespace: 'device_control', service: 'device', protocol: 'jotmo.device-control', protocol_major: 1, descriptor: {}, request_id: registerId })
         } else if (frame.type === 'service.registered' && frame.request_id === registerId && stage === 'registering') {
-          stage = 'active'; this.changed()
+          stage = 'active'; this.active = true; this.changed()
         } else if (frame.type === 'channel.event' && frame.module === 'device_control' && frame.namespace === 'device_control' && frame.channel_ref === String(userId)) {
           this.changed()
         } else if (frame.type === 'error' || frame.type === 'connection.replaced') { socket.terminate(); stop() }
@@ -53,7 +55,7 @@ export class DeviceControlRealtime {
     socket.on('error', stop); socket.on('close', stop)
   }
   close(): void {
-    const socket = this.socket; this.socket = undefined; this.identity = ''; clearTimeout(this.timer); this.timer = undefined
+    const socket = this.socket; this.socket = undefined; this.identity = ''; this.active = false; clearTimeout(this.timer); this.timer = undefined
     if (socket !== undefined) { socket.on('error', () => undefined); socket.terminate() }
   }
 }
