@@ -66,7 +66,7 @@ function visualCopy(source: HTMLElement, win: Window): HTMLElement {
 export interface MessageDeletionMotion { afterRemoval(): void; cancel(): void }
 
 /** Capture before React removes facts; animate the visual copies and surviving rows after commit. */
-export function captureMessageDeletion(viewport: HTMLElement, shouldDelete: (item: { itemUid: string; recordVersion?: number }) => boolean): MessageDeletionMotion {
+export function captureMessageDeletion(viewport: HTMLElement, shouldDelete: (item: { itemUid: string; recordVersion?: number }) => boolean, style: 'shatter' | 'lift' = 'shatter'): MessageDeletionMotion {
   const doc = viewport.ownerDocument, win = doc.defaultView!
   const bounds = viewport.getBoundingClientRect()
   const rows = [...viewport.querySelectorAll<HTMLElement>(ROW)]
@@ -105,7 +105,7 @@ export function captureMessageDeletion(viewport: HTMLElement, shouldDelete: (ite
       if (remainingFragments < 1 || remainingNodes < nodes) return
       // Bound work even for 100 selections, long Markdown, or many media cards.
       const budget = Math.min(24, Math.floor(remainingFragments / (targets.length - rowIndex)), Math.floor(remainingNodes / nodes))
-      const columns = reduced || budget < 4 ? 1 : Math.min(6, Math.max(2, Math.round(box.width / 70)), Math.floor(budget / 2))
+      const columns = style === 'lift' || reduced || budget < 4 ? 1 : Math.min(6, Math.max(2, Math.round(box.width / 70)), Math.floor(budget / 2))
       const lines = columns === 1 ? 1 : Math.max(2, Math.min(4, Math.round(box.height / 32), Math.floor(budget / columns)))
       const template = visualCopy(bubble, win)
       Object.assign(template.style, { position: 'absolute', left: '0', top: '0', margin: '0', width: `${box.width}px`, height: `${box.height}px`, maxWidth: 'none', boxSizing: 'border-box', opacity: '1', transform: 'none' })
@@ -140,7 +140,7 @@ export function captureMessageDeletion(viewport: HTMLElement, shouldDelete: (ite
           { opacity: 1, transform: 'translate(0, 0) rotate(0deg) scale(1)' },
           { opacity: .95, offset: .4 },
           { opacity: .6, offset: .7 },
-          { opacity: 0, transform: `translate(${part.x}px, ${part.y}px) rotate(${part.angle}deg) scale(.88)` },
+          { opacity: 0, transform: style === 'lift' ? 'translateY(-20px)' : `translate(${part.x}px, ${part.y}px) rotate(${part.angle}deg) scale(.88)` },
         ], { duration: reduced ? 110 : 360, delay: reduced ? 0 : part.delay, easing: 'cubic-bezier(.2,.65,.35,1)', fill: 'both' }))
       }
       if (!reduced) for (const row of viewport.querySelectorAll<HTMLElement>(ROW)) {
@@ -161,4 +161,26 @@ export function captureMessageDeletion(viewport: HTMLElement, shouldDelete: (ite
       timer = setTimeout(cancel, reduced ? 120 : MESSAGE_DELETION_DURATION + 20)
     },
   }
+}
+
+/** Emphasize membership in-place; the message still belongs in the aggregate. */
+export function emphasizeMessageTopic(viewport: HTMLElement, ids: ReadonlySet<string>): MessageDeletionMotion {
+  const animations: Animation[] = []
+  let started = false, timer: ReturnType<typeof setTimeout> | undefined
+  const cancel = () => { animations.forEach(animation => animation.cancel()); if (timer) clearTimeout(timer) }
+  return { cancel, afterRemoval() {
+    if (started) return
+    started = true
+    const bounds = viewport.getBoundingClientRect(), reduced = viewport.ownerDocument.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    for (const row of viewport.querySelectorAll<HTMLElement>(ROW)) {
+      if (!ids.has(row.dataset.arkmeMessageItemUid ?? '') || !intersects(row.getBoundingClientRect(), bounds)) continue
+      const bubble = row.querySelector<HTMLElement>('.arkme-timed-bubble')
+      if (bubble?.animate) animations.push(bubble.animate(reduced ? [{ opacity: .65 }, { opacity: 1 }] : [
+        { transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-6px)', opacity: .8, offset: .4 }, { transform: 'translateY(0)', opacity: 1 },
+      ], { duration: reduced ? 110 : 320, easing: 'ease-out' }))
+      const badge = row.querySelector<HTMLElement>('[data-arkme-self-topic-badge]')
+      if (badge?.animate) animations.push(badge.animate([{ opacity: .3 }, { opacity: 1 }], { duration: reduced ? 110 : 420 }))
+    }
+    timer = setTimeout(cancel, 450)
+  } }
 }

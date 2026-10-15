@@ -11,6 +11,7 @@ export function ArkmeRecordDeletionDialog(props: {
   port?: RecordDeletionClientPort
   onPendingChange?(pending: boolean): void
   stopRef?: MutableRefObject<(() => void) | undefined>
+  onSubmit?(): void
   onCancel(): void
   onRefresh(): void
   onResult(result: ArkmeRecordDeletionResult): void
@@ -28,6 +29,11 @@ export function ArkmeRecordDeletionDialog(props: {
   const confirm = async () => {
     if (request.current || invalid) return
     if (error) { props.onRefresh(); return }
+    if (props.onSubmit) {
+      request.current = new AbortController()
+      try { props.onSubmit() } catch (caught) { request.current = undefined; setError(caught instanceof Error ? caught.message : '删除未开始') }
+      return
+    }
     const controller = new AbortController()
     request.current = controller
     setPending(true)

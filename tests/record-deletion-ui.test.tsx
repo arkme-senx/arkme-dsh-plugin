@@ -71,3 +71,12 @@ it.each([false, true])('keeps busy close opt-in for shared dialogs (%s)', async 
  const confirm = view!.root.findAllByType('button').find(button => button.children.includes('Working'))!
  expect(confirm.props.disabled).toBe(true)
 })
+
+it('hands confirmation to the background owner immediately and guards double confirmation', async () => {
+  const p = props(), onSubmit = vi.fn(); let view!: ReactTestRenderer
+  await act(async () => { view = create(<ArkmeRecordDeletionDialog {...p} onSubmit={onSubmit} />) })
+  const confirm = view.root.findByType(ArkmeConfirmDialog).props.onConfirm
+  await act(async () => { confirm(); confirm() })
+  expect(onSubmit).toHaveBeenCalledOnce(); expect(p.port.delete).not.toHaveBeenCalled()
+  await act(async () => view.unmount())
+})

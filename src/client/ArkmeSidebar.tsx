@@ -61,7 +61,10 @@ import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { useForwardTargetDirectory } from './forward-target-directory.js'
 import { ArkmeRecordDeletionDialog } from './ArkmeRecordDeletionDialog.js'
-import { captureMessageDeletion, ConfirmedMessageDeletions, type MessageDeletionMotion } from './message-deletion-feedback.js'
+import { recordMutationFeedback, topicMutationBelongs } from './record-mutation-feedback.js'
+import { submitRecordMutation } from './record-mutation-submit.js'
+import { RecordMutationReceipt } from './RecordMutationReceipt.js'
+import { captureMessageDeletion, emphasizeMessageTopic, type MessageDeletionMotion } from './message-deletion-feedback.js'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { messageSelectionStyles, ArkmeMessageSelectionControl, ArkmeSelectActionIcon } from './message-selection-presentation.js'
@@ -2984,17 +2987,15 @@ export function ArkmeSurface({
     arkmeUi.showHarness()
     onActivateSurface?.()
   })
-  const [recordDeletion, setRecordDeletion] = useState<{ scopeKey: string; sourceRef: string; items: ArkmeTimelineItem[]; pending?: boolean }>()
+  const [recordDeletion, setRecordDeletion] = useState<{ scopeKey: string; sourceRef: string; items: ArkmeTimelineItem[] }>()
   const [topicAssignment, setTopicAssignment] = useState<{
-    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; itemUids: string[]; anchor: HTMLElement | undefined; currentTopicKey?: string
+    scopeKey: string; source: ArkmeSourceItem; items: ArkmeTimelineItem[]; assignmentRefs: string[]; itemUids: string[]; anchor: HTMLElement | undefined; currentTopicKey?: string
   }>()
+  const recordMutations = useMemo(() => recordMutationFeedback(authenticatedAccountKey ?? 'logged-out'), [authenticatedAccountKey])
+  const recordMutationSnapshot = useSyncExternalStore(recordMutations.subscribe, recordMutations.getSnapshot, recordMutations.getSnapshot)
   const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
-  const recordDeletionPending = recordDeletion?.scopeKey === topicAssignmentScopeKey && recordDeletion.pending === true
-  const messageActionBusy = recordDeletionPending ? 'delete' : askDsh.busy ? 'ask-dsh' : nativeMessageActionBusy
-  const recordDeletionStopRef = useRef<(() => void) | undefined>()
+  const messageActionBusy = askDsh.busy ? 'ask-dsh' : nativeMessageActionBusy
   const deletionMotionRef = useRef<MessageDeletionMotion>()
-  const confirmedDeletions = useMemo(() => new ConfirmedMessageDeletions(), [authenticatedAccountKey, conversationKey])
-  const [deletionAnnouncement, setDeletionAnnouncement] = useState('')
   useLayoutEffect(() => () => { deletionMotionRef.current?.cancel(); deletionMotionRef.current = undefined }, [topicAssignmentScopeKey, activeConversation, active])
   useEffect(() => { setRecordDeletion(undefined) }, [topicAssignmentScopeKey, activeConversation, active])
   useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
@@ -3869,6 +3870,7 @@ export function ArkmeSurface({
     const sourceRef = source.sourceRef
     const sourceKey = arkmeSourceIdentityKey(source)
     const generation = timelineGenerationRef.current
+    const recordMutationReadEpoch = recordMutations.readEpoch
     const invalidationRevision = arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).revision
     const liveReadRevision = liveTimelineTail.readRevision
     const interwovenRevision = arkmeInterwovenInvalidation.getSnapshotForSource(sourceKey).revision
@@ -4029,6 +4031,8 @@ export function ArkmeSurface({
     }
     if (controller.signal.aborted || generation !== timelineGenerationRef.current
       || windowRevision !== timelineWindowRevisionRef.current) return
+    if (!sourceIsChat && recordMutationReadEpoch !== recordMutations.readEpoch) { timelineRefreshScheduler.request(); return }
+    if (!sourceIsChat) recordMutations.observe(page.items, source, recordMutationReadEpoch)
     setTimelineError('')
     if (page.unified) {
       const continuation = direction === 'newer' ? page.unified.newerCursor : page.unified.olderCursor
@@ -4207,7 +4211,7 @@ export function ArkmeSurface({
       })
       else await refresh
     }
-  }, [acknowledgeRead, confirmedSendRetention, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, liveTimelineTail])
+  }, [acknowledgeRead, confirmedSendRetention, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, liveTimelineTail, recordMutations])
   useLayoutEffect(() => {
     scheduledTimelineRefreshRef.current = () => {
       if (!activeConversation || !authenticated) return
@@ -5827,7 +5831,8 @@ export function ArkmeSurface({
     `${authenticatedAccountKey}:${conversationKey}:${sourceProjectionRevision}`,
     activeConversation && source !== undefined && isArkmeSelfWorkspaceSource(source) ? source.sourceRef : undefined, items,
   )
-  const detailRow = items.find(item => item.itemUid === detailItemUid)
+  const detailRawRow = items.find(item => item.itemUid === detailItemUid)
+  const detailRow = detailRawRow && source ? recordMutations.project(detailRawRow, source, selfSources) : detailRawRow
   const detailItem = detailRow === undefined ? undefined : personalExtensionParents.has(detailRow.itemUid)
     ? { ...detailRow, extensionParent: personalExtensionParents.get(detailRow.itemUid)! } : detailRow
   const detailTopicPresentation = detailItem === undefined ? undefined
@@ -6565,6 +6570,19 @@ export function ArkmeSurface({
     setMomentRelatedView(relatedDrawerBackTarget(momentRelatedView))
   }
 
+  useEffect(() => {
+    if (!activeConversation || !source || !recordMutations.needsReconcile(source)) return
+    let disposed = false, timer: ReturnType<typeof setTimeout> | undefined, pass = 0
+    const delays = [0, 1_000, 3_000, 7_000, 15_000]
+    const refresh = async () => {
+      if (disposed || !recordMutations.needsReconcile(source)) return
+      try { await loadTimeline(undefined, true, 40, 'refresh') } catch { /* The in-conversation receipt remains available. */ }
+      if (!disposed && ++pass < delays.length) timer = setTimeout(() => { void refresh() }, delays[pass])
+    }
+    timer = setTimeout(() => { void refresh() }, 0)
+    return () => { disposed = true; if (timer !== undefined) clearTimeout(timer) }
+  }, [activeConversation, source?.sourceRef, recordMutations, recordMutationSnapshot.receipts, loadTimeline])
+
   const refreshCurrentWindow = useCallback(() => loadTimeline(undefined, true, 40, 'refresh'), [loadTimeline])
   const reeditSubmissions = useRecordReeditSubmissions(
     source?.sourceRef, authenticatedAccountKey, activeConversation,
@@ -6573,20 +6591,16 @@ export function ArkmeSurface({
   const { displayItems, reeditItems } = useMemo(() => {
     const remoteIds = new Set(items.map(item => item.itemUid))
     const reeditItems = new Set<ArkmeTimelineItem>()
-    const remoteItems = items.filter(item => confirmedDeletions.keeps(item)).map(item => {
+    const remoteItems = items.map(item => {
       const bound = bindSentFileTaskLocals(item, fileTasks.tasks)
       const projected = projectRecordReedit(bound, reeditSubmissions.jobs)
       if (projected !== bound) reeditItems.add(projected)
       return projected
     })
-    // Live invalidation may arrive before the write receipt. Retain the submitted
-    // presentation until the result is classified; never turn a missing row into success.
-    const pendingItems = recordDeletionPending ? recordDeletion.items.filter(item => !remoteIds.has(item.itemUid)) : []
-    for (const item of pendingItems) remoteIds.add(item.itemUid)
-    const displayItems = [...remoteItems, ...pendingItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem).filter(item => confirmedDeletions.keeps(item))]
+    const displayItems = [...remoteItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem)]
       .sort(compareTimelineMessages)
-    return { displayItems, reeditItems }
-  }, [items, fileTasks.tasks, reeditSubmissions.jobs, confirmedDeletions, recordDeletionPending, recordDeletion?.items])
+    return { displayItems: source ? recordMutations.projectWindow(displayItems, source, selfSources).sort(compareTimelineMessages) : displayItems, reeditItems }
+  }, [items, fileTasks.tasks, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources])
   useEffect(() => {
     for (const job of reeditSubmissions.jobs) {
       if (job.state === 'pending' || job.state === 'committing') pendingReeditHighlights.current.add(job.submissionId)
@@ -6658,9 +6672,9 @@ export function ArkmeSurface({
           ...(communityWelcome !== undefined && source !== undefined && welcomeMatchesSource(communityWelcome, authenticatedAccountKey, source)
             && timelineMode !== 'around' ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
               occurredAtMillis: communityWelcome.occurredAtMillis, title: source.displayName }] : []),
-          ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || confirmedDeletions.keeps(messageByEvent.get(event.eventId) ?? event.item)).map(event => event.kind === 'message'
+          ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || !source || recordMutations.project(event.item, source, selfSources) !== undefined).map(event => event.kind === 'message'
             ? { kind: 'message' as const, id: `message:${event.eventId}`, occurredAtMillis: event.occurredAtMillis,
-              item: messageByEvent.get(event.eventId) ?? event.item }
+              item: messageByEvent.get(event.eventId) ?? (source ? recordMutations.project(event.item, source, selfSources)! : event.item) }
             : event.kind === 'world-public' ? { ...event, id: event.eventId }
             : event.kind === 'moment' ? { kind: 'moment' as const, id: `moment:${event.item.momentId}`, occurredAtMillis: event.occurredAtMillis, item: event.item }
               : event.kind === 'member-event' ? { kind: 'member-event' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, item: event.item }
@@ -6697,16 +6711,10 @@ export function ArkmeSurface({
       ? compareTimelineMessages(left.item, right.item)
       : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id))
     },
-    [unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, confirmedDeletions,
+    [unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
-  const displayRows = useMemo(() => {
-    if (!recordDeletionPending) return liveDisplayRows
-    const keys = new Set(liveDisplayRows.filter(row => row.kind === 'message').map(row => arkmeTimelineOccurrenceKey(row.item)))
-    const missing = recordDeletion.items.filter(item => !keys.has(arkmeTimelineOccurrenceKey(item)))
-      .map(item => ({ kind: 'message' as const, id: `message:${item.timelineEventId ?? item.itemUid}`, occurredAtMillis: item.sendAtMillis, item }))
-    return missing.length ? mergeTimelineSendRows(liveDisplayRows, missing.sort((a, b) => compareTimelineMessages(a.item, b.item))) : liveDisplayRows
-  }, [liveDisplayRows, recordDeletionPending, recordDeletion?.items])
+  const displayRows = liveDisplayRows
   useLayoutEffect(() => {
     const pending = pendingConversationTargetLocateRef.current
     const body = bodyRef.current
@@ -6938,7 +6946,7 @@ export function ArkmeSurface({
       : itemsToAssign[0]?.recordTopicAssignmentTopicKey
     const allInCurrentTopic = currentTopicKey !== undefined && (source.kind === 'topic'
       || itemsToAssign.every(item => item.recordTopicAssignmentTopicKey === currentTopicKey))
-    setTopicAssignment({ scopeKey: topicAssignmentScopeKey, source, anchor,
+    setTopicAssignment({ scopeKey: topicAssignmentScopeKey, source, anchor, items: [...itemsToAssign],
       ...(allInCurrentTopic ? { currentTopicKey } : {}),
       assignmentRefs: itemsToAssign.map(item => item.recordTopicAssignmentRef!),
       itemUids: itemsToAssign.map(item => item.itemUid),
@@ -7786,7 +7794,11 @@ export function ArkmeSurface({
   useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined, endAccessoryRef, activeSelectMode !== undefined, recordsRef, viewportRestoreIntentRef)
   // Run after viewport restoration, before paint, so survivor motion starts at
   // the position the user actually saw rather than a stale scroll offset.
-  useLayoutEffect(() => { deletionMotionRef.current?.afterRemoval() })
+  useLayoutEffect(() => {
+    const latest = recordMutationSnapshot.receipts.at(-1)
+    if (latest?.phase === 'failed' || latest?.phase === 'uncertain') deletionMotionRef.current?.cancel()
+    else deletionMotionRef.current?.afterRemoval()
+  })
   const bottomVisibility = useScrollBottomVisibility(bodyRef, recordsRef, active && activeConversation, displayRows)
   const getCalendarReadingDate = useCallback(() => {
     if (!activeConversation || timelineStateKey !== conversationKey) return undefined
@@ -8206,7 +8218,6 @@ export function ArkmeSurface({
                     data-arkme-width-sender-kind={item.senderKind ?? 'human'}
                     data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid}
                     data-arkme-message-version={item.recordVersion ?? 0}
-                    aria-busy={recordDeletionPending && selectedForAction || undefined}
                     data-arkme-message-owner-id={item.recordOwnerUserId} style={{
                     ...styles.row,
                     ...(activeSelectMode === undefined
@@ -8218,7 +8229,6 @@ export function ArkmeSurface({
                         : styles.rowSelectCardCenterMode),
                     ...(selectedForAction ? styles.rowSelectedForAction : {}),
                     ...(isHighlighted ? styles.rowSearchTarget : {}),
-                    ...(recordDeletionPending && selectedForAction ? { opacity: .65, pointerEvents: 'none' as const } : {}),
                   }}
                     onClickCapture={event => {
                       if (activeSelectMode === undefined) return
@@ -8422,7 +8432,7 @@ export function ArkmeSurface({
   }, [displayRows, personalExtensionParents, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
-    highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid, recordDeletionPending,
+    highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
     reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, reactionMenuRequest])
 
   const directRecordingNotice = ui.mode !== 'recordings' || !active ? <ArkmeDirectRecordingStatus floating /> : null
@@ -8584,56 +8594,38 @@ export function ArkmeSurface({
     {activeConversation && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}
       deletionRefs={recordDeletion.items.map(item => item.recordDeletionRef!)}
-      stopRef={recordDeletionStopRef}
-      onPendingChange={pending => {
-        setRecordDeletion(current => current?.scopeKey === recordDeletion.scopeKey ? { ...current, pending } : current)
-        if (pending) setDeletionAnnouncement('')
-      }}
-      onCancel={() => { setRecordDeletion(undefined) }}
-      onRefresh={() => {
-        confirmedSendRetention.forget(conversationKey, recordDeletion.items.map(item => item.itemUid))
-        conversationCacheRef.current.invalidateTimelines()
+      onSubmit={() => {
+        if (!source) return
+        const selected = recordDeletion.items
+        const ids = new Set(selected.map(item => item.itemUid))
+        deletionMotionRef.current?.cancel()
+        if (bodyRef.current) deletionMotionRef.current = captureMessageDeletion(bodyRef.current, item => ids.has(item.itemUid))
+        const id = recordMutations.begin('delete', source, selected)
         setRecordDeletion(undefined)
         exitMessageSelectMode()
-        void loadTimeline(undefined, true, 40, 'refresh').catch(caught => {
-          if (activeSourceKeyRef.current === conversationKey) showMessageActionStatus(errorMessage(caught))
-        })
+        void submitRecordMutation(recordMutations, id, 'delete', source, selected)
       }}
-      onResult={result => {
-        // 已完成的 owner 写入使旧窗口读取失效，避免迟到分页重新插入删除前的快照。
-        timelineWindowRevisionRef.current += 1
-        for (const request of timelineRequestsRef.current.values()) request.controller.abort()
-        timelineRequestsRef.current.clear()
-        setLoadingOlder(false)
-        const deleted = new Set(result.items.filter(item => item.result === 'deleted').map(item => item.recordUid))
-        confirmedSendRetention.forget(conversationKey, [...deleted])
-        const confirmedVersions = new Map(result.items.filter(item => deleted.has(item.recordUid)).map(item => [item.recordUid, item.version]))
-        const keep = (item: ArkmeTimelineItem) => !deleted.has(item.itemUid) || (item.recordVersion ?? 0) > (confirmedVersions.get(item.itemUid) ?? 0)
-        const complete = recordDeletion.items.every(item => deleted.has(item.itemUid)) && result.items.every(item => item.result === 'deleted')
-        deletionMotionRef.current?.cancel()
-        if (bodyRef.current && deleted.size > 0) deletionMotionRef.current = captureMessageDeletion(bodyRef.current,
-          item => deleted.has(item.itemUid) && (item.recordVersion ?? 0) <= (confirmedVersions.get(item.itemUid) ?? 0))
-        confirmedDeletions.accept(result)
-        setItems(current => current.filter(keep))
-        conversationCacheRef.current.invalidateTimelines()
-        const cached = conversationCacheRef.current.getTimeline(conversationKey)
-        if (cached) conversationCacheRef.current.storeTimeline(conversationKey, { ...cached, items: cached.items.filter(keep), fetchedAtMillis: 0 })
-        setRecordDeletion(undefined)
-        if (complete) exitMessageSelectMode()
-        else setSelectMode(current => current?.sourceKey !== conversationKey ? current : { ...current,
-          selectedIds: new Set(recordDeletion.items.filter(keep).map(arkmeTimelineOccurrenceKey)) })
-        const rejection = result.items.find(item => item.result === 'rejected')
-        if (complete) setDeletionAnnouncement(tr("成功删除 {v0} 条内容", { v0: String(deleted.size) }))
-        else showMessageActionStatus(rejection?.result === 'rejected'
-            ? `已确认删除 ${String(deleted.size)} 条；${rejection.message}；其余内容未继续删除`
-            : `已确认删除 ${String(deleted.size)} 条，其余内容请刷新核对后再操作`)
-      }}
+      onCancel={() => { setRecordDeletion(undefined) }}
+      onRefresh={() => { setRecordDeletion(undefined); void loadTimeline(undefined, true, 40, 'refresh').catch(() => undefined) }}
+      onResult={() => { /* The parent-owned submission settles in RecordMutationFeedback. */ }}
     />}
     {activeConversation && auth?.userId !== undefined && topicAssignment?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordTopicAssignmentDialog
       key={topicAssignmentScopeKey}
       userId={auth.userId} environment={auth.environment} anchor={topicAssignment.anchor}
       source={topicAssignment.source} assignmentRefs={topicAssignment.assignmentRefs}
       {...(topicAssignment.currentTopicKey === undefined ? {} : { currentTopicKey: topicAssignment.currentTopicKey })}
+      onSubmit={target => {
+        const selected = topicAssignment.items, origin = topicAssignment.source
+        const ids = new Set(selected.map(item => item.itemUid))
+        deletionMotionRef.current?.cancel()
+        if (bodyRef.current) deletionMotionRef.current = topicMutationBelongs(origin, target, selfSources)
+          ? emphasizeMessageTopic(bodyRef.current, ids)
+          : captureMessageDeletion(bodyRef.current, item => ids.has(item.itemUid), 'lift')
+        const id = recordMutations.begin('topic', origin, selected, target, selfSources)
+        setTopicAssignment(undefined)
+        exitMessageSelectMode()
+        void submitRecordMutation(recordMutations, id, 'topic', origin, selected, target)
+      }}
       onCancel={() => { setTopicAssignment(undefined) }}
       onRefresh={() => {
         if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, topicAssignment.itemUids)
@@ -8642,14 +8634,7 @@ export function ArkmeSurface({
         setSelfSourcesRetryRevision(value => value + 1)
         arkmeUi.recordChanged()
       }}
-      onAssigned={(result, target) => {
-        if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, result.movedRecordUids)
-        setTopicAssignment(undefined)
-        exitMessageSelectMode()
-        setSelfSourcesRetryRevision(value => value + 1)
-        arkmeUi.recordChanged()
-        showMessageActionStatus(`${target ? '已指定主题' : '已移出主题'}${result.projectionRefreshPending ? '，列表正在刷新' : ''}`)
-      }}
+      onAssigned={() => { /* The parent-owned submission settles in RecordMutationFeedback. */ }}
     />}
     <div
       key="conversation-surface"
@@ -8951,6 +8936,9 @@ export function ArkmeSurface({
           <ArkmeInterwovenReadProvider sourceRef={source.sourceRef} scope={`${authenticatedAccountKey}:${conversationKey}`}
             enabled={activeConversation && authenticated && source.kind === 'private_chat'}>
           <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
+          {isArkmeSelfWorkspaceSource(source) && recordMutationSnapshot.receipts.slice(-1).map(receipt => <RecordMutationReceipt
+            key={receipt.id} receipt={receipt} owner={recordMutations} onView={activateSource}
+            onRefresh={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => undefined) }} />)}
           <div className="arkme-conversation-body" data-arkme-width-viewport ref={bodyRef} style={{
             ...styles.body,
             ...(displayRows.length === 0 && interwovenWindow.prelude.length === 0 ? { display: 'flex', flexDirection: 'column' as const } : {}),
@@ -9433,10 +9421,6 @@ export function ArkmeSurface({
           >{selectedMessageCount > 100 ? `已选择 ${selectedMessageCount} 条消息，批量操作最多支持 100 条，请减少选择后操作`
             : '选中的消息包含暂不支持复制链接或转发的内容，可取消这些消息后操作'}</div>}
           {activeSelectMode !== undefined && <div style={{ ...styles.selectBar, flexWrap: 'wrap' }} role="toolbar" aria-label={tr("已选择 {v0} 条消息", { v0: selectedMessageCount })}>
-            {recordDeletionPending && <div role="status" style={{ flexBasis: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, color: arkmeTheme.secondary, fontSize: 12 }}>
-              <IconLoadingOutline16 />正在删除所选内容…
-              <button type="button" style={styles.retry} title="停止剩余删除并刷新核对，已提交的删除仍可能完成" onClick={() => recordDeletionStopRef.current?.()}>停止并核对</button>
-            </div>}
             {askDsh.status && <div role="status" aria-live="polite" style={{ flexBasis: '100%', textAlign: 'center', color: arkmeTheme.secondary, fontSize: 12, overflowWrap: 'anywhere' }}>{askDsh.status}</div>}
             {source !== undefined && isArkmeSelfWorkspaceSource(source) && <button data-arkme-feedback="neutral"
               type="button" aria-label={tr("指定主题")} style={styles.selectBarButton}
@@ -9499,7 +9483,6 @@ export function ArkmeSurface({
               onClick={exitMessageSelectMode}
             ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[3]}</span></button>
           </div>}
-          <span role="status" aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' }}>{deletionAnnouncement}</span>
           </div>
         </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
