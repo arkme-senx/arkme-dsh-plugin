@@ -30,11 +30,13 @@ describe('speaker update in a long recording transcript', () => {
   let reads: number, resolvePoll: (value: ArkmeRecordingDay) => void
   beforeEach(() => {
     vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 9, 14, 22))
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     initial = day(true); updated = day(false); reads = 0
     mocks.call.mockReset().mockImplementation(async (op, params) => {
+      if (op === 'recordings.totals.index') return { items: [], nextOffset: null }
       if (op === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (op === 'recordings.summary-model-config') return { options: [] }
       if (op === 'recordings.speaker.cached-options') return null

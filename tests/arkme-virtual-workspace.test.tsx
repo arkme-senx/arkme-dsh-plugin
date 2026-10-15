@@ -150,7 +150,7 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('botDirectoryIsPinned(botDirectoryPreferences, bot)')
     expect(workspaceSource).not.toContain('bots.private-chat.directory-source')
     expect(workspaceSource).toContain("id: 'remove', label: '移除', danger: true")
-    expect(workspaceSource).toContain('Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis')
+    expect(workspaceSource).toContain('return withConversationDraftActivity(')
   })
 
   it('delegates directory dismissal and pointer placement to the shared native menu', () => {

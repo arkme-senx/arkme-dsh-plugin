@@ -1,4 +1,7 @@
 import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
+import { ArkmeDraftPreviewText, useSelfConversationDraftPreview, useConversationDraftPresentation } from './ArkmeConversationDraftPreview.js'
+import { arkmeComposerDraftStore } from './composer-draft-store.js'
+import { withConversationDraftActivity } from './conversation-draft-preview.js'
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview, latestReactionPreview } from './ArkmeReactionNotification.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
@@ -547,10 +550,12 @@ export function ArkmeArkoRow({
   latestAtMillis?: number
   onClick(): void
 }) {
-  const latestTime = latestAtMillis === undefined ? '' : timeLabel(latestAtMillis)
-  const latestDateTime = latestTime === '' || latestAtMillis === undefined
+  const { preview: draftPreview, editedAtMillis } = useConversationDraftPresentation('arko')
+  const activityAtMillis = Math.max(latestAtMillis ?? 0, editedAtMillis)
+  const latestTime = timeLabel(activityAtMillis)
+  const latestDateTime = latestTime === ''
     ? undefined
-    : new Date(latestAtMillis).toISOString()
+    : new Date(activityAtMillis).toISOString()
   return <button
     type="button"
     data-arkme-home-tour-target="arko"
@@ -571,7 +576,7 @@ export function ArkmeArkoRow({
           dateTime={latestDateTime}
         >{latestTime}</time>}
       </span>
-      <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={latestPreview} presentation="preview" emojiSize={20} /></span></span>
+      <span style={styles.chatBottom}>{draftPreview !== undefined ? <ArkmeDraftPreviewText preview={draftPreview} /> : <span style={styles.preview}><ArkmeRichText text={latestPreview} presentation="preview" emojiSize={20} /></span>}</span>
     </span>
   </button>
 }
@@ -692,10 +697,12 @@ export function arkmeRootChatUnreadPlacement(source: {
 }
 
 export function ArkmeRootChatPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
+  const { preview: draftPreview } = useConversationDraftPresentation(source)
   useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  if (draftPreview !== undefined) return <ArkmeDraftPreviewText preview={draftPreview} />
   if (latestReactionPreview(reactionNotifications.forSource(scope, source.sourceKey), source.unreadCount, arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0))) return <ArkmeReactionNotificationPreview source={source} disabled={disabled} />
 
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
@@ -1143,6 +1150,7 @@ export function ArkmeNavigation({
       }
     }
   }, [chatDirectory.projection?.bots, chatDirectory.projection?.botPinnedKeys, chatDirectory.projection?.removedBotRefs])
+  const draftRevision = useSyncExternalStore(arkmeComposerDraftStore.subscribe, arkmeComposerDraftStore.getRevision, arkmeComposerDraftStore.getRevision)
   const rootConversationRows = useMemo(() => {
     if (conversationProjection.accountScope !== `${auth?.environment}:${String(auth?.userId)}`) return []
     const hiddenRefs = new Set(conversationProjection.visibility.filter(item => item.hidden).map(item => item.entryRef))
@@ -1150,12 +1158,12 @@ export function ArkmeNavigation({
       ...(chatDirectory.projection?.removedSourceKeys ?? []),
       ...conversationProjection.directory.sources.filter(item => hiddenRefs.has(item.sourceRef)).map(arkmeSourceIdentityKey),
     ])
-    return [
+    return withConversationDraftActivity([
       ...mergePrivateInteractionSources(conversationProjection.sources, privateInteractionDirectory.rows, excludedKeys)
         .map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
       ...conversationProjection.bots.map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
-    ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis)
-  }, [auth?.environment, auth?.userId, conversationProjection, botDirectoryPreferences, privateInteractionDirectory.rows, chatDirectory.projection?.removedSourceKeys])
+    ], arkmeComposerDraftStore, authenticated ? auth?.userId : undefined)
+  }, [auth?.environment, auth?.userId, authenticated, conversationProjection, botDirectoryPreferences, privateInteractionDirectory.rows, chatDirectory.projection?.removedSourceKeys, draftRevision])
   const removalFeedback = useConversationRemovalFeedback({
     rows: rootConversationRows,
     rowKey: row => row.kind === 'source'
@@ -1188,7 +1196,10 @@ export function ArkmeNavigation({
     if (directoryContextTarget !== undefined && directoryContextMenu === undefined) setDirectoryContextMenu(undefined)
   }, [directoryContextMenu, directoryContextTarget])
   const showArkoInSearch = true
-  const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(sendToSelfSource)
+  const effectiveSelfSource = sendToSelfSource ?? chatDirectory.projection?.sendToSelf
+  const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(effectiveSelfSource)
+  const selfDraft = useSelfConversationDraftPreview(effectiveSelfSource)
+  if (selfDraft && selfDraft.editedAtMillis > (effectiveSelfSource?.activeAtMillis ?? 0)) sendToSelfPresentation.time = timeLabel(selfDraft.editedAtMillis)
   const showSelfInSearch = true
   const showHarnessInSearch = true
 
@@ -2000,7 +2011,8 @@ export function ArkmeNavigation({
               <span aria-hidden style={{ flex: 1 }} />
               {sendToSelfPresentation.time !== '' && <span style={styles.chatTime}>{sendToSelfPresentation.time}</span>}
             </span>
-            <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={sendToSelfPresentation.preview} presentation="preview" emojiSize={20} /></span></span>
+            <span style={styles.chatBottom}>{selfDraft ? <ArkmeDraftPreviewText preview={selfDraft.preview} />
+              : <span style={styles.preview}><ArkmeRichText text={sendToSelfPresentation.preview} presentation="preview" emojiSize={20} /></span>}</span>
           </span>
         </button>)
 
@@ -2256,7 +2268,7 @@ export function ArkmeNavigation({
                   <ArkmeTopicTagBadge label={tr("官方")} selected={selected} />
                   <span aria-hidden style={{ flex: 1 }} />
                 </>}
-                <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
+                <span style={styles.chatTime}>{timeLabel(row.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
                 <ArkmeRootChatPreview source={source} disabled={interactionsDisabled} />
