@@ -67,7 +67,9 @@ function installNativeTransport(route: string): void {
   const aliasCandidates = new Map<string, DshAccountSession[]>()
   let localRuntimeRef: string | undefined
   const redirect = (canonical: DshAccountSession) => {
-    selected = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
+    const target = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
+    if (target === selected) return
+    selected = target
     const doc = surface.ownerDocument
     doc.dispatchEvent(new doc.defaultView!.CustomEvent('arkme:native-session-open', { detail: {
       runtimeRef: canonical.local ? '' : canonical.runtimeRef, sessionRef: canonical.sessionRef,
@@ -479,7 +481,7 @@ function installNativeTransport(route: string): void {
         if (envelope.result?.ok) {
           const items = envelope.result.value.items as Json[]
           for (const item of items) remember(item)
-          envelope.result.value.items = [...items.filter(item => !folded.has(item.sessionId) || folded.get(item.sessionId)?.coveredLocalHistory?.source === 'local'), ...[...rows.values()].filter(row => !hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))).map(summary)]
+          envelope.result.value.items = [...items.filter(item => !folded.has(item.sessionId) || folded.get(item.sessionId)?.coveredLocalHistory?.source === 'local'), ...[...rows.values()].filter(row => !row.local && !hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))).map(summary)]
         }
         return Response.json(envelope)
       }

@@ -12,6 +12,7 @@ function fixture(search = '?arkme-harness-embed=1') {
   const attributes = new Map<string, string>([['data-arkme-account-id', '3016']])
   const listeners = new Map<string, () => void>()
   const window = { location: { search, href: 'http://localhost:3000/arkme-self/harness' }, frameElement: { parentElement: {
+    ownerDocument: { dispatchEvent: vi.fn(), defaultView: { CustomEvent } },
     getAttribute: (key: string) => attributes.get(key), setAttribute: (key: string, value: string) => attributes.set(key, value),
   } }, addEventListener: (name: string, fn: () => void) => listeners.set(name, fn) } as any
   const fetch = vi.fn(async (url: string | URL, init: RequestInit) => {
@@ -309,9 +310,6 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   expect(String(f.fetch.mock.calls[0]![0])).toBe('http://localhost:3000/api/session/prompt')
   expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body)).payload.args.request.content).toEqual([{ text: 'arkme:windows:same' }])
   await next.return()
-})
-
-
 })
 
 it('marks a follow carrier loss for the official DSH stream generation recovery', async () => {

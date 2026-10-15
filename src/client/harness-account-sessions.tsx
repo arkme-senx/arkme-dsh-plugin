@@ -8,7 +8,6 @@ import { callArkme, createArkmeSdk } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
 import { compareDshDirectoryVersion, parseDshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
 import { openNativeAccountSession } from './harness-native-navigation.js'
-import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
 import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
 type SessionsState = ReturnType<ISessions['list']['getSnapshot']>
@@ -113,7 +112,7 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
       row = { ...row, projectionAsOfSeq: Math.max(old.projectionAsOfSeq ?? -1, row.projectionAsOfSeq ?? -1) }
     }
     return old && ([...new Set([...Object.keys(row), ...Object.keys(old)])] as Array<keyof DshAccountSession>).every(key =>
-      key === 'directoryVersion' ? row.directoryVersion?.join('/') === old.directoryVersion?.join('/') : key === 'coveredLocalHistory' ? JSON.stringify(row.coveredLocalHistory) === JSON.stringify(old.coveredLocalHistory) : key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' ? (row.previousRuntimeRefs ?? []).join('\0') === (old.previousRuntimeRefs ?? []).join('\0') : row[key] === old[key]) ? old : row
+      key === 'directoryVersion' ? row.directoryVersion?.join('/') === old.directoryVersion?.join('/') : key === 'coveredLocalHistory' ? JSON.stringify(row.coveredLocalHistory) === JSON.stringify(old.coveredLocalHistory) : key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' || key === 'readableRuntimeRefs' ? (row[key] ?? []).join('\0') === (old[key] ?? []).join('\0') : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }
@@ -139,6 +138,13 @@ export function applyAccountSessionDelta(previous: DshAccountSession[], value: u
     if (!deleted && (!source || item.workspace_ref !== '' && !workspace)) return
     next.set(key, {
       runtimeRef: item.runtime_ref, sessionRef: item.session_ref,
+      canonicalIdentity: item.canonical_identity === true,
+      ...(old?.coveredLocalHistory && old.contentRevision && old.contentRevision === item.content_revision && old.historyRevision === item.history_revision
+        ? { coveredLocalHistory: old.coveredLocalHistory } : {}),
+      ...(item.deduplicated_runtime_refs ? { previousRuntimeRefs: item.deduplicated_runtime_refs } : {}),
+      ...(item.readable_runtime_refs ? { readableRuntimeRefs: item.readable_runtime_refs } : {}),
+      ...(item.history_revision ? { historyRevision: item.history_revision } : {}),
+      ...(item.content_revision ? { contentRevision: item.content_revision } : {}),
       workspaceRef: item.workspace_ref, workspaceName: item.workspace_ref === '' ? '未分组' : workspace?.workspaceName ?? '',
       directoryVersion: version, ...(deleted ? { deleted: true } : {}),
       title: item.title ?? '', updatedAt: item.source_updated_at,
@@ -162,10 +168,10 @@ function createCatalog(surface: Element, remove: () => void) {
     const listeners = new Set<() => void>()
     let controller = new AbortController()
     let stopRefresh: (() => void) | undefined
-    const publish = () => {
+    const publish = (nativeChanged = true) => {
       const visible = rows.filter(row => !row.deleted)
       snapshot = { rows: visible, localRuntimeRef, localDesktopName }
-      ;(window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(visible)
+      if (nativeChanged) (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(visible, localRuntimeRef)
       listeners.forEach(listener => listener())
     }
     const refresh = async () => {
@@ -204,8 +210,10 @@ function createCatalog(surface: Element, remove: () => void) {
           && (row.deleted || before.get(accountSessionKey(row)) !== row)))
         const merged = reconcileAccountSessions(rows, next)
         incremental = includesDeleted
-        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows, localRuntimeRef) }
-        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
+        const nativeChanged = merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef
+        const changed = nativeChanged || snapshot.localDesktopName !== localDesktopName
+        rows = merged
+        if (changed) publish(nativeChanged)
       } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
       finally {
         if (signal === controller.signal) {

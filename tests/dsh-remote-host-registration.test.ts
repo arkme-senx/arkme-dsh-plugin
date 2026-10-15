@@ -826,6 +826,14 @@ describe('Host login-only registration lifecycle', () => {
       await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
       await internal.backgroundProjectionFlight
       expect(realtime.published.find(p => p.directoryChanged)).not.toHaveProperty('directoryDelta')
+      title = 'Alias display revision'
+      sync.mockImplementationOnce(async input => ({ directory_refresh_required: true,
+        sessions: (input.items as Record<string, unknown>[]).map(item => ({ ...item, runtime_ref: 'canonical-origin', host_generation: 2 })),
+      }))
+      realtime.published.splice(0)
+      await internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
+      await internal.backgroundProjectionFlight
+      expect(realtime.published.find(p => p.directoryChanged)).not.toHaveProperty('directoryDelta')
     } finally { pending.resolve(); await host.stop() }
   })
 

@@ -1897,7 +1897,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           items,
         }, requestSignal)
           const accepted = parseDshDirectoryDelta({ version: 1, sessions: result.sessions })
-          if (!accepted || acceptedSessions.length + accepted.sessions.length > 100) directoryDeltaComplete = false
+          if (!accepted || result.directory_refresh_required === true || acceptedSessions.length + accepted.sessions.length > 100) directoryDeltaComplete = false
           else acceptedSessions.push(...accepted.sessions)
           return result
         }, signal, this.options.readRecoveryProof ? {
