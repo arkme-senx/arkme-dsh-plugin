@@ -1405,21 +1405,24 @@ export class RecordingService {
     return (await this.readRecordingTranscripts(dateStamp, session, signal)).section('system')
   }
 
+  private readRecordingTranscriptData(dayStart: Date, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    // Keep the same Audio contract and source identity for presentation and entity evidence.
+    return this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/one-day-trans',
+      { start_at: dayStart.getTime(), end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+      session, signal,
+    )
+  }
+
   private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal) {
     const dayStart = this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
     dayEnd.setDate(dayEnd.getDate() + 1)
     const date = dayStart.getTime()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
-      this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        // Keep the same transcript contract as the Flutter desktop client.
-        // The v2 endpoint omits the session-to-speaker bindings needed to
-        // resolve a labelled person from get-speaker-ls.
-        '/api/v1/audio/one-day-trans',
-        { start_at: date, end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
-        session,
-        signal,
-      ),
+      this.readRecordingTranscriptData(dayStart, session, signal),
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
         '/api/v1/audio/get-speaker-ls', {}, session, signal,
       ),
@@ -1606,6 +1609,17 @@ export class RecordingService {
       signal,
     )
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
+  }
+
+  /** Host-only evidence reader: never expose Audio owner IDs through a consumer DTO. */
+  async entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
+    const dayStart = this.recordingDayStart(dateStamp), dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const response = await this.readRecordingTranscriptData(dayStart, session, signal)
+    // Mentions need exact text/identity, not speaker names, profiles or avatar references.
+    return projectRecordingTranscripts(response, [], new Map(), {
+      viewerUserId: session.userId, dayStartMillis: dayStart.getTime(), dayEndMillis: dayEnd.getTime(), transcriptSource: source,
+    })
   }
 
   async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {

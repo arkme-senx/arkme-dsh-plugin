@@ -1,9 +1,10 @@
+import type { RecordingEntityPort } from '../../recording-entity-contract.js'
 import type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../../types.js'
 import type { PublicRecordingImportJob, RecordingFileImportInput } from '../../recording-import-contract.js'
 import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDirectoryResult } from '../../recording-directory-import.js'
 
-/** Local recording import commands; no retired transcript/calendar/cursor ports. */
-export interface ArkmeRecordingToolPort {
+/** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
+export interface ArkmeRecordingToolPort extends RecordingEntityPort {
   recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]>
   recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence>
   recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string): Promise<ArkmeRecordingSpeakerMembers>
