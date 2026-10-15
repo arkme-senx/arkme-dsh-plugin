@@ -5,6 +5,7 @@ import { RecordingWorkflowService } from './services/recording-workflow-service.
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
 import {readProfileImage} from './services/profile-image.js'
 import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from './team-profile-contract.js'
+import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -601,6 +602,10 @@ export class ArkmeService {
       this.callHistory,
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, progress => {
+      this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress })
+    })
+    this.realtime.subscribeChatRealtime(event => this.messageSync.accept(event))
     this.realtime.subscribeChatRealtime(event => {
       if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
       else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
@@ -729,6 +734,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.messageSync.reset()
     this.unifiedTimeline.reset()
     this.recordingPresenceWriter.revoke()
     this.commonGroups.dispose()
@@ -756,8 +762,12 @@ export class ArkmeService {
   startChatRealtime(): () => void {
     const stopRoles = this.selfRoles.start()
     const stopRealtime = this.realtime.startChatRealtime()
-    return () => { stopRoles(); stopRealtime() }
+    const stopSync = this.messageSync.start()
+    return () => { stopSync(); stopRoles(); stopRealtime() }
   }
+
+  async messageSyncStatus(signal?: AbortSignal) { return await this.messageSync.status(signal) }
+  async retryMessageSync(signal?: AbortSignal) { return await this.messageSync.retry(signal) }
 
   chatRealtimeState(): ArkmeChatRealtimeState {
     return this.realtime.chatRealtimeState()
@@ -952,6 +962,7 @@ export class ArkmeService {
       throw error
     }
   }
+  private messageSync!: ChatMessageSyncService
   private unifiedTimeline!: UnifiedChatTimelineService
 
   providerCapabilities(): ArkmeProviderCapabilities {
@@ -991,6 +1002,7 @@ export class ArkmeService {
         sourceTimeline: true,
         unifiedChatTimeline: true,
         durableChatTimeline: true,
+        accountMessageSync: true,
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
@@ -1108,6 +1120,7 @@ export class ArkmeService {
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.messageSync.dispose()
     this.unifiedTimeline.dispose()
     this.teamDelivery.dispose()
     this.selfRoles.dispose()

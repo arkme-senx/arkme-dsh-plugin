@@ -31,12 +31,7 @@ export interface ArkmeConversationTimelineSequenceRange {
   maximumSequence: number
 }
 
-export interface ArkmeConversationViewportSnapshot {
-  scrollTop: number
-  stickToBottom: boolean
-  anchorId?: string
-  anchorOffset?: number
-}
+export type ArkmeConversationViewportSnapshot = import('../conversation-viewport-state.js').ConversationViewportState
 
 export const ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS = 15_000
 

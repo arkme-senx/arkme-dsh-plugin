@@ -5324,12 +5324,14 @@ export class ChatService {
       chatSessionUid: string,
       projectedSourceKind?: 'private_chat' | 'group_chat',
       bundle?: Record<string, unknown>,
+      signal?: AbortSignal,
     ): Promise<ArkmeTimelineItem[]> {
       const items: ArkmeTimelineItem[] = []
-      const botProfiles = await this.timelineBotDisplayProfiles(listValue(data.items), session, chatSessionUid, projectedSourceKind, undefined, bundle)
+      const botProfiles = await this.timelineBotDisplayProfiles(listValue(data.items), session, chatSessionUid, projectedSourceKind, signal, bundle)
       const signingKey = await this.runtime.stateStore.uniqueCode()
       const sourceKind = projectedSourceKind
       for (const raw of listValue(data.items)) {
+        signal?.throwIfAborted()
         const item = objectValue(raw)
         const relation = timelineSenderRelation(item)
         const record = objectValue(item.record)

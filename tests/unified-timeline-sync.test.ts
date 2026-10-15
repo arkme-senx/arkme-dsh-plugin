@@ -22,6 +22,7 @@ function setup(unavailable = false, readbackMissing = false) {
     if (unavailable) throw new Error('disk failed')
     let result: unknown
     switch (command.kind) {
+      case 'sync': result = store.sync(command.command); break
       case 'reserve': result = store.reserve(); break
       case 'read': result = readbackMissing ? undefined : store.read(command.scope, command.request, command.anchorId, command.latest); break
       case 'write': writes(command); result = store.write(command.scope, command.request, command.page, command.options); break
@@ -160,6 +161,14 @@ it.each(['account', 'hint', 'cancel'] as const)('rejects a response that crosses
   await expect(pending).rejects.toThrow()
   expect(writes).toHaveBeenCalledTimes(1)
 })
+it('keeps a missing remote older window a cache miss instead of substituting the local tail', async () => {
+  const { owner, post } = setup()
+  post.mockResolvedValueOnce(response('tail', { older_has_more: true, older_cursor: 'next' }))
+  const tail = await owner.read('ref')
+  await expect(owner.read('ref', { cacheOnly: true, mode: 'older', cursor: tail.unified!.olderCursor }))
+    .rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+  expect(post).toHaveBeenCalledTimes(1)
+})
 
 it('keeps the invalidation fence when a content change races a pending refresh', async () => {
   const { owner, post } = setup()
@@ -204,4 +213,31 @@ it('a hard change still rejects a read after arrival hints', async () => {
   await owner.invalidate('source-key')
   gate.resolve(response('revoked'))
   await checked
+})
+it('reads committed unread bodies without invented coverage, seals local pagination and restores a saved anchor offline', async () => {
+  const {owner,post,changeAccount}=setup()
+  const {epoch}=await owner.sync<import('../src/chat-message-sync.js').ChatSyncPlan>({action:'begin',account:'test:1'})
+  const work=Array.from({length:80},(_,i)=>({id:String(i+1),revision:1,version:1,state:'available' as const,sequence:i+1,unread:true,eventId:`event:${i+1}`,itemKey:`key:${i+1}`}))
+  const session={uid:'chat',kind:1,membership:1,accessible:true,complete:true,position:{cursor:80,initialized:true,membership_version:1},cacheRequired:false,scope:JSON.stringify(['test',1,'chat']),sourceKey:'source-key',work}
+  const page={manifest:true,checkpoint:'private-checkpoint',hasMore:false,retry:false,sessions:[session]}
+  await owner.sync({action:'manifest',account:'test:1',epoch,expectedCheckpoint:'',page,ticket:await owner.syncTicket(),now:0})
+  await owner.sync({action:'freeze',account:'test:1',epoch})
+  await owner.sync({action:'commit',account:'test:1',epoch,expectedCheckpoint:page.checkpoint,ticket:await owner.syncTicket(),now:0,
+    page:{...page,manifest:false,sessions:[{...session,work:work.map(item=>({...item,event:{eventId:item.eventId,kind:'message' as const,source:'messages' as const,occurredAtMillis:item.sequence,orderTie:item.id,contentStatus:'available' as const,
+      item:{itemUid:item.id,recordOwnerUserId:2,recordVersion:1,timelineItemKey:item.itemKey,textContent:'body'} as never}}))}]}})
+  const latest=await owner.read('ref',{cacheOnly:true,limit:40})
+  expect(latest.items.map(item=>item.itemUid)).toEqual(work.slice(40).map(item=>item.id))
+  expect(latest.unified).toMatchObject({complete:false,windowTokens:[]})
+  expect(latest.nextCursor?.unified).toMatchObject({cacheOnly:true,mode:'older'})
+  expect(JSON.stringify(latest)).not.toContain('private-checkpoint')
+  const older=await owner.read('ref',latest.nextCursor!.unified)
+  expect(older.items).toHaveLength(40);expect(older.items[0]?.itemUid).toBe('1')
+  const anchor=await owner.read('ref',{cacheOnly:true,anchorId:'message:key:20',limit:20})
+  expect(anchor.items.some(item=>item.itemUid==='20')).toBe(true)
+  const around=await owner.read('ref',{cacheOnly:true,mode:'around',itemUid:'20',recordOwnerUserId:2,limit:20})
+  expect(around.items.some(item=>item.itemUid==='20')).toBe(true)
+  await expect(owner.read('ref',{cacheOnly:true,mode:'around',itemUid:'missing',recordOwnerUserId:2})).rejects.toMatchObject({code:'chat-timeline-cache-miss'})
+  await expect(owner.read('ref',{cacheOnly:true,mode:'newer',cursor:latest.unified!.olderCursor})).rejects.toMatchObject({code:'chat-timeline-cache-miss'})
+  expect(post).not.toHaveBeenCalled()
+  changeAccount();await expect(owner.read('ref',{cacheOnly:true})).rejects.toMatchObject({code:'chat-timeline-cache-miss'})
 })

@@ -1494,6 +1494,7 @@ export interface ArkmeProviderCapabilities {
     recordingWorkflowV2?: true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
+    accountMessageSync?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -3862,6 +3863,10 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'message-sync-progress'
+  revision: number
+  progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
+} | {
   type: 'team-invalidated'
   revision: number
 } | {
@@ -4170,6 +4175,8 @@ export type ArkmePluginOperation =
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'
   | 'source.directory.policy.set'
+  | 'chat.sync.status'
+  | 'chat.sync.retry'
   | 'source.timeline'
   | 'source.timeline-around'
   | 'source.members'

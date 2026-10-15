@@ -12,7 +12,8 @@ import { normalizeConversationViewports } from '../src/conversation-viewport-sta
 it('persists bounded geometry across database restart and isolates accounts, environments and windows', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'arkme viewport '))
   let db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
-  const anchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12 }
+  const anchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12,
+    messageAnchor: { itemUid: 'record-history', recordOwnerUserId: '9223372036854775806' } }
   try {
     await db.writeConversationViewports('test:1', 'main', [['chat:A', anchor]])
     db.close(); db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
@@ -47,4 +48,16 @@ it('drops non-geometry fields and bounds UTF-8 payloads before persistence', () 
   expect(JSON.stringify(entries)).not.toContain('must not persist')
   expect(entries.at(-1)?.[1].scrollTop).toBe(99)
   expect(normalizeConversationViewports([['A', { scrollTop: -1, stickToBottom: false }]])).toEqual([])
+})
+
+it('retains only valid bounded message identity and removes it for latest-follow intent', () => {
+  const geometry = { scrollTop: 20, stickToBottom: false, anchorId: 'message:event' }
+  for (const recordOwnerUserId of [0, -1, '', 'invalid', '9'.repeat(1000), Number.MAX_SAFE_INTEGER + 1]) {
+    expect(normalizeConversationViewports([['A', { ...geometry, messageAnchor: { itemUid: 'r', recordOwnerUserId } }]])).toEqual([['A', geometry]])
+  }
+  const messageAnchor = { itemUid: 'r', recordOwnerUserId: 3020, token: 'never persist', body: 'secret' }
+  expect(normalizeConversationViewports([['A', { ...geometry, messageAnchor }]])).toEqual([['A', {
+    ...geometry, messageAnchor: { itemUid: 'r', recordOwnerUserId: 3020 },
+  }]])
+  expect(normalizeConversationViewports([['A', { ...geometry, stickToBottom: true, messageAnchor }]])).toEqual([['A', { scrollTop: 0, stickToBottom: true }]])
 })

@@ -68,6 +68,18 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('conversation viewport ownership', () => {
+  it('captures the visible durable message identity without copying its body or cursor', () => {
+    render(); scroll(730)
+    const body = host.firstElementChild as HTMLDivElement
+    const row = body.querySelector<HTMLElement>('[data-arkme-conversation-row="message:A-7"]')!
+    row.dataset.arkmeMessageItemUid = 'old-history'
+    row.dataset.arkmeMessageOwnerId = '9223372036854775806'
+    expect(arkmeConversationViewport(body)).toEqual({ scrollTop: 730, stickToBottom: false,
+      anchorId: 'message:A-7', anchorOffset: -30, messageAnchor: { itemUid: 'old-history', recordOwnerUserId: '9223372036854775806' } })
+    row.dataset.arkmeMessageOwnerId = '0'
+    expect(arkmeConversationViewport(body).messageAnchor).toBeUndefined()
+  })
+
   it('keeps the latest edge fixed in the commit that slides the message window', () => {
     render(); scroll(maximum())
     const schedule = vi.spyOn(window, 'requestAnimationFrame')

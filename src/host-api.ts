@@ -1077,6 +1077,8 @@ export async function dispatchArkmeHostOperation(
     }
     case 'provider.instance': return { instanceId: ARKME_RUNTIME_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
+    case 'chat.sync.status': return await service.messageSyncStatus(requestSignal)
+    case 'chat.sync.retry': return await service.retryMessageSync(requestSignal)
     case 'chat.realtime.state': return service.chatRealtimeState()
     case 'link.metadata': return await resolveArkmeLinkMetadata(
       service, stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
