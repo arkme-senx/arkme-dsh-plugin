@@ -8,17 +8,17 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const workflow = (name: string) => readFile(path.join(repositoryRoot, '.github', 'workflows', name), 'utf8')
 
 describe('Arkme runtime publish workflow boundaries', () => {
-  it('covers all four shards without cancelling siblings and keeps tests away from publishing secrets', async () => {
+  it('covers all eight shards without cancelling siblings and keeps tests away from publishing secrets', async () => {
     const definition = parse(await workflow('test-shards.yml'))
     const job = definition.jobs.test
-    expect(job.strategy).toMatchObject({ 'fail-fast': false, 'max-parallel': 4, matrix: { shard: [1, 2, 3, 4] } })
+    expect(job.strategy).toMatchObject({ 'fail-fast': false, 'max-parallel': 8, matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8] } })
     expect(definition.permissions).toEqual({ contents: 'read' })
     expect(job.if).toBe('inputs.enabled')
     const checkout = job.steps.find((step: any) => step.uses === 'actions/checkout@v4')
     expect(checkout.with.ref).toBe('${{ inputs.ref }}')
     expect(checkout.with['persist-credentials']).toBe(false)
     const test = job.steps.find((step: any) => step.name === '执行全量测试分片')
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/4 --maxWorkers=4')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/8 --maxWorkers=4')
     expect(test.run).not.toMatch(/continue-on-error|passWithNoTests/)
     expect(JSON.stringify(job)).not.toContain('secrets.')
     const report = job.steps.find((step: any) => step.uses === 'actions/upload-artifact@v4')
