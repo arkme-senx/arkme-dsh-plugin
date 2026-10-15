@@ -464,6 +464,7 @@ it('waits for paged locate, ignores replaced entity scopes, and permits retry af
   await act(async () => { (host.querySelector('.arkme-entity-occurrence') as HTMLButtonElement).click(); await tick() })
   expect(onClose).not.toHaveBeenCalled()
   expect((host.querySelector('.arkme-entity-occurrence') as HTMLButtonElement).disabled).toBe(true)
+  mocks.call.mockResolvedValue({version:'v2',offset:0,total:1,hasMore:false,items:[occurrence]})
   await act(async () => { render(day({version:'v2'})); await tick() })
   await act(async () => { resolve(true); await tick() })
   expect(onClose).not.toHaveBeenCalled()
