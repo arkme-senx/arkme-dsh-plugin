@@ -9824,7 +9824,8 @@ describe('conversation send directory projection', () => {
       if (outcome === 'synced') sent.resolve({sourceRef:target.sourceRef,itemUid:'record-new',status:1,sequence:9,localState:'synced'})
       else sent.reject(new Error('send failed'))
     })
-    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'synced' ? 1 : 0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    if (outcome === 'rejected') expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认')
     if (outcome === 'synced') {
       await act(async () => { arkmeInterwovenInvalidation.invalidate(target.sourceKey!) })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
