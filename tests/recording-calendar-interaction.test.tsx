@@ -8,6 +8,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 }))
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
+import { ArkmeRecordingFiles } from '../src/client/recordings/ArkmeRecordingFiles.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import type { ArkmeRecordingDailyMetrics, ArkmeRecordingDay } from '../src/types.js'
 
@@ -47,6 +48,87 @@ describe('recording calendar selection', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     vi.useRealTimers()
+  })
+
+  it.each(['import-dialog', 'day-files'] as const)('replaces the calendar duration after a %s mutation and shows progress until the read settles', async source => {
+    const dayStamp = new Date(2026, 8, 4).getTime()
+    const calendar = (durationMillis: number) => ({ fromStamp: 0, toStamp: 1,
+      days: [{ dateStamp: dayStamp, durationMillis, hasRecording: durationMillis > 0, unreviewedCount: 0 }] })
+    let calendarReads = 0, resolveCalendar!: (value: ReturnType<typeof calendar>) => void
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') {
+        if (++calendarReads === 1) return calendar(7200000)
+        return await new Promise(resolve => { resolveCalendar = resolve })
+      }
+      if (operation === 'recordings.day') return recordingDay(params.dateStamp, '当前内容')
+      return { options: [] }
+    })
+    const element = (revision: number) => <ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={revision} />
+    await act(async () => { renderer = create(element(0)) })
+    const selectedCell = () => renderer.root.findByProps({ 'aria-label': '9月4日' })
+    const cellText = () => selectedCell().findAllByType('span').flatMap(node => node.children).filter(child => typeof child === 'string').join('')
+    expect(cellText()).toContain('2.0h')
+    const refresh = async (revision: number) => {
+      if (source === 'import-dialog') await act(async () => { renderer.update(element(revision)) })
+      else {
+        await act(async () => {
+          renderer.root.findAll(node => node.type === 'button' && node.children.includes('音频文件'))[0]!.props.onClick()
+        })
+        await act(async () => { renderer.root.findByType(ArkmeRecordingFiles).props.onChanged() })
+      }
+    }
+    await refresh(1)
+    expect(cellText()).toContain('更新中')
+    expect(cellText()).not.toContain('2.0h')
+    await act(async () => { resolveCalendar(calendar(3600000)) })
+    expect(cellText()).toContain('1.0h')
+    expect(cellText()).not.toContain('更新中')
+    await refresh(2)
+    await act(async () => { resolveCalendar(calendar(0)) })
+    expect(cellText()).not.toContain('1.0h')
+    expect(cellText()).not.toContain('更新中')
+    expect(selectedCell().props['aria-pressed']).toBe(true)
+  })
+
+  it('discards a late calendar result from before deletion', async () => {
+    const dayStamp = new Date(2026, 8, 4).getTime()
+    let resolveOld!: (value: unknown) => void, reads = 0
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') {
+        if (++reads === 1) return await new Promise(resolve => { resolveOld = resolve })
+        return { days: [] }
+      }
+      if (operation === 'recordings.day') return recordingDay(params.dateStamp, '新内容')
+      return { options: [] }
+    })
+    const element = (revision: number) => <ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={revision} />
+    await act(async () => { renderer = create(element(0)) })
+    await act(async () => { renderer.update(element(1)) })
+    await act(async () => { resolveOld({ days: [{ dateStamp: dayStamp, durationMillis: 7200000, hasRecording: true, unreviewedCount: 1 }] }) })
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('2.0h')
+    expect(renderer.root.findAllByProps({ 'aria-label': '新录音' })).toHaveLength(0)
+  })
+
+  it('offers a retry when refreshed calendar data fails instead of retaining the deleted duration', async () => {
+    const dayStamp = new Date(2026, 8, 4).getTime()
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') {
+        reads++
+        if (reads === 1) return { days: [{ dateStamp: dayStamp, durationMillis: 7200000, hasRecording: true, unreviewedCount: 0 }] }
+        if (reads === 2) throw new Error('网络异常')
+        return { days: [] }
+      }
+      if (operation === 'recordings.day') return recordingDay(params.dateStamp, '当前内容')
+      return { options: [] }
+    })
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+    await act(async () => { renderer.update(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={1} />) })
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('2.0h')
+    expect(JSON.stringify(renderer.toJSON())).toContain('录音日历更新失败')
+    await act(async () => { renderer.root.findAll(node => node.type === 'button' && node.children.includes('重试更新日历'))[0]!.props.onClick() })
+    expect(reads).toBe(3)
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('录音日历更新失败')
   })
 
   it('keeps the browsed month distinct from the selected date and import date', async () => {
@@ -99,11 +181,11 @@ describe('recording calendar selection', () => {
       return day
     })
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
-    expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 暂不可用')
+    expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 统计中')
     await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     if (scenario === 'transcript-finishes') {
       expect(JSON.stringify(renderer.toJSON())).toContain('已完成文本')
-      expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 暂不可用')
+      expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 统计中')
       await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     }
     expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 6秒')
@@ -231,7 +313,8 @@ describe('recording calendar selection', () => {
         expect(node.props.style.border).toBe(0)
         if (!node.props['aria-pressed']) expect(node.props.style.background).toBe('transparent')
       }
-      expect(date(day).props.style.background).toBe(arkmeTheme.layer2)
+      expect(date(day).props.style.background).toBe(arkmeTheme.primaryAction)
+      expect(date(day).props.style.color).toBe(arkmeTheme.onPrimaryAction)
       expect(date(day).props.disabled).toBe(false)
       expect(date(5).props.disabled).toBe(true)
     }

@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingSpeakerOption, ArkmeRecordingWorkbenchItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.cached-options' ? Promise.resolve(null) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args), ArkmeClientError: class extends Error {} }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.correction.context' ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? Promise.resolve(null) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args), ArkmeClientError: class extends Error {} }))
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
 import { recordingSpeakerOptions, recordingSpeakerItemContexts } from '../src/client/recordings/recording-speaker-options-store.js'
@@ -38,7 +38,7 @@ describe('speaker cache interaction and lifecycle', () => {
     const row = renderer.root.findAll(node => node.type === 'button' && node.findAll(child => child.type === 'span' && child.children.includes('同名')).length > 0)[1]!
     await act(async () => { row.props.onClick(); await tick() })
   }
-  const confirm = () => renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+  const confirm = () => renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
   beforeEach(() => {
     mocks.recommendation.mockReset().mockResolvedValue({})
     recordingSpeakerOptions.reset()
@@ -202,17 +202,18 @@ describe('speaker cache interaction and lifecycle', () => {
   })
 
   it.each([
-    { force: false, batch: false, scope: 'item' },
-    { force: false, batch: true, scope: 'speaker' },
-    { force: true, batch: false, scope: 'speaker' },
+    { initialBatch: false, choice: undefined, scope: 'item' },
+    { initialBatch: false, choice: '当天同组 3 处', scope: 'speaker' },
+    { initialBatch: true, choice: undefined, scope: 'speaker' },
+    { initialBatch: true, choice: '仅此片段', scope: 'item' },
   ])('submits the intended assignment scope: %j', async scenario => {
     await act(async () => {
-      renderer = create(<ArkmeRecordingSpeakerEditor item={{ ...item, sameSpeakerItemCount: 3 }} forceBatchUpdate={scenario.force} onUpdated={onUpdated} onClose={onClose} />)
+      renderer = create(<ArkmeRecordingSpeakerEditor item={{ ...item, sameSpeakerItemCount: 3 }} initialBatchUpdate={scenario.initialBatch} onUpdated={onUpdated} onClose={onClose} />)
       await tick()
     })
     await chooseUser()
-    if (scenario.batch) await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '批量修改' }).props.onChange({ target: { checked: true } })
+    if (scenario.choice) await act(async () => {
+      renderer.root.findAllByType('button').find(button => button.children.join('') === scenario.choice)!.props.onClick()
       await tick()
     })
     mocks.callArkme.mockImplementation(async operation => operation === 'recordings.speaker.assign-item' ? { day: { dateStamp: 1 } } : options)
@@ -220,6 +221,37 @@ describe('speaker cache interaction and lifecycle', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('recordings.speaker.assign-item', {
       itemRef: item.itemRef, scope: scenario.scope, speakerRef: 'user-ref',
     }, expect.any(AbortSignal))
+  })
+
+  it('auditions the selected recording without assigning or closing the editor', async () => {
+    const onPlay = vi.fn()
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSpeakerEditor item={item} onUpdated={onUpdated} onClose={onClose} onPlay={onPlay} />)
+      await tick()
+    })
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('试听这段'))!.props.onClick(); await tick() })
+    expect(onPlay).toHaveBeenCalledExactlyOnceWith(item)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.speaker.assign-item')).toHaveLength(0)
+  })
+
+  it('freezes scope and person selection while a save is pending, retaining them on failure', async () => {
+    await open({ ...item, sameSpeakerItemCount: 3 })
+    await chooseUser()
+    const write = deferred<unknown>()
+    mocks.callArkme.mockImplementation(operation => operation === 'recordings.speaker.assign-item' ? write.promise : Promise.resolve(options))
+    await act(async () => { confirm().props.onClick(); await tick() })
+    const scope = () => renderer.root.findAllByType('button').find(button => button.children.join('') === '当天同组 3 处')!
+    expect(scope().props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ 'aria-label': '说话人名称' }).props.disabled).toBe(true)
+    const candidate = renderer.root.findByProps({ 'data-speaker-option-key': 'voiceprint' })
+    expect(candidate.props.disabled).toBe(true)
+    await act(async () => { scope().props.onClick(); candidate.props.onClick(); write.reject(new Error('保存失败')); await tick() })
+    expect(scope().props['aria-pressed']).toBe(false)
+    expect(renderer.root.findByProps({ 'data-speaker-option-key': 'user' }).props['aria-pressed']).toBe(true)
+    expect(scope().props.disabled).toBe(false)
+    expect(onUpdated).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it.each([{ initialOptions: [] }, { initialOptions: options }])('allows a trimmed new name with $initialOptions candidates without mixing references', async ({ initialOptions }) => {

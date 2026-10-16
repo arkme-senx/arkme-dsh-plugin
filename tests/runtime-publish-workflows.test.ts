@@ -8,9 +8,27 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const workflow = (name: string) => readFile(path.join(repositoryRoot, '.github', 'workflows', name), 'utf8')
 
 describe('Arkme runtime publish workflow boundaries', () => {
+  it('covers all eight shards without cancelling siblings and keeps tests away from publishing secrets', async () => {
+    const definition = parse(await workflow('test-shards.yml'))
+    const job = definition.jobs.test
+    expect(job.strategy).toMatchObject({ 'fail-fast': false, 'max-parallel': 8, matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8] } })
+    expect(definition.permissions).toEqual({ contents: 'read' })
+    expect(job.if).toBe('inputs.enabled')
+    const checkout = job.steps.find((step: any) => step.uses === 'actions/checkout@v4')
+    expect(checkout.with.ref).toBe('${{ inputs.ref }}')
+    expect(checkout.with['persist-credentials']).toBe(false)
+    const test = job.steps.find((step: any) => step.name === '执行全量测试分片')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/8 --maxWorkers=4')
+    expect(test.run).not.toMatch(/continue-on-error|passWithNoTests/)
+    expect(JSON.stringify(job)).not.toContain('secrets.')
+    const report = job.steps.find((step: any) => step.uses === 'actions/upload-artifact@v4')
+    expect(report.if).toBe('${{ !cancelled() }}')
+    expect(report.with['if-no-files-found']).toBe('error')
+  })
+
   it.each(['publish-pre-release-runtime.yml', 'publish-production-runtime.yml'])('passes the optional persisted range from the publishing Environment in %s', async file => {
     const definition = parse(await workflow(file))
-    const steps = Object.values(definition.jobs).flatMap((job: any) => job.steps)
+    const steps = Object.values(definition.jobs).flatMap((job: any) => job.steps ?? [])
     const publish = steps.find((step: any) => step.run === 'node scripts/publish-runtime-artifact.mjs')
     expect(publish?.env.ARKME_HARNESS_VERSION_CODE_RANGE).toBe('${{ vars.ARKME_HARNESS_VERSION_CODE_RANGE }}')
   })
@@ -45,10 +63,11 @@ describe('Arkme runtime publish workflow boundaries', () => {
       const steps = definition.jobs.prepare.steps
       const version = steps.findIndex((step: { run?: string }) => step.run?.includes('node scripts/prepare-plugin-release.mjs'))
       const install = steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm install'))
-      const tests = steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm test'))
       expect(version).toBeGreaterThan(-1)
       expect(install).toBeGreaterThan(version)
-      expect(tests).toBeGreaterThan(install)
+      expect(definition.jobs.prepare.needs).toBe('tests')
+      expect(definition.jobs.tests.with.ref).toBe('${{ github.sha }}')
+      expect(steps.some((step: { run?: string }) => step.run?.includes('pnpm test'))).toBe(false)
     },
   )
 
@@ -57,17 +76,20 @@ describe('Arkme runtime publish workflow boundaries', () => {
     ['publish-pre-release-runtime.yml', 'build-runtime', 'true'],
   ])('keeps the independent Runtime test switch in %s', async (file, jobName, defaultValue) => {
     const definition = parse(await workflow(file))
-    expect(definition.env.RUN_TESTS).toBe(defaultValue)
-    const tests = definition.jobs[jobName].steps.filter((step: { run?: string }) => step.run === 'pnpm test')
-    expect(tests).toHaveLength(1)
-    expect(tests[0].if).toBe("env.RUN_TESTS == 'true'")
+    expect(definition.jobs.tests.with.enabled).toBe(defaultValue === 'true')
+    expect(definition.jobs.tests.uses).toBe('./.github/workflows/test-shards.yml')
+    expect(definition.jobs[jobName].needs).toBe('tests')
+    expect(definition.jobs[jobName].if).toBe("${{ !cancelled() && (needs.tests.result == 'success' || needs.tests.result == 'skipped') }}")
   })
 
   it('runs tests while preparing the release but not while publishing npm', async () => {
     const release = await workflow('publish-plugin-release.yml')
 
-    expect(release.match(/pnpm test/g)).toHaveLength(1)
-    expect(release.indexOf('pnpm test')).toBeLessThan(release.indexOf('  publish:'))
+    const definition = parse(release)
+    expect(definition.jobs.tests.uses).toBe('./.github/workflows/test-shards.yml')
+    expect(definition.jobs.prepare.needs).toBe('tests')
+    expect(definition.jobs.publish.needs).toBe('prepare')
+    expect(release).not.toContain('pnpm test')
   })
 
   it('starts npm publishing and production runtime dispatch independently after prepare', async () => {
@@ -109,7 +131,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(validation).toBeGreaterThan(0)
     expect(exactCheckout).toBeGreaterThan(validation)
     expect(publish).toBeGreaterThan(exactCheckout)
-    expect(production).toContain('pnpm test')
+    expect(parse(production).jobs.tests.uses).toBe('./.github/workflows/test-shards.yml')
     expect(production).toContain('pnpm run typecheck')
     expect(production).toContain('pnpm run build')
     expect(production).toContain('pnpm run pack:runtime')
@@ -148,7 +170,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(preRelease).toContain('ref: ${{ github.sha }}')
     expect(preRelease).toContain('persist-credentials: false')
     expect(preRelease).toContain('node scripts/prepare-runtime-version.mjs --run-number "$GITHUB_RUN_NUMBER"')
-    expect(preRelease).toContain('pnpm test')
+    expect(parse(preRelease).jobs['build-runtime'].needs).toBe('tests')
     expect(preRelease).toContain('pnpm run typecheck')
     expect(preRelease).toContain('pnpm run build')
     expect(preRelease).toContain('pnpm run pack:runtime')
@@ -162,9 +184,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(preRelease).not.toContain('npm publish')
     expect(preRelease).not.toContain('request-arkme-build.sh')
     expect(preRelease).not.toContain('/arkme-plugin/build')
-    expect(preRelease.indexOf('pnpm test')).toBeLessThan(
-      preRelease.indexOf('node scripts/prepare-runtime-version.mjs'),
-    )
+    expect(parse(preRelease).jobs.tests.with.ref).toBe('${{ github.sha }}')
     expect(preRelease.indexOf('node scripts/prepare-runtime-version.mjs')).toBeLessThan(
       preRelease.indexOf('pnpm run build'),
     )

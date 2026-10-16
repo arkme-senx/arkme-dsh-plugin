@@ -11,6 +11,9 @@ import type {
 import { isRecordingInstantOnOrAfterUnixEpoch } from './recording-time.js'
 
 export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTranscriptItem {
+  speakerRevision?: string
+  soundSource?: import('./types.js').ArkmeRecordingSoundSource
+  containsPlayback?: boolean
   childAsrItemStartAt: number
   childAsrItemEndAt: number
   formalSpeakerId: string
@@ -49,21 +52,23 @@ export function buildRecordingGenerationTranscript(
   items: readonly ArkmeRecordingPrivateTranscriptItem[],
   kind: 'summary' | 'timeline',
   dayStartMillis: number,
+  timeZone?: string,
 ): string {
   const available = items
     .filter(item => item.text.trim() !== '' && item.endAtMillis > item.startAtMillis)
     .toSorted((left, right) => left.startAtMillis - right.startAtMillis || left.endAtMillis - right.endAtMillis)
   let selfSpeakerLabel = ''
   const sections = available.map(item => {
-    if (item.isSelf) selfSpeakerLabel = item.speakerLabel
+    if (item.isSelf && item.soundSource !== 'playback' && !item.containsPlayback) selfSpeakerLabel = item.speakerLabel
     const startSeconds = Math.round((item.startAtMillis - dayStartMillis) / 1_000)
     const endSeconds = Math.round((item.endAtMillis - dayStartMillis) / 1_000)
     const event = item.event?.trim() ?? ''
     const text = item.generationText?.trim() || item.text
     return [
       `说话人：${item.speakerLabel}`,
+      ...(item.soundSource === 'playback' ? ['[声音来源：播放内容；不能据此认定该人物在现场发言或表达观点]'] : item.containsPlayback ? ['[本片段部分声音来自播放内容；不能把整段归为现场人物发言]'] : []),
       ...(item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
-      `[${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
+      `[${timeZone ? new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(item.startAtMillis) : `${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)}`} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
       text,
     ].join('\n')
   })
@@ -354,9 +359,10 @@ export function projectRecordingTranscripts(
         || (itemAssignedSpeakerId === '' && stringValue(row.q_unassigned_spk_id).trim() === sessionSpeakerId && sessionSpeakerId !== '' && !hasEffectiveIdentity)
       const formalSpeakerId = explicitlyUnassigned ? '' : hasEffectiveIdentity ? effectiveSpeakerId : itemAssignedSpeakerId || sessionSpeakerId
       const innerDisplay = stringValue(assignmentSessionSpeaker.inner_display).trim()
+      const partitionId = stringValue(row.speaker_partition_id).trim()
       const speakerIdentity = formalSpeakerId !== ''
         ? `speaker:${formalSpeakerId}`
-        : innerDisplay !== ''
+        : partitionId !== '' ? `partition:${partitionId}` : innerDisplay !== ''
           ? `inner:${innerDisplay}`
           : `session:${sessionId}:${String(assignmentSpeakerNumber)}`
       const formalSpeaker = speakers.get(formalSpeakerId) ?? {}
@@ -366,11 +372,12 @@ export function projectRecordingTranscripts(
       const profile = speakerUserId === undefined ? undefined : profilesByUserId.get(speakerUserId)
       const isSelf = speakerUserId !== undefined && speakerUserId === options.viewerUserId
       const persistentSpeakerNumber = optionalNumberValue(
-        assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
+        (partitionId !== '' && formalSpeakerId === '' ? row.speaker_display_number : undefined)
+          ?? assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
       )
       const speakerNumber = persistentSpeakerNumber !== undefined && persistentSpeakerNumber > 0
         ? persistentSpeakerNumber
-        : assignmentSpeakerNumber
+        : partitionId !== '' && formalSpeakerId === '' ? -1 : assignmentSpeakerNumber
       const speakerColorIndex = speakerColorIndexes.get(speakerIdentity)
         ?? sessionSpeakerColorIndexes.get(`${sessionId}:${String(assignmentSpeakerNumber)}`)
         ?? Math.max(0, assignmentSpeakerNumber)
@@ -398,7 +405,10 @@ export function projectRecordingTranscripts(
         transcriptSource,
         childAsrItemStartAt: startOffset,
         childAsrItemEndAt: endOffset,
+        ...(stringValue(row.speaker_revision) ? { speakerRevision: stringValue(row.speaker_revision) } : {}),
         formalSpeakerId,
+        ...(['unknown', 'in_person', 'playback'].includes(String(row.sound_source)) ? { soundSource: row.sound_source as 'unknown' | 'in_person' | 'playback' } : {}),
+        ...(row.contains_playback === true ? { containsPlayback: true } : {}),
         sourceSpeakerNumber,
         assignmentSpeakerNumber,
         speakerIdentity,
@@ -692,7 +702,7 @@ export function projectRecordingVersions(
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),
       content,
       timelineEvents,
-      error: stringValue(version.error ?? version.error_message).trim(),
+      error: stringValue(version.llm_error).trim() || stringValue(version.error).trim() || stringValue(version.error_message).trim(),
       sourceIndex,
     })
     sourceIndex += 1

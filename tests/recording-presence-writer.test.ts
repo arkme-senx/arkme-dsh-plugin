@@ -146,16 +146,16 @@ describe('durable recording presence writer', () => {
   })
   it('uses the server heartbeat interval above and below ten seconds', async () => {
     const slow = await setup(async () => ({ heartbeat_interval_ms: 20000 }))
-    await slow.writer.report(scope, start); await slow.wait(1); await new Promise(resolve => setTimeout(resolve, 5))
-    expect((slow.writer as any).timer._idleTimeout).toBe(20000)
+    await slow.writer.report(scope, start); await slow.wait(1)
+    await vi.waitFor(() => expect((slow.writer as any).timer?._idleTimeout).toBe(20000))
     slow.setNow(startedAt + 11000); await slow.writer.report(scope, update(12000))
     expect(slow.post).toHaveBeenCalledTimes(1)
     slow.setNow(startedAt + 21000); await slow.writer.report(scope, update(22000)); await slow.wait(2)
     expect(slow.post.mock.calls[1]![1]).toMatchObject({ seq: 2, elapsed_ms: 22000 })
 
     const fast = await setup(async () => ({ heartbeat_interval_ms: 5000 }))
-    await fast.writer.report(scope, start); await fast.wait(1); await new Promise(resolve => setTimeout(resolve, 5))
-    expect((fast.writer as any).timer._idleTimeout).toBe(5000)
+    await fast.writer.report(scope, start); await fast.wait(1)
+    await vi.waitFor(() => expect((fast.writer as any).timer?._idleTimeout).toBe(5000))
     fast.setNow(startedAt + 6000); await fast.writer.report(scope, update(7000)); await fast.wait(2)
     expect(fast.post.mock.calls[1]![1]).toMatchObject({ seq: 2, elapsed_ms: 7000 })
   })
@@ -167,7 +167,10 @@ describe('durable recording presence writer', () => {
     expect(reason).toBe('😀'.repeat(32))
   })
   it('catches timer persistence failure and retries on the next tick', async () => {
-    const h = await setup(); await h.writer.report(scope, start); await h.wait(1); await new Promise(resolve => setTimeout(resolve, 5))
+    const h = await setup(); await h.writer.report(scope, start); await h.wait(1)
+    // The HTTP call precedes its durable settlement. Inject failure only after
+    // that write finishes, so a slow disk cannot consume the next-tick fault.
+    await vi.waitFor(() => expect((h.writer as any).sending).toBe(false))
     h.setNow(startedAt + 11000)
     const save = vi.spyOn(h.writer as any, 'save').mockRejectedValueOnce(new Error('disk full'))
     ;(h.writer as any).schedule(1)

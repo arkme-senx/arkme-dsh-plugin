@@ -33,7 +33,8 @@ export class ReactionService {
     private readonly resolve: (target: ReactionTargetRef) => Promise<ReactionWireTarget>,
     private readonly worldReference?: (recordUID: string) => Promise<string>,
  private readonly chatSourceKey?: (viewer: number, sessionUID: string) => Promise<string>,
- private readonly historyContext?: (items: { sessionUID: string; senderID: number; sourceKind: string; message?: { recordUID: string; ownerUserID: number; sendAtMillis: number } }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionHistoryContext[]>) {}
+ private readonly historyContext?: (items: { sessionUID: string; senderID: number; sourceKind: string; message?: { recordUID: string; ownerUserID: number; sendAtMillis: number } }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionHistoryContext[]>,
+ private readonly notificationContext?: (items: { sessionUID: string; actorUserId: number }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionNotificationContext[]>) {}
   async request(input: ReactionRequest, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession()
     const accountKey = `${this.runtime.config.environment}:${session.userId}`
@@ -45,7 +46,7 @@ export class ReactionService {
       return await measureReaction('target-resolve', {}, () => this.resolve(target))
     }
     switch (input.action) {
-      case 'notifications': path = 'notifications/query'; body = { after_id: input.after_id ?? '', limit: input.limit }; break
+      case 'notifications': path = 'notifications/query'; body = { after_id: input.after_id ?? '', limit: input.limit, ...(input.include_read === undefined ? {} : { include_read: boolean(input.include_read) }) }; break
       case 'notifications-read':
         if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) return invalid()
         path = 'notifications/read'; body = { items: input.items.map(item => ({ id: key(item.id), revision: integer(item.revision, 1) })) }; break
@@ -81,7 +82,8 @@ export class ReactionService {
     }
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal)))
+    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal,
+      input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     if (input.action === 'query') {
@@ -98,16 +100,20 @@ export class ReactionService {
     if (input.action === 'notifications-read') return { ok: boolean(result.ok) }
     if (input.action === 'notifications') {
       if (!this.chatSourceKey) return invalid()
-      const items = await Promise.all(array(result.items, 50).map(async raw => {
-        const item = objectValue(raw), target = objectValue(item.target)
+      const rows = array(result.items, 50).map(objectValue)
+      const items = await Promise.all(rows.map(async item => {
+        const target = objectValue(item.target)
         if (typeof target.chat_session_uid !== 'string' || !target.chat_session_uid || typeof item.record_uid !== 'string' || !item.record_uid) return invalid()
-        return { id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1),
+        return { ...(input.include_read ? { unread: boolean(item.unread) } : {}), id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1),
           sourceKey: await this.chatSourceKey!(session.userId, target.chat_session_uid), itemUid: item.record_uid,
           recordOwnerUserId: integer(item.record_owner_user_id, 1), sendAtMillis: integer(item.attach_at), text: typeof item.text === 'string' ? item.text.slice(0, 320) : '',
           selections: array(item.selections, 56).map(raw => { const selected = objectValue(raw); return { key: key(selected.key), expression: expression(selected.expression), at: integer(selected.at) } }) }
       }))
+      const contexts = items.length && this.notificationContext ? await this.notificationContext(rows.map((row, index) => ({
+        sessionUID: String(objectValue(row.target).chat_session_uid), actorUserId: items[index]!.actorUserId,
+      })), signal) : []
       if (signal?.aborted || `${this.runtime.config.environment}:${(await this.runtime.requireSession()).userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-      return { items, after_id: result.after_id === '' ? '' : key(result.after_id), has_more: boolean(result.has_more) }
+      return { items: items.map((item, index) => ({ ...item, ...contexts[index] })), after_id: result.after_id === '' ? '' : key(result.after_id), has_more: boolean(result.has_more) }
     }
     if (input.action === 'library-query') return library(result)
     if (input.action === 'history-policy-query') return { revision: integer(result.revision), locked: boolean(result.locked) }

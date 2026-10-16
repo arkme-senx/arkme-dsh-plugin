@@ -7,7 +7,7 @@ import {
   RelatedQuickNoteService,
   type ArkmeRelatedQuickNoteSourceLocator,
 } from '../../src/services/related-quick-note-service.js'
-import type { ServiceRuntime } from '../../src/services/service.js'
+import { ArkmePluginError, type ServiceRuntime } from '../../src/services/service.js'
 
 const locator: ArkmeRelatedQuickNoteSourceLocator = {
   viewerUserId: 42,
@@ -31,7 +31,7 @@ function fixture(options: {
     refreshToken: 'refresh',
   }
   const authenticatedPost = vi.fn(async (path: string) => {
-    if (path === '/api/v1/records/related/query') return options.relatedResponse
+    if (path === '/api/v1/records/related/query') return { recall_mode: 'embedding', retryable: false, ...options.relatedResponse }
     if (path === '/api/v1/records/detail') return options.detail ?? {}
     throw new Error(`unexpected record route: ${path}`)
   })
@@ -86,6 +86,50 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
+  it('retains healthy profiles arriving after 500ms', async () => {
+    vi.useFakeTimers()
+    try {
+      const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+      vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(() => new Promise(resolve => {
+        setTimeout(() => resolve(new Map([[13, { userId: 13, displayName: 'B 用户', nickname: 'B 用户', avatarUrl: 'https://image.test/b.png' }]])), 800)
+      }))
+      let completed = false
+      const pending = test.service.list(locator).then(result => { completed = true; return result })
+      await vi.advanceTimersByTimeAsync(501)
+      expect(completed).toBe(false)
+      await vi.advanceTimersByTimeAsync(300)
+      expect((await pending).items[0]).toMatchObject({ textPreview: 'readable', senderName: 'B 用户', senderAvatarRef: 'opaque-avatar-13' })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('uses the existing fallback when the profile service fails', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+    vi.mocked(test.profile.publicProfileSummariesByUserIds).mockRejectedValue(new Error('profile timeout'))
+    expect((await test.service.list(locator)).items[0]).toMatchObject({textPreview: 'readable', senderName: 'Arkme 用户'})
+  })
+
+  it('does not deliver a list after the subscriber cancels optional profiles', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'readable' }] } })
+    const controller = new AbortController()
+    vi.mocked(test.profile.publicProfileSummariesByUserIds).mockImplementation(async () => {
+      controller.abort(new DOMException('left page', 'AbortError'))
+      return new Promise(() => {})
+    })
+    await expect(test.service.list(locator, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it.each([50001, 40001, 40004])('classifies record business code %i without HTTP-status heuristics', async (code) => {
+    const test = fixture({ relatedResponse: {} })
+    test.authenticatedPost.mockRejectedValueOnce(new ArkmePluginError(`arkme-code-${code}`, 'backend', true, 502))
+    await expect(test.service.list(locator)).rejects.toMatchObject({ code: `arkme-code-${code}`, retryable: code === 50001 })
+  })
+
+  it('does not turn a failed required hydration into a definitive empty result', async () => {
+    const test = fixture({ relatedResponse: { items: [{ record_uid: 'missing-details' }] }, batchItems: [] })
+    await expect(test.service.list(locator)).rejects.toMatchObject({ code: 'related-invalid-response', retryable: false })
+  })
+
   it('keeps a synthetic record owner distinct from a human profile identity', async () => {
     const owner = '6690025278483443577'
     const test = fixture({
@@ -109,6 +153,20 @@ describe('RelatedQuickNoteService', () => {
     expect(result.items[0]?.textPreview).toBe('文'.repeat(1995))
   })
 
+  it('keeps identical UIDs isolated by owner, including the source and viewer privacy snapshot', async () => {
+    const test = fixture({ lockedRecordUids: ['same'], relatedResponse: { items: [
+      { record_uid: 'record-source', record_owner_user_id: 12, text_preview: 'source' },
+      { record_uid: 'record-source', record_owner_user_id: 13, text_preview: 'other source owner' },
+      { record_uid: 'same', record_owner_user_id: 42, text_preview: 'viewer locked' },
+      { record_uid: 'same', record_owner_user_id: 13, text_preview: 'owner 13' },
+      { record_uid: 'same', record_owner_user_id: 14, text_preview: 'owner 14' },
+      { record_uid: 'same', record_owner_user_id: 14, text_preview: 'duplicate' },
+    ] } })
+    const result = await test.service.list(locator)
+    expect(result.items.map(item => item.textPreview)).toEqual(['other source owner', 'owner 13', 'owner 14'])
+    expect(new Set(result.items.map(item => item.relatedRef)).size).toBe(3)
+  })
+
   it('projects the new response in source order without leaking routing fields', async () => {
     const test = fixture({
       lockedRecordUids: ['record-locked'],
@@ -126,7 +184,7 @@ describe('RelatedQuickNoteService', () => {
           },
           { record_uid: 'record-b', record_owner_user_id: 13, text_preview: 'duplicate' },
           { record_uid: 'record-private', record_owner_user_id: 15, content_access_state: 2 },
-          { record_uid: 'record-locked', record_owner_user_id: 16, text_preview: 'locked' },
+          { record_uid: 'record-locked', record_owner_user_id: 42, text_preview: 'locked' },
         ],
       },
     })
@@ -144,6 +202,7 @@ describe('RelatedQuickNoteService', () => {
       },
       expect.objectContaining({ userId: 42 }),
       undefined,
+      expect.objectContaining({ lane: 'interactive-read', cacheMs: 0, cancelWhenUnobserved: true }),
     )
     expect(test.authenticatedDataPost).not.toHaveBeenCalled()
     expect(result.items.map(item => item.textPreview)).toEqual(['问题不大', '没什么问题'])

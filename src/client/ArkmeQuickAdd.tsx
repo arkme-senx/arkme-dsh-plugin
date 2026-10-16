@@ -1,9 +1,9 @@
-import { useSocialAccess } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
+import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
@@ -14,6 +14,8 @@ import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { directorySearchLayout } from './directory-search-layout.js'
+import { directRecordingStore } from './recordings/direct-recording-store.js'
+import { arkmeUi } from './ui-controller.js'
 
 
 type QuickAddDialogKind = 'group' | 'call' | 'bot'
@@ -76,7 +78,7 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
 }
 
 export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
-  anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor,
+  anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor, recordingAction,
 }: {
   onContactAdd(): void
   onCreateGroup(): void
@@ -90,8 +92,8 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   getAnchorRect?: () => DOMRect | null
   /** Hover entry point: the trigger and the menu stay one hover target. */
   hoverAnchor?: HTMLElement | undefined
+  recordingAction?: { label: string; disabled: boolean; onSelect(): void } | undefined
 }) {
-  const socialAllowed = useSocialAccess()
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
@@ -100,10 +102,11 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
         onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
-        socialAllowed && { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
-        socialAllowed && { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
+        { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
+        { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
-        socialAllowed && onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
+        onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
+        recordingAction !== undefined && { id: 'recording', ...recordingAction, icon: <Microphone size={16} aria-hidden /> },
         error ? { id: 'error', label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} } : false,
       ]}
     />
@@ -115,6 +118,7 @@ export function ArkmeQuickAddButton({
   onSourceCreated,
   onBotCreated,
   onNewDshSession,
+  recordingAccountKey,
   notificationActivationRevision = 0,
   onBlockingOverlayChange,
 }: {
@@ -122,15 +126,42 @@ export function ArkmeQuickAddButton({
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
   onNewDshSession?: (() => void) | undefined
+  /** Offered by the conversation directory, using its authenticated account scope. */
+  recordingAccountKey?: string | undefined
   notificationActivationRevision?: number
   onBlockingOverlayChange?(open: boolean): void
 }) {
   useArkmeLocale()
-  const socialAllowed = useSocialAccess()
   const [menuMode, setMenuMode] = useState<'hover' | 'pinned'>()
   const menuOpen = menuMode !== undefined
   const closeMenu = () => setMenuMode(undefined)
   const [menuError, setMenuError] = useState('')
+  // Only phase changes affect this menu; microphone levels and elapsed time do not.
+  const recordingPhase = useSyncExternalStore(directRecordingStore.subscribe, () => {
+    const state = directRecordingStore.getSnapshot()
+    return recordingAccountKey && state.accountKey === recordingAccountKey ? state.phase : undefined
+  }, () => undefined)
+  const recordingScope = useRef<{ accountKey: string | undefined; active: boolean }>({ accountKey: recordingAccountKey, active: true })
+  useEffect(() => {
+    const scope = { accountKey: recordingAccountKey, active: true }
+    recordingScope.current = scope
+    return () => { scope.active = false }
+  }, [recordingAccountKey])
+  const startRecording = async () => {
+    const scope = recordingScope.current
+    const state = directRecordingStore.getSnapshot()
+    if (!scope.accountKey || state.accountKey !== scope.accountKey) return
+    if (state.phase === 'recording') { closeMenu(); arkmeUi.showRecordings(); return }
+    if (state.phase !== 'idle') return
+    closeMenu(); setMenuError('')
+    let error = ''
+    try { await directRecordingStore.start(); error = directRecordingStore.getSnapshot().error }
+    catch (reason) { error = reason instanceof Error ? reason.message : tr('录音操作失败，请重试') }
+    // A permission failure must remain visible even though the floating capture controls close.
+    if (error && scope.active && directRecordingStore.getSnapshot().accountKey === scope.accountKey) {
+      setMenuError(error); setMenuMode('pinned')
+    }
+  }
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
@@ -181,9 +212,7 @@ export function ArkmeQuickAddButton({
       open={menuOpen} onClose={closeMenu}
       hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
       anchor={<button data-arkme-feedback="neutral"
-        ref={triggerRef} type="button" aria-label={socialAllowed
-          ? onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'
-          : onNewDshSession ? '新建 DSH 会话或添加 Bot' : '添加 Bot'} title={tr("添加")}
+        ref={triggerRef} type="button" aria-label={`${onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'}${recordingAccountKey ? '、开始录音' : ''}`} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
         // A click pins an already-hovered menu as well as opening a closed one.
         // Removing hoverAnchor also cancels any pending hover-close timer.
@@ -192,6 +221,12 @@ export function ArkmeQuickAddButton({
         onClick={() => { setMenuError(''); setMenuMode('pinned') }}
       ><IconPlusOutline16 size={20} aria-hidden /></button>}
       error={menuError}
+      recordingAction={recordingAccountKey === undefined ? undefined : {
+        label: recordingPhase === 'recording' ? '查看录音' : recordingPhase === 'starting' ? '正在准备录音…'
+          : recordingPhase === 'saving' ? '正在保存录音…' : recordingPhase === 'uploading' ? '正在上传录音…' : '开始录音',
+        disabled: recordingPhase !== 'idle' && recordingPhase !== 'recording',
+        onSelect: () => { void startRecording() },
+      }}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
         try { onNewDshSession(); setMenuError(''); closeMenu() }
         catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }

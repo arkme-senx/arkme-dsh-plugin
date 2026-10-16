@@ -17,6 +17,8 @@ export interface DayActivityQuery {
 }
 
 export interface DayActivityEntry {
+  /** Shared text is distinct from the viewer's physical audio coverage. */
+  sharedRecording?: { detailRef?: string; sourceDigest: string; sourceLabel: string }
   /** Presentation only; image references retain the existing authorized image reader. */
   avatar?: { [Key in 'avatarRef' | 'avatarRefs' | 'groupAvatar']?: ArkmeSourceItem[Key] | undefined }
   previewAuthor?: { name: string; remark?: string }
@@ -168,6 +170,10 @@ export function dayActivityOverview(items: readonly DayActivityEntry[], mode: Da
   const parts = dayActivityFilters.filter(filter => filter.kind !== 'all').flatMap(filter => {
     const matches = available.filter(item => dayActivityMatchesFilter(filter.kind, item.kind))
     if (!matches.length) return []
+    if (filter.kind === 'recording' && matches.some(item => item.sharedRecording)) {
+      const shared = matches.filter(item => item.sharedRecording).length
+      return [...(matches.length > shared ? [`${matches.length - shared} 个本人录音时段`] : []), `${shared} 份共享录音文字`]
+    }
     const count = filter.kind === 'note' ? matches.reduce((total, item) => total + item.recordCount, 0) : matches.length
     const label = filter.kind === 'conversation' ? `${count} ${mode === 'activities' ? '段对话' : '条对话记录'}`
       : filter.kind === 'call' ? `${count} 次通话` : filter.kind === 'recording' ? `${count} 个录音时段` : `${count} 条个人记录`

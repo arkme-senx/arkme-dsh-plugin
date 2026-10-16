@@ -4,9 +4,13 @@ import { callArkme } from './api.js'
 /** Reading messages grants neither conversation activation nor read-ack authority. */
 export interface ConversationTimelineReadPort {
   readPage(sourceRef: string, cursor: ArkmeTimelineCursor | undefined, signal: AbortSignal): Promise<ArkmeTimelinePage>
+  readLocal?(sourceRef: string, signal: AbortSignal): Promise<ArkmeTimelinePage>
 }
 
 export const conversationTimelineReadPort: ConversationTimelineReadPort = {
+  readLocal: async (sourceRef, signal) => await callArkme<ArkmeTimelinePage>('source.timeline', {
+    sourceRef, cursor: { unified: { mode: 'initial', cacheOnly: true } },
+  }, signal),
   readPage: async (sourceRef, cursor, signal) => await callArkme<ArkmeTimelinePage>('source.timeline', {
     sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
   }, signal),

@@ -1,4 +1,10 @@
+import type { ArkmeRecordingWindow } from '../types.js'
+import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
+import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
+import { parseRecordingTotalMetrics } from '../recording-total-metrics.js'
+import type { RecordingTotalsIndexPage } from '../recording-total-metrics.js'
+import { projectRecordingTotalsBucket } from '../recording-total-projection.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
@@ -57,10 +63,15 @@ import type {
   ArkmeRecordingSpeakerMembers,
   ArkmeRecordingSpeakerPresence,
   ArkmeRecordingSpeakerRecommendation,
+  ArkmeRecordingSpeakerCorrectionContext,
+  ArkmeRecordingSpeakerCorrectionInput,
+  ArkmeRecordingSpeakerCorrectionUndoInput,
+  ArkmeRecordingSpeakerCorrectionResult,
+  ArkmeRecordingSpeakerCorrectionResultQuery,
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
-import { projectRecordingCoverage, recordingBelongsToViewer } from '../recording-coverage.js'
+import { projectRecordingCoverage, recordingUploadedByViewer, recordingBelongsToViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
@@ -103,7 +114,9 @@ export interface RecordingServiceDependencies {
 }
 
 interface RecordingItemRefPayload {
+  speakerRevision?: string
   version: 1
+  window?: ArkmeRecordingWindow
   viewerUserId: number
   dateStamp: number
   sessionId: string
@@ -533,6 +546,9 @@ export class RecordingService {
     if (session.userId !== item.viewerUserId) {
       throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
     }
+    // A detached interval has no independent verified embedding yet. Its former
+    // acoustic track cannot supply a recommendation for this new identity.
+    if (item.speakerIdentity.startsWith('partition:')) return {}
     const similar = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/similar-session-speaker',
       { session_id: item.sessionId, num: item.assignmentSpeakerNumber }, session, signal,
@@ -542,6 +558,184 @@ export class RecordingService {
     return { optionKey: this.recordingSpeakerOptionKey(
       await this.recordingRefKey('arkme-recording-speaker-v1'), session.userId, 'speaker', speakerId,
     ) }
+  }
+
+  /** Explicit time selection creates opaque references; no inferred acoustic membership. */
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: ArkmeRecordingWorkbenchItem[] }> {
+    if (!Number.isSafeInteger(query.dateStamp) || !Number.isSafeInteger(query.atMillis) || !['system', 'doubao'].includes(query.transcriptSource)) {
+      throw new ArkmePluginError('recording-correction-invalid', '请提供明确日期、时间和转写来源', false, 400)
+    }
+    const end = new Date(query.dateStamp); end.setDate(end.getDate() + 1)
+    if (query.atMillis < query.dateStamp || query.atMillis >= end.getTime()) throw new ArkmePluginError('recording-correction-invalid', '片段时间不属于所选日期', false, 400)
+    const day = await this.recordingDay(query.dateStamp, signal)
+    const transcript = query.transcriptSource === 'doubao' ? (await this.recordingComparison(query.dateStamp, signal)).doubao : day.transcript
+    if (transcript.state === 'error') throw new ArkmePluginError('recording-correction-read-failed', '附近片段读取失败', true, 502)
+    return { items: transcript.items.filter(item => Math.abs(item.startAtMillis - query.atMillis) <= 600_000).toSorted((a,b) => Math.abs(a.startAtMillis - query.atMillis) - Math.abs(b.startAtMillis - query.atMillis)).slice(0,100).toSorted((a,b) => a.startAtMillis - b.startAtMillis) }
+  }
+
+  /** Proposed v1 owner API. An absent route is explicitly unavailable, never a local-only correction. */
+  async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const item = await this.openRecordingItemRef(itemRef)
+    if (item.viewerUserId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    let raw: Record<string, unknown>
+    try {
+      raw = objectValue(await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-corrections/context',
+        { item: this.correctionLocator(item), date_stamp: item.dateStamp }, session, signal, { bypassCache: true, lane: 'interactive-read' }))
+    } catch (error) {
+      if (error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)) return { supported: false }
+      throw error
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (raw.supported === false) return { supported: false }
+    if (raw.supported !== true || raw.schema_version !== 1 || !stringValue(raw.version).trim()
+      || !Number.isInteger(raw.max_items) || Number(raw.max_items) < 1 || Number(raw.max_items) > 100
+      || !['unknown', 'in_person', 'playback'].includes(String(raw.sound_source)) || !Array.isArray(raw.excluded_speakers)) {
+      throw new ArkmePluginError('recording-correction-contract-invalid', '纠错信息暂不可用，请稍后重试', true, 502)
+    }
+    const key = await this.recordingRefKey('arkme-recording-speaker-v1')
+    const excludedSpeakers = raw.excluded_speakers.map(value => {
+      const person = objectValue(value)
+      if (!stringValue(person.speaker_id).trim() || !stringValue(person.label).trim()) throw new ArkmePluginError('recording-correction-contract-invalid', '纠错人物信息无效', true, 502)
+      return { optionKey: this.recordingSpeakerOptionKey(key, session.userId, 'speaker', stringValue(person.speaker_id)), label: stringValue(person.label) }
+    })
+    const last = objectValue(raw.last_correction)
+    return { supported: true, version: String(raw.version), maxItems: Number(raw.max_items),
+      soundSource: raw.sound_source as 'unknown' | 'in_person' | 'playback', excludedSpeakers,
+      ...(last.can_undo === true && stringValue(last.id) ? { undoRef: await this.sealCorrectionUndo(item, String(last.id)) } : {}) }
+  }
+
+  private correctionLocator(item: RecordingItemRefPayload) {
+    return { session_id: item.sessionId, child_id: item.childId, item_index: item.asrItemIndex,
+      transcript_source: item.transcriptSource, start_at: item.childAsrItemStartAt, end_at: item.childAsrItemEndAt, revision: item.speakerRevision }
+  }
+
+  private async sealCorrectionUndo(item: RecordingItemRefPayload, correctionId: string) {
+    return this.sealRecordingRefWithKey('arkme-recording-correction-v1',
+      { version: 1, viewerUserId: item.viewerUserId, dateStamp: item.dateStamp, childId: item.childId, sessionId: item.sessionId, transcriptSource: item.transcriptSource, itemIndex: item.asrItemIndex, correctionId },
+      await this.recordingRefKey('arkme-recording-correction-v1'))
+  }
+
+  async applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const primary = await this.openRecordingItemRef(input.itemRef)
+    this.assertCorrectionWrite(input.expectedVersion, input.idempotencyKey)
+    if (!Array.isArray(input.itemRefs) || input.itemRefs.length < 1 || input.itemRefs.length > 100
+      || typeof input.detach !== 'boolean' || (input.rejectCurrent !== undefined && typeof input.rejectCurrent !== 'boolean') || (input.soundSource !== undefined && !['unknown', 'in_person', 'playback'].includes(input.soundSource))) {
+      throw new ArkmePluginError('recording-correction-invalid', '请选择有效的纠错范围', false)
+    }
+    const items = await Promise.all(input.itemRefs.map(ref => this.openRecordingItemRef(ref)))
+    const key = (item: RecordingItemRefPayload) => `${item.childId}:${item.asrItemIndex}:${item.transcriptSource}`
+    if (primary.viewerUserId !== session.userId || items.some(item => item.viewerUserId !== session.userId
+      || item.dateStamp !== primary.dateStamp || item.transcriptSource !== primary.transcriptSource
+      || JSON.stringify(item.window) !== JSON.stringify(primary.window))
+      || !items.some(item => key(item) === key(primary)) || new Set(items.map(key)).size !== items.length) {
+      throw new ArkmePluginError('recording-correction-scope-invalid', '纠错范围已变化，请重新选择', false, 409)
+    }
+    // The owner validates current facts after replaying an existing receipt.
+    // Local semantic prechecks would reject a safe retry after a lost response.
+    if (items.some(item => Math.abs(item.startAtMillis - primary.startAtMillis) > 600_000)) {
+      throw new ArkmePluginError('recording-correction-scope-invalid', '纠错范围超出附近片段', false, 409)
+    }
+    let rejectedSpeakerId = input.rejectCurrent ? primary.formalSpeakerId : ''
+    if (input.rejectedSpeakerRef) {
+      if (input.rejectCurrent) throw new ArkmePluginError('recording-correction-invalid', '只能指定一个排除人物', false)
+      const person = await this.openRecordingSpeakerRef(input.rejectedSpeakerRef)
+      if (person.viewerUserId !== session.userId || person.target.kind !== 'speaker') throw new ArkmePluginError('recording-correction-person-invalid', '纠错人物无效', false, 403)
+      rejectedSpeakerId = person.target.speakerId
+    }
+    if ((input.rejectCurrent && !rejectedSpeakerId) || (!rejectedSpeakerId && input.soundSource === undefined && !input.detach)) {
+      throw new ArkmePluginError('recording-correction-empty', '请选择需要纠正的内容', false)
+    }
+    return await this.writeRecordingCorrection('apply', primary, session, {
+      item: this.correctionLocator(primary), items: items.map(item => this.correctionLocator(item)),
+      date_stamp: primary.dateStamp, day_end: primary.window?.endStamp ?? new Date(new Date(primary.dateStamp).setDate(new Date(primary.dateStamp).getDate() + 1)).getTime(), expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey,
+      ...(rejectedSpeakerId ? { rejected_speaker_id: rejectedSpeakerId } : {}),
+      ...(input.soundSource === undefined ? {} : { sound_source: input.soundSource }), detach: input.detach,
+    }, items.length, signal)
+  }
+
+  async undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const primary = await this.openRecordingItemRef(input.itemRef)
+    const undo = await this.openRecordingRef('arkme-recording-correction-v1', input.undoRef)
+    if (primary.viewerUserId !== session.userId || undo.viewerUserId !== session.userId || undo.dateStamp !== primary.dateStamp
+      || undo.sessionId !== primary.sessionId || undo.transcriptSource !== primary.transcriptSource
+      || undo.childId !== primary.childId || undo.itemIndex !== primary.asrItemIndex || !stringValue(undo.correctionId)) {
+      throw new ArkmePluginError('recording-correction-undo-invalid', '撤销记录不属于当前片段', false, 403)
+    }
+    this.assertCorrectionWrite(input.expectedVersion, input.idempotencyKey)
+    return await this.writeRecordingCorrection('undo', primary, session, { item: this.correctionLocator(primary),
+      correction_id: undo.correctionId, expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey }, undefined, signal)
+  }
+
+  private assertCorrectionWrite(version: string, key: string) {
+    if (typeof version !== 'string' || !version.trim()) throw new ArkmePluginError('recording-correction-conflict', '请先读取纠错信息', false, 409)
+    if (typeof key !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(key)) throw new ArkmePluginError('recording-correction-invalid', '纠错请求编号无效', false)
+  }
+
+  private async writeRecordingCorrection(action: 'apply' | 'undo', item: RecordingItemRefPayload, session: ArkmeSessionCredentials,
+    body: Record<string, unknown>, expectedCount: number | undefined, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    await this.invalidateSpeakerCache(session.userId)
+    try {
+      const raw = objectValue(await this.runtime.authenticatedAudioPost(`/api/v1/audio/speaker-corrections/${action}`, body,
+        session, signal, { lane: 'write', bypassCache: true }))
+      if (raw.schema_version !== 1 || raw.state !== (action === 'apply' ? 'applied' : 'undone') || !stringValue(raw.version)
+        || !Number.isInteger(raw.affected_count) || Number(raw.affected_count) < 1 || Number(raw.affected_count) > 100
+        || (expectedCount !== undefined && raw.affected_count !== expectedCount)
+        || (action === 'apply' && !stringValue(raw.correction_id))) {
+        throw new ArkmePluginError('recording-correction-outcome-unknown', '保存结果未能确认，请刷新查看，勿重复提交', false, 502)
+      }
+      return await this.readRecordingCorrectionResult(action, item, session, raw, signal)
+    } catch (error) {
+      // These owner responses definitively reject the command before commit.
+      // Transport/server failures remain ambiguous and must replay the same key.
+      if (error instanceof ArkmePluginError && [409, 410].includes(error.upstreamStatus ?? error.httpStatus)) {
+        const status = error.upstreamStatus ?? error.httpStatus
+        throw new ArkmePluginError('recording-correction-rejected', status === 410 ? '录音片段已不可用。' : '片段或纠错信息已变化，请重新打开录音后核对。', false, status, { cause: error })
+      }
+      throw error
+    } finally { await this.invalidateSpeakerCache(session.userId) }
+  }
+
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const item = await this.openRecordingItemRef(query.itemRef)
+    if (item.viewerUserId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (!['apply', 'undo'].includes(query.action) || !/^[a-zA-Z0-9-]{16,80}$/.test(query.idempotencyKey)) throw new ArkmePluginError('recording-correction-invalid', '纠错请求编号无效', false, 400)
+    const raw = objectValue(await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-corrections/result',
+      { item: this.correctionLocator(item), action: query.action, idempotency_key: query.idempotencyKey }, session, signal, { bypassCache: true, lane: 'interactive-read' }))
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    if (raw.schema_version !== 1 || !('receipt' in raw)) throw new ArkmePluginError('recording-correction-contract-invalid', '暂时无法读取保存结果', true, 502)
+    // A missing receipt is only a read observation, not permission to retry a write.
+    if (raw.receipt === null) return null
+    const receipt = objectValue(raw.receipt)
+    if (receipt.schema_version !== 1 || receipt.state !== (query.action === 'apply' ? 'applied' : 'undone') || !stringValue(receipt.version)
+      || !Number.isInteger(receipt.affected_count) || Number(receipt.affected_count) < 1 || Number(receipt.affected_count) > 100
+      || (query.action === 'apply' && !stringValue(receipt.correction_id))) throw new ArkmePluginError('recording-correction-contract-invalid', '保存回执无效', true, 502)
+    return await this.readRecordingCorrectionResult(query.action, item, session, receipt, signal)
+  }
+
+  private async readRecordingCorrectionResult(action: 'apply' | 'undo', item: RecordingItemRefPayload, session: ArkmeSessionCredentials,
+    raw: Record<string, unknown>, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    const result: ArkmeRecordingSpeakerCorrectionResult = { affectedCount: Number(raw.affected_count), version: String(raw.version),
+      ...(action === 'apply' && raw.can_undo === true ? { undoRef: await this.sealCorrectionUndo(item, String(raw.correction_id)) } : {}) }
+    try {
+      // Enhanced utterance IDs cannot be looked up in the system transcript.
+      // Keep the day contract unchanged and read back the selected source.
+      const day = item.transcriptSource === 'system' ? await this.recordingDayWithSession(item.dateStamp, session, signal, item.window, true) : undefined
+      const transcript = day?.transcript ?? (await this.recordingComparisonWithSession(item.dateStamp, session, signal, item.window, true)).doubao
+      if (transcript.state === 'error' || !transcript.items.some(row => row.itemId === `${item.childId}:${item.asrItemIndex}${item.transcriptSource === 'doubao' ? ':doubao' : ''}`)) throw new Error('incomplete readback')
+      result.transcript = transcript
+      if (day) result.day = day
+    } catch { result.warning = action === 'undo' ? '纠错已撤销，但转写暂未刷新，请重新打开录音查看。' : '纠错已保存，但转写暂未刷新，请重新打开录音查看。' }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-ref-account-mismatch', '账号已切换', false, 403)
+    return result
   }
 
   private recordingSpeakerOptionKey(key: Buffer, viewerUserId: number, kind: 'speaker' | 'arkme-user', id: string | number): string {
@@ -591,7 +785,8 @@ export class RecordingService {
       batchTargets.filter(candidate => candidate.assignmentSpeakerNumber < 0)
         .map(candidate => candidate.sessionId),
     )]
-    if (input.scope === 'speaker' && normalPairs.length === 0 && flaggedSessionIds.length === 0) {
+    const partitionTargets = item.speakerIdentity.startsWith('partition:') ? batchTargets : []
+    if (input.scope === 'speaker' && normalPairs.length === 0 && flaggedSessionIds.length === 0 && partitionTargets.length === 0) {
       throw new ArkmePluginError('recording-speaker-batch-empty', '没有可批量修改的说话人片段', false, 409)
     }
     let speakerId = ''
@@ -638,7 +833,12 @@ export class RecordingService {
       if (speakerId === '') throw new ArkmePluginError('recording-speaker-create-invalid', '创建说话人响应无效', true, 502)
     }
     let affectedCount = 1
-    if (input.scope === 'speaker') {
+    if (input.scope === 'speaker' && partitionTargets.length > 0) {
+      const childIds = new Set(partitionTargets.map(target => target.childId))
+      if (childIds.size !== 1) throw new ArkmePluginError('recording-correction-scope-invalid', '纠错片段归属已变化，请刷新', false, 409)
+      await this.runtime.authenticatedAudioPost('/api/v1/audio/assign-asr-item-to-spk', { child_id: item.childId, item_index_ls: partitionTargets.map(target => target.asrItemIndex), spk_id: speakerId, transcript_source: item.transcriptSource }, session, signal, { lane: 'write', bypassCache: true })
+      affectedCount = partitionTargets.length
+    } else if (input.scope === 'speaker') {
       if (normalPairs.length > 0) {
         await this.runtime.authenticatedAudioPost(
           '/api/v1/audio/batch-assign-session-num-to-spk',
@@ -670,7 +870,69 @@ export class RecordingService {
         { lane: 'write', bypassCache: true },
       )
     }
-    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal) }
+    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal, item.window) }
+  }
+
+  async unassignRecordingSpeaker(input: {
+    itemRef: string
+    scope: 'item' | 'speaker'
+    expectedCount: number
+  }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> {
+    this.assertWorkbenchEnabled()
+    const item = await this.openRecordingItemRef(input.itemRef)
+    const session = await this.runtime.requireSession()
+    if (session.userId !== item.viewerUserId) {
+      throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
+    }
+    if (item.formalSpeakerId === '') {
+      throw new ArkmePluginError('recording-speaker-unassigned', '当前片段没有可取消的人物标记', false, 409)
+    }
+    const current = await this.currentRecordingSpeakerItems(item, session, signal, true)
+    const targets = current.filter(candidate => candidate.transcriptSource === item.transcriptSource
+      && (input.scope === 'speaker' ? this.sameRecordingSpeakerMutationTarget(candidate, item)
+        : candidate.childId === item.childId && candidate.asrItemIndex === item.asrItemIndex))
+    if (!Number.isSafeInteger(input.expectedCount) || input.expectedCount < 1 || targets.length !== input.expectedCount) {
+      throw new ArkmePluginError('recording-speaker-conflict', '片段数量已变化，请关闭弹窗刷新后重试', true, 409)
+    }
+    // Use explicit item indices even for bulk removal. Session-level removal can
+    // touch fragments outside the day/window or reveal an older inherited label.
+    const groups = new Map<string, number[]>()
+    for (const target of targets) {
+      const indices = groups.get(target.childId) ?? []
+      indices.push(target.asrItemIndex)
+      groups.set(target.childId, indices)
+    }
+    let affectedCount = 0
+    let conflicts = 0
+    await this.invalidateSpeakerCache(session.userId)
+    try {
+      for (const [childId, indices] of groups) {
+        for (let offset = 0; offset < indices.length; offset += 500) {
+          if ((await this.runtime.requireSession()).userId !== session.userId) {
+            throw new ArkmePluginError('recording-ref-account-mismatch', '账号已变化，请重新打开录音', false, 409)
+          }
+          const response = objectValue(await this.runtime.authenticatedAudioPost(
+            '/api/v1/audio/unassign-asr-item-spk',
+            { child_id: childId, expected_spk_id: item.formalSpeakerId,
+              item_index_ls: indices.slice(offset, offset + 500), transcript_source: item.transcriptSource },
+            session, signal, { lane: 'write', bypassCache: true },
+          ))
+          const counts = ['modified_count', 'already_unassigned_count', 'conflict_count'].map(key => response[key])
+          if (!counts.every(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) {
+            throw new ArkmePluginError('recording-speaker-unassign-invalid', '取消结果未能确认，请关闭弹窗刷新后查看', true, 502)
+          }
+          affectedCount += numberValue(response.modified_count)
+          conflicts += numberValue(response.conflict_count)
+        }
+      }
+      const day = await this.recordingDayWithSession(item.dateStamp, session, signal, item.window, true)
+      const targetIds = new Set(targets.map(target => target.itemId))
+      const confirmed = day.transcript.items.filter(target => targetIds.has(target.itemId)
+        && target.assignedSpeakerOptionKey === undefined).length
+      return { scope: input.scope, affectedCount, day,
+        ...(conflicts > 0 || confirmed !== targets.length ? { warning: '部分片段的标记未取消或已变化，已刷新转写；请关闭弹窗后查看，其他新标记不会被覆盖。' } : {}),
+      }
+    } finally { await this.invalidateSpeakerCache(session.userId) }
   }
 
   async recordingImportUserId(): Promise<number> {
@@ -748,6 +1010,7 @@ export class RecordingService {
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
+      batch?: RecordingImportBatch
       fileName: string
       mimeType: string
       fileSize: number
@@ -781,11 +1044,12 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
     }
+    if (metadata.batch !== undefined && !validRecordingImportBatch(metadata.batch)) throw new ArkmePluginError('recording-import-batch-invalid', '录音导入批次无效', false, 400)
     const recordingKind = metadata.recordingKind ?? 0
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
     const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity)
-      && job.recordingKind === recordingKind)
+      && job.recordingKind === recordingKind && sameRecordingImportBatch(job.batch, metadata.batch))
     if (existing !== undefined) {
       const importRef = await this.recordingImportRef(existing)
       signal?.throwIfAborted()
@@ -820,6 +1084,7 @@ export class RecordingService {
     const now = Date.now()
     const job: RecordingImportJob = {
       jobId: randomUUID(),
+      ...(metadata.batch ? { batch: { ...metadata.batch }, createRequestUID: recordingCreateRequestUID(now) } : {}),
       userId: session.userId,
       revision: 1,
       phase: 'prepared',
@@ -898,8 +1163,13 @@ export class RecordingService {
     return await this.recordingImportStatus(importRef)
   }
 
-  async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> {
+  async recordingImportList(signal?: AbortSignal, page?: { toMillis: number; limit: number; offset: number }): Promise<PublicRecordingImportCurrentSnapshot> {
     this.assertWorkbenchEnabled()
+    if (page && (!Number.isSafeInteger(page.toMillis) || page.toMillis <= 0
+      || !Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > RECORDING_IMPORT_HISTORY_MAX_PAGE_SIZE
+      || !Number.isSafeInteger(page.offset) || page.offset < 0)) {
+      throw new ArkmePluginError('recording-import-list-invalid', '未完成任务查询参数无效', false)
+    }
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of jobs) {
@@ -910,11 +1180,13 @@ export class RecordingService {
     let activeOwnerTasks: Awaited<ReturnType<RecordingImportOwnerGateway['listOwnerTasks']>>['tasks'] | undefined
     let owner: PublicRecordingImportCurrentSnapshot['owner'] = { state: 'available' }
     try {
-      activeOwnerTasks = (await this.recordingImportOwnerGateway.listOwnerTasks({
+      const ownerPage = await this.recordingImportOwnerGateway.listOwnerTasks({
         viewerUserId: session.userId,
-        scope: 'active', toMillis: Date.now(), limit: RECORDING_IMPORT_VISIBLE_LIMIT, offset: 0,
+        scope: 'active', toMillis: page?.toMillis ?? Date.now(), limit: page?.limit ?? RECORDING_IMPORT_VISIBLE_LIMIT, offset: page?.offset ?? 0,
         ...(signal === undefined ? {} : { signal }),
-      })).tasks
+      })
+      activeOwnerTasks = ownerPage.tasks
+      if (page) owner = { state: 'available', hasMore: ownerPage.hasMore, nextOffset: page.offset + ownerPage.tasks.length }
     } catch (error) {
       if (signal?.aborted === true
         || recordingImportErrorCode(error) === 'recording-import-account-mismatch') throw error
@@ -1348,6 +1620,43 @@ export class RecordingService {
     return parseRecordingPresence(data)
   }
 
+  async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal): Promise<RecordingTotalsIndexPage> {
+    this.assertWorkbenchEnabled()
+    if (!Number.isSafeInteger(toMillis) || toMillis <= 0 || toMillis > Date.now() + 60_000
+      || !Number.isSafeInteger(offset) || offset < 0 || offset > 500_000) throw new ArkmePluginError('recording-range-invalid', '录音统计范围无效', false)
+    const session = await this.runtime.requireSession()
+    if (account !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换', false)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/get-session-ls',
+      { to_stamp: toMillis, offset, limit: 50, query_new: false }, session, signal, { lane: 'background-read', bypassCache: true })
+    if (!Array.isArray(data.session_ls) || data.session_ls.length > 50) throw new ArkmePluginError('recording-totals-invalid', '录音列表不完整', true)
+    const items: RecordingTotalsIndexPage['items'] = []
+    for (const raw of data.session_ls) {
+      const row = objectValue(raw)
+      if (typeof row.id !== 'string' || !row.id || !Number.isSafeInteger(row.start_at) || (row.start_at as number) < 0
+        || (row.start_at as number) >= toMillis || !Number.isSafeInteger(row.user_id) || (row.user_id as number) <= 0) {
+        throw new ArkmePluginError('recording-totals-invalid', '录音日期或归属不完整', true)
+      }
+      if (!recordingUploadedByViewer(row, session.userId)) continue
+      const date = new Date(row.start_at as number); date.setHours(0, 0, 0, 0)
+      const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+      items.push({ key: hash(`${session.userId}:${row.id}`), dateStamp: date.getTime(),
+        revision: hash(JSON.stringify([row.id, row.update_at, row.start_at, row.end_at, row.duration, row.size, row.has_done_child, row.has_finish_spk])),
+        pending: row.has_done_child !== true })
+    }
+    return { items, nextOffset: data.session_ls.length === 50 ? offset + 50 : null }
+  }
+
+  async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    const day = this.recordingDayStart(dateStamp), end = new Date(day); end.setDate(end.getDate() + 1)
+    const session = await this.runtime.requireSession()
+    if (account !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换', false)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/one-day-trans',
+      { start_at: day.getTime(), end_at: end.getTime(), tz_offset: -day.getTimezoneOffset() * 60_000 }, session, signal,
+      { lane: 'background-read', bypassCache: true })
+    return projectRecordingTotalsBucket(data, session.userId, day.getTime(), end.getTime())
+  }
+
   async recordingCalendar(
     fromStamp: number,
     toStamp: number,
@@ -1382,7 +1691,8 @@ export class RecordingService {
       })
       cursor.setDate(cursor.getDate() + 1)
     }
-    return { fromStamp: from, toStamp: to, days }
+    const totals = parseRecordingTotalMetrics(data.recording_totals)
+    return { fromStamp: from, toStamp: to, days, ...(totals ? { totals } : {}) }
   }
 
   async recordingTranscript(
@@ -1401,10 +1711,21 @@ export class RecordingService {
     return (await this.readRecordingTranscripts(dateStamp, session, signal)).section('system')
   }
 
-  private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal) {
-    const dayStart = this.recordingDayStart(dateStamp)
+  private readRecordingTranscriptData(dayStart: Date, session: ArkmeSessionCredentials, signal?: AbortSignal) {
     const dayEnd = new Date(dayStart)
     dayEnd.setDate(dayEnd.getDate() + 1)
+    // Keep the same Audio contract and source identity for presentation and entity evidence.
+    return this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/one-day-trans',
+      { start_at: dayStart.getTime(), end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+      session, signal,
+    )
+  }
+
+  private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow, fresh = false) {
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    if (window) dayEnd.setTime(window.endStamp); else dayEnd.setDate(dayEnd.getDate() + 1)
     const date = dayStart.getTime()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
@@ -1412,12 +1733,13 @@ export class RecordingService {
         // The v2 endpoint omits the session-to-speaker bindings needed to
         // resolve a labelled person from get-speaker-ls.
         '/api/v1/audio/one-day-trans',
-        { start_at: date, end_at: dayEnd.getTime(), tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+        { start_at: date, end_at: dayEnd.getTime(), tz_offset: window ? recordingBatchOffset(window.dateStamp, window.timeZone) : -dayStart.getTimezoneOffset() * 60_000 },
         session,
         signal,
+        fresh ? { bypassCache: true } : {},
       ),
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/get-speaker-ls', {}, session, signal,
+        '/api/v1/audio/get-speaker-ls', {}, session, signal, fresh ? { bypassCache: true } : {},
       ),
     ])
     if (transcriptResult.status === 'rejected') throw transcriptResult.reason
@@ -1457,8 +1779,12 @@ export class RecordingService {
   async recordingComparison(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingComparison> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
-    const date = this.recordingDayStart(dateStamp).getTime()
-    const data = await this.readRecordingTranscripts(date, session, signal)
+    return await this.recordingComparisonWithSession(dateStamp, session, signal)
+  }
+
+  private async recordingComparisonWithSession(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow, fresh = false): Promise<ArkmeRecordingComparison> {
+    const date = window ? dateStamp : this.recordingDayStart(dateStamp).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal, window, fresh)
     const key = await this.recordingRefKey('arkme-recording-item-v1')
     const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
     const project = (source: ArkmeRecordingTranscriptSource) => {
@@ -1468,7 +1794,7 @@ export class RecordingService {
         const speakerKey = this.recordingSpeakerMutationKey(item)
         counts.set(speakerKey, (counts.get(speakerKey) ?? 0) + 1)
       }
-      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key, speakerRefKey)) }
+      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key, speakerRefKey, window)) }
     }
     return { dateStamp: date, system: project('system'), doubao: project('doubao'), candidateCount: data.candidateCount, failedCount: data.failedCount, silentCount: data.silentCount }
   }
@@ -1494,15 +1820,17 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     routeKey = '',
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     this.assertWorkbenchEnabled()
+    this.validateRecordingWindow(window)
     const normalizedRouteKey = routeKey.trim()
     if (normalizedRouteKey.length > 256) {
       throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
     }
-    const dayStart = this.recordingDayStart(dateStamp)
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const session = await this.runtime.requireSession()
-    const transcript = await this.recordingTranscriptWithSession(dayStart.getTime(), session, signal)
+    const transcript = (await this.readRecordingTranscripts(dayStart.getTime(), session, signal, window)).section('system')
     if (transcript.state === 'processing') {
       throw new ArkmePluginError(
         'recording-generation-transcript-processing',
@@ -1525,12 +1853,13 @@ export class RecordingService {
       '/api/v1/summary/create',
       {
         date_stamp: dayStart.getTime(),
-        tz_offset: -dayStart.getTimezoneOffset() * 60_000,
+        ...(window ? { time_zone: window.timeZone, day_end_stamp: window.endStamp } : {}),
+        tz_offset: window ? recordingBatchOffset(window.dateStamp, window.timeZone) : -dayStart.getTimezoneOffset() * 60_000,
         from_stamp: firstItem.startAtMillis,
         to_stamp: lastItem.endAtMillis,
         model_type: 1,
         prompt_ver: 1,
-        transcripts: buildRecordingGenerationTranscript(transcript.items, kind, dayStart.getTime()),
+        transcripts: buildRecordingGenerationTranscript(transcript.items, kind, dayStart.getTime(), window?.timeZone),
         kind: kind === 'timeline' ? 1 : 2,
         ...(normalizedRouteKey === '' ? {} : { route_key: normalizedRouteKey }),
       },
@@ -1544,7 +1873,7 @@ export class RecordingService {
       throw new ArkmePluginError('recording-generation-response-invalid', '生成请求响应无效', true, 502)
     }
     try {
-      const section = await this.recordingProjectionWithSession(dayStart.getTime(), kind, session, signal)
+      const section = await this.recordingProjectionWithSession(dayStart.getTime(), kind, session, signal, window)
       return section.state === 'empty'
         ? { state: 'processing', items: section.items, message: '内容仍在生成' }
         : section
@@ -1586,10 +1915,11 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
-    const dayStart = this.recordingDayStart(dateStamp)
+    const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+    if (window) dayEnd.setTime(window.endStamp); else dayEnd.setDate(dayEnd.getDate() + 1)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/summary/list-timeline-by-range',
       {
@@ -1604,20 +1934,80 @@ export class RecordingService {
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
   }
 
-  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
-    return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal)
+  /** Resolve an Explore audio anchor against the owned original ASR version, including historical Doubao sources. */
+  async exploreRecordingEvidence(owner: Record<string, unknown>, quote: string, signal?: AbortSignal): Promise<Extract<import('../explore-contract.js').ExploreSource, {kind:'recording'}>> {
+    const session = await this.runtime.requireSession()
+    const start = Number(owner.start_at)
+    const source = owner.transcript_source
+    if (!Number.isFinite(start) || start <= 0 || !['system', 'doubao'].includes(String(source)) || typeof owner.container_id !== 'string' || typeof owner.child_id !== 'string' || !Number.isSafeInteger(owner.item_ordinal)) {
+      throw new ArkmePluginError('explore-source-unavailable', '这条录音缺少精确定位信息', false, 404)
+    }
+    const dayStart = new Date(start)
+    dayStart.setHours(0, 0, 0, 0)
+    const date = this.recordingDayStart(dayStart.getTime()).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal, undefined, true)
+    const rows = data.section(source as ArkmeRecordingTranscriptSource).items
+    const index = rows.findIndex(row => row.sessionId === owner.container_id && row.childId === owner.child_id && row.asrItemIndex === owner.item_ordinal)
+    const row = rows[index]
+    if (!row || Math.abs(row.startAtMillis - start) > 2000 || quote.trim() && ![row.text, row.rawTranscriptText ?? ''].some(value => value.includes(quote.trim()))) {
+      throw new ArkmePluginError('explore-source-changed', '原转写已更新或不可访问，未跳转到其他相似内容', false, 409)
+    }
+    const refKey = await this.recordingRefKey('arkme-recording-item-v1'), speakerKey = await this.recordingRefKey('arkme-recording-speaker-v1')
+    const context = rows.slice(Math.max(0, index - 2), index + 3).filter(item => item.sessionId === row.sessionId)
+    // Doubao timestamps do not name the physical FLAC slices. Only use a system
+    // slice from the same child that actually contains this source instant.
+    const playbackTargets = context.flatMap(item => {
+      const target = source === 'system' ? item : data.section('system').items.find(candidate =>
+        candidate.sessionId === item.sessionId && candidate.childId === item.childId
+        && candidate.startAtMillis <= item.startAtMillis && candidate.endAtMillis > item.startAtMillis)
+      return target ? [{itemId:item.itemId,item:this.workbenchItem(date,target,1,session.userId,refKey,speakerKey)}] : []
+    })
+    return { kind: 'recording', dateStamp: date, focusItemId: row.itemId,
+      items: context.map(item => this.workbenchItem(date, item, 1, session.userId, refKey, speakerKey)),
+      playbackTargets,
+      ...(source === 'system' ? { segment: { sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: 'system' as const, transcriptVersion: recordingSearchVersion({...row, text:row.rawTranscriptText ?? row.text}) } } : {}),
+    }
+  }
+
+  /** Host-only evidence reader: never expose Audio owner IDs through a consumer DTO. */
+  async entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
+    const dayStart = this.recordingDayStart(dateStamp), dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const response = await this.readRecordingTranscriptData(dayStart, session, signal)
+    // Mentions need exact text/identity, not speaker names, profiles or avatar references.
+    return projectRecordingTranscripts(response, [], new Map(), {
+      viewerUserId: session.userId, dayStartMillis: dayStart.getTime(), dayEndMillis: dayEnd.getTime(), transcriptSource: source,
+    })
+  }
+
+  private validateRecordingWindow(window?: ArkmeRecordingWindow): void {
+    if (!window) return
+    try {
+      if (!Number.isSafeInteger(window.dateStamp) || !Number.isSafeInteger(window.endStamp) || window.dateStamp < -26 * 3600_000 || window.endStamp <= 0 || window.endStamp <= window.dateStamp || window.endStamp - window.dateStamp > 26 * 3600_000) throw new Error()
+      const civil = new Date(window.dateStamp + recordingBatchOffset(window.dateStamp, window.timeZone))
+      const end = new Date(window.endStamp + recordingBatchOffset(window.endStamp, window.timeZone))
+      if (civil.toISOString() !== `${window.date}T00:00:00.000Z` || end.getTime() - civil.getTime() !== 86400_000) throw new Error()
+    } catch { throw new ArkmePluginError('recording-window-invalid', '录音日期范围无效', false, 400) }
+  }
+
+  async recordingDay(dateStamp: number, signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingDay> {
+    this.validateRecordingWindow(window)
+    if (window && (!Number.isSafeInteger(dateStamp) || dateStamp < -26 * 3600_000)) throw new ArkmePluginError('recording-date-invalid', '录音日期无效', false, 400)
+    return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal, window)
   }
 
   private async recordingDayWithSession(
     dateStamp: number,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    window?: ArkmeRecordingWindow,
+    fresh = false,
   ): Promise<ArkmeRecordingDay> {
-    const date = this.recordingDayStart(dateStamp).getTime()
+    const date = window ? dateStamp : this.recordingDayStart(dateStamp).getTime()
     const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
-      this.readRecordingTranscripts(date, session, signal),
-      this.recordingProjectionWithSession(date, 'summary', session, signal),
-      this.recordingProjectionWithSession(date, 'timeline', session, signal),
+      this.readRecordingTranscripts(date, session, signal, window, fresh),
+      this.recordingProjectionWithSession(date, 'summary', session, signal, window),
+      this.recordingProjectionWithSession(date, 'timeline', session, signal, window),
     ])
     let transcript: ArkmeRecordingDay['transcript']
     if (transcriptResult.status === 'fulfilled') {
@@ -1639,6 +2029,7 @@ export class RecordingService {
           session.userId,
           recordingItemRefKey,
           speakerRefKey,
+          window,
         ), recordingBelongsToViewer: transcriptResult.value.ownSessionIds.has(item.sessionId) })),
       }
     } else {
@@ -1670,11 +2061,13 @@ export class RecordingService {
     viewerUserId: number,
     refKey: Buffer,
     speakerRefKey: Buffer,
+    window?: ArkmeRecordingWindow,
   ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId,
       dateStamp,
+      ...(window ? { window } : {}),
       sessionId: item.sessionId,
       childId: item.childId,
       asrItemIndex: item.asrItemIndex,
@@ -1687,6 +2080,7 @@ export class RecordingService {
       formalSpeakerId: item.formalSpeakerId,
       childAsrItemStartAt: item.childAsrItemStartAt,
       childAsrItemEndAt: item.childAsrItemEndAt,
+      ...(item.speakerRevision === undefined ? {} : { speakerRevision: item.speakerRevision }),
     }
     return {
       itemId: item.itemId,
@@ -1706,6 +2100,8 @@ export class RecordingService {
       speakerLabel: item.speakerLabel,
       ...(item.speakerAvatarRef === undefined ? {} : { speakerAvatarRef: item.speakerAvatarRef }),
       sameSpeakerItemCount,
+      ...(item.soundSource === undefined ? {} : { soundSource: item.soundSource }),
+      ...(item.containsPlayback ? { containsPlayback: true } : {}),
       isSelf: item.isSelf,
       isBackground: item.isBackground,
       text: item.text,
@@ -1728,6 +2124,8 @@ export class RecordingService {
       isSelf: item.isSelf,
       isBackground: item.isBackground,
       text: item.text,
+      ...(item.soundSource === undefined ? {} : { soundSource: item.soundSource }),
+      ...(item.containsPlayback ? { containsPlayback: true } : {}),
     }
   }
 
@@ -1746,8 +2144,11 @@ export class RecordingService {
     item: RecordingItemRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    fresh = false,
   ): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
-    const current = await this.recordingTranscriptWithSession(item.dateStamp, session, signal)
+    // Revalidate against the same civil day that produced the opaque item ref.
+    const current = (await this.readRecordingTranscripts(item.dateStamp, session, signal, item.window, fresh)).section('system')
+    if (fresh && current.identityCoverage !== 'complete') throw new ArkmePluginError('recording-speaker-read-incomplete', '人物信息暂未读取完整，请稍后重试', true, 502)
     const currentItems = current.items
     const currentItem = currentItems.find(candidate => candidate.childId === item.childId
       && candidate.asrItemIndex === item.asrItemIndex && candidate.transcriptSource === item.transcriptSource)
@@ -1770,10 +2171,13 @@ export class RecordingService {
 
   private async openRecordingItemRef(itemRef: string): Promise<RecordingItemRefPayload> {
     const raw = await this.openRecordingRef('arkme-recording-item-v1', itemRef)
+    const window = raw.window as ArkmeRecordingWindow | undefined
+    this.validateRecordingWindow(window)
     const payload: RecordingItemRefPayload = {
       version: 1,
       viewerUserId: numberValue(raw.viewerUserId),
       dateStamp: numberValue(raw.dateStamp),
+      ...(window ? { window } : {}),
       sessionId: stringValue(raw.sessionId).trim(),
       childId: stringValue(raw.childId).trim(),
       asrItemIndex: Math.trunc(numberValue(raw.asrItemIndex)),
@@ -1786,6 +2190,7 @@ export class RecordingService {
       formalSpeakerId: stringValue(raw.formalSpeakerId).trim(),
       childAsrItemStartAt: numberValue(raw.childAsrItemStartAt),
       childAsrItemEndAt: numberValue(raw.childAsrItemEndAt),
+      speakerRevision: stringValue(raw.speakerRevision),
     }
     if (payload.sessionId === '' || payload.childId === '' || payload.speakerIdentity === '' || payload.asrItemIndex < 0
       || !isRecordingLocalDateOnOrAfterMinimum(payload.dateStamp)

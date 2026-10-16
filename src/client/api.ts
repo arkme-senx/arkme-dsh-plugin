@@ -1,3 +1,4 @@
+import type { RecordingImportBatch } from '../recording-workflow-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeClientError } from '../sdk/index.js'
 import type { TeamAppOperation } from '../team-app-contract.js'
@@ -7,6 +8,7 @@ import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
 import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
+import { socialWriteAction } from './social-write-policy.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
@@ -18,6 +20,7 @@ export interface RecordingImportUploadProgress {
 }
 
 export interface RecordingImportUploadOptions {
+  batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
   /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
@@ -63,6 +66,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
     request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
       options.onProgress?.({
         uploadedBytes: Math.max(0, Math.min(file.size, Math.trunc(event.loaded))),
@@ -98,6 +102,8 @@ export async function uploadArkmeRecording(
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
   | 'emoji.recent.list'
+  | 'conversation.viewport.read'
+  | 'conversation.viewport.write'
   | 'emoji.recent.record'
   | 'topic.candidates'
   | 'provider.instance'
@@ -140,6 +146,8 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -150,6 +158,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.generate'
   | 'recordings.import.list'
   | 'recordings.import.history'
+  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
@@ -170,6 +179,13 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
+  | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.home-visibility'
@@ -244,6 +260,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'search.history.create'
   | 'search.records'
   | 'search.conversations'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'
@@ -260,12 +277,25 @@ export async function callArkme<T>(
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
-  const accountKey = operation.startsWith('team.app.') && auth?.status === 'authenticated'
+  const accountKey = (operation.startsWith('team.app.') || operation === 'contacts.team-join') && auth?.status === 'authenticated'
     ? `${auth.environment}:${auth.userId}` : undefined
   // A retained view can still hold the previous account's refs during teardown.
   // Reject it locally instead of replacing its scope with the latest login.
   if (accountKey !== undefined && params?.expectedAccountKey !== undefined && params.expectedAccountKey !== accountKey) {
     throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+  }
+  const socialAction = socialWriteAction(operation, params)
+  if (socialAction !== undefined) {
+    const { requirePhoneForSocialAction } = await import('./social-action-guard.js')
+    const before = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (before?.status !== 'authenticated' || before.environment !== auth.environment || before.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
+    await requirePhoneForSocialAction(socialAction, signal)
+    const current = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (current?.status !== 'authenticated' || current.environment !== auth.environment || current.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
   }
   let cleanupBackground: (() => void) | undefined
   try {

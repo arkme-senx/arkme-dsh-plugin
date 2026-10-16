@@ -1,3 +1,5 @@
+import { ArkmeConversationDate } from './ArkmeConversationDate.js'
+import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeClipboardFiles } from './clipboard-files.js'
 import { teamTaskShowsInlineStatus, useTeamSendTasks } from './team-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -11,6 +13,7 @@ import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
+import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
 import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
@@ -35,7 +38,7 @@ import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamI
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
-import { arkmeConversationMessageLayout as messageLayout, dayKey, dayLabel } from './conversation-message-presentation.js'
+import { arkmeConversationMessageLayout as messageLayout, dayKey } from './conversation-message-presentation.js'
 import { arkmeConversationComposerLayout as composerLayout, arkmeConversationComposerBorder } from './conversation-composer-presentation.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
@@ -97,7 +100,9 @@ export function TeamConversationRow({ conversation: c, selected = false, showTea
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onClick={onClick}>
     <span style={directoryStyles.sourceAvatarWrap}>
-      <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.side === 'team' ? c.visitor ?? { nickname: tr('用户') } : { ...c.channel, nickname: c.channel.name }} />
+      {c.side === 'team'
+        ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
+        : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
@@ -383,6 +388,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     const timeline = latest.current, draft = draftRef.current
     if (!timeline || sendBusy.current || uploading || busy) return
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
+    sendBusy.current = true
+    try { await requirePhoneForSocialAction('发送消息', ctrl.current.signal) }
+    catch (e) { if (!ctrl.current.signal.aborted && !isSocialBindingRequired(e)) setError(errorText(e)); return }
+    finally { sendBusy.current = false }
+    if (ctrl.current.signal.aborted || latest.current?.conversation.ref !== timeline.conversation.ref || draftRef.current !== draft) return
     const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
     const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', attempt }
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
@@ -407,7 +417,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
-        if (['team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
+        if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
           const kept = { text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
@@ -532,7 +542,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     <div ref={scroller} className="team-message-list" onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {visibleMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
-        {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}>{dayLabel(m.createdAt)}</div>}
+        {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
         <TeamConversationMessage message={m} avatar={<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}

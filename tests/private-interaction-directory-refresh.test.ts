@@ -17,6 +17,38 @@ function start(read: Parameters<typeof watchPrivateInteractionDirectory>[0]['rea
   return { publish, invalidate, stop: () => watcher.dispose(), retry: () => watcher.retry() }
 }
 describe('private interaction directory refresh', () => {
+  it('waits for a quiet version after a conflict overtaken by continuous invalidations', async () => {
+    vi.useFakeTimers()
+    const first = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(page('fresh'))
+    const { publish, invalidate } = start(read)
+    invalidate()
+    first.reject(new Error('interaction-version-changed'))
+    await vi.advanceTimersByTimeAsync(0)
+    for (let i = 0; i < 100; i++) { invalidate(); await vi.advanceTimersByTimeAsync(i % 10 === 0 ? 3000 : 1500) }
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenLastCalledWith([], expect.any(String))
+    invalidate(); await vi.advanceTimersByTimeAsync(4999)
+    expect(read).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(publish).toHaveBeenLastCalledWith([row('fresh')])
+  })
+
+  it('lets explicit retry bypass conflict quiet-time and cancels its old timer', async () => {
+    vi.useFakeTimers()
+    const first = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(page('fresh'))
+    const { publish, invalidate, retry } = start(read)
+    invalidate(); first.reject(new Error('interaction-version-changed'))
+    await vi.advanceTimersByTimeAsync(0)
+    retry(); await vi.advanceTimersByTimeAsync(0)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(read.mock.calls[1]?.[3]).toBe('foreground')
+    expect(publish).toHaveBeenLastCalledWith([row('fresh')])
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(read).toHaveBeenCalledTimes(2)
+  })
   it('publishes recent contacts before the remaining pages finish', async () => {
     const older = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
     const read = vi.fn().mockResolvedValueOnce(page('recent', true)).mockReturnValueOnce(older.promise)

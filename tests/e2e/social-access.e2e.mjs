@@ -24,7 +24,7 @@ if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? ''
 }
 
 describe('packed social access on the target Harness', () => {
-  it('keeps normal startup and drafts stable while only confirmed unbound profile hides UI', async () => {
+  it('keeps complete navigation and drafts while prompting only on unbound social writes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme social acceptance '))
     let scaffold, browser, page
     let allowed = true
@@ -123,16 +123,23 @@ describe('packed social access on the target Harness', () => {
       expect(frames.partial).toBe(0)
       await input.fill('资格变化期间保留的个人草稿')
       await input.evaluate(node => { window.socialComposerBeforeRefresh = node })
+      const revalidateAfterExpiry = async () => {
+        // A focus/navigation event no longer forces a fresh profile read. Wait
+        // for the real cache TTL (or failure cooldown) instead of bypassing it.
+        const refresh = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
+          && response.request().postDataJSON()?.operation === 'user.profile.refresh', { timeout: 75_000 })
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+        const response = await refresh
+        await response.finished()
+        return response
+      }
       for (const state of [true, null, false, true]) {
         allowed = state
         if (state !== null) await service.refreshProfile()
-        const refresh = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
-          && response.request().postDataJSON()?.operation === 'user.profile')
-        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-        const response = await refresh
+        const response = await revalidateAfterExpiry()
         expect(response.status()).toBe(state === null ? 503 : 200)
         for (const name of ['联系人', '通话', '世界']) {
-          await navigation(name).waitFor({ state: state === false ? 'hidden' : 'visible' })
+          await navigation(name).waitFor({ state: 'visible' })
         }
         expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
         expect(await input.evaluate(node => node === window.socialComposerBeforeRefresh)).toBe(true)
@@ -140,47 +147,37 @@ describe('packed social access on the target Harness', () => {
         if (state === false && process.env.ARKME_E2E_SCREENSHOT) {
           await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.unbound.png` })
         }
-        if (state === false) {
-          await navigation('个人资料').click()
-          const menu = page.getByRole('dialog', { name: '个人菜单', exact: true })
-          await menu.locator('[data-arkme-social-binding-hint]').waitFor({ state: 'visible' })
-          if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.account-guide.png` })
-          await menu.getByRole('button', { name: '去绑定', exact: true }).click()
-          await menu.waitFor({ state: 'hidden' })
-          await page.locator('[data-arkme-settings-view="account"]').waitFor({ state: 'visible' })
-          await page.keyboard.press('Escape')
-          expect(await input.innerText()).toBe('资格变化期间保留的个人草稿')
-        }
+
       }
-      const callsProfileRead = page.waitForResponse(response => response.url().endsWith('/arkme-self/api')
-        && response.request().postDataJSON()?.operation === 'user.profile')
       await navigation('通话').click()
-      await (await callsProfileRead).finished()
-      // Let the navigation refresh publish before simulating a later account update.
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
       await page.locator('[data-arkme-retained-call-page="true"]').waitFor({ state: 'visible' })
       allowed = false
       await service.refreshProfile()
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-      await navigation('通话').waitFor({ state: 'hidden' })
-      const hint = page.locator('[data-arkme-owned="product-surface"] [data-arkme-social-binding-hint]').first()
-      await hint.waitFor({ state: 'visible' })
-      expect(await hint.innerText()).toContain('绑定手机号后即可使用社交功能')
-      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.call-guide.png` })
-      await hint.getByRole('button', { name: '去绑定', exact: true }).click()
-      const account = page.locator('.arkme-redesign-settings-surface').filter({ hasText: '手机号' })
+      expect((await revalidateAfterExpiry()).status()).toBe(200)
+      await navigation('通话').waitFor({ state: 'visible' })
+      await page.locator('[data-arkme-retained-call-page="true"]').waitFor({ state: 'visible' })
+      await navigation('世界').click()
+      await page.getByRole('button', { name: '发世界', exact: true }).click()
+      const publish = page.getByRole('dialog', { name: '发世界', exact: true })
+      await publish.getByRole('textbox', { name: '世界内容' }).fill('未绑定时保留世界草稿')
+      await publish.getByRole('button', { name: '发布', exact: true }).click()
+      const binding = page.getByRole('dialog', { name: '绑定手机号后继续', exact: true })
+      await binding.waitFor({ state: 'visible' })
+      await binding.getByRole('button', { name: '暂不绑定', exact: true }).click()
+      expect(await publish.getByRole('textbox', { name: '世界内容' }).inputValue()).toBe('未绑定时保留世界草稿')
+      await publish.getByRole('button', { name: '发布', exact: true }).click()
+      await binding.getByRole('button', { name: '去绑定', exact: true }).click()
+      const account = page.locator('[data-arkme-settings-view="account"]')
       await account.waitFor({ state: 'visible' })
-      // The existing account form owns binding; the UI fixture confirms the
-      // mutation without sending a real SMS or changing the Host login policy.
       await account.locator('.arkme-account-info-row').filter({ hasText: '手机号' }).click()
       await page.getByPlaceholder('请输入手机号', { exact: true }).fill('13800000000')
       await page.getByPlaceholder('请输入验证码', { exact: true }).fill('123456')
-      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.binding-form.png` })
       await page.getByRole('button', { name: '绑 定', exact: true }).click()
       await page.getByRole('dialog', { name: '绑定手机号', exact: true }).waitFor({ state: 'hidden' })
       await page.keyboard.press('Escape')
+      // Publishing is never automatically replayed after binding.
+      if (await publish.count()) await publish.getByRole('button', { name: '关闭发布窗口', exact: true }).click()
       for (const name of ['联系人', '通话', '世界']) await navigation(name).waitFor({ state: 'visible' })
-      await hint.waitFor({ state: 'hidden' })
       expect(await service.authStatus()).toMatchObject({ status: 'authenticated', userId: 10001 })
       // Start a separate account-refresh journey in the active personal session.
       // Validate a fresh draft in the visible composer and retain its DOM identity.
@@ -193,12 +190,13 @@ describe('packed social access on the target Harness', () => {
       // event, another click, or remounting the personal composer.
       allowed = false
       await service.refreshProfile()
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-      await navigation('世界').waitFor({ state: 'hidden' })
+      expect((await revalidateAfterExpiry()).status()).toBe(200)
+      await navigation('世界').waitFor({ state: 'visible' })
       await navigation('个人资料').click()
       const profileMenu = page.getByRole('dialog', { name: '个人菜单', exact: true })
       bindOnProfileRefresh = true
-      await profileMenu.getByRole('button', { name: '去绑定', exact: true }).click()
+      await profileMenu.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByRole('button', { name: '账号', exact: true }).click()
       await page.locator('[data-arkme-settings-view="account"]').waitFor({ state: 'visible' })
       // The existing official-settings adapter temporarily unmounts the Arkme
       // sidebar. Wait for the fresh account value, then close settings to restore it.
@@ -223,7 +221,7 @@ describe('packed social access on the target Harness', () => {
       await cleanup(() => rm(root, { recursive: true, force: true }))
       if (failures.length) throw new AggregateError(failures, 'Social access acceptance or cleanup failed')
     }
-  })
+  }, 600_000)
 })
 
 describe('packed account registration policy', () => {
@@ -267,12 +265,10 @@ describe('packed account registration policy', () => {
       await connectFreshWorkspaceZh(frame, scaffold.workspaceCwd)
       if (mode === 'none') {
         await page.getByRole('button', { name: '个人资料', exact: true }).waitFor({ state: 'visible' })
-        for (const name of ['联系人', '通话', '世界']) await page.getByRole('button', { name, exact: true }).waitFor({ state: 'hidden' })
+        for (const name of ['联系人', '通话', '世界']) await page.getByRole('button', { name, exact: true }).waitFor({ state: 'visible' })
         const input = frame.locator('[data-composer-input]').first()
         await input.fill('老账号无需强绑也能编辑')
         expect(await input.innerText()).toBe('老账号无需强绑也能编辑')
-        await page.getByRole('button', { name: '个人资料', exact: true }).click()
-        await page.getByRole('dialog', { name: '个人菜单', exact: true }).locator('[data-arkme-social-binding-hint]').waitFor({ state: 'visible' })
         expect(await service.authStatus()).toMatchObject({ status: 'authenticated' })
       } else {
         // Web's guest workspace remains usable. An account-only entry opens

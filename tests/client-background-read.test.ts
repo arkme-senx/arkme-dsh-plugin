@@ -12,14 +12,14 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-it('keeps startup fanout out of the browser connection queue so official entry and sends can proceed', async () => {
+it.each(['world.interactions.list', 'world.notification-sources'] as const)('keeps %s fanout out of the browser connection queue so official entry and sends can proceed', async operation => {
   const release: Array<() => void> = []
-  provider.mockImplementation(async (operation: string) => {
-    if (operation === 'world.interactions.list') await new Promise<void>(resolve => release.push(resolve))
+  provider.mockImplementation(async (requested: string) => {
+    if (requested === operation) await new Promise<void>(resolve => release.push(resolve))
     return {}
   })
   const controller = new AbortController()
-  const reads = Array.from({ length: 6 }, (_, index) => callArkme('world.interactions.list', { recordRef: String(index) }, controller.signal, background))
+  const reads = Array.from({ length: 6 }, (_, index) => callArkme(operation, { recordRef: String(index) }, controller.signal, background))
   const completion = Promise.allSettled(reads)
   try {
     await vi.waitFor(() => expect(release.length).toBeGreaterThanOrEqual(2))

@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn(), cached: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.correction.context' ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
@@ -30,6 +30,36 @@ describe('recording speaker editor failure recovery', () => {
     vi.restoreAllMocks()
   })
 
+
+  it('keeps actions inside the viewport when child content grows without an editor render', async () => {
+    let resize!: () => void
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    vi.stubGlobal('window', { innerWidth: 1024, innerHeight: 800, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    let height = 120
+    const popover = { style: { top: '600px' }, getBoundingClientRect: () => ({ top: Number.parseFloat(popover.style.top), bottom: Number.parseFloat(popover.style.top) + height, height }) }
+    mocks.callArkme.mockResolvedValue([])
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSpeakerEditor item={{
+        itemId: 'growth', itemRef: 'growth-ref', speakerLabel: '说话人', speakerColorIndex: 1,
+        speakerNumber: 1, speakerKey: 'growth-key', sameSpeakerItemCount: 1,
+        text: '内容', startAtMillis: 1000, endAtMillis: 2000, isBackground: false, isSelf: false,
+      }} onUpdated={() => {}} onClose={() => {}} />, {
+        createNodeMock: element => element.props.role === 'dialog' ? popover : null,
+      })
+      await tick()
+    })
+    height = 650
+    resize()
+    expect(popover.getBoundingClientRect().bottom).toBe(792)
+    expect(popover.style.top).toBe('142px')
+    await act(async () => { renderer.unmount(); await tick() })
+    expect(disconnect).toHaveBeenCalled()
+  })
 
   it('opens without programmatic focus and preserves manual input through candidate refresh', async () => {
     const focus = vi.fn()
@@ -104,7 +134,7 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { candidate.props.onClick(); await tick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('本地说话人')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('正在读取候选')
-    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!.props.disabled).toBe(false)
+    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!.props.disabled).toBe(false)
   })
 
   it('shares cached candidates with another item while refresh is pending', async () => {
@@ -143,10 +173,10 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { renderer = create(editor); await tick() })
     const second = renderer.root.findAll(node => node.type === 'button' && node.findAll(child => child.type === 'span' && child.children.includes('乙')).length > 0)[0]!
     await act(async () => { second.props.onClick(); await tick() })
-    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!.props.disabled).toBe(false)
+    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!.props.disabled).toBe(false)
     await act(async () => { finish(options.map(option => ({ ...option, speakerRef: `${option.speakerRef}-renewed` }))); await tick() })
     mocks.callArkme.mockResolvedValueOnce({ day: { dateStamp: 1 } })
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
     expect(confirm.props.disabled).toBe(false)
     await act(async () => { confirm.props.onClick(); confirm.props.onClick(); await tick() })
     const writes = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.speaker.assign-item')
@@ -174,7 +204,7 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { renderer = create(editor); await tick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('已缓存候选')
     expect(renderer.root.findByProps({ 'aria-label': '重试读取说话人候选' })).toBeDefined()
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
     expect(confirm.props.disabled).toBe(true)
   })
 
@@ -231,7 +261,7 @@ describe('recording speaker editor failure recovery', () => {
 
     const input = renderer.root.findByProps({ 'aria-label': '说话人名称' })
     await act(async () => { input.props.onChange({ target: { value: '林老师' } }); await tick() })
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
 
     expect(confirm.props.disabled).toBe(true)
     await act(async () => { confirm.props.onClick(); await tick() })

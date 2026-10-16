@@ -11,6 +11,9 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
+  retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
+  sharedRecordingDetail(detailRef: string, options?: { signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSharedRecordingPreview>
   reactions(input: import('../../reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown>
   privateInteractionSummary(sourceRef: string, options?: Pick<import('../../types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'>): Promise<import('../../types.js').ArkmePrivateInteractionSummary>
   queryPrivateInteractions(options?: import('../../types.js').ArkmePrivateInteractionQueryOptions): Promise<import('../../types.js').ArkmePrivateInteractionPage>

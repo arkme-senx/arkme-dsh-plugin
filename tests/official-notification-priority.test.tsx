@@ -271,7 +271,11 @@ it.each(['more', 'retry'] as const)('keeps the real %s button clickable during a
   try {
     await act(async () => { officialNotifications.invalidate('test:4') })
     expect(officialNotifications.getSnapshot()).toMatchObject({ loading: true, foregroundLoading: false })
-    const buttons = renderer!.root.findAll(node => node.type === 'button' && node.children.includes(action === 'more' ? '加载更多官方通知' : '重试'))
+    // Other notification domains can expose their own retry action at the same time.
+    const actionRoot = action === 'retry'
+      ? renderer!.root.find(node => node.props.role === 'status' && node.children.includes('官方通知暂时不可用'))
+      : renderer!.root
+    const buttons = actionRoot.findAll(node => node.type === 'button' && node.children.includes(action === 'more' ? '加载更多官方通知' : '重试'))
     expect(buttons).toHaveLength(1)
     expect(buttons[0]!.props.disabled).not.toBe(true)
     await act(async () => { buttons[0]!.props.onClick() })

@@ -107,7 +107,7 @@ describe('day location presentation', () => {
     await mount(reader); await select('a'); await click('查看地点')
     const signal = loadLocation.mock.calls[0]![2].signal
     if (action === 'close') await click('关闭活动详情')
-    else if (action === 'refresh') await click('刷新当天活动')
+    else if (action === 'refresh') await act(async () => view.update(<ArkmeDayTimeline key="hard-refresh" query={query} reader={reader} onQueryChange={() => {}} />))
     else await act(async () => view.update(<ArkmeDayTimeline query={{ ...query, ...(action === 'date' ? { bucketDate: '2026-09-18' } : { accountScope: 'account:43' }) }} reader={reader} onQueryChange={() => {}} />))
     expect(signal.aborted).toBe(true)
     await act(async () => resolve({ query, activityId: 'a', snapshotId: 's', access: 'available', location: point }))

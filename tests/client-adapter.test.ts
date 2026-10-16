@@ -7,7 +7,7 @@ function installDesktopGateMarker(): () => void {
   const previousWindow = globalThis.window
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: { arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
+    value: { location: { hostname: 'localhost', search: '' }, arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
   })
   return () => {
     if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
@@ -16,6 +16,20 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
+  it.each([
+    ['?arkmeScreenshot=1', false],
+    ['?arkmeConversation=1', true],
+  ] as const)('scopes the social binding prompt correctly for %s', (search, expected) => {
+    const effect = vi.fn()
+    vi.stubGlobal('location', { search })
+    vi.stubGlobal('window', { location: { search } })
+    try {
+      apply({ effect, slots: { register: vi.fn() } } as never)
+      const prompts = effect.mock.calls.filter(([, label]) => label === 'dsh-arkme: social action binding prompt')
+      expect(prompts).toHaveLength(expected ? 1 : 0)
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('shadows only the native settings seat inside the embedded Harness document', () => {
     const previousWindow = globalThis.window
     Object.defineProperty(globalThis, 'window', {
@@ -199,6 +213,7 @@ describe('official DSH client adapter', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
+        location: { hostname: 'localhost', search: '' },
         setInterval: vi.fn((callback: () => void) => { tick = callback; return 1 }),
         clearInterval: vi.fn(),
       },
@@ -328,6 +343,7 @@ describe('official DSH client adapter', () => {
     } as never)
 
     const labels = effect.mock.calls.map(call => call[1])
+    expect(labels.filter(label => label === 'dsh-arkme: social action binding prompt')).toHaveLength(1)
     expect(labels).toContain('dsh-arkme: client app update bridge')
     expect(labels).not.toContain('dsh-arkme: client plugin update status')
   })

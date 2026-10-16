@@ -36,6 +36,7 @@ beforeEach(() => {
   arkmeAvatarImages.activateScope('test:4')
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('This fixture must not access the network') }))
   provider.mockImplementation(async (operation: string, _params: unknown, signal?: AbortSignal) => {
+    if (operation === 'user.profile.refresh') return { profile: { userId: 4, contact: { phoneMasked: '138****0000' } } }
     if (operation === 'world.interactions.list') return await new Promise((_resolve, reject) => {
       if (signal?.aborted) reject(signal.reason)
       else signal?.addEventListener('abort', () => reject(signal.reason), { once: true })

@@ -9,6 +9,11 @@ export function recordingBelongsToViewer(session: unknown, viewerUserId: number)
   return Number.isSafeInteger(viewerUserId) && viewerUserId > 0 && number(object(session).belong_usr) === viewerUserId
 }
 
+/** Storage and model usage belong to the uploading account, regardless of memory/speaker attribution. */
+export function recordingUploadedByViewer(session: unknown, viewerUserId: number): boolean {
+  return Number.isSafeInteger(viewerUserId) && viewerUserId > 0 && number(object(session).user_id) === viewerUserId
+}
+
 /** Adjacent physical children may jointly cover one uploaded file; never bridge a gap. */
 export function recordingCoverageContains(intervals: readonly { startAtMillis: number; endAtMillis: number }[], start: number, end: number): boolean {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false

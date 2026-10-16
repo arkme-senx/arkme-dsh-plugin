@@ -1,3 +1,4 @@
+import { recordingImportBatchID } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
@@ -642,7 +643,7 @@ export type RecordingImportButtonStatus = 'idle' | 'uploading' | 'finalizing' | 
 export function ArkmeRecordingImportTrigger({ onClick, status = 'idle', fullWidth = false }: { onClick(): void; status?: RecordingImportButtonStatus; fullWidth?: boolean }) {
   const busy = status === 'uploading' || status === 'finalizing'
   const label = status === 'uploading' ? '音频上传中' : status === 'finalizing' ? '正在完成导入' : status === 'failed' ? '导入失败，查看' : '导入历史音频'
-  return <button data-arkme-feedback="danger" type="button" data-arkme-recording-tour-target="import" data-arkme-recording-import-status={status} aria-live="polite"
+  return <button data-arkme-feedback={status === 'failed' ? 'danger' : 'neutral'} type="button" data-arkme-recording-tour-target="import" data-arkme-recording-import-status={status} aria-live="polite"
     title={status === 'idle' ? tr("导入历史音频") : tr("{v0}，点击查看导入任务", { v0: label })}
     style={{ ...styles.trigger, ...(fullWidth ? { width: '100%', gridColumn: '1 / -1' } : {}), outlineColor: desktop.secondary, ...(status === 'failed' ? { color: arkmeTheme.danger } : {}) }}
     onClick={onClick}>{busy ? <CircleNotch size={16} style={{ flexShrink: 0 }} className="arkme-icon-spin" aria-hidden /> : status === 'failed' ? <WarningCircle size={16} style={{ flexShrink: 0 }} aria-hidden /> : <UploadSimple size={16} style={{ flexShrink: 0 }} aria-hidden />}{label}</button>
@@ -680,6 +681,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const [backgroundNoticeVisible, setBackgroundNoticeVisible] = useState(false)
   const [error, setError] = useState('')
   const [jobsError, setJobsError] = useState('')
+  const [workflowNotice, setWorkflowNotice] = useState('')
   const [duplicateNames, setDuplicateNames] = useState<string[]>([])
   const [ownershipChange, setOwnershipChange] = useState<OwnershipChange>()
   const [jobDeletion, setJobDeletion] = useState<ImportDeletion>()
@@ -944,6 +946,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     if (prepared.length === 0) return
     submissionActiveRef.current = true
     setError('')
+    setWorkflowNotice('')
     const preparedIds = new Set(prepared.map(item => item.row.id))
     publishRows(current => current.map(row => preparedIds.has(row.id) ? { ...row, submitting: true } : row))
     const controller = new AbortController()
@@ -982,8 +985,19 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       return
     }
     clearDuplicateNames()
+    let batchId: string | undefined
+    try {
+      const capability = await callArkme<{ supported: boolean }>('recordings.workflow', { operation: 'capabilities' }, controller.signal)
+      if (capability?.supported === true) batchId = recordingImportBatchID()
+    } catch (reason) {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '录音批次能力查询失败，请重试')
+      finishSubmission()
+      return
+    }
+    if (controller.signal.aborted) { finishSubmission(); return }
+    setWorkflowNotice(batchId ? tr('处理完成后将通知你，并自动更新对应日期的总结和时间轴。批次续传与自动整理期限为 30 天，通知保留 90 天；已有录音和整理结果不受影响。') : tr('录音仍可导入；完成通知与自动整理暂不可用。'))
     const succeeded = new Set<string>()
-    for (const { row, start } of prepared) {
+    for (const [itemIndex, { row, start }] of prepared.entries()) {
       if (controller.signal.aborted) break
       const uploadStartedAtMillis = Date.now()
       updateRow(row.id, { error: '', uploadStartedAtMillis, uploadedBytes: 0 })
@@ -994,6 +1008,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           start,
           row.ownership === 'self' ? currentUserId : 0,
           {
+            ...(batchId ? { batch: { batchId, itemIndex, itemCount: prepared.length, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } } : {}),
             signal: controller.signal,
             onProgress: progress => {
               if (controller.signal.aborted || !inspectionActiveRef.current) return
@@ -1030,10 +1045,19 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const mutateJob = async (intent: 'recordings.import.retry' | 'recordings.import.cancel', job: PublicRecordingImportJob) => {
     if (pending) return
+    const lifecycleSignal = lifecycleAbortRef.current?.signal
     setPending(true); setError('')
-    try { await callArkme(intent, { importRef: job.importRef, expectedRevision: job.revision }); await loadJobs() }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '导入任务操作失败') }
-    finally { setPending(false) }
+    try {
+      await callArkme(intent, { importRef: job.importRef, expectedRevision: job.revision })
+      if (lifecycleSignal?.aborted) return
+      if (intent === 'recordings.import.cancel') {
+        jobsLoadRevisionRef.current += 1
+        publishJobs(jobsRef.current.filter(item => !isLocalRecordingImport(item) || item.importRef !== job.importRef))
+        onAccepted()
+      }
+      await loadJobs()
+    } catch (reason) { if (!lifecycleSignal?.aborted) setError(reason instanceof Error ? reason.message : '导入任务操作失败') }
+    finally { if (!lifecycleSignal?.aborted) setPending(false) }
   }
 
   const loadHistory = async (
@@ -1138,6 +1162,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const mutateOwner = async (intent: OwnerMutationIntent, historyView: boolean) => {
     if (pending) return
+    const lifecycleSignal = lifecycleAbortRef.current?.signal
     setPending(true); setError('')
     try {
       if (intent.kind === 'start') {
@@ -1153,11 +1178,16 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       } else {
         await callArkme('recordings.import.session.delete', { sessionRef: intent.sessionRef })
       }
+      if (lifecycleSignal?.aborted) return
+      jobsLoadRevisionRef.current += 1
       applyOwnerMutationProjection(intent)
+      // Completed files are absent from the active list; successful edits also
+      // preserve task IDs. Neither can rely on loadJobs detecting a change.
+      onAccepted()
       await reloadOwnerViews(historyView)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '录音任务操作失败')
-    } finally { setPending(false) }
+      if (!lifecycleSignal?.aborted) setError(reason instanceof Error ? reason.message : '录音任务操作失败')
+    } finally { if (!lifecycleSignal?.aborted) setPending(false) }
   }
 
   const changeOwnerStart = (task: ImportTask, historyView: boolean, value: string) => {
@@ -1325,6 +1355,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
         {jobsError !== '' && <div role="alert" style={{ ...styles.error, margin: '12px 16px 0' }}>{jobsError}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.error, margin: '12px 16px 0' }}>{error}</div>}
       </div>
+      {workflowNotice && <p role="status" style={{ margin: '8px 24px', fontSize: 12, color: desktop.secondary }}>{workflowNotice}</p>}
       <footer style={styles.footer}><span style={styles.selection}><span style={styles.checkboxSlot}>{selectableRows.length > 0 && <input style={styles.checkbox} aria-label={tr("全选")} type="checkbox" disabled={pending || submittingRows.length > 0} checked={selectedRows.length === selectableRows.length} onChange={event => { publishRows(current => current.map(row => row.submitting ? row : { ...row, selected: event.target.checked })) }} />}</span><span>{tr("共")}{rows.length + visibleJobs.length}{tr("个文件")}{selectedRows.length > 0 ? tr("，已选择{v0}个", { v0: String(selectedRows.length) }) : ''}</span></span><span style={styles.footerActions}><button data-arkme-feedback="primary" type="button" style={{ ...styles.primaryButton, ...(importDisabled ? { borderColor: arkmeTheme.subtle, background: arkmeTheme.subtle, color: desktop.tertiary, cursor: 'default' } : {}) }} disabled={importDisabled} onClick={() => { void submitRows() }}><UploadSimple size={16} aria-hidden />{tr("导入")}</button></span></footer>
       </> : <section style={styles.historyDialog} aria-label={tr("已完成录音导入")}>
         <header style={styles.header}><h2 style={styles.historyTitle}><span>{tr("已完成")}</span>{history.total !== undefined && <span style={styles.historyTotal}>（{history.total}）</span>}</h2><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭已完成")} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined); setStatusDetails(undefined); setHistory(undefined) }}><X size={16} aria-hidden /></button></header>

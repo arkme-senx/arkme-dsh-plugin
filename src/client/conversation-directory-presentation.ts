@@ -1,7 +1,8 @@
+import { formatConversationDate } from './conversation-date-format.js'
 import type { CSSProperties } from 'react'
 import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeIntlLocale, tr } from './locale.js'
+import { tr } from './locale.js'
 
 // Shared by ordinary conversations, Team rows in the sidebar and Team directories.
 export const conversationDirectoryStyles = {
@@ -40,9 +41,9 @@ export function conversationTimeLabel(value: number): string {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const time = new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
+  const time = formatConversationDate(date, 'time')
   if (day === start) return time
   if (day === start - 86_400_000) return tr("昨天 {v0}", { v0: time })
-  if (day > start - 7 * 86_400_000) return new Intl.DateTimeFormat(arkmeIntlLocale(), { weekday: 'short' }).format(date)
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(date)
+  if (day > start - 7 * 86_400_000) return formatConversationDate(date, 'weekday')
+  return formatConversationDate(date, 'day')
 }

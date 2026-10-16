@@ -1,4 +1,5 @@
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
+import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
 import { screenshotWindowRequested } from './native-screenshot.js'
@@ -11,6 +12,7 @@ import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import { AppMigrationDialog } from './AppMigrationDialog.js'
+import { ArkmeSocialBindingDialog } from './ArkmeSocialBindingDialog.js'
 import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -21,6 +23,7 @@ import './composer-draft-auth-binding.js'
 import './private-chat-actions-auth-binding.js'
 import { callArkme } from './api.js'
 import { connectArkmeLocale, tr } from './locale.js'
+import { connectDesktopBranding, type DesktopBrandingBridge } from './desktop-branding.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -108,6 +111,27 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  // Explicit loopback-only review surface; never inject synthetic events into a real chat.
+  if (typeof window !== 'undefined' && offlineContextPreviewRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: offline context preview language')
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<OfflineContextPreview />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: offline context interaction preview')
+    return
+  }
+  if (!deepSeekHarnessEmbedRequested() && !screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeSocialBindingDialog />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: social action binding prompt')
+  }
   if (screenshotWindowRequested()) {
     ctx.effect(() => {
       const host = document.createElement('div')
@@ -168,6 +192,9 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
+  ctx.effect(() => connectDesktopBranding((window as Window & {
+    arkmeDesktop?: { branding?: DesktopBrandingBridge }
+  }).arkmeDesktop?.branding), 'dsh-arkme: desktop brand language')
 
   ctx.effect(() => {
     if (!localMigrationDesktop()) return () => undefined

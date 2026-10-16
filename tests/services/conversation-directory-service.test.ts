@@ -53,8 +53,10 @@ describe('local-first directory', () => {
     const first = await test.owner.read()
     expect(first.items).toHaveLength(20)
     expect(first.projection?.phase).toBe('syncing')
+    expect(test.source.listSources.mock.calls[0]?.[1].background).toBe(false)
     next.resolve(page([row(21)])); avatar.resolve([]); disk.resolve()
     await test.owner.settled()
+    expect(test.source.listSources.mock.calls[1]?.[1].background).toBe(true)
     expect((await test.owner.read()).items).toHaveLength(21)
   })
 
@@ -125,6 +127,38 @@ describe('local-first directory', () => {
 
 
 describe('final review regressions', () => {
+  it.each([false, true])('does not requery confirmed visible rows for 100 arrivals (older page pending: %s)', async scanning => {
+    const older = gate<ArkmeSourceList>()
+    const test = setup(async cursor => cursor ? older.promise : page([row(1)], scanning ? 'older' : undefined))
+    await test.owner.read()
+    if (!scanning) await test.owner.settled()
+    test.preferences.query.mockClear()
+    for (let sequence = 2; sequence <= 101; sequence++) {
+      await test.owner.accept({ type: 'sessions-delta', revision: sequence, updates: [{ source: row(1, {
+        sourceRef: `ref-1-${sequence}`, latestSequence: sequence, activeAtMillis: sequence,
+      }), timelineItems: [] }] })
+    }
+    expect(test.preferences.query).not.toHaveBeenCalled()
+    expect((await test.owner.read()).projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'ref-1-101', hidden: false })
+    expect((await test.owner.read()).items[0]?.latestSequence).toBe(101)
+    older.resolve(page([])); await test.owner.settled()
+  })
+
+  it('still reconciles hidden and newly discovered rows on arrivals', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    await test.owner.confirmVisibility('source', 'ref-1', true, 1)
+    test.preferences.query.mockClear()
+    await test.owner.accept({ type: 'sessions-delta', revision: 10, updates: [
+      { source: row(1, { latestSequence: 10, activeAtMillis: 10 }), timelineItems: [] },
+      { source: row(2), timelineItems: [] },
+    ] })
+    expect(test.preferences.query).toHaveBeenCalledExactlyOnceWith(['ref-1', 'ref-2'], [], expect.any(AbortSignal))
+    expect((await test.owner.read()).projection?.visibility).toEqual(expect.arrayContaining([
+      { entryKind: 'source', entryRef: 'ref-1', hidden: false }, { entryKind: 'source', entryRef: 'ref-2', hidden: false },
+    ]))
+  })
+
   it('keeps an acknowledged read when a later equal-sequence refresh is stale', async () => {
     const test = setup(async () => page([row(1, { latestSequence: 10, unreadCount: 4 })]))
     await test.owner.read(); await test.owner.settled()
@@ -147,6 +181,7 @@ describe('final review regressions', () => {
   it('preserves a newer live message visibility when an older preference query resolves last', async () => {
     const test = setup(async () => page([row(1)]))
     await test.owner.read(); await test.owner.settled()
+    await test.owner.confirmVisibility('source', 'ref-1', true, 1)
     const oldVisibility = gate<{items: {entryKind: 'source'; entryRef: string; hidden: boolean}[]}>()
     test.preferences.query.mockImplementationOnce(() => oldVisibility.promise)
     const old = test.owner.accept({ type: 'sessions-delta', revision: 1, updates: [{ source: row(1, { latestSequence: 2, activeAtMillis: 2, sourceRef: 'old-ref' }), timelineItems: [] }] })
@@ -617,4 +652,32 @@ it('bounds reconciliation under repeated visibility conflicts and recovers on ex
   await vi.advanceTimersByTimeAsync(1100)
   expect((await test.owner.read()).projection).toMatchObject({ phase: 'complete', visibility: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }] })
   expect(vi.getTimerCount()).toBe(0)
+})
+
+
+it.each([false, true])('keeps the server ACK frontier with unread counts before baseline: %s', async beforeBaseline => {
+  const remote = gate<ArkmeSourceList>()
+  const test = setup(async () => remote.promise)
+  const first = test.owner.read()
+  await vi.waitFor(() => expect(test.source.listSources).toHaveBeenCalledOnce())
+  if (!beforeBaseline) { remote.resolve(page([row(1, { latestSequence: 8, unreadCount: 0 })])); await first; await test.owner.settled() }
+  await test.owner.accept({ type: 'read-ack', revision: 1, sourceKey: 'key-1', sourceRef: 'ref-1', effectiveReadSequence: 9, unreadCount: 2, latestSequence: 11 })
+  if (beforeBaseline) remote.resolve(page([row(1, { latestSequence: 8, unreadCount: 0 })]))
+  await first; await test.owner.settled()
+  expect((await test.owner.read()).items[0]).toMatchObject({ latestSequence: 11, readSequence: 9, unreadCount: 2 })
+})
+
+it('finishes a scan whose visible preference agrees with a newer activity ref instead of rescanning the whole directory', async () => {
+  const test = setup(async () => page([row(1)]))
+  await test.owner.read(); await test.owner.settled()
+  const visibility = gate<Awaited<ReturnType<typeof test.preferences.query>>>()
+  test.preferences.query.mockImplementationOnce(() => visibility.promise)
+  await test.owner.read(true)
+  await vi.waitFor(() => expect(test.preferences.query).toHaveBeenCalledTimes(2))
+  await test.owner.accept({ type: 'sessions-delta', revision: 10,
+    updates: [{ source: row(1, { sourceRef: 'latest-ref', latestSequence: 2, activeAtMillis: 2 }), timelineItems: [] }] })
+  visibility.resolve({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: false }] })
+  await test.owner.settled()
+  expect((await test.owner.read()).projection?.phase).toBe('complete')
+  expect(test.source.listSources).toHaveBeenCalledTimes(2)
 })

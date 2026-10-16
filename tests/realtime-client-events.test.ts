@@ -48,6 +48,39 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('routes committed-body hints only to bounded source caches in the active account without changing unread facts', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    const before = arkmeChatDirectory.getSnapshot()
+    const progress = { accountKey: 'test:42', cycle: 1, revision: 1, phase: 'syncing', total: 100, completed: 50, pending: 50, terminal: 0 }
+    const emit = async (revision: number, accountKey: string) => {
+      await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'message-sync-progress', revision,
+        progress: { ...progress, accountKey }, sourceKeys: Array.from({ length: 60 }, (_, i) => `source-${i}`) }) } as MessageEvent<string>) })
+    }
+    await emit(1, 'prod:42')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBeUndefined()
+    await emit(2, 'test:42')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBe(1)
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-49').localCacheRevision).toBe(1)
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-50').localCacheRevision).toBeUndefined()
+    expect(arkmeChatDirectory.getSnapshot()).toBe(before)
+    arkmeChatTimelineDelta.activateAccount('test:43')
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('source-0').localCacheRevision).toBeUndefined()
+  } finally { await act(async () => renderer?.unmount()) }
+})
+
 it.each([
   { visibilityState: 'hidden', focused: true },
   { visibilityState: 'visible', focused: false },
@@ -76,11 +109,21 @@ it.each([
       timelineItems: [{ itemUid: `${kind}-9`, sequence: 9, senderName: '同事', isMe: false,
         sendAtMillis: 9, textContent: '后台收到的正文', status: 1 }],
     }))
-    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 1, updates }) } as MessageEvent<string>) })
+    const upsert = vi.spyOn(arkmeChatDirectory, 'upsertMany')
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'timeline-items', revision: 1,
+      source: updates[0]!.source, items: updates[0]!.timelineItems }) } as MessageEvent<string>) })
+    expect(arkmeChatTimelineDelta.getSnapshotForSource('private_chat').items).toEqual(updates[0]!.timelineItems)
+    expect(upsert).not.toHaveBeenCalled()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 2, updates }) } as MessageEvent<string>) })
     for (const update of updates) {
       expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
       expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
     }
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'read-ack', revision: 3,
+      sourceRef: 'private_chat-ref', sourceKey: 'private_chat', effectiveReadSequence: 9, unreadCount: 2, latestSequence: 11,
+    }) } as MessageEvent<string>) })
+    expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === 'private_chat'))
+      .toMatchObject({ latestSequence: 11, unreadCount: 2 })
     expect(reads.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
     await act(async () => { arkmeChatTimelineDelta.activateAccount('test:43') })
     for (const update of updates) expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual([])

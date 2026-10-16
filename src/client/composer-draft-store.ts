@@ -1,7 +1,8 @@
 import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
 import { arkmeEscapeMarkdownText, arkmeMarkdownPlainText, arkmeMarkdownTextRanges, type ArkmeTextFormat } from '../markdown.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
-import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
+import { composerExtensionTarget, readComposerExtensionTarget, type ArkmeComposerExtensionTarget } from './composer-extension-target.js'
+import type { ArkmeTimelineItem, ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
@@ -27,6 +28,9 @@ export interface ArkmeComposerEmoji {
 }
 
 export interface ArkmeComposerDraftSnapshot {
+  /** Last content edit, preserved when hydrating, replicating or restoring a failed send. */
+  editedAtMillis?: number
+  extensionTarget?: ArkmeComposerExtensionTarget
   markdown?: ArkmeMarkdownDraft
   text: string
   attachments: readonly ArkmeComposerAttachment[]
@@ -55,6 +59,21 @@ const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
   mentions: Object.freeze([]),
   emojis: Object.freeze([]),
 })
+
+export function arkmeDraftEditedAtMillis(draft: ArkmeComposerDraftSnapshot): number {
+  const value = draft.editedAtMillis
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000 ? value : 0
+}
+
+function sameDraftContent(left: ArkmeComposerDraftSnapshot, right: ArkmeComposerDraftSnapshot): boolean {
+  return left.text === right.text && left.markdown?.source === right.markdown?.source
+    && JSON.stringify(left.markdown?.document) === JSON.stringify(right.markdown?.document)
+    && JSON.stringify(left.mentions) === JSON.stringify(right.mentions)
+    && JSON.stringify(left.emojis) === JSON.stringify(right.emojis)
+    && JSON.stringify(left.extensionTarget) === JSON.stringify(right.extensionTarget)
+    && left.attachments.length === right.attachments.length
+    && left.attachments.every((attachment, index) => arkmeAttachmentId(attachment) === arkmeAttachmentId(right.attachments[index]!))
+}
 
 export const ARKME_COMPOSER_EMOJI_PLACEHOLDER = '\uFFFC'
 
@@ -88,6 +107,7 @@ export function insertArkmeComposerEmoji(current: ArkmeComposerDraftSnapshot, em
   emojis.push({ emojiId: emoji.id, startIndex: start })
   emojis.sort((left, right) => left.startIndex - right.startIndex)
   const next: ArkmeComposerDraftSnapshot = {
+    ...(current.extensionTarget === undefined ? {} : { extensionTarget: current.extensionTarget }),
     text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
     attachments: current.attachments,
     mentions,
@@ -321,6 +341,7 @@ export class ArkmeComposerDraftStore {
   private lastPersisted = ''
   private pendingPersisted: string | undefined
   private revision = 0
+  private readonly changeRevisions = new Map<string, number>()
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
   beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
@@ -330,7 +351,7 @@ export class ArkmeComposerDraftStore {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
     const identity = { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fingerprint }
-    this.store(key, { ...draft, fileSendIdentity: identity })
+    this.store(key, { ...draft, fileSendIdentity: identity }, 'preserve')
     return identity
   }
   private static readonly storageKey = 'arkme-local-file-drafts-v1'
@@ -346,7 +367,14 @@ export class ArkmeComposerDraftStore {
         const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
           && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
-        if (attachments.length > 0 || draft.markdown?.document?.type === 'doc') { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
+        const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
+        if (draft.extensionTarget !== undefined && extensionTarget === undefined) continue
+        if (attachments.length > 0 || draft.markdown?.document?.type === 'doc' || extensionTarget !== undefined) {
+          const { editedAtMillis: _savedTime, ...content } = draft
+          const editedAtMillis = arkmeDraftEditedAtMillis(draft)
+          this.drafts.set(entry[0], { ...content, attachments, ...(editedAtMillis ? { editedAtMillis } : {}), ...(extensionTarget === undefined ? {} : { extensionTarget }) })
+          this.restoredKeys.add(entry[0])
+        }
       }
       this.refreshPersisted()
       this.lastPersisted = this.persistedPayload()
@@ -361,10 +389,15 @@ export class ArkmeComposerDraftStore {
     const draft = value as ArkmeComposerDraftSnapshot | undefined
     if (!draft || typeof draft.text !== 'string' || !Array.isArray(draft.attachments)
       || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) return
-    this.storeOrDelete(key, draft)
+    const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
+    if (draft.extensionTarget !== undefined && extensionTarget === undefined) return
+    this.storeOrDelete(key, { ...draft, ...(extensionTarget === undefined ? {} : { extensionTarget }) }, 'preserve')
   }
 
   readonly getRevision = (): number => this.revision
+
+  /** Session-local edit order for aggregate previews; restored drafts do not become new activity. */
+  getChangeRevision(key: string | undefined): number { return key === undefined ? 0 : this.changeRevisions.get(key) ?? 0 }
 
   readonly subscribe = (listener: (key?: string) => void): (() => void) => {
     this.listeners.add(listener)
@@ -373,6 +406,12 @@ export class ArkmeComposerDraftStore {
 
   get(key: string | undefined): ArkmeComposerDraftSnapshot {
     return key === undefined ? EMPTY_DRAFT : this.drafts.get(key) ?? EMPTY_DRAFT
+  }
+
+  setExtensionTarget(key: string | undefined, item: ArkmeTimelineItem | undefined): void {
+    if (key === undefined) return
+    const { extensionTarget: _previous, fileSendIdentity: _identity, ...draft } = this.get(key)
+    this.storeOrDelete(key, { ...draft, ...(item === undefined ? {} : { extensionTarget: composerExtensionTarget(item) }) })
   }
 
   setMarkdown(key: string | undefined, markdown: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void {
@@ -385,6 +424,7 @@ export class ArkmeComposerDraftStore {
     const current = this.get(key)
     if (current.text === text && emojis === undefined) return
     this.storeOrDelete(key, {
+      ...(current.extensionTarget === undefined ? {} : { extensionTarget: current.extensionTarget }),
       text,
       attachments: current.attachments,
       mentions: reconcileArkmeComposerMentions(current.text, text, current.mentions),
@@ -395,7 +435,10 @@ export class ArkmeComposerDraftStore {
   /** Atomic text-editor projection, including emoji restored by undo/redo. */
   setRichText(key: string | undefined, text: string, emojis: readonly ArkmeComposerEmoji[]): void {
     if (key === undefined) return
-    this.storeOrDelete(key, { text, emojis, mentions: [], attachments: this.get(key).attachments })
+    const current = this.get(key)
+    this.storeOrDelete(key, { text, emojis, mentions: [], attachments: current.attachments,
+      ...(current.extensionTarget === undefined ? {} : { extensionTarget: current.extensionTarget }),
+    })
   }
 
   insertEmoji(
@@ -423,7 +466,9 @@ export class ArkmeComposerDraftStore {
     const current = this.get(key)
     const inserted = insertArkmeComposerMentionToken(current, mention, displayName, selectionStart, selectionEnd)
     if (inserted === undefined) return undefined
-    this.store(key, { text: inserted.text, attachments: current.attachments, mentions: inserted.mentions, emojis: inserted.emojis })
+    this.store(key, { text: inserted.text, attachments: current.attachments, mentions: inserted.mentions, emojis: inserted.emojis,
+      ...(current.extensionTarget === undefined ? {} : { extensionTarget: current.extensionTarget }),
+    })
     return inserted.caretIndex
   }
 
@@ -456,7 +501,9 @@ export class ArkmeComposerDraftStore {
         ? { ...mention, startIndex: mention.startIndex + inserted.length }
         : mention)
     const emojis = replaceArkmeComposerEmojiSelection(current.emojis, start, end, inserted.length)
-    this.store(key, { text, attachments: current.attachments, mentions, emojis })
+    this.store(key, { text, attachments: current.attachments, mentions, emojis,
+      ...(current.extensionTarget === undefined ? {} : { extensionTarget: current.extensionTarget }),
+    })
     return start + inserted.length
   }
 
@@ -579,15 +626,17 @@ export class ArkmeComposerDraftStore {
         releaseArkmeComposerAttachment(attachment)
       }
     }
-    const restoreIdentity = current.text === '' && current.attachments.length === 0
-      && current.mentions.length === 0 && current.emojis.length === 0
-      ? snapshot.fileSendIdentity
-      : undefined
+    const restoreOriginal = current === EMPTY_DRAFT
+    const restoreIdentity = restoreOriginal ? snapshot.fileSendIdentity : undefined
+    const extensionTarget = restoreOriginal ? snapshot.extensionTarget : current.extensionTarget
+    const editedAtMillis = Math.max(arkmeDraftEditedAtMillis(current), arkmeDraftEditedAtMillis(snapshot))
     this.storeOrDelete(key, {
       text, attachments: merged, mentions, emojis,
+      ...(editedAtMillis ? { editedAtMillis } : {}),
+      ...(extensionTarget === undefined ? {} : { extensionTarget }),
       ...((current.text === '' ? snapshot.markdown : current.markdown) === undefined ? {} : { markdown: (current.text === '' ? snapshot.markdown : current.markdown)! }),
       ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
-    })
+    }, 'preserve')
   }
 
   clear(key: string | undefined): void {
@@ -612,22 +661,27 @@ export class ArkmeComposerDraftStore {
     if (changed) this.publish()
   }
 
-  private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
+  private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
     // A newly typed heading/list/fence has no visible text yet, but is still an editable draft.
     // Inspect the document: serializers may omit an empty heading or task item's Markdown source.
     const hasMarkdownStructure = snapshot.markdown?.document.content?.some(node => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
-    if (snapshot.text === '' && !hasMarkdownStructure && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
+    if (snapshot.extensionTarget === undefined && snapshot.text === '' && !hasMarkdownStructure && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
       if (!this.drafts.delete(key)) return
       this.publish(key)
       return
     }
-    this.store(key, snapshot)
+    this.store(key, snapshot, timing)
   }
 
-  private store(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
+  private store(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
+    const current = this.get(key)
+    const editedAtMillis = timing === 'preserve' ? arkmeDraftEditedAtMillis(snapshot)
+      : sameDraftContent(current, snapshot) ? arkmeDraftEditedAtMillis(current) : Date.now()
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
+      ...(editedAtMillis ? { editedAtMillis } : {}),
+      ...(snapshot.extensionTarget === undefined ? {} : { extensionTarget: snapshot.extensionTarget }),
       ...(snapshot.markdown === undefined ? {} : { markdown: snapshot.markdown }),
       attachments: Object.freeze([...snapshot.attachments]),
       mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
@@ -641,7 +695,7 @@ export class ArkmeComposerDraftStore {
     const keys = key === undefined ? new Set([...this.persisted.keys(), ...this.drafts.keys()]) : [key]
     for (const changedKey of keys) {
       const draft = this.drafts.get(changedKey)
-      if (draft === undefined || (draft.markdown === undefined && !draft.attachments.some(item => item.localFile !== undefined))) {
+      if (draft === undefined || (draft.extensionTarget === undefined && draft.markdown === undefined && !draft.attachments.some(item => item.localFile !== undefined))) {
         this.persisted.delete(changedKey)
       } else {
         this.persisted.set(changedKey, JSON.stringify([changedKey, { ...draft,
@@ -672,6 +726,9 @@ export class ArkmeComposerDraftStore {
       }
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1
+    if (key !== undefined && this.drafts.has(key)) this.changeRevisions.set(key, this.revision)
+    else if (key !== undefined) this.changeRevisions.delete(key)
+    else for (const changedKey of this.changeRevisions.keys()) if (!this.drafts.has(changedKey)) this.changeRevisions.delete(changedKey)
     for (const listener of this.listeners) listener(key)
   }
 

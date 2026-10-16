@@ -35,6 +35,9 @@ describe('RecordingService', () => {
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
     const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }] as Array<{ speaker_id: string; nick_name: string; ref_usr_id?: number }>, failWrite: false,
       members: {} as Record<string, unknown>, presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
+      transcripts: undefined as Record<number, Record<string, unknown>> | undefined,
+      calendar: undefined as Record<string, unknown> | undefined,
+      totalsSessions: [] as Record<string, unknown>[],
       presence: { state: 'fresh', version: 'v1', items: [{ speaker_id: 'speaker', day_count: 3, last_seen_at: 1_780_000_000_000 }] } }
     const calls: string[] = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -50,9 +53,15 @@ describe('RecordingService', () => {
       if (state.presenceMissing && path.endsWith('/get-calender-summary')) data = {
         duration_ls: [0, 0, 0, 0, 0, 0, 1_000], un_click_session_ids_per_day: [[], [], [], [], [], [], []],
       }
+      if (state.calendar && path.endsWith('/get-calender-summary')) data = state.calendar
+      if (path.endsWith('/get-session-ls')) data = { session_ls: state.totalsSessions }
       if (path.endsWith('/one-day-trans')) data = {
         session_ls: [{ id: 'session', belong_usr: session.userId, start_at: 3600000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
         child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '内容' }] }],
+      }
+      if (state.transcripts && path.endsWith('/one-day-trans')) {
+        const request = JSON.parse(String(init?.body ?? '{}'))
+        data = state.transcripts[request.start_at] ?? { session_ls: [], child_ls: [] }
       }
       if (state.presenceMissing && path.endsWith('/one-day-trans')) {
         const request = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -65,6 +74,132 @@ describe('RecordingService', () => {
     return { root, database, runtime, service, state, calls, fetchImpl,
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
+
+  it('reads the totals index and bucket through existing endpoints without speaker or generated-content requests', async () => {
+    const f = await speakerCacheFixture()
+    const day = new Date(2026, 8, 1).getTime()
+    f.state.totalsSessions = [{ id: 'secret-session-id', user_id: 42, belong_usr: 0, start_at: day, update_at: day, has_done_child: true }]
+    f.state.transcripts = { [day]: { session_ls: f.state.totalsSessions.map(s => ({ ...s, end_at: day + 1000 })), child_ls: [
+      { id: 'secret-child-id', session_id: 'secret-session-id', start_at: 0, duration: 1000, archive_size: 100, size: 20, has_asr: true,
+        asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 1000, spans: [[0, 1000]] } },
+    ] } }
+    try {
+      const index = await f.service.recordingTotalsIndex('test:42', Date.now(), 0)
+      expect(index).toMatchObject({ items: [{ dateStamp: day, pending: false }], nextOffset: null })
+      expect(JSON.stringify(index)).not.toContain('secret-session-id')
+      const result = await f.service.recordingTotalsBucket('test:42', day)
+      expect(result).toMatchObject({ sessionCount: 1, metrics: { storage: { bytes: 120 }, asrInput: { durationMillis: 1000 } } })
+      expect(JSON.stringify(result)).not.toContain('secret-child-id')
+      expect(f.calls).toEqual(['/api/v1/audio/get-session-ls', '/api/v1/audio/one-day-trans'])
+      await expect(f.service.recordingTotalsBucket('test:7', day)).rejects.toThrow('账号已切换')
+      await expect(f.service.recordingTotalsIndex('test:42', Date.now(), -1)).rejects.toThrow()
+    } finally { await f.close() }
+  })
+
+  it('reads account-wide totals through the existing monthly request without loading historical transcripts', async () => {
+    const fixture = await speakerCacheFixture()
+    const from = new Date(2026, 9, 1).getTime(), to = new Date(2026, 10, 1).getTime()
+    const totals = { version: 2, scope: 'all_uploaded_recordings', as_of_ms: from,
+      storage: { state: 'ready', bytes: 123456, archive_bytes: 23456, clip_bytes: 100000 }, asr_input: { state: 'partial', duration_ms: 987654, basis: 'observed' } }
+    fixture.state.calendar = { duration_ls: [5000], un_click_session_ids_per_day: [[]], recording_totals: totals }
+    try {
+      expect(await fixture.service.recordingCalendar(from, to)).toMatchObject({ days: [{ durationMillis: 5000 }],
+        totals: { storage: { bytes: 123456 }, asrInput: { state: 'partial', durationMillis: 987654 } } })
+      expect(fixture.calls.filter(path => path.startsWith('/api/v1/audio/'))).toEqual(['/api/v1/audio/get-calender-summary'])
+      fixture.state.calendar = { duration_ls: [6000], un_click_session_ids_per_day: [[]] }
+      const next = await fixture.service.recordingCalendar(new Date(2026, 8, 1).getTime(), from)
+      expect(next.days[0]?.durationMillis).toBe(6000)
+      expect(next.totals).toBeUndefined()
+    } finally { await fixture.close() }
+  })
+
+  it('resolves entity evidence from Audio without speaker or profile requests, preserving raw text and day boundaries', async () => {
+    const profiles = vi.fn(async () => new Map())
+    const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'unused' } })
+    const date = new Date(2026, 7, 12).getTime()
+    fixture.state.presenceMissing = true
+    fixture.state.recentDayStart = date
+    fixture.state.recentTranscript = {
+      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_400_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
+        asr: [{ s: 1000, e: 2000, n: 1, b: 1, t: '  (背景音) 🙂武汉  ' }, { s: 86_400_000, e: 86_401_000, t: '次日' }],
+        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '豆包原文' }] }],
+    }
+    try {
+      const session = await fixture.runtime.requireSession()
+      expect(await fixture.service.entityTranscriptRows(date, 'system', session)).toMatchObject([
+        { sessionId: 's', childId: 'c', asrItemIndex: 0, transcriptSource: 'system', text: '🙂武汉', rawTranscriptText: '  (背景音) 🙂武汉  ' },
+      ])
+      expect(await fixture.service.entityTranscriptRows(date, 'doubao', session)).toMatchObject([
+        { transcriptSource: 'doubao', text: '豆包原文', asrItemIndex: 0 },
+      ])
+      expect(fixture.calls).toEqual(['/api/v1/audio/one-day-trans', '/api/v1/audio/one-day-trans'])
+      expect(profiles).not.toHaveBeenCalled()
+    } finally { await fixture.close() }
+  })
+
+  it('opens Explore evidence on the original ASR source and rejects mismatched anchors', async () => {
+    const fixture = await speakerCacheFixture()
+    const date = new Date(2026, 7, 12).getTime(), start = date + 9 * 3600000
+    fixture.state.transcripts = { [date]: {
+      session_ls: [{ id: 's', belong_usr: 42, start_at: start, end_at: start + 3000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
+        asr: [{ s: 1000, e: 2000, n: 1, t: '系统原文' }],
+        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '生日是十月二十八日' }] }],
+    } }
+    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
+    try {
+      const source = await fixture.service.exploreRecordingEvidence(owner, '十月二十八日')
+      expect(source.dateStamp).toBe(date)
+      expect(source.items).toMatchObject([{ text: '生日是十月二十八日', transcriptSource: 'doubao' }])
+      expect(source.segment).toBeUndefined()
+      expect(source.playbackTargets?.[0]?.item).toMatchObject({text:'系统原文',transcriptSource:'system'})
+      await expect(fixture.service.exploreRecordingEvidence({...owner, transcript_source:'system'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, child_id:'wrong'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, start_at:start+5000}, '十月二十八日')).rejects.toThrow('原转写已更新')
+    } finally { await fixture.close() }
+  })
+
+  it('validates original civil windows and retains them for transcript and version reads', async () => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    try {
+      const browserDate = Date.parse('2026-03-08T00:00:00+09:00')
+      const day = await fixture.service.recordingDay(browserDate, undefined, window)
+      expect(day.dateStamp).toBe(browserDate)
+      const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
+      expect(requests.find(call => call.path.endsWith('/one-day-trans'))?.body).toEqual({ start_at: window.dateStamp, end_at: window.endStamp, tz_offset: -5 * 3600_000 })
+      expect(requests.filter(call => call.path.endsWith('/list-timeline-by-range')).map(call => call.body)).toEqual([1, 2].map(kind => ({ from_stamp: window.dateStamp, to_stamp: window.endStamp, date_stamp: window.dateStamp, kind })).reverse())
+      for (const invalid of [{ ...window, timeZone: 'invalid-zone' }, { ...window, endStamp: window.dateStamp + 86400_000 }]) {
+        await expect(fixture.service.recordingDay(window.dateStamp, undefined, invalid)).rejects.toMatchObject({ code: 'recording-window-invalid' })
+      }
+    } finally { await fixture.close() }
+  })
+
+  it.each([['item', false], ['speaker', false], ['item', true], ['speaker', true]] as const)('keeps the notification civil day during speaker %s edits (different browser zone=%s)', async (scope, differentBrowserZone) => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    const browserDate = differentBrowserZone ? Date.parse('2026-03-08T00:00:00+09:00') : new Date(2026, 2, 8).getTime()
+    const start = window.endStamp - 3600_000 // Outside the browser's March 8, inside the original DST day.
+    fixture.state.transcripts = { [window.dateStamp]: {
+      session_ls: [{ id: 'session', belong_usr: 42, start_at: start, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '通知日的晚间录音' }] }],
+    } }
+    try {
+      const day = await fixture.service.recordingDay(browserDate, undefined, window)
+      expect(day.transcript.items).toHaveLength(1)
+      const options = await fixture.service.recordingSpeakerOptions()
+      const result = await fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })
+      expect(result).toMatchObject({ scope, affectedCount: 1, day: { dateStamp: browserDate, transcript: { items: [expect.objectContaining({ text: '通知日的晚间录音' })] } } })
+      const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
+      const reads = requests.filter(call => call.path.endsWith('/one-day-trans'))
+      expect(reads.length).toBeGreaterThan(0)
+      expect(reads.every(call => call.body.start_at === window.dateStamp && call.body.end_at === window.endStamp && call.body.tz_offset === -5 * 3600_000)).toBe(true)
+      expect(requests.some(call => call.path.endsWith(scope === 'item' ? '/assign-asr-item-to-spk' : '/batch-assign-session-num-to-spk'))).toBe(true)
+      // Refreshed items retain the same scope for a subsequent edit too.
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: result.day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })).resolves.toMatchObject({ affectedCount: 1 })
+    } finally { await fixture.close() }
+  })
 
   it('enriches only requested speaker IDs through existing public profiles, with no contact or presence scan', async () => {
     const profiles = vi.fn(async () => new Map([[7, { userId: 7, displayName: '同名', nickname: '同名', avatarUrl: 'https://avatar.test/7' }]]))
@@ -286,12 +421,13 @@ describe('RecordingService', () => {
     return bytes
   }
 
-  it('starts summary generation with the desktop transcript contract and returns the owner processing projection', async () => {
+  it.each([false, true])('starts summary generation with the desktop transcript contract (original window=%s)', async (originalWindow) => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const dayStart = new Date(2026, 7, 31).getTime()
+    const window = originalWindow ? { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') } : undefined
+    const dayStart = window?.dateStamp ?? new Date(2026, 7, 31).getTime()
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
@@ -300,7 +436,7 @@ describe('RecordingService', () => {
       let data: Record<string, unknown> = {}
       if (path.endsWith('/one-day-trans')) data = {
         session_ls: [{
-          id: 'session-secret', belong_usr: 42, start_at: dayStart + 14 * 3_600_000,
+          id: 'session-secret', user_id: 42, belong_usr: 42, start_at: dayStart + 14 * 3_600_000,
           end_at: dayStart + 14 * 3_600_000 + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker-secret' }],
         }],
         child_ls: [{
@@ -324,11 +460,11 @@ describe('RecordingService', () => {
       dependencies(),
     )
 
-    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max')).resolves.toMatchObject({
+    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max', undefined, window)).resolves.toMatchObject({
       state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
     })
     const create = requests.find(request => request.path.endsWith('/summary/create'))
-    const timezoneOffset = -new Date(dayStart).getTimezoneOffset() * 60_000
+    const timezoneOffset = window ? -5 * 3600_000 : -new Date(dayStart).getTimezoneOffset() * 60_000
     expect(create?.body).toMatchObject({
       date_stamp: dayStart,
       // JSON serialization normalizes UTC's negative zero to positive zero.
@@ -340,6 +476,10 @@ describe('RecordingService', () => {
       route_key: 'dashscope/qwen3-max',
       kind: 1,
     })
+    if (window) {
+      expect(create?.body.transcripts).toContain('2026-03-08 15:00:00')
+      expect(create?.body).toMatchObject({ time_zone: window.timeZone, day_end_stamp: window.endStamp })
+    }
     expect(create?.body.transcripts).toContain('说话人：我')
     expect(create?.body.transcripts).toContain('其中，我是我自己')
     expect(JSON.stringify(create?.body)).not.toContain('session-secret')
@@ -562,13 +702,13 @@ describe('RecordingService', () => {
       vi.mocked(fixture.fetchImpl).mockImplementation(async input=>{
         const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
         const data=path.endsWith('/one-day-trans')?{
-          session_ls:[{id:'session-secret',belong_usr:42,start_at:dayStart,end_at:dayStart+60000,spk_ls:[{num:1,spk_id:'speaker-secret'}]}],
-          child_ls:[{id:'child-secret',session_id:'session-secret',start_at:0,duration:60000,has_asr:true,archive_size:123456,source_size:999999,asr_input_metrics:{state:'ready',basis:'observed',duration_ms:5000,spans:[[0,5000]]},asr:[{s:0,e:1000,n:1,t:'你好 🙂'}]}],
+          session_ls:[{id:'session-secret',user_id:42,belong_usr:42,start_at:dayStart,end_at:dayStart+60000,spk_ls:[{num:1,spk_id:'speaker-secret'}]}],
+          child_ls:[{id:'child-secret',session_id:'session-secret',start_at:0,duration:60000,has_asr:true,archive_size:123456,size:1000,source_size:999999,asr_input_metrics:{state:'ready',basis:'observed',duration_ms:5000,spans:[[0,5000]]},asr:[{s:0,e:1000,n:1,t:'你好 🙂'}]}],
         }:{spk_ls:[]}
         return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day=await fixture.service.recordingDay(dayStart)
-      expect(day.transcript.dailyMetrics).toEqual({archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
+      expect(day.transcript.dailyMetrics).toMatchObject({storage:{bytes:124456,archiveBytes:123456,clipBytes:1000,state:'ready'},archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
       expect(JSON.stringify(day.transcript.dailyMetrics)).not.toContain('secret')
       expect(fixture.fetchImpl).toHaveBeenCalledTimes(4)
     }finally{await fixture.close()}
@@ -589,7 +729,7 @@ describe('RecordingService', () => {
           expect(request).toEqual({ start_at: dayStart, end_at: dayEnd, tz_offset: offsetHours * 3600000 })
           expect(request.end_at - request.start_at).toBe(hours * 3600000)
           data = {
-            session_ls: [{ id: 's', belong_usr: 42, start_at: dayEnd - 60000, end_at: dayEnd }],
+            session_ls: [{ id: 's', user_id: 42, belong_usr: 42, start_at: dayEnd - 60000, end_at: dayEnd }],
             child_ls: [{ id: 'c', session_id: 's', start_at: dayEnd - 60000, duration: 60000,
               has_asr: true, asr: [], asr_input_metrics: {
                 state: 'ready', basis: 'observed', duration_ms: 60000, spans: [[0, 60000]],
@@ -625,7 +765,7 @@ describe('RecordingService', () => {
             asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 8000, spans: [[1000, 5000], [3000, 7000]] },
           }
           data = {
-            session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
+            session_ls: [{ id: 'session-secret', user_id: 42, belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
             child_ls: [child, child],
           }
         }
@@ -651,7 +791,7 @@ describe('RecordingService', () => {
       vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
         const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
         const data = path.endsWith('/one-day-trans') ? {
-          session_ls: [{ id: 's', belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
+          session_ls: [{ id: 's', user_id: 42, belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
           child_ls: [{ id: 'c', session_id: 's', start_at: 0, duration: 60000, has_asr: true,
             archive_size: 1234, asr: [{ s: 0, e: 1000, n: 1, t: '仍可读取' }], asr_input_metrics }],
         } : { spk_ls: [] }
@@ -1105,6 +1245,35 @@ describe('RecordingService', () => {
       total: 1, offset: 0, hasMore: false,
     })
     expect(JSON.stringify(history)).not.toContain('session-completed')
+  })
+
+  it('exposes explicit active pagination while keeping the default current-task read bounded', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-active-pages-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    const owners = Array.from({ length: 55 }, (_, i) => ({
+      sessionId: `active-${i}`, ownership: 'self' as const, fileName: `${i}.wav`,
+      fileSize: 1_024, parsedSize: 0, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_001_000,
+      hasFinishedUpload: false,
+    }))
+    gateway.listOwnerTasks = vi.fn(async input => ({
+      ...ownerPage(owners.slice(input.offset, input.offset + input.limit)),
+      hasMore: input.offset + input.limit < owners.length,
+    }))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway))
+    expect((await service.recordingImportList()).items).toHaveLength(20)
+    const first = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 0 })
+    expect(first.items).toHaveLength(50)
+    expect(first.owner).toEqual({ state: 'available', hasMore: true, nextOffset: 50 })
+    const last = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 50 })
+    expect(last.items).toHaveLength(5)
+    expect(last.owner).toEqual({ state: 'available', hasMore: false, nextOffset: 55 })
+    await expect(service.recordingImportList(undefined, { toMillis: Date.now(), limit: 51, offset: 0 })).rejects.toMatchObject({ code: 'recording-import-list-invalid' })
   })
 
   it('does not downgrade an accepted Audio session into a local processing task when owner reads fail', async () => {

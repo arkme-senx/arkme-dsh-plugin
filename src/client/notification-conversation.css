@@ -1,0 +1,38 @@
+.arkme-notification-conversation { display: flex; flex-direction: column; min-height: 0; height: 100%; color: var(--dsw-alias-label-primary, #17191c); background: var(--dsw-alias-bg-base, #fff); }
+.arkme-notification-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; flex: none; min-height: 67px; padding: 0 22px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); }
+.arkme-notification-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.arkme-notification-filter { position: relative; }
+.arkme-notification-filter-menu { position: absolute; z-index: 20; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 164px; padding: 6px; border: 1px solid var(--dsw-alias-border-l1, #eee); border-radius: 12px; background: var(--dsw-specific-menu, #fff); box-shadow: var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.12)); }
+.arkme-notification-filter-menu button { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 14px; cursor: pointer; }
+.arkme-notification-filter-menu button:hover, .arkme-notification-filter-menu button[aria-checked=true] { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.arkme-notification-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.arkme-notification-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.arkme-notification-messages { padding: 12px 22px 30px; }
+.arkme-notification-message { margin: 0 0 20px; }
+.arkme-notification-time { display: block; margin: 15px 0 22px; text-align: center; font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-caption, #a3a8ae); }
+.arkme-notification-message-row { display: flex; align-items: flex-start; gap: 12px; }
+.arkme-notification-identity { flex: none; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 50px; }
+.arkme-notification-avatar { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--dsw-alias-state-business-tertiary, #eef1f8); color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-notification-avatar-icon { display: block; width: 23px; height: 23px; background: currentColor; mask-size: contain; mask-repeat: no-repeat; mask-position: center; -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat; -webkit-mask-position: center; }
+.arkme-notification-message-content { min-width: 0; max-width: min(760px, calc(100% - 62px)); }
+.arkme-notification-sender { font-size: 11px; line-height: 1.2; text-align: center; overflow-wrap: anywhere; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-notification-bubble { padding: 14px 17px; border-radius: 3px 14px 14px; background: var(--arkme-chat-other-bubble, var(--dsw-specific-bubble, var(--dsw-alias-bg-layer-2, #f3f4f6))); overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
+.arkme-notification-bubble h3 { margin: 0; font-size: 14px; line-height: 1.65; font-weight: 600; }
+.arkme-notification-text { margin-top: 7px; white-space: pre-wrap; }
+.arkme-notification-source { margin-top: 3px; font-size: 12px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-notification-original { padding-left: 10px; border-left: 2px solid var(--dsw-alias-border-l2, #ddd); }
+.arkme-notification-text--collapsed { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.arkme-notification-link { margin-top: 10px; padding: 3px 0; border: 0; background: transparent; color: var(--dsw-alias-state-business-primary, #3964fe); font: inherit; font-size: 13px; cursor: pointer; }
+.arkme-notification-link:hover { text-decoration: underline; }
+.arkme-notification-conversation button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 3px; }
+.arkme-notification-status { padding: 10px 22px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; line-height: 1.6; }
+.arkme-notification-empty { padding: 60px 20px; text-align: center; color: var(--dsw-alias-label-secondary, #68707c); font-size: 13px; line-height: 1.8; }
+.arkme-notification-history { display: flex; justify-content: center; flex-wrap: wrap; gap: 20px; }
+.arkme-notification-latest { position: absolute; bottom: 20px; right: 24px; padding: 9px 14px; border: 1px solid var(--dsw-alias-border-l2, #ddd); border-radius: 20px; color: var(--dsw-alias-state-business-primary, #3964fe); background: var(--dsw-alias-bg-base, #fff); box-shadow: var(--dsw-shadow-lv2, 0 2px 10px #0001); font: inherit; font-size: 13px; cursor: pointer; }
+@media (max-width: 600px) {
+  .arkme-notification-header { padding: 0 16px; }
+  .arkme-notification-messages { padding: 10px 12px 24px; }
+  .arkme-notification-message-row { gap: 8px; }
+  .arkme-notification-message-content { max-width: calc(100% - 58px); }
+  .arkme-notification-bubble { padding: 12px 14px; }
+}

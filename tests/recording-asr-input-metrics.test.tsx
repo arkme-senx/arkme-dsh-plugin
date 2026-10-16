@@ -6,7 +6,7 @@ import { RecordingDailyMetrics } from '../src/client/recordings/RecordingDailyMe
 import { connectArkmeLocale } from '../src/client/locale.js'
 
 const start = new Date(2026, 9, 8).getTime(), end = start + 86400000
-const session = { id: 's', belong_usr: 42, start_at: start, end_at: end }
+const session = { id: 's', user_id: 42, belong_usr: 42, start_at: start, end_at: end }
 const speech = (spans: number[][], duration_ms = spans.reduce((sum, [s, e]) => sum + e! - s!, 0)) => ({ state: 'ready', basis: 'observed', spans, duration_ms })
 const child = { id: 'c', session_id: 's', start_at: 0, duration: 60000, has_asr: true, archive_size: 40,
   asr_input_metrics: speech([[1000, 3000], [5000, 9000]]) }
@@ -14,7 +14,7 @@ const metrics = (children: unknown[], sessions: unknown[] = [session]) => projec
 afterEach(() => connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} })())
 
 it('counts reported model input independently of text and speaker identity', () => {
-  expect(metrics([{ ...child, has_asr: false }])).toEqual({ asrInputEstimatedCount: 0, asrInputDurationMillis: 6000, asrInputState: 'ready', asrInputConfirmedCount: 1, asrInputPendingCount: 0, asrInputUnknownCount: 0 })
+  expect(metrics([{ ...child, has_asr: false }])).toEqual({ asrInputMissingHistoryCount: 0, asrInputEstimatedCount: 0, asrInputDurationMillis: 6000, asrInputState: 'ready', asrInputConfirmedCount: 1, asrInputPendingCount: 0, asrInputUnknownCount: 0 })
 })
 it('counts overlapping input and independent recordings separately while deduplicating response children', () => {
   const overlapping = { ...child, asr_input_metrics: speech([[5000, 9000], [1000, 6000], [9000, 10000]], 10000) }
@@ -25,10 +25,10 @@ it('selects the newest duplicate child regardless of response order', () => {
   expect(metrics([child, newer]).asrInputDurationMillis).toBe(1000)
   expect(metrics([newer, child]).asrInputDurationMillis).toBe(1000)
 })
-it('uses recording ownership, including all speakers and excluding others recordings', () => {
-  expect(metrics([child, { ...child, id: 'foreign', session_id: 'foreign' }], [session, { ...session, id: 'foreign', belong_usr: 7 }]).asrInputDurationMillis).toBe(6000)
-  expect(metrics([child], [{ ...session, belong_usr: 0 }])).toMatchObject({ asrInputDurationMillis: 0, asrInputState: 'ready' })
-  expect(metrics([child], [{ ...session, belong_usr: undefined }]).asrInputState).toBe('unavailable')
+it('uses the uploading account independently of speaker and memory attribution', () => {
+  expect(metrics([child, { ...child, id: 'foreign', session_id: 'foreign' }], [session, { ...session, id: 'foreign', user_id: 7, belong_usr: 42 }]).asrInputDurationMillis).toBe(6000)
+  expect(metrics([child], [{ ...session, user_id: 7 }])).toMatchObject({ asrInputDurationMillis: 0, asrInputState: 'ready' })
+  expect(metrics([child], [{ ...session, user_id: undefined }]).asrInputState).toBe('unavailable')
 })
 it('clips spans at midnight using absolute and session-relative child starts', () => {
   const spans = speech([[29000, 32000], [40000, 50000]])
@@ -93,7 +93,7 @@ it('renders precise duration, localized states and no stale values during loadin
   const daily = projectRecordingDailyMetrics({ session_ls: [session], child_ls: [child] }, [], 42, start, end)
   const ready = { ...daily, asrInputDurationMillis: 8316000 }
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('转写输入时长 2小时18分36秒')
-  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('缺少可靠记录的历史输入时长暂不可用')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('历史计量缺失表示转写可能已完成')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={{ ...ready, asrInputDurationMillis: 500 }}/>)).toContain('不足1秒')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).toContain('转写输入时长 —')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).not.toContain('2小时')
@@ -104,7 +104,7 @@ it('renders precise duration, localized states and no stale values during loadin
   expect(partial).toContain('部分转写输入时长暂不可确认')
   connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('ASR input 2h 18m 36s')
-  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical input without reliable records is unavailable')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical measurement missing means transcription may be complete')
 })
 
 it('preserves partial attempt totals and clearly labels historical estimates', () => {

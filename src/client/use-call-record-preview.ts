@@ -3,8 +3,8 @@ import type { ArkmeCallDetail } from '../types.js'
 import { callArkme } from './api.js'
 
 /** Only fetch visible quick notes; abort on message/account changes and unmount. */
-export function useCallRecordPreview(callRef: string | undefined, revision?: number | string) {
-  const element = useRef<HTMLDivElement>(null)
+export function useCallRecordPreview<Element extends HTMLElement = HTMLDivElement>(callRef: string | undefined, revision?: number | string) {
+  const element = useRef<Element>(null)
   const [snapshot, setSnapshot] = useState<{ callRef: string; revision: number | string | undefined; detail?: ArkmeCallDetail; failed?: boolean }>()
   useEffect(() => {
     if (!callRef) return

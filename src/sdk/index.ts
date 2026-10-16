@@ -1,3 +1,17 @@
+import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
+export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
+import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+import { connectArkmeRealtime } from '../client/realtime-connection.js'
+export { recordingImportBatchID } from '../recording-workflow-contract.js'
+import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
+export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
+import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
+export type {ArkmeTeamAvatar,ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
 export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
 import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
 export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
@@ -31,6 +45,8 @@ import type {
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -53,6 +69,7 @@ import type {
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteStickerList,
   ArkmeFavoriteStickerAddInput,
@@ -185,6 +202,8 @@ export type {
   ArkmeArrangementMutationOutcome,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderEvent,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
@@ -216,6 +235,7 @@ export type {
   ArkmeContactAddResult,
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
@@ -483,10 +503,64 @@ export class ArkmeSdk {
     }
   }
 
+  /** Explicit user command; idempotently starts recognition for the current account/day. */
+  async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
+    if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
+    return this.call('recordings.entities.start', { ...query }, signal)
+  }
+
+  /** Existing recognition for one recording day. Does not start an extraction job. */
+  async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities', { ...query }, signal)
+  }
+
+  /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities.occurrences', { ...query }, signal)
+  }
+
+  async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
+    if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
+    return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
+  }
+  async recordingNotifications(cursor = '', signal?: AbortSignal): Promise<RecordingWorkflowPage> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'query', cursor }, signal)
+  }
+  async readRecordingNotifications(input: { accountKey: string; items?: Array<{ id: string; sequence: string }>; readThrough?: string }, signal?: AbortSignal): Promise<void> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    await this.call('recordings.workflow', { ...input, operation: 'read' }, signal)
+  }
+  async recordingNotificationVersion(versionId: string, kind: 'summary' | 'timeline', signal?: AbortSignal): Promise<{ version: import('../types.js').ArkmeRecordingVersion | null }> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'version', versionId, kind }, signal)
+  }
+
   /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */
   async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
     await this.requireSpeakerPresence(signal)
     return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
+    return this.call('recordings.speaker.correction.items', { ...query }, signal)
+  }
+
+  /** Human correction uses the same account-bound item references as the UI. */
+  /** Read only: null means no committed receipt was observed, not a failed write. */
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    return this.call('recordings.speaker.correction.result', { ...query }, signal)
+  }
+  async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext> {
+    return this.call('recordings.speaker.correction.context', { itemRef }, signal)
+  }
+  async applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.apply', { ...input }, signal)
+  }
+  async undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.undo', { ...input }, signal)
   }
 
   async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> {
@@ -512,6 +586,15 @@ export class ArkmeSdk {
     return capabilities
   }
 
+  async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.query', { expectedAccountScope }, signal)
+  }
+  /** Enable only after a human explicitly accepts ongoing actual-usage charges. */
+  async updateAutomaticCapability(expectedAccountScope: string, input: ArkmeCapabilityUpdate, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.update', { expectedAccountScope, ...input }, signal)
+  }
   async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
     if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
     return this.call('account.points.query', { expectedAccountScope }, signal)
@@ -535,6 +618,14 @@ export class ArkmeSdk {
   async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
+
+  private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
+  /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
+  async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}
+  async updateTeamProfile(profileRef:string,command:ArkmeTeamProfileUpdate,signal?:AbortSignal):Promise<ArkmeTeamProfileResult>{await this.requireTeamProfiles(signal);return await this.call('team.profile.update',{profileRef,command},signal)}
+  /** Upload a normalized/cropped image <=2MiB. Use a stable UID when retrying. */
+  async uploadTeamAvatar(profileRef:string,contentBase64:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}>{await this.requireTeamProfiles(signal);return await this.call('team.profile.avatar.upload',{profileRef,contentBase64,uploadUid},signal)}
+  async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void>{await this.requireTeamProfiles(signal);await this.call('team.profile.avatar.abort',{uploadRef},signal)}
 
   /** List every Team visible to the current account using opaque OpenAPI references. */
   async listTeams(
@@ -925,6 +1016,13 @@ export class ArkmeSdk {
     if (!/^1[3-9][0-9]{9}$/.test(normalized)) throw new TypeError('Phone number is invalid')
     if (!/^[0-9]{6}$/.test(normalizedCode)) throw new TypeError('Phone verification code is invalid')
     return await this.call<ArkmeAuthSnapshot>('auth.phone.verify', { phone: normalized, code: normalizedCode }, signal)
+  }
+
+  /** Join an open team or submit an approval request; reuse requestUid when retrying. */
+  async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal): Promise<{ state: string }> {
+    if ((await this.capabilities(signal)).features.contactTeamDiscovery !== true) throw new Error('当前 Provider 不支持搜索团队并申请加入，请升级')
+    const result = await this.call<{ state: string }>('contacts.team-join', { jotmoId, requestUid }, signal)
+    return { state: result.state }
   }
 
   /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
@@ -1381,6 +1479,11 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read plans by their source recording day, never by creation or due date. */
+  async recordingDayArrangements(query: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.call<ArkmeRecordingArrangementPage>('arrangements.recording-day', { ...query }, signal)
+  }
+
   /** Read public reviews and rating summary for one extension. */
   async extensionReviews(
     extensionId: string,
@@ -1772,20 +1875,75 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
   }
 
+  async messageSyncStatus(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.status', {}, signal)
+  }
+
+  async retryMessageSync(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.retry', {}, signal)
+  }
+
+  /** One bounded subscription per SDK instance; returned dispose/AbortSignal releases it. No polling. */
+  observeMessageSync(changed: (progress: ArkmeMessageSyncProgress) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    if (this.syncObservers.size >= 64) throw new Error('Message sync observer capacity exceeded')
+    const controller = new AbortController()
+    let active = true
+    const listener = (progress: ArkmeMessageSyncProgress) => { if (active) changed(progress) }
+    this.syncObservers.add(listener)
+    const stop = () => {
+      if (!active) return
+      active = false; controller.abort(); options.signal?.removeEventListener('abort', stop); this.syncObservers.delete(listener)
+      if (!this.syncObservers.size) { this.syncConnection?.close(); this.syncConnection = undefined; this.syncSequence++ }
+    }
+    options.signal?.addEventListener('abort', stop, { once: true })
+    if (options.signal?.aborted) { stop(); return stop }
+    const sequence = this.syncSequence
+    void this.messageSyncStatus(controller.signal).then(progress => {
+      if (!active) return
+      if (sequence === this.syncSequence) listener(progress)
+      if (!this.syncConnection) this.syncConnection = connectArkmeRealtime({
+        onOpen: () => {}, onDisconnect: () => {},
+        onMessage: event => {
+          try {
+            const update = JSON.parse(event.data) as import('../types.js').ArkmeChatClientEvent
+            if (update.type === 'message-sync-progress') {
+              this.syncSequence++
+              for (const notify of this.syncObservers) { try { notify(update.progress) } catch { /* A consumer cannot disrupt another listener. */ } }
+            } else if (update.type === 'reconcile') {
+              const sequence = ++this.syncSequence
+              void this.messageSyncStatus().then(progress => {
+                if (!this.syncConnection || sequence !== this.syncSequence) return
+                for (const notify of this.syncObservers) { try { notify(progress) } catch { /* Consumer isolation. */ } }
+              }).catch(error => options.onError?.(error))
+            }
+          } catch (error) { options.onError?.(error) }
+        },
+      }, `${this.route}/events`)
+    }).catch(error => { if (active) { options.onError?.(error); stop() } })
+    return stop
+  }
+  private syncObservers = new Set<(progress: ArkmeMessageSyncProgress) => void>()
+  private syncConnection: { close(): void } | undefined
+  private syncSequence = 0
+
   async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
-    if ((await this.capabilities(signal)).features.unifiedChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统一聊天时间线', retryable: false })
+    const features = (await this.capabilities(signal)).features
+    if (features.unifiedChatTimeline !== true || (query.reconcile || query.anchorId) && features.durableChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持所请求的聊天时间线能力', retryable: false })
     return await this.readSource(sourceRef, { cursor: { unified: query }, ...(query.limit === undefined ? {} : { limit: query.limit }), ...(signal === undefined ? {} : { signal }) })
   }
 
   async readSource(
     sourceRef: string,
-    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {},
   ): Promise<ArkmeTimelinePage> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
     return await this.call<ArkmeTimelinePage>('source.timeline', {
       sourceRef,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.background === true ? { background: true } : {}),
     }, options.signal)
   }
 
@@ -2282,7 +2440,7 @@ export class ArkmeSdk {
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
   async calendarChatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     const { signal, ...params } = options
     return await this.call<ArkmeCalendarBucketPage>('calendar.chat-statistics', params, signal)

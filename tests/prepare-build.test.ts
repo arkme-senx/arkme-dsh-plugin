@@ -54,7 +54,7 @@ function environment(skip?: string) {
 function pnpm(cwd: string, args: string[], skip?: string, extraEnv = {}) {
   const cli = process.env.npm_execpath
   return exec(cli ? process.execPath : 'pnpm', [...(cli ? [cli] : []), ...args], {
-    cwd, env: { ...environment(skip), ...extraEnv },
+    cwd, env: { ...environment(skip), ...extraEnv }, timeout: 30_000,
   })
 }
 
@@ -76,6 +76,7 @@ describe('prepare build lifecycle', () => {
     expect(await readFile(join(cwd, 'postinstall-ran'), 'utf8')).toBe('true')
   }, 20_000)
 
+  // Four real pnpm lifecycles verify byte identity, not package-manager wall time.
   it('keeps local pack builds and packages identical bytes after one explicit CI build', async () => {
     const cwd = await fixture()
     await pnpm(cwd, ['pack', '--pack-destination', 'before'])
@@ -86,7 +87,7 @@ describe('prepare build lifecycle', () => {
     expect(await readFile(join(cwd, 'builds.log'), 'utf8')).toBe('build\nbuild\n')
     const tarball = 'senguoyun-dsh-arkme-0.1.45.tgz'
     expect(await readFile(join(cwd, 'after', tarball))).toEqual(await readFile(join(cwd, 'before', tarball)))
-  }, 30_000)
+  }, 120_000)
 
   it('propagates a build failure through the prepare lifecycle', async () => {
     const cwd = await fixture()

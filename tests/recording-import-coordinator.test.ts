@@ -1,3 +1,4 @@
+import { recordingImportBatchID, RECORDING_IMPORT_RECOVERY_MILLIS } from '../src/recording-workflow-contract.js'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginError, ServiceRuntime } from '../src/services/service.js'
 import { RecordingImportContractError, type RecordingImportJob, type RecordingImportSource } from '../src/recording-import-contract.js'
@@ -331,4 +332,22 @@ describe('RecordingImportCoordinator', () => {
     expect(owner.deleteSession).toHaveBeenCalledTimes(1)
     expect(store.value).toMatchObject({ phase: 'cancelled', sourceHandle: '' })
   })
+})
+
+it.each(['prepared', 'uploading'] as const)('rejects expired batch recovery from %s without touching recording data', async phase => {
+  const owner = gateway(), input = source()
+  const batch = { batchId: recordingImportBatchID(Date.now() - RECORDING_IMPORT_RECOVERY_MILLIS), itemIndex: 0, itemCount: 1, timeZone: 'UTC' }
+  const store = memoryStore(job({ phase, batch, sessionId: 'session-1', childId: 'child-1' }))
+  const result = await new RecordingImportCoordinator(store, owner, input, async () => 42).run(42, 'job-1')
+  expect(result).toMatchObject({ phase: 'failed', errorCode: 'recording-import-expired', retryable: false })
+  expect(owner.ensureSession).not.toHaveBeenCalled()
+  expect(owner.upload).not.toHaveBeenCalled()
+  expect(owner.deleteSession).not.toHaveBeenCalled()
+  expect(input.discard).not.toHaveBeenCalled()
+})
+it('allows already-uploaded finalization after automation expiry without losing the recording', async () => {
+  const batch = { batchId: recordingImportBatchID(Date.now() - RECORDING_IMPORT_RECOVERY_MILLIS), itemIndex: 0, itemCount: 1, timeZone: 'UTC' }
+  const store = memoryStore(job({ phase: 'finalizing', batch, sessionId: 'session-1', childId: 'child-1', uploadedBytes: 1024 }))
+  const result = await new RecordingImportCoordinator(store, gateway(), source(), async () => 42).run(42, 'job-1')
+  expect(result.phase).toBe('accepted')
 })

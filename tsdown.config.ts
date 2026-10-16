@@ -15,6 +15,7 @@ export default defineConfig([
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
+      'timeline-cache-worker': 'src/timeline-cache-worker.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',
@@ -60,6 +61,8 @@ export default defineConfig([
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
     },
     outputOptions: {
+      // DSH registers one factory per browser entry; relative chunks have no module-table entry.
+      codeSplitting: false,
       entryFileNames: 'client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -72,6 +75,7 @@ export default defineConfig([
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
     fixedExtension: false, dts: false, clean: false,
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-session-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-session", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -85,6 +89,7 @@ export default defineConfig([
     fixedExtension: false, dts: false, clean: false,
     external: ['react'],
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-onboarding-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-onboarding", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -101,6 +106,7 @@ export default defineConfig([
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-model-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-model", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -116,6 +122,7 @@ export default defineConfig([
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-native-selection-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-native-selection", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -128,6 +135,7 @@ export default defineConfig([
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
     fixedExtension: false, dts: false, clean: false,
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-trajectory-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-trajectory", factory: (require) => {',
       footer: 'return module.exports; } });',
@@ -142,6 +150,7 @@ export default defineConfig([
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     outputOptions: {
+      codeSplitting: false,
       entryFileNames: 'harness-sidebar-client.js',
       banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-sidebar", factory: (require) => {',
       footer: 'return module.exports; } });',

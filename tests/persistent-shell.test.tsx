@@ -70,15 +70,13 @@ describe('Arkme persistent DSH shell', () => {
     expect(() => writePersistentSidebarWidth(382, unavailable)).not.toThrow()
   })
 
-  it('applies the conversation and Web-locked grid contract below the desktop breakpoint without changing Contacts', () => {
+  it('applies one directory grid contract below the desktop breakpoint while retaining the Contacts mobile layout', () => {
     const desktopOnlyMedia = redesignCss.indexOf('@media (min-width: 1100px)')
-    const conversationRule = redesignCss.indexOf('[data-arkme-directory-mode="conversations"]')
-    const webLockedRule = redesignCss.indexOf('[data-arkme-directory-mode="web-locked"]')
-    expect(conversationRule).toBeGreaterThanOrEqual(0)
-    expect(webLockedRule).toBeGreaterThanOrEqual(0)
-    expect(conversationRule).toBeLessThan(desktopOnlyMedia)
-    expect(webLockedRule).toBeLessThan(desktopOnlyMedia)
-    expect(redesignCss.slice(desktopOnlyMedia)).toContain('[data-arkme-directory-mode="contacts"]')
+    const directoryRule = redesignCss.indexOf('[data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]')
+    expect(directoryRule).toBeGreaterThanOrEqual(0)
+    expect(directoryRule).toBeLessThan(desktopOnlyMedia)
+    expect(redesignCss.slice(desktopOnlyMedia)).toContain('[data-arkme-contacts-mobile-view="directory"]')
+    expect(redesignCss.slice(desktopOnlyMedia)).toContain('[data-arkme-contacts-mobile-view="content"]')
     expect(redesignCss).toContain('[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }')
   })
 
@@ -105,7 +103,7 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-directory-compact="true"')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
     expect(markup).toContain('cursor:ew-resize')
-    expect(markup).toContain('width: 1px')
+    expect(markup).toContain('width: 2px')
     expect(markup).toContain('width: 3px')
     expect(markup).toContain('background: #09b83e')
     expect(markup).toContain(':hover::after')
@@ -140,7 +138,6 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('aria-valuemin="120"')
     expect(markup).toContain('aria-valuenow="120"')
     expect(markup).toContain('data-arkme-sidebar-resizing="false"')
-    expect(markup).toContain('transition: none !important')
   })
 
   it('only renders the conversation directory on conversation routes', () => {

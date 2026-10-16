@@ -28,7 +28,8 @@ afterEach(() => {
 })
 const labels = () => renderer!.root.findAllByType('button').map(button => button.props['data-arkme-home-tour-target']).filter(Boolean)
 const expectSocial = (visible: boolean) => {
-  for (const name of ['contacts', 'world', 'calls']) expect(labels().includes(name)).toBe(visible)
+  for (const name of ['contacts', 'calls']) expect(labels().includes(name)).toBe(visible)
+  expect(renderer!.root.findAllByType('button').some(button => button.props['aria-label'] === '探索')).toBe(visible)
 }
 const mount = async () => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
@@ -46,9 +47,9 @@ describe('social UI without service restrictions', () => {
     expect(renderer!.root.findByType('input')).toBe(input)
     expect(api.calls.mock.calls.every(([name]) => name !== 'social.access')).toBe(true)
   })
-  it('hides known unbound navigation and restores it after account update without remounting personal UI', async () => {
+  it('keeps every navigation entry for unbound accounts and after binding without remounting personal UI', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     const input = renderer!.root.findByType('input')
     api.phone = '138****0000'
     await act(async () => { await socialAccessStore.refresh() })
@@ -57,10 +58,10 @@ describe('social UI without service restrictions', () => {
   })
   it.each([true, false])('failed refresh preserves previously confirmed bound=%s', async bound => {
     api.phone = bound ? '138****0000' : undefined
-    await mount(); expectSocial(bound)
+    await mount(); expectSocial(true)
     api.fail = true
     await act(async () => { await socialAccessStore.refresh() })
-    expectSocial(bound)
+    expectSocial(true)
   })
   it('first profile failure keeps normal navigation available', async () => {
     api.fail = true
@@ -68,14 +69,14 @@ describe('social UI without service restrictions', () => {
   })
   it('does not reuse another account restriction', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     api.fail = true
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }) })
     expectSocial(true)
   })
   it('restores navigation when the existing account settings refresh discovers binding from another device', async () => {
     api.phone = undefined
-    await mount(); expectSocial(false)
+    await mount(); expectSocial(true)
     const input = renderer!.root.findByType('input')
     api.bindOnRefresh = true
     await act(async () => {
@@ -83,6 +84,7 @@ describe('social UI without service restrictions', () => {
     })
     expect(api.calls).toHaveBeenCalledWith('user.profile.refresh')
     expectSocial(true)
+    expect(socialAccessStore.getSnapshot().allowed).toBe(true)
     expect(renderer!.root.findAllByType('input')[0]).toBe(input)
   })
   it('uses the existing cache and fetches only when no profile exists', async () => {
@@ -91,5 +93,8 @@ describe('social UI without service restrictions', () => {
     api.calls.mockClear(); api.stale = true
     await loadSocialAccess(new AbortController().signal)
     expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile', 'user.profile.refresh'])
+    api.calls.mockClear()
+    await loadSocialAccess(new AbortController().signal, true)
+    expect(api.calls.mock.calls.map(([name]) => name)).toEqual(['user.profile.refresh'])
   })
 })
