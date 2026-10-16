@@ -69,7 +69,7 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 
 - 完整插件套件：1021 文件、12016 项通过；20 项明确跳过。Node 25 使用 `NODE_OPTIONS=--no-experimental-webstorage` 运行既有测试环境。
 - 包构建、类型检查通过；独立 TypeScript consumer 从正式安装的 tgz 导入公开 SDK，编译并运行通过。
-- `tests/e2e/speaker-evidence.e2e.mjs` 在官方 DSH fb2c4b9 的隔离 profile、真实 TEST 3016 登录下通过：SDK 完整组、两页成员、Tool 发现、只读拒写、真实确认拦截、AbortSignal。
-- E2E 设置 `ARKME_DSH_CHECKOUT`、`ARKME_PACKED_PROFILE`、`ARKME_EVIDENCE_TEST_ACCOUNT=3016`；已准备专用三行录音时可设 `ARKME_EVIDENCE_TEST_DAY` 增加真实读链验证。profile 必须由官方 CLI 安装不可变 tgz；不使用用户常驻客户端。
+- `tests/e2e/speaker-evidence.e2e.mjs` 在官方 DSH fb2c4b9 的隔离 profile、专用测试账号登录下通过：SDK 完整组、两页成员、Tool 发现、只读拒写、真实确认拦截、AbortSignal。
+- E2E 设置 `ARKME_DSH_CHECKOUT`、`ARKME_PACKED_PROFILE`、`ARKME_EVIDENCE_TEST_ACCOUNT`（专用测试账号）；已准备专用三行录音时可设 `ARKME_EVIDENCE_TEST_DAY` 增加真实读链验证。profile 必须由官方 CLI 安装不可变 tgz；不使用用户常驻客户端。
 
-测试服版本、真实后端纠正／撤销及负载结果在 Meta 的本次开发验收记录中。未发布插件 npm 包，也未替换用户常驻客户端；页面实际消费这些新能力仍由页面负责人在本交接合同下接入。
+后端纠正／撤销及负载结果由对应后端交付记录提供。未发布插件 npm 包，也未替换用户常驻客户端；页面实际消费这些新能力仍由页面负责人在本交接合同下接入。
