@@ -269,3 +269,12 @@ it('rejects incomplete counts and duplicate speaker identities instead of presen
   participation.participants[1] = { ...participant, speaker_key: 'distinct-speaker' }
   expect((await f.service.recordingEntities({ dateStamp: date })).entities![0]!.participation?.participants).toHaveLength(2)
 })
+
+it('passes owner system speakers through while keeping unknown audio source and identities private', async () => {
+  const f = fixture(); personalize(f)
+  f.state.occurrences = [{ ...occurrence(), context: { speaker_key: 'private-system-track', speaker_label: '说话人 3', relevance: 'unknown', accuracy: 'unverified', sound_source: 'unknown' } }]
+  const list = await f.service.recordingEntities({ dateStamp: date })
+  const detail = await f.service.recordingEntityOccurrences({ entityRef: list.entities![0]!.entityRef })
+  expect(detail.items[0]!.context).toMatchObject({ speakerLabel: '说话人 3', soundSource: 'unknown', relevance: 'unknown' })
+  expect(JSON.stringify(detail)).not.toContain('private-system-track')
+})

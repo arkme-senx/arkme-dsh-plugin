@@ -1958,6 +1958,7 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 其他提及|Other mentions
 背景内容|Background content
 来源待确认|Source unconfirmed
+声源待确认|Sound source unconfirmed
 现场提及|In-person mention
 待核实|Needs verification
 其他内容 · {count}|Other content · {count}

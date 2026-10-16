@@ -565,3 +565,14 @@ it('keeps opening, refreshing and changing days read-only; only an explicit retr
   await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='重试识别')!.click()})
   expect(start).toHaveBeenCalledOnce()
 })
+
+it('shows system speaker number separately from unknown sound source without inferring presence', async () => {
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'mention', startAtMillis: 123,
+    text: '提到老钱', context: { speakerLabel: '说话人 3', relevance: 'unknown', soundSource: 'unknown', accuracy: 'unverified' } }] })
+  await act(async () => { root.render(<RecordingEntityPanel data={day({ status: 'succeeded' })} loading={false} error={false} paused={false}
+    onClose={() => {}} onRefresh={() => {}} onLocate={() => false} />); await tick() })
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  const mention = host.querySelector('.arkme-entity-occurrence')!
+  expect(mention.textContent).toContain('说话人 3 · 声源待确认')
+  expect(mention.textContent).not.toMatch(/现场提及|与你交流|你提到/)
+})

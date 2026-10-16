@@ -156,7 +156,7 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
                   <time>{occurrence.target?.sourceText !== undefined
                     ? new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hour12: false })
                     : new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}</time>
-                  {occurrence.context && <small>{tr(entityOccurrenceSourceLabel(occurrence.context))}{occurrence.context.speakerLabel && <> · {occurrence.context.speakerLabel}</>}{occurrence.context.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small>}
+                  {occurrence.context && <small>{occurrence.context.speakerLabel && <>{occurrence.context.speakerLabel} · </>}{tr(entityOccurrenceSourceLabel(occurrence.context))}{occurrence.context.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small>}
                   <span>{occurrence.text}</span>{!occurrence.target && <small>{tr('原文位置已不可用')}</small>}
                 </button>
                 {sourceKey === occurrence.key && occurrence.target?.sourceText !== undefined && <div className="arkme-entity-source" role="region" aria-label={tr('提及原文')}>
