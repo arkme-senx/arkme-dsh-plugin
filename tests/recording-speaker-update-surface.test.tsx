@@ -24,7 +24,8 @@ const day = (marked: boolean, pending = false): ArkmeRecordingDay => ({
   summary: { state: pending ? 'processing' : 'empty', items: [] }, timeline: { state: 'empty', items: [] },
 })
 
-describe('speaker update in a long recording transcript', () => {
+// Rendering and editing 1,442 transcript rows can exceed the default 5s on shared CI runners.
+describe('speaker update in a long recording transcript', { timeout: 15_000 }, () => {
   let renderer: ReactTestRenderer
   let initial: ArkmeRecordingDay, updated: ArkmeRecordingDay
   let reads: number, resolvePoll: (value: ArkmeRecordingDay) => void

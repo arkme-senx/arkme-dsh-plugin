@@ -41,6 +41,8 @@ describe('publish failure receipts and explicit recovery', () => {
     try {
       await expect(publish()).rejects.toMatchObject({ publishReceipt: outcome, retryable: false })
       await publish().catch(error => expect(JSON.stringify(error.publishReceipt)).not.toContain('SECRET'))
+      completionError = new ArkmeUpstreamResponseError('audit-error', '审核中断', true, 503, { ...outcome, publish_session_id: 'pub_unrelated', extension_id: 'ext_unrelated', version: '9.0.0' })
+      await expect(publish()).rejects.toMatchObject({ publishReceipt: outcome })
       recovered = true
       await expect(publish()).resolves.toMatchObject({ status: 'published', execution_state: 'published' })
       recovered = false
