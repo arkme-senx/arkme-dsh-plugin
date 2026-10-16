@@ -24,9 +24,12 @@ function login(userId = 42) { arkmeAuthStore.setAuth({ status: 'authenticated', 
 function html() { return JSON.stringify(mounted?.toJSON()) }
 
 describe('conversation draft preview', () => {
-  it('updates a mounted row immediately, keeps drafts isolated and restores the latest message on clear', () => {
+  it('publishes a mounted row only on departure, keeps drafts isolated and restores the latest message on clear', () => {
     act(() => { login(); mounted = create(<><ArkmeRootChatPreview source={privateChat} /><ArkmeRootChatPreview source={group} /></>) })
     act(() => { drafts.setText(key(42, privateChat), '明天下午\n再确认') })
+    expect(html()).not.toContain('[草稿]')
+    expect(html()).toContain('最新消息')
+    act(() => { drafts.markConversationLeft(key(42, privateChat)!, Date.now()) })
     expect(html()).toContain('明天下午 再确认')
     expect(mounted!.root.findAllByProps({ 'data-arkme-draft-preview': true })).toHaveLength(1)
     const marker = mounted!.root.findByProps({ 'data-arkme-draft-preview': true }).findAllByType('span')[1]!
@@ -40,7 +43,7 @@ describe('conversation draft preview', () => {
   })
 
   it('removes a submitted draft and immediately shows it again after failed-send restoration', () => {
-    act(() => { login(); drafts.setText(key(42, group), '待发送'); mounted = create(<ArkmeRootChatPreview source={group} />) })
+    act(() => { login(); drafts.setText(key(42, group), '待发送'); drafts.markConversationLeft(key(42, group)!, Date.now()); mounted = create(<ArkmeRootChatPreview source={group} />) })
     let submitted = drafts.get(undefined)
     act(() => { submitted = drafts.take(key(42, group)) })
     expect(html()).not.toContain('[草稿]')
@@ -49,7 +52,8 @@ describe('conversation draft preview', () => {
   })
 
   it('does not expose another account draft on the same conversation', () => {
-    act(() => { login(); drafts.setText(key(42, group), '私有草稿'); mounted = create(<ArkmeRootChatPreview source={group} />) })
+    act(() => { login(); drafts.setText(key(42, group), '私有草稿'); drafts.markConversationLeft(key(42, group)!, Date.now()); mounted = create(<ArkmeRootChatPreview source={group} />) })
+    expect(html()).toContain('私有草稿')
     act(() => { login(43) })
     expect(html()).not.toContain('私有草稿'); expect(html()).not.toContain('[草稿]')
   })
@@ -57,6 +61,8 @@ describe('conversation draft preview', () => {
   it('uses the existing Arko draft owner too', () => {
     act(() => { login(); mounted = create(<ArkmeArkoRow selected={false} onClick={() => {}} />) })
     act(() => { drafts.setText(arkmeArkoComposerDraftKey(42), '请整理今天的录音') })
+    expect(html()).not.toContain('[草稿]')
+    act(() => { drafts.markConversationLeft(arkmeArkoComposerDraftKey(42)!, Date.now()) })
     expect(html()).toContain('[草稿]'); expect(html()).toContain('请整理今天的录音')
   })
 
@@ -72,12 +78,15 @@ describe('conversation draft preview', () => {
     expect(conversationDraftPreview({ ...base, text: '\uFFFC', emojis: [{ emojiId: emoji.id, startIndex: 0 }] })).toBeTruthy()
   })
 
-  it('aggregates the most recently edited visible personal topic and falls back after it is cleared', () => {
+  it('aggregates the most recently left personal topic and falls back after it is cleared', () => {
     const store = new ArkmeComposerDraftStore()
     store.setText(key(42, self), '主输入框')
     store.setText(key(42, topic), '主题输入框')
+    store.markConversationLeft(key(42, self)!, 1000)
+    store.markConversationLeft(key(42, topic)!, 2000)
     expect(selfConversationDraftPreview(store, 42, [self, topic])?.preview).toBe('工作待办 · 主题输入框')
     store.setText(key(42, self), '更新的主输入框')
+    store.markConversationLeft(key(42, self)!, 3000)
     expect(selfConversationDraftPreview(store, 42, [self, topic])?.preview).toBe('更新的主输入框')
     store.clear(key(42, self))
     expect(selfConversationDraftPreview(store, 42, [self, topic])?.source).toBe(topic)
@@ -90,6 +99,7 @@ describe('conversation draft preview', () => {
       login(); selfTopicDirectory(42, 'test').upsert(topic)
       mounted = create(<ArkmeSelfConversationDraftPreview source={self} fallback={<span>最新消息</span>} />)
       drafts.setText(key(42, topic), '还没完成')
+      drafts.markConversationLeft(key(42, topic)!, Date.now())
     })
     expect(html()).toContain('工作待办 · 还没完成')
     act(() => { selfTopicDirectory(42, 'test').upsert({ ...topic, displayName: '新主题名' }) })

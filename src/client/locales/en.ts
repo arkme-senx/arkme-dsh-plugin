@@ -825,6 +825,37 @@ AI智能体|AI agent
 附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history
+手动编辑|Manual edit
+AI 润色|AI polish
+正文|Body
+新增|Added
+原始消息|Original message
+AI 改写|AI rewrite
+其他变更|Other change
+改动较多，按整段对比|Extensive changes; comparing whole blocks
+未改动内容已折叠|Unchanged content collapsed
+标题有修改|Title changed
+正文修改 {v0} 处|{v0} text changes
+文字格式已调整|Text format changed
+新增 {v0} 个附件|{v0} attachments added
+移除 {v0} 个附件|{v0} attachments removed
+附件名称已修改|Attachment name changed
+附件顺序已调整|Attachment order changed
+文字、标题和可比较附件未变化|No changes to text, title or comparable attachments
+版本先后顺序不明确，暂不对比|Version order is uncertain; comparison unavailable
+上一版本加载后显示差异|Differences will appear after the preceding version loads
+缺少上一版本，无法完整对比|Previous version missing; full comparison unavailable
+对比基准：{v0}|Compared with: {v0}
+差异保留 Markdown 格式标记|Differences include Markdown formatting syntax
+新增附件|Added attachment
+移除附件|Removed attachment
+未命名附件|Unnamed attachment
+附件改名|Renamed attachment
+部分历史附件信息不完整，附件变化暂无法完整对比|Historical attachment data is incomplete; full attachment comparison unavailable
+收起上下文|Collapse context
+展开上下文|Expand context
+收起全文|Collapse full version
+查看此版全文|View full version
 重新加载历史附件|Reload earlier attachments
 刷新并重新选择|Refresh and select again
 音频文字正在导入&转写中|Importing and transcribing audio

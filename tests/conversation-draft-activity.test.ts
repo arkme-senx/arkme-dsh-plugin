@@ -37,9 +37,11 @@ describe('draft edit time', () => {
     const storage = { getItem: () => saved, setItem: (_: string, value: string) => { saved = value } }
     const store = new ArkmeComposerDraftStore(storage)
     store.setMarkdown(key, markdown, '待处理', [], [])
+    store.markConversationLeft(key, 4500)
     now.mockReturnValue(9000)
     const restored = new ArkmeComposerDraftStore(storage)
     expect(restored.get(key).editedAtMillis).toBe(3000)
+    expect(restored.get(key).leftAtMillis).toBe(4500)
     expect(withConversationDraftActivity(rows, restored, 42).map(row => row.source.sourceRef)).toEqual(['pinned', 'older', 'newer'])
     restored.setMarkdown(key, structuredClone(markdown), '待处理', [], [])
     expect(restored.get(key).editedAtMillis).toBe(3000)
@@ -95,10 +97,11 @@ describe('draft edit time', () => {
 })
 
 describe('conversation activity ordering', () => {
-  it('uses the later of draft and message times, preserves pins, and never mutates source truth', () => {
+  it('uses the later of departure and message times, preserves pins, and never mutates source truth', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(3000)
     const store = new ArkmeComposerDraftStore()
     store.setText(key, '未发送')
+    store.markConversationLeft(key, 3000)
     const sorted = withConversationDraftActivity(rows, store, 42)
     expect(sorted.map(row => row.source.sourceRef)).toEqual(['pinned', 'older', 'newer'])
     expect(sorted[1]!.activeAtMillis).toBe(3000)
@@ -106,6 +109,7 @@ describe('conversation activity ordering', () => {
     expect(rows[1]!.activeAtMillis).toBe(1000)
     now.mockReturnValue(1500)
     store.setText(key, '更早的草稿')
+    store.markConversationLeft(key, 1500)
     expect(withConversationDraftActivity(rows, store, 42).map(row => row.source.sourceRef)).toEqual(['pinned', 'newer', 'older'])
     expect(withConversationDraftActivity(rows, store, 43).map(row => row.source.sourceRef)).toEqual(['pinned', 'newer', 'older'])
   })
@@ -114,6 +118,7 @@ describe('conversation activity ordering', () => {
     vi.spyOn(Date, 'now').mockReturnValue(3000)
     const store = new ArkmeComposerDraftStore()
     store.appendAttachments(key, [{ localFile }])
+    store.markConversationLeft(key, 3000)
     expect(withConversationDraftActivity(rows, store, 42)[1]!.source).toBe(older)
     store.removeAttachment(key, localFile.fileRef)
     expect(withConversationDraftActivity(rows, store, 42)[1]!.source).toBe(newer)
@@ -126,6 +131,6 @@ describe('conversation activity ordering', () => {
     const a = source('主题A', 1, 'topic'), b = source('主题B', 1, 'topic')
     store.applyRemote(draftKey(42, a)!, { text: '新草稿', attachments: [], mentions: [], emojis: [], editedAtMillis: 3000 })
     store.applyRemote(draftKey(42, b)!, { text: '晚恢复的旧草稿', attachments: [], mentions: [], emojis: [], editedAtMillis: 1000 })
-    expect(selfConversationDraftPreview(store, 42, [a, b])).toMatchObject({ source: a, editedAtMillis: 3000, preview: '主题A · 新草稿' })
+    expect(selfConversationDraftPreview(store, 42, [a, b])).toMatchObject({ source: a, activityAtMillis: 3000, preview: '主题A · 新草稿' })
   })
 })

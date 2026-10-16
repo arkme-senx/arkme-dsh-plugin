@@ -71,6 +71,33 @@ function submit() {
 }
 
 describe('navigate to a newly created self topic', () => {
+  it('revalidates a restored topic even when the directory owner stayed mounted in another conversation', async () => {
+    await openCreate()
+    const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={undefined} />))
+    const renamed = { ...parent, displayName: '父主题已改名' }
+    vi.mocked(callArkme).mockResolvedValueOnce({ items: [self, uncategorized, renamed], hasMore: false })
+    await act(async () => { await selfTopicDirectory(10001, 'prod').ensure(true) })
+    props.onSelect.mockClear()
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={parent} />))
+    expect(props.onSelect).toHaveBeenCalledExactlyOnceWith(renamed)
+    expect(props.onSelectionInvalidated).not.toHaveBeenCalled()
+  })
+
+  it('falls back only after a restored missing topic is confirmed unavailable', async () => {
+    await openCreate()
+    const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={undefined} />))
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return { items: [self, uncategorized], hasMore: false }
+      if (method === 'archives.state') return [{ ownerAvailable: false }]
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { await selfTopicDirectory(10001, 'prod').ensure(true) })
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={parent} />))
+    expect(props.onSelectionInvalidated).toHaveBeenCalledOnce()
+  })
+
   it('revalidates a created topic directory membership when an ancestor was archived before its reply', async () => {
     const actual = await vi.importActual<typeof import('../src/client/create-self-topic.js')>('../src/client/create-self-topic.js')
     vi.mocked(createSelfTopic).mockImplementationOnce(actual.createSelfTopic)

@@ -3,7 +3,8 @@ import type { ArkmeSourceItem } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
-import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey, arkmeArkoComposerDraftKey, arkmeDraftEditedAtMillis } from './composer-draft-store.js'
+import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey, arkmeArkoComposerDraftKey, arkmeDraftActivityAtMillis } from './composer-draft-store.js'
+import { conversationDraftPresence } from './conversation-draft-presence.js'
 import { conversationDraftPreview, selfConversationDraftPreview } from './conversation-draft-preview.js'
 import { conversationDirectoryStyles } from './conversation-directory-presentation.js'
 import { selfTopicDirectory } from './self-topic-directory-cache.js'
@@ -17,14 +18,18 @@ export function ArkmeDraftPreviewText({ preview }: { preview: string }) {
   </span>
 }
 
-export function useConversationDraftPresentation(source: ArkmeSourceItem | 'arko'): { preview: string | undefined; editedAtMillis: number } {
+export function useConversationDraftPresentation(source: ArkmeSourceItem | 'arko'): { preview: string | undefined; activityAtMillis: number } {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const userId = auth?.status === 'authenticated' ? auth.userId : undefined
   const key = source === 'arko' ? arkmeArkoComposerDraftKey(userId) : arkmeSourceComposerDraftKey(userId, source)
   const draft = useSyncExternalStore(arkmeComposerDraftStore.subscribe,
     () => arkmeComposerDraftStore.get(key), () => arkmeComposerDraftStore.get(undefined))
+  useSyncExternalStore(conversationDraftPresence.subscribe, conversationDraftPresence.getRevision, conversationDraftPresence.getRevision)
   const preview = conversationDraftPreview(draft)
-  return { preview, editedAtMillis: preview === undefined ? 0 : arkmeDraftEditedAtMillis(draft) }
+  return {
+    preview: conversationDraftPresence.isActive(key) || draft.leftAtMillis === 0 ? undefined : preview,
+    activityAtMillis: preview === undefined ? 0 : arkmeDraftActivityAtMillis(draft),
+  }
 }
 
 /** Uses the same account-owned topic directory as the composer, including nested topics. */
@@ -34,11 +39,13 @@ export function useSelfConversationDraftPreview(source?: ArkmeSourceItem) {
   const topics = auth?.status === 'authenticated' && userId !== undefined ? selfTopicDirectory(userId, auth.environment) : undefined
   const directory = useSyncExternalStore(topics?.subscribe ?? subscribeNothing, topics?.getSnapshot ?? noTopics, noTopics)
   useSyncExternalStore(arkmeComposerDraftStore.subscribe, arkmeComposerDraftStore.getRevision, arkmeComposerDraftStore.getRevision)
+  useSyncExternalStore(conversationDraftPresence.subscribe, conversationDraftPresence.getRevision, conversationDraftPresence.getRevision)
   const sources = directory?.sources ?? []
-  return selfConversationDraftPreview(arkmeComposerDraftStore, userId, source ? [source, ...sources] : sources)
+  const draft = selfConversationDraftPreview(arkmeComposerDraftStore, userId, source ? [source, ...sources] : sources)
+  return draft && { ...draft, hidden: conversationDraftPresence.isActive(arkmeSourceComposerDraftKey(userId, draft.source)) }
 }
 
 export function ArkmeSelfConversationDraftPreview({ source, fallback }: { source?: ArkmeSourceItem | undefined; fallback: ReactNode }) {
   const preview = useSelfConversationDraftPreview(source)
-  return preview ? <ArkmeDraftPreviewText preview={preview.preview} /> : <>{fallback}</>
+  return preview && !preview.hidden ? <ArkmeDraftPreviewText preview={preview.preview} /> : <>{fallback}</>
 }
