@@ -92,10 +92,13 @@ it('generates and reads a real day through the independent consumer and official
       if (Date.now() >= generationDeadline) throw new Error('Generation did not reach a terminal state')
       await new Promise(resolve => setTimeout(resolve, 5000))
     }
+    const readStarted = Date.now()
     const ready = await sdk.dayDigest(query)
+    evidence.readyReadMillis = Date.now() - readStarted
     expect(ready.result.summary.length).toBeGreaterThan(0)
     expect(ready.result.timeline.length).toBeGreaterThan(0)
     expect(ready.result.timeZoneOffsetMillis).toBe(settings.timeZoneOffsetMillis)
+    if (settings.minimumTimelineEndMillis !== undefined) expect(Math.max(...ready.result.timeline.map(event => event.endAtMillis))).toBeGreaterThanOrEqual(settings.minimumTimelineEndMillis)
     evidence.result = { jobId: ready.job.id, modelName: ready.result.modelName, coverage: ready.result.coverage, summarySections: ready.result.summary.length, timelineSegments: ready.result.timeline.length, sourceScope: ready.result.sourceScope }
     expect(JSON.stringify(await execute('arkme_day_digest_read', toolQuery))).toContain(ready.job.id)
     const args = { ...toolQuery, idempotency_key: ready.job.requestId, kinds: ['summary', 'timeline'], sources: ['audio', 'call', 'chat', 'self'] }
@@ -114,10 +117,12 @@ it('generates and reads a real day through the independent consumer and official
       await surface.screenshot({ path: join(process.env.ARKME_E2E_ARTIFACTS, 'timeline.png') })
       await writeFile(join(process.env.ARKME_E2E_ARTIFACTS, 'consumer-result.json'), JSON.stringify(evidence, null, 2))
     }
+    evidence.completed = true
   } finally {
     if (page && process.env.ARKME_E2E_ARTIFACTS) {
       await mkdir(process.env.ARKME_E2E_ARTIFACTS, { recursive: true })
       await page.screenshot({ path: join(process.env.ARKME_E2E_ARTIFACTS, 'last-page.png') }).catch(() => {})
+      await writeFile(join(process.env.ARKME_E2E_ARTIFACTS, 'consumer-result.json'), JSON.stringify(evidence, null, 2))
     }
     await browser?.close(); await server?.kill()
     await scaffold?.ctx.get('arkmeData')?.logout(); await scaffold?.close()
