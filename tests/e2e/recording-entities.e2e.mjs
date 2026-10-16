@@ -154,7 +154,7 @@ describe('packaged recording entities', () => {
       expect(await panel.locator('.arkme-entity-item').count()).toBe(0)
       expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(2)
       expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(0)
-      expect(await panel.innerText()).toContain('仅手动识别，识别会消耗 AI 积分')
+      expect(await panel.innerText()).toContain('仅支持手动识别，并且会消耗AI额度的积分')
       await panel.getByRole('button', { name: '开始识别', exact: true }).click()
       await expect.poll(() => panel.innerText()).toContain('等待实体识别')
       expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(3)

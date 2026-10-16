@@ -560,7 +560,7 @@ it('keeps opening, refreshing and changing days read-only; only an explicit retr
   expect(mocks.call.mock.calls.filter(([operation])=>operation.endsWith('.start'))).toHaveLength(0)
   const start=vi.fn()
   await act(async()=>{root.render(<RecordingEntityPanel data={day({status:'failed',canStart:true})} loading={false} error={false} paused={false} compact={false} onStart={start} onClose={()=>{}} onRefresh={()=>{}} onLocate={()=>true}/>)})
-  expect(host.textContent).toContain('仅手动识别，识别会消耗 AI 积分')
+  expect(host.textContent).toContain('仅支持手动识别，并且会消耗AI额度的积分')
   expect(start).not.toHaveBeenCalled()
   await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='重试识别')!.click()})
   expect(start).toHaveBeenCalledOnce()

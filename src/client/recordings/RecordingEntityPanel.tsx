@@ -95,7 +95,7 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
         if (event.target instanceof Element && event.target.closest('[data-recording-entity-trigger], [data-recording-entity-key]')) return
         onClose()
       }}>
-      <p className="arkme-entity-hint">{tr('仅手动识别，识别会消耗 AI 积分。请选择日期后开始。')}</p>
+      <p className="arkme-entity-hint">{tr('仅支持手动识别，并且会消耗AI额度的积分')}</p>
       {showStatus && <div className="arkme-entity-status">
         <div className="arkme-entity-status-row">
           <span role="status" aria-live="polite" aria-atomic="true">
