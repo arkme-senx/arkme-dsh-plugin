@@ -3287,7 +3287,14 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   undoRef?: string
 }
 
+export interface ArkmeRecordingSpeakerCorrectionPreview {
+  affectedCount: number; intentToken: string; expiresAt: number; selectionVersion: string; evidenceVersion: string
+}
 export interface ArkmeRecordingSpeakerCorrectionInput {
+  intentToken?: string
+  /** Explicit child-relative subranges, paired with existing itemRefs. */
+  selections?: Array<{ itemRef: string; startAt: number; endAt: number }>
+  target?: { kind: 'unknown' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
   itemRef: string
   itemRefs: string[]
   expectedVersion: string
@@ -3306,6 +3313,7 @@ export interface ArkmeRecordingSpeakerCorrectionUndoInput {
 }
 
 export interface ArkmeRecordingSpeakerCorrectionResult {
+  learningStateAtCommit?: string
   affectedCount: number
   version: string
   undoRef?: string
@@ -4026,8 +4034,10 @@ export type ArkmePluginOperation =
   | 'recordings.entities.occurrences'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.evidence'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.preview'
   | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
@@ -4437,8 +4447,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.evidence'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.preview'
   | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'

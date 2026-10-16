@@ -23,6 +23,7 @@ function fixture(fixtureDate = date) {
       if (state.badContext) return { supported: true }
       return { supported: true, schema_version: 1, version: state.version, max_items: 100, sound_source: 'unknown', excluded_speakers: [], ...(state.applied ? { last_correction: { id: 'correction', can_undo: true } } : {}) }
     }
+    if (path.endsWith('/speaker-corrections/preview')) return { schema_version: 1, affected_count: (body.items as unknown[]).length, intent_token: 'signed-intent', expires_at: Date.now() + 60000, selection_version: 'selection', evidence_version: 'evidence' }
     if (path.endsWith('/speaker-corrections/result')) return { schema_version: 1, receipt: receipts.get(String(body.idempotency_key)) ?? null }
     if (path.endsWith('/speaker-corrections/apply')) {
       if (state.unsupported) throw new ArkmePluginError('arkme-http-error', 'missing', false, 404)
@@ -105,14 +106,13 @@ describe('speaker correction owner adapter', () => {
     expect(f.writes()).toHaveLength(1)
   })
 
-  it.each(['account', 'version', 'range', 'duplicate', 'count', 'missing-anchor', 'empty'] as const)('rejects invalid %s without committing', async kind => {
+  it.each(['account', 'version', 'range', 'duplicate', 'count', 'empty'] as const)('rejects invalid %s without committing', async kind => {
     const f = fixture(), day = await f.service.recordingDay(date), input = request(day.transcript.items[0]!.itemRef)
     if (kind === 'account') f.session.userId = 43
     if (kind === 'version') input.expectedVersion = 'old'
     if (kind === 'range') f.rows[0]!.e = 999
     if (kind === 'duplicate') input.itemRefs.push(input.itemRef)
     if (kind === 'count') input.itemRefs = Array(101).fill(input.itemRef)
-    if (kind === 'missing-anchor') input.itemRefs = [day.transcript.items[1]!.itemRef]
     if (kind === 'empty') { input.rejectCurrent = false; input.detach = false }
     await expect(f.service.applyRecordingSpeakerCorrection(input)).rejects.toThrow()
     expect(f.writes()).toHaveLength(['version', 'range'].includes(kind) ? 1 : 0)
@@ -209,4 +209,26 @@ it('reads enhanced correction from its own source without inventing a day or a r
   const undo = await f.service.undoRecordingSpeakerCorrection({ itemRef: result.transcript!.items[1]!.itemRef, undoRef: result.undoRef!, expectedVersion: 'v2', idempotencyKey: 'enhanced-undo-0001' })
   expect(undo.warning).toBeUndefined()
   expect(undo.transcript?.items[1]!.speakerLabel).toBe('周鹏')
+})
+
+
+it('submits only the explicit selected rows when the navigation anchor is unselected', async () => {
+  const f = fixture(), day = await f.service.recordingDay(date)
+  const input = request(day.transcript.items[0]!.itemRef)
+  input.itemRefs = [day.transcript.items[1]!.itemRef]
+  await f.service.applyRecordingSpeakerCorrection(input)
+  const body = f.writes()[0]![1] as Record<string, unknown>
+  expect(body.items).toEqual([expect.objectContaining({ item_index: 1 })])
+  expect(f.rows[0]!.speaker_partition_id).toBeUndefined()
+  expect(f.rows[1]!.speaker_partition_id).toBe('split-1')
+})
+
+it('preview is read-only and apply preserves its signed intent without expanding selections', async () => {
+  const f = fixture(), day = await f.service.recordingDay(date)
+  const input = request(day.transcript.items[1]!.itemRef)
+  const preview = await f.service.previewRecordingSpeakerCorrection(input)
+  expect(preview).toMatchObject({ affectedCount: 1, intentToken: 'signed-intent' })
+  expect(f.writes()).toHaveLength(0)
+  await f.service.applyRecordingSpeakerCorrection({ ...input, intentToken: preview.intentToken })
+  expect(f.writes()[0]![1]).toMatchObject({ intent_token: 'signed-intent', items: [expect.objectContaining({ item_index: 1 })] })
 })

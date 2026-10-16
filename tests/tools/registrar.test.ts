@@ -82,6 +82,22 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires the existing conversation confirmation before scheduling evidence', async () => {
+    const ctx = await setup()
+    const recordingSpeakerEvidence = vi.fn(async () => ({state:'building',queuedCount:1,missingMaterialChildren:0}))
+    const mounted = await mountArkmeTools(ctx,'business',{...ports,recordingSpeakerEvidence} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{seq:0,type:'user/message',data:{content:[{type:'text',text:'计算选中声音证据'}],source:{kind:'user'}}}])
+    const agent={id:SessionId('evidence-build'),session:{get events(){return events}}} as unknown as Agent
+    const invoke=(call:string)=>ctx.tools.execute({callId:CallId(call),name:'arkme_recording_speaker_evidence_build',arguments:{request_json:JSON.stringify({action:'build',itemRefs:['opaque']})},agent,signal:new AbortController().signal})
+    const prepared=await invoke('evidence-prepare')
+    expect(prepared.isError?'':prepared.value).toContain('confirmation_required')
+    expect(recordingSpeakerEvidence).not.toHaveBeenCalled()
+    events.push({seq:1,type:'user/message',data:{content:[{type:'text',text:'确认计算'}],source:{kind:'user'}}})
+    expect((await invoke('evidence-execute')).isError).toBe(false)
+    expect(recordingSpeakerEvidence).toHaveBeenCalledTimes(1)
+    await mounted.dispose()
+  })
+
   it('executes common-group reads with paging and cancellation, and keeps sync separate from paging', async () => {
     const ctx = await setup()
     const result = {items:[],totalCached:0,hasMore:false,syncHasMore:false,syncedAtMillis:1,revision:1}
@@ -235,7 +251,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
-      'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
+      'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',
       'arkme_recording_notifications',
       'arkme_recording_notifications_read',

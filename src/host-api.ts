@@ -75,7 +75,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 
 function requestBytesLimit(operation: string): number {
   // A selection contains up to 100 signed item references, not 100 raw IDs.
-  if (operation === 'recordings.speaker.correction.apply') return 1024 * 1024
+  if (['recordings.speaker.correction.apply', 'recordings.speaker.correction.preview'].includes(operation)) return 1024 * 1024
   if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
   if (operation === 'remote.session.native') return MAX_NATIVE_REQUEST_BYTES
   if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
@@ -966,6 +966,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
+      if (request.operation === 'recordings.speaker.evidence' && params.action === 'build' && origin === undefined) throw new ArkmePluginError('origin-required', '证据计算必须从当前 DSH 页面发起', false, 403)
       if (['calendar.day-recap', 'calendar.day-review.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
@@ -1583,9 +1584,11 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
+    case 'recordings.speaker.evidence': return await service.recordingSpeakerEvidence(params as unknown as import('./recording-evidence-contract.js').RecordingEvidenceQuery, requestSignal)
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
     case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
+    case 'recordings.speaker.correction.preview': return await service.previewRecordingSpeakerCorrection(params as unknown as import('./types.js').ArkmeRecordingSpeakerCorrectionInput, requestSignal)
     case 'recordings.speaker.correction.apply': {
       if (!Array.isArray(params.itemRefs) || !params.itemRefs.every(value => typeof value === 'string')
         || typeof params.detach !== 'boolean' || (params.rejectCurrent !== undefined && typeof params.rejectCurrent !== 'boolean')
@@ -1594,6 +1597,9 @@ export async function dispatchArkmeHostOperation(
       }
       return await service.applyRecordingSpeakerCorrection({
         itemRef: stringParam(params, 'itemRef'), itemRefs: params.itemRefs as string[], detach: params.detach,
+        ...(params.selections === undefined ? {} : { selections: params.selections as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['selections']> }),
+        ...(params.intentToken === undefined ? {} : { intentToken: stringParam(params, 'intentToken') }),
+        ...(params.target === undefined ? {} : { target: params.target as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['target']> }),
         expectedVersion: stringParam(params, 'expectedVersion'), idempotencyKey: stringParam(params, 'idempotencyKey'),
         ...(params.rejectCurrent === true ? { rejectCurrent: true } : {}),
         ...(params.soundSource === undefined ? {} : { soundSource: params.soundSource as 'unknown' | 'in_person' | 'playback' }),
