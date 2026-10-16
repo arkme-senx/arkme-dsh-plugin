@@ -1,3 +1,4 @@
+import { assertHostCapability } from '../host-policy.js'
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
@@ -819,6 +820,7 @@ export class ExtensionPublishClient {
     signal?: AbortSignal,
     onProgress?: (progress: ExtensionDownloadProgress) => void,
   ): Promise<Uint8Array> {
+    assertHostCapability('executableExtensionInstall')
     let url: URL
     try { url = new URL(artifactUrl) } catch (error) {
       throw new ArkmePluginError('extension-download-url-invalid', '市集返回了无效下载地址', false, 502, { cause: error })

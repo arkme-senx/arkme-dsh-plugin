@@ -1,3 +1,4 @@
+import type { ArkmeHostPolicy } from './host-policy.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
 
@@ -41,6 +42,7 @@ export interface ArkmeCaptchaResult {
 }
 
 export interface ArkmeClientConfig {
+  hostPolicy?: Pick<ArkmeHostPolicy, 'distribution' | 'capabilities'>
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean

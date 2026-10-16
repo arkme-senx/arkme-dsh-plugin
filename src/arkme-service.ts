@@ -1,3 +1,4 @@
+import { resolveHostPolicy } from './host-policy.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -860,7 +861,9 @@ export class ArkmeService {
   async dshRemotePost<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemotePost<T>(path, body, undefined, signal) }
 
   clientConfig(): ArkmeClientConfig {
+    const {distribution, capabilities} = resolveHostPolicy()
     return {
+      hostPolicy: {distribution, capabilities},
       captchaId: this.config.geetestCaptchaId,
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',

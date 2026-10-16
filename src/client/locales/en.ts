@@ -1291,6 +1291,7 @@ Arkme 设置|Arkme settings
 账号信息|Account information
 ArkME 客户端|Arkme app
 打开 APP 更新|Open app update
+该功能仅在官网版本中可用。|This feature is only available in the website version.
 ArkME 插件|Arkme extension
 消息头像|Message avatar
 原消息附件|Original attachments
