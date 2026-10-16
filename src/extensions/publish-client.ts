@@ -1,5 +1,8 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { assertHostCapability } from '../host-policy.js'
 import { ArkmePluginError } from '../arkme-service.js'
+import { publishFailure, publishReceipt } from './publish-failure.js'
+import type { ArkmeExtensionPublishPage } from './types.js'
 import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
   type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
@@ -292,9 +295,10 @@ export class ExtensionPublishClient {
 
   async completePublishSession(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
     try {
-      return await this.post('/api/v1/extensions/publish-session/complete', {
+      const result = await this.post<ArkmeExtensionPublishResult>('/api/v1/extensions/publish-session/complete', {
         publish_session_id: publishSessionId,
       }, signal)
+      return await this.awaitPublishAttempt({ ...result, publish_session_id: publishSessionId }, signal)
     } catch (error) {
       if (error instanceof ArkmePluginError && error.upstreamStatus === 409
         && ['制品尚未上传完成', '源码尚未上传完成'].some(message => error.message.includes(message))) {
@@ -306,14 +310,55 @@ export class ExtensionPublishClient {
           { cause: error, upstreamStatus: error.upstreamStatus, ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }) },
         )
       }
-      throw error
+      throw publishFailure(error)
     }
   }
 
+  async listPublishSessions(limit = 20, offset = 0, signal?: AbortSignal): Promise<ArkmeExtensionPublishPage> {
+    await this.requirePublishRecovery(signal)
+    const page = await this.post<ArkmeExtensionPublishPage>('/api/v1/extensions/publish-session/list', { limit, offset }, signal)
+    return { ...page, items: page.items.map(item => publishReceipt(item)).filter((item): item is ArkmeExtensionPublishResult => item !== undefined) }
+  }
+
+  async resumePublishSession(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requirePublishRecovery(signal)
+    try {
+      const result = await this.post<ArkmeExtensionPublishResult>('/api/v1/extensions/publish-session/resume', { publish_session_id: publishSessionId }, signal)
+      return await this.awaitPublishAttempt({ ...result, publish_session_id: publishSessionId }, signal)
+    } catch (error) { throw publishFailure(error) }
+  }
+
+  private async awaitPublishAttempt(initial: ArkmeExtensionPublishResult, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    let receipt = initial
+    // Poll only after this explicit write was accepted. No write is retried, and
+    // closing the caller stops reads while the durable server attempt continues.
+    const budget = AbortSignal.timeout(100_000)
+    const readSignal = signal === undefined ? budget : AbortSignal.any([signal, budget])
+    try {
+      for (let reads = 0; receipt.execution_state === 'running' && reads < 50; reads += 1) {
+        await delay(2_000, undefined, { signal: readSignal })
+        receipt = await this.publishStatus(initial.publish_session_id!, readSignal)
+      }
+      if (receipt.status === 'published') return receipt
+      if (receipt.execution_state !== undefined) {
+        throw new Error(receipt.error_message || receipt.validation_error_message || '发布仍未完成，请在发布记录中查询状态')
+      }
+      return receipt
+    } catch (error) {
+      throw publishFailure(error, receipt)
+    }
+  }
+
+  private async requirePublishRecovery(signal?: AbortSignal): Promise<void> {
+    const page = await this.myList({ limit: 1 }, signal)
+    if (page.publication_capabilities?.publish_recovery !== true) throw new ArkmePluginError('capability-unsupported', '当前发布服务尚不支持发布记录与恢复，请升级发布服务', false, 409)
+  }
+
   async publishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
-    return await this.post('/api/v1/extensions/publish-session/status', {
+    const result = await this.post<ArkmeExtensionPublishResult>('/api/v1/extensions/publish-session/status', {
       publish_session_id: publishSessionId,
     }, signal)
+    return { ...result, publish_session_id: publishSessionId }
   }
 
 	async rotateShareLink(extensionId: string, clientMutationId: string, signal?: AbortSignal): Promise<ArkmeExtensionShare> {

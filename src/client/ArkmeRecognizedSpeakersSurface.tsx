@@ -8,6 +8,7 @@ import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
 import { UnmarkedSpeakerTokenAvatar } from './redesign/contacts/UnmarkedSpeakerVisuals.js'
 import { readRecognizedSpeakerOrder, writeRecognizedSpeakerOrder } from './recognized-speaker-order.js'
+import { SimilarSpeakersPanel } from './recordings/SimilarSpeakersPanel.js'
 import { SpeakerSelfGuide } from './recordings/SpeakerSelfGuide.js'
 import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
 import { RecognizedSpeakerDirectory, recognizedSpeakerDirectory, directoryQueryValid, directoryVisible, directoryErrorCode, normalizeDirectoryQuery, speakerRetryDelay, type DirectoryList } from './recognized-speaker-directory.js'
@@ -133,6 +134,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
   const [loading, setLoading] = useState(true), [moreLoading, setMoreLoading] = useState(false)
   const [error, setError] = useState(''), [seenError, setSeenError] = useState('')
   const [selected, setSelected] = useState<SpeakerDirectoryPerson>()
+  const [similarOpen, setSimilarOpen] = useState(false)
   const [avatars, setAvatars] = useState<Record<string, string | null>>({})
   const rootRef = useRef<HTMLDivElement>(null), listScroll = useRef(0), hadSelection = useRef(false)
   useLayoutEffect(() => {
@@ -286,15 +288,18 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
         <div className="arkme-recognized-speakers-list" aria-busy={loading || queryPending}>
           {!disabled && (loading || queryPending) && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
             : !disabled && !error && rows.length === 0 && list?.coverage === 'complete' && !queryPending ? <div role="status" style={styles.state}>{tr(queryText ? '没有匹配的说话人' : filter === 'all' ? '暂无已识别说话人' : '该分类暂无说话人')}</div>
-              : <ul style={styles.list}>{rows.map(row => <li key={row.personKey}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row) }}>
+              : <ul style={styles.list}>{rows.map(row => <li key={row.personKey} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row); setSimilarOpen(false) }}>
                 {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar {...(avatars[row.detailRef] ? { avatarRef: avatars[row.detailRef]! } : {})} fallbackContent={speakerNameAvatarFallback(row)} size={38} label={row.displayName} />}
                 <span style={styles.copy}><span style={styles.name}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{personStats(row)}</span></span>
                 <span style={styles.badge}>{tr(row.type === 'marked' ? '已标记' : '未标记')} ›</span>
-              </button></li>)}</ul>}
+              </button><button type="button" style={{ ...styles.button, flexShrink: 0, fontSize: 11 }} aria-label={tr('查找与 {v0} 相似的声音', { v0: row.displayName })} onClick={() => { recoveryAttempts.current = 0; setSelected(row); setSimilarOpen(true) }}>{tr('找相似')}</button></li>)}</ul>}
           {!disabled && !queryPending && list?.hasMore && <button type="button" disabled={moreLoading || loading} style={{ ...styles.button, marginTop: 14 }} onClick={() => { void loadMore() }}>{tr(moreLoading ? '正在加载…' : '加载更多说话人')}</button>}
         </div>
         {selected && !disabled && <div style={styles.detail}><button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => setSelected(undefined)}>{tr('‹ 返回列表')}</button>
-          <PersonDetail key={selected.detailRef} row={selected} accountKey={accountKey} directory={directory} loadMembers={loadMarkedMembers} onChanged={recoverDetail} />
+          {similarOpen ? <SimilarSpeakersPanel accountKey={accountKey} row={selected} directory={directory} onBack={() => setSimilarOpen(false)} /> : <>
+            <button type="button" style={{ ...styles.button, marginBottom: 12 }} onClick={() => setSimilarOpen(true)}>{tr('找相似声音')}</button>
+            <PersonDetail key={selected.detailRef} row={selected} accountKey={accountKey} directory={directory} loadMembers={loadMarkedMembers} onChanged={recoverDetail} />
+          </>}
         </div>}
       </div>
     </div>

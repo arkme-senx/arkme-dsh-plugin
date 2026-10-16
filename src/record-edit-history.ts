@@ -3,7 +3,7 @@ import type { ArkmeContentBlock, ArkmeTimelineItem } from './types.js'
 /** Revision content is immutable display data, never a mutable timeline message. */
 export interface ArkmeRecordRevision {
   revisionUid: string
-  kind: 'manual' | 'original'
+  kind: 'manual' | 'original' | 'transcription' | 'polish' | 'rewrite' | 'other'
   editAtMillis: number
   content: Pick<ArkmeTimelineItem, 'title' | 'textContent' | 'textFormat' | 'mediaUnavailable'> & { contentBlocks: ArkmeContentBlock[] }
 }

@@ -33,6 +33,11 @@ export function ArkmeConversationSearch({ source, host, accountKey }: { source: 
   useArkmeLocale()
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const closeForWords = () => setOpen(false)
+    window.addEventListener('arkme:conversation-analysis-open', closeForWords)
+    return () => window.removeEventListener('arkme:conversation-analysis-open', closeForWords)
+  }, [])
   const preferenceKey = source.sourceKey === undefined ? undefined : `arkme:chat-search:${accountKey}:${source.sourceKey}`
   const [preferences, setPreferences] = useState<{ scene: ArkmeSearchSceneKind; global: boolean }>(() => {
     try {

@@ -30,6 +30,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { useSelfTopicExpansion } from './self-topic-expansion-preference.js'
 import { mergeSelfTopicSources, selfTopicDirectory } from './self-topic-directory-cache.js'
 import { filterArkmeTopicSources } from './topic-search.js'
+import { arkmeSourceIdentityKey } from './source-identity.js'
 export { filterArkmeTopicSources } from './topic-search.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
@@ -198,12 +199,15 @@ export function ArkmeTopicDirectoryPopover({
     writeNavigationCache(cacheWithTopics(userId, nextSources, selectedRef))
   }, [userId])
 
-  const firstLoad = useRef(true)
+  const selectedIdentity = selectedSource === undefined ? undefined : arkmeSourceIdentityKey(selectedSource)
+  const lastRefresh = useRef<{ directory: typeof directory; retryRevision: number; recordRevision: number; topicDirectoryRevision: number }>()
   useEffect(() => {
     let disposed = false
     const controller = new AbortController()
-    const force = !firstLoad.current
-    firstLoad.current = false
+    const previous = lastRefresh.current
+    const force = previous?.directory === directory && (previous.retryRevision !== retryRevision
+      || previous.recordRevision !== recordRevision || previous.topicDirectoryRevision !== topicDirectoryRevision)
+    lastRefresh.current = { directory, retryRevision, recordRevision, topicDirectoryRevision }
     void directory.ensure(force).then(async () => {
       if (disposed) return
       const result = directory.getConfirmedSnapshot()
@@ -237,7 +241,7 @@ export function ArkmeTopicDirectoryPopover({
       // The next directory refresh retries this owner check.
     })
     return () => { disposed = true; controller.abort() }
-  }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
+  }, [directory, selectedIdentity, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return

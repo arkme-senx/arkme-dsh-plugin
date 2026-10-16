@@ -156,3 +156,10 @@ it('persists validated recording provenance without weakening the cache allowlis
   value.items[0]!.recordingSource = { kind: 'daily-summary', state: 'unavailable' }
   expect(parseArrangementBoardCachePages({ identified: value }).identified?.items[0]?.recordingSource?.state).toBe('unavailable')
 })
+
+it('retains the protected-source read flag without accepting arbitrary source data', () => {
+  const data = page()
+  data.items[0]!.provenance = [{ id: 'evidence', kind: 'call', role: 'initial', text: '', canOpen: true, readOnExpand: true }]
+  expect(parseArrangementBoardCachePages({ identified: data }).identified?.items[0]!.provenance?.[0]?.readOnExpand).toBe(true)
+  expect(() => parseArrangementBoardCachePages({ identified: { ...data, items: [{ ...data.items[0], provenance: [{ ...data.items[0]!.provenance![0], readOnExpand: 'yes' }] }] } })).toThrow()
+})

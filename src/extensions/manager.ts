@@ -1,4 +1,6 @@
 import { assertHostCapability, hostAllows } from '../host-policy.js'
+import { publishFailure } from './publish-failure.js'
+import type { ArkmeExtensionPublishPage } from './types.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -544,11 +546,12 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
+      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.version, status: 'validating', execution_state: 'unknown' }
       try {
-        const recovered = await this.client.publishStatus(session.publish_session_id, input.signal)
-        if (['validating', 'published'].includes(recovered.status)) return recovered
-      } catch { /* The original failure retains the best causal signal. */ }
-      throw error
+        receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
+        if (receipt.status === 'published') return receipt
+      } catch { /* Keep the original failure and durable receipt if status is unavailable. */ }
+      throw publishFailure(error, receipt)
     }
   }
 
@@ -592,11 +595,12 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
+      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.source.bundle.version, status: 'validating', execution_state: 'unknown' }
       try {
-        const recovered = await this.client.publishStatus(session.publish_session_id, input.signal)
-        if (['validating', 'published'].includes(recovered.status)) return recovered
-      } catch { /* The original failure retains the best causal signal. */ }
-      throw error
+        receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
+        if (receipt.status === 'published') return receipt
+      } catch { /* Keep the original failure and durable receipt if status is unavailable. */ }
+      throw publishFailure(error, receipt)
     }
   }
 
@@ -640,11 +644,12 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
+      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.source.bundle.version, status: 'validating', execution_state: 'unknown' }
       try {
-        const recovered = await this.client.publishStatus(session.publish_session_id, input.signal)
-        if (['validating', 'published'].includes(recovered.status)) return recovered
-      } catch { /* The original failure retains the best causal signal. */ }
-      throw error
+        receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
+        if (receipt.status === 'published') return receipt
+      } catch { /* Keep the original failure and durable receipt if status is unavailable. */ }
+      throw publishFailure(error, receipt)
     }
   }
 
@@ -768,6 +773,28 @@ export class ArkmeExtensionManager {
 
   async myList(signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.client.myList({ limit: 50 }, signal)
+  }
+
+  async publishSessions(limit = 20, offset = 0, signal?: AbortSignal): Promise<ArkmeExtensionPublishPage> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new TypeError('发布记录分页参数无效')
+    return await this.client.listPublishSessions(limit, offset, signal)
+  }
+
+  async publishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    return await this.client.publishStatus(requiredId(publishSessionId, 'publish_session_id'), signal)
+  }
+
+  async resumePublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    const id = requiredId(publishSessionId, 'publish_session_id')
+    const current = await this.client.publishStatus(id, signal)
+    if (current.status === 'published') return current
+    if (current.can_resume !== true) throw publishFailure(new Error(current.error_message || '该发布会话当前不可恢复，请刷新状态'), current)
+    try { return await this.client.resumePublishSession(id, signal) }
+    catch (error) {
+      // A transport failure may contain no server receipt. Retain the known
+      // identity without presenting the previous failure as the new outcome.
+      throw publishFailure(error, { publish_session_id: id, extension_id: current.extension_id, version: current.version, status: current.status })
+    }
   }
 
   async updateMetadata(input: {

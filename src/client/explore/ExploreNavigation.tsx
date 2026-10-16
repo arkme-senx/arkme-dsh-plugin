@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
 import { Compass } from '@phosphor-icons/react/dist/icons/Compass'
 import { IdentificationCard } from '@phosphor-icons/react/dist/icons/IdentificationCard'
 import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
@@ -12,8 +13,8 @@ import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import type { CSSProperties } from 'react'
-export const exploreIcons = {profile:IdentificationCard,relations:UsersThree,events:Flag,goals:Target,anniversaries:Gift,world:GlobeHemisphereWest}
-export function ExploreNavigation({style,active,current,locked,compact=false}:{style:CSSProperties;active:boolean;current?:ExploreModule|'world'|undefined;locked:boolean;compact?:boolean}) {
+export const exploreIcons = {statistics:ChartBar,profile:IdentificationCard,relations:UsersThree,events:Flag,goals:Target,anniversaries:Gift,world:GlobeHemisphereWest}
+export function ExploreNavigation({style,active,current,locked,compact=false}:{style:CSSProperties;active:boolean;current?:ExploreModule|'world'|'statistics'|undefined;locked:boolean;compact?:boolean}) {
   const [openMode,setOpenMode]=useState<'hover'|'click'|'keyboard'|null>(null),[position,setPosition]=useState({left:0,top:0})
   const open=openMode!==null
   const trigger=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null)
@@ -30,7 +31,7 @@ export function ExploreNavigation({style,active,current,locked,compact=false}:{s
   useEffect(()=>()=>{clearTimeout(closeTimer.current)},[])
   useEffect(()=>{if(locked){clearTimeout(closeTimer.current);setOpenMode(null)}},[locked])
   useLayoutEffect(()=>{if(!open)return
-    const move=()=>{const r=trigger.current?.getBoundingClientRect();if(r)setPosition({left:Math.min(r.right+8,window.innerWidth-210),top:Math.max(8,Math.min(r.top,window.innerHeight-330))})};move()
+    const move=()=>{const r=trigger.current?.getBoundingClientRect();if(r)setPosition({left:Math.min(r.right+8,window.innerWidth-210),top:Math.max(8,Math.min(r.top,window.innerHeight-(panel.current?.offsetHeight ?? 380)-8))})};move()
     const pointer=(e:PointerEvent)=>{if(!within(e.target))close()}
     const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){const restore=openMode==='keyboard'||panel.current?.contains(document.activeElement);close();if(restore)trigger.current?.focus()}}
     document.addEventListener('pointerdown',pointer);document.addEventListener('keydown',key);window.addEventListener('resize',move)
@@ -46,6 +47,6 @@ export function ExploreNavigation({style,active,current,locked,compact=false}:{s
     {open&&createPortal(<div ref={panel} id="arkme-explore-menu" aria-label={tr('探索板块')} onPointerEnter={keepOpen} onPointerLeave={leave}
       onBlur={event=>{if(!within(event.relatedTarget))close()}}
       style={{position:'fixed',...position,width:190,padding:8,zIndex:1600,border:`1px solid ${theme.border}`,borderRadius:12,background:theme.menu,boxShadow:theme.shadow,color:theme.text}}>
-      {[...EXPLORE_MODULES,'world' as const].map(module=>{const Icon=exploreIcons[module];return <button key={module} type="button" aria-current={current===module?'page':undefined} style={{display:'flex',alignItems:'center',gap:12,width:'100%',border:0,borderRadius:7,padding:'11px 12px',font:'inherit',fontSize:13,textAlign:'left',cursor:'pointer',background:current===module?theme.active:'transparent',color:theme.text}} onClick={()=>{close();module==='world'?arkmeUi.showWorld():arkmeUi.showExplore(module)}}><Icon size={20}/>{tr(EXPLORE_LABELS[module])}</button>})}
+      {['statistics' as const,...EXPLORE_MODULES,'world' as const].map(module=>{const Icon=exploreIcons[module];return <button key={module} type="button" aria-current={current===module?'page':undefined} style={{display:'flex',alignItems:'center',gap:12,width:'100%',border:0,borderRadius:7,padding:'11px 12px',font:'inherit',fontSize:13,textAlign:'left',cursor:'pointer',background:current===module?theme.active:'transparent',color:theme.text}} onClick={()=>{close();module==='statistics'?arkmeUi.showStatistics():module==='world'?arkmeUi.showWorld():arkmeUi.showExplore(module)}}><Icon size={20}/>{tr(module==='statistics'?'统计与分析':EXPLORE_LABELS[module])}</button>})}
     </div>,document.body)}</>
 }

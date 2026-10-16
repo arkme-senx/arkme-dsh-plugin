@@ -962,11 +962,11 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (['calendar.day-recap', 'calendar.day-review.create'].includes(request.operation) && origin === undefined) {
+      if (['calendar.day-recap', 'calendar.day-review.create', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
       if (request.operation === 'remote.session.observe') {
@@ -1021,6 +1021,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           ...(known.retryScope === undefined ? {} : { retryScope: known.retryScope }),
           ...(known.recovery === undefined ? {} : { recovery: known.recovery }),
           ...(known.imageFailures === undefined ? {} : { imageFailures: known.imageFailures }),
+          ...(known.publishReceipt === undefined ? {} : { publishReceipt: known.publishReceipt }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
       })
     } finally {
@@ -1052,6 +1053,9 @@ export async function dispatchArkmeHostOperation(
 ): Promise<unknown> {
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
+  if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
+  if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
+  if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
   if (operation === 'explore.list') return service.explorePage(params as unknown as ExploreQuery, requestSignal)
   if (operation === 'explore.detail') return service.exploreDetail(stringParam(params, 'ref'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal)
   if (operation === 'explore.mutate') return service.exploreMutate(params as unknown as ExploreMutation, requestSignal)
@@ -1574,6 +1578,8 @@ export async function dispatchArkmeHostOperation(
     case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
     case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
     case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.similar': return await service.speakerDirectorySimilar(params, requestSignal)
+    case 'speaker-directory.voice-samples': return await service.speakerDirectoryVoiceSamples(params, requestSignal)
     case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
     case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
@@ -1583,6 +1589,16 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
+    case 'recordings.speaker.evidence': {
+      if ([params.itemRefs, params.referenceA, params.referenceB].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) {
+        throw new ArkmePluginError('invalid-params', '声纹对比参数无效', false)
+      }
+      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[] }, requestSignal)
+    }
+    case 'recordings.speaker.consistency': {
+      if ([params.anchorRefs, params.itemRefs].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) throw new ArkmePluginError('invalid-params', '一致性查询参数无效', false)
+      return await service.recordingSpeakerConsistency({ anchorRefs: params.anchorRefs as string[], itemRefs: params.itemRefs as string[] }, requestSignal)
+    }
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
     case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
@@ -1651,6 +1667,19 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
+    case 'chat.activity.read': return await service.conversationActivityRead(params, requestSignal)
+    case 'chat.activity.participants': return await service.conversationActivityParticipants(params, requestSignal)
+    case 'chat.activity.messages': return await service.conversationActivityMessages(params, requestSignal)
+    case 'chat.activity.source': return await service.conversationActivitySource(params, requestSignal)
+    case 'chat.word-frequency.state': return await service.conversationWordsState(params, requestSignal)
+    case 'chat.word-frequency.create': return await service.conversationWordsCreate(params, requestSignal)
+    case 'chat.word-frequency.participants': return await service.conversationWordsParticipants(params, requestSignal)
+    case 'chat.word-frequency.messages': return await service.conversationWordsMessages(params, requestSignal)
+    case 'chat.word-frequency.source': return await service.conversationWordsSource(params, requestSignal)
+    case 'recordings.speech-statistics.state': return await service.recordingSpeechState(params, requestSignal)
+    case 'recordings.speech-statistics.create': return await service.recordingSpeechCreate(params, requestSignal)
+    case 'recordings.speech-statistics.occurrences': return await service.recordingSpeechOccurrences(params, requestSignal)
+    case 'recordings.speech-statistics.source': return await service.recordingSpeechSource(params, requestSignal)
     case 'calendar.day-review.state': return await service.dayReviewState(params, requestSignal)
     case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
@@ -1892,6 +1921,7 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
+    case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
@@ -2829,6 +2859,9 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.quarantine.health': return await requireDesktopQuarantine(desktopQuarantine).health(
       stringParam(params, 'packageName'),
     )
+    case 'extensions.publish.list': return await requireExtensionManager(extensionManager).publishSessions(numberParam(params, 'limit', 20), numberParam(params, 'offset', 0), requestSignal)
+    case 'extensions.publish.status': return await requireExtensionManager(extensionManager).publishStatus(stringParam(params, 'publishSessionId'), requestSignal)
+    case 'extensions.publish.resume': return await requireExtensionManager(extensionManager).resumePublish(stringParam(params, 'publishSessionId'), requestSignal)
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
     })
