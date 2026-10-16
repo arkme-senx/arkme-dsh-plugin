@@ -10,7 +10,7 @@ it('uses capability discovery and the same Host contract', async () => {
   } })
   expect(await sdk.offlineContext({ operation: 'pending' })).toEqual([])
   expect(calls).toContainEqual({ operation: 'offline-context', params: { operation: 'pending' } })
-  
+
 })
 it('rejects an unsupported provider before a mutation and separates Tool grants', async () => {
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, value: { contractVersion: 1, features: {} } }), { headers: { 'Content-Type': 'application/json' } }))
@@ -18,5 +18,5 @@ it('rejects an unsupported provider before a mutation and separates Tool grants'
   await expect(sdk.offlineContext({ operation: 'pending' })).rejects.toThrow()
   expect(fetchImpl).toHaveBeenCalledOnce()
   expect(offlineContextTools.map(t => t.meta)).toMatchObject([{ effect: 'read' }, { effect: 'write', grant: 'explicit-user-write' }])
-  
+
 })

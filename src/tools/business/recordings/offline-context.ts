@@ -38,9 +38,9 @@ const command = defineArkmeCoreToolModule({
   meta: { id: 'business.offline-context.command.v1', toolName: 'arkme_offline_context_command', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
     name: 'arkme_offline_context_command',
-    description: 'Only on explicit user instruction, confirm/dismiss/restore/range/relink a private context, or share the exact previously displayed server preview. Never infer sharing consent from chat membership or an inferred relation. Private removal does not withdraw a shared message; withdraw explicitly removes the current immutable shared message from its original audience. Use observed opaque refs and revision. Range offsets count Unicode code points: start is inclusive, end is exclusive; they refer to the first and last selected utterances. If outcome is pending/unknown, query the same request_id; do not submit a new mutation.',
+    description: 'Only on explicit user instruction, confirm/dismiss/restore/range/relink a private context, or share the exact previously displayed server preview. Never infer sharing consent from chat membership or an inferred relation. Private removal does not withdraw a shared message; withdraw explicitly removes the current immutable shared message from its original audience. Use observed opaque refs and revision. Range offsets count Unicode code points: start is inclusive, end is exclusive; they refer to the first and last selected utterances. If outcome is pending/unknown, query the same request_id; do not submit a new mutation. On explicit user request, retry replays only the encrypted original request with its original request_id; it never changes the preview, target or revision.',
     parameters: {
-      action: { type: 'string', enum: ['confirm', 'dismiss', 'restore', 'range', 'relink', 'share', 'withdraw'], required: true },
+      action: { type: 'string', enum: ['confirm', 'dismiss', 'restore', 'range', 'relink', 'share', 'withdraw', 'retry'], required: true },
       entry_ref: { type: 'string', required: true }, revision: { type: 'string', required: true }, request_id: { type: 'string', required: true },
       reason: { type: 'string', enum: ['unrelated', 'playback', 'remove'] }, evidence_refs: { type: 'array', items: { type: 'string' } },
       start_offset: { type: 'integer' }, end_offset: { type: 'integer' },
@@ -50,7 +50,7 @@ const command = defineArkmeCoreToolModule({
       const base = { entryRef: args.entry_ref, revision: args.revision, requestId: args.request_id }
       let change: OfflineContextCommand
       switch (args.action) {
-        case 'confirm': case 'restore': case 'withdraw': change = { ...base, action: args.action }; break
+        case 'confirm': case 'restore': case 'withdraw': case 'retry': change = { ...base, action: args.action }; break
         case 'dismiss': if (!args.reason) throw new Error('dismiss reason is required'); change = { ...base, action: 'dismiss', reason: args.reason }; break
         case 'range': if (!args.evidence_refs?.length) throw new Error('observed evidence_refs are required'); change = { ...base, action: 'range', evidenceRefs: args.evidence_refs, ...(args.start_offset === undefined ? {} : { startOffset: args.start_offset }), ...(args.end_offset === undefined ? {} : { endOffset: args.end_offset }) }; break
         case 'relink': if (!args.message_ref) throw new Error('observed message_ref is required'); change = { ...base, action: 'relink', messageRef: args.message_ref }; break
