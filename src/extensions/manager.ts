@@ -546,7 +546,11 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
-      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.version, status: 'validating', execution_state: 'unknown' }
+      let receipt: ArkmeExtensionPublishResult = {
+        status: 'validating', execution_state: 'unknown', ...publishFailure(error).publishReceipt,
+        publish_session_id: session.publish_session_id, extension_id: session.extension_id,
+        version: session.version ?? input.version,
+      }
       try {
         receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
         if (receipt.status === 'published') return receipt
@@ -595,7 +599,11 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
-      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.source.bundle.version, status: 'validating', execution_state: 'unknown' }
+      let receipt: ArkmeExtensionPublishResult = {
+        status: 'validating', execution_state: 'unknown', ...publishFailure(error).publishReceipt,
+        publish_session_id: session.publish_session_id, extension_id: session.extension_id,
+        version: session.version ?? input.source.bundle.version,
+      }
       try {
         receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
         if (receipt.status === 'published') return receipt
@@ -644,7 +652,11 @@ export class ArkmeExtensionManager {
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
-      let receipt: ArkmeExtensionPublishResult = publishFailure(error).publishReceipt ?? { publish_session_id: session.publish_session_id, extension_id: session.extension_id, version: session.version ?? input.source.bundle.version, status: 'validating', execution_state: 'unknown' }
+      let receipt: ArkmeExtensionPublishResult = {
+        status: 'validating', execution_state: 'unknown', ...publishFailure(error).publishReceipt,
+        publish_session_id: session.publish_session_id, extension_id: session.extension_id,
+        version: session.version ?? input.source.bundle.version,
+      }
       try {
         receipt = await this.client.publishStatus(session.publish_session_id, input.signal)
         if (receipt.status === 'published') return receipt
