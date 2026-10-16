@@ -1,3 +1,4 @@
+import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -2238,6 +2239,10 @@ export function ArkmeMarketplace({
   }
 
   const startInstall = async (target: { extensionId: string; version?: string }) => {
+    if (arkmeAuthStore.getSnapshot().config?.hostPolicy?.capabilities.executableExtensionInstall === false) {
+      setInstallError(tr('该功能仅在官网版本中可用。'))
+      return
+    }
     setActionBusyExtensionId(target.extensionId); setInstallError(''); setRestartNotice('')
     try {
       const preview = await callArkme<ArkmeExtensionInstallPreview>('extensions.install.preview', {

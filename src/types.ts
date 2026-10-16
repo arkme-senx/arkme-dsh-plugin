@@ -1,3 +1,4 @@
+import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
@@ -42,6 +43,7 @@ export interface ArkmeCaptchaResult {
 }
 
 export interface ArkmeClientConfig {
+  hostPolicy?: Pick<ArkmeHostPolicy, 'distribution' | 'capabilities'>
   captchaId: string
   /** Public Baidu JavaScript API browser key, never a server secret. */
   baiduMapBrowserAk?: string

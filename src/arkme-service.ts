@@ -1,3 +1,4 @@
+import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import { ExploreService } from './services/explore-service.js'
@@ -941,7 +942,9 @@ export class ArkmeService {
   async dshRemotePost<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemotePost<T>(path, body, undefined, signal) }
 
   clientConfig(): ArkmeClientConfig {
+    const {distribution, capabilities} = resolveHostPolicy()
     return {
+      hostPolicy: {distribution, capabilities},
       captchaId: this.config.geetestCaptchaId,
       baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,

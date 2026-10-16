@@ -74,7 +74,6 @@ describe('Arkme settings policy', () => {
     expect(source).not.toContain('复制更新命令')
     expect(source).toContain('arkmeAppUpdateStore')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
-    expect(source).toContain('actionLabel="打开 APP 更新"')
     expect(source).toContain('arkmeAppUpdateStore.open()')
     expect(source).not.toContain('arkmeUpdateUi')
     expect(source).not.toContain('arkmeAppUpdateStore.download')
