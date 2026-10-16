@@ -16,7 +16,7 @@ export const rawResult = () => ({ ...envelope, id: 'result-1', snapshot_id: 'sna
   summary: [{ text: '讨论了录音存储方案', source_refs: ['source-1'] }],
   timeline: [{ title: '讨论存储', text: '有依据的结论', start_at: at, end_at: at + 60000, source_refs: ['source-1'] }],
 })
-export const rawState = () => ({ ...envelope, job: null, result: rawResult(), has_new_content: false, versions: [{ id: 'result-1', generated_at: at }] })
+export const rawState = () => ({ ...envelope, job: null, result: rawResult(), freshness: 'unchanged', versions: [{ id: 'result-1', generated_at: at }] })
 const current = () => parseDayReviewState(rawState(), query)
 describe('calendar review material and provenance contract', () => {
   it('requires actual dates, timezone and matching scope, rather than accepting recording-only results', () => {
@@ -49,13 +49,13 @@ beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockRe
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
   it('shows unavailable support clearly and never automatically submits AI work', async () => {
-    vi.mocked(callArkme).mockResolvedValue({ supported: false, job: null, result: null, versions: [], hasNewContent: false })
+    vi.mocked(callArkme).mockResolvedValue({ supported: false, job: null, result: null, versions: [], freshness: 'unknown' })
     await mount()
     expect(content()).toContain('日历回顾服务尚未接通')
     expect(button('生成当天回顾').props.disabled).toBe(true)
     expect(vi.mocked(callArkme).mock.calls.map(x => x[0])).toEqual(['calendar.day-review.state'])
   })
-  it('shares the result across summary/timeline and opens its exact citation', async () => {
+  it('opens exact citations and clears both output views when source access fails', async () => {
     await mount()
     expect(content()).toContain('讨论了录音存储方案')
     vi.mocked(callArkme).mockRejectedValueOnce(new Error('原文已删除'))
@@ -63,7 +63,8 @@ describe('calendar review interaction', () => {
     expect(callArkme).toHaveBeenLastCalledWith('calendar.day-review.source', expect.objectContaining({ resultId: 'result-1', sourceRef: 'source-1' }), expect.any(AbortSignal))
     expect(content()).toContain('原文已删除')
     await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="timeline" />))
-    expect(content()).toContain('有依据的结论')
+    expect(content()).not.toContain('有依据的结论')
+    expect(content()).not.toContain('讨论了录音存储方案')
     expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.state')).toHaveLength(1)
   })
   it('keeps the previous result on failed updates and reuses an uncertain submission id', async () => {
@@ -75,7 +76,8 @@ describe('calendar review interaction', () => {
     expect(content()).toContain('提交结果尚未确认')
     vi.mocked(callArkme).mockResolvedValueOnce({ ...current(), job: { id: 'job', status: 'collecting', message: '' } })
     await act(async () => button('核对提交').props.onClick())
-    expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.create')[1]![1]).toEqual(first)
+    expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.create')).toHaveLength(1)
+    expect(callArkme).toHaveBeenLastCalledWith('calendar.day-review.reconcile', query, expect.any(AbortSignal))
     expect(first).toMatchObject({ sourceKinds: DAY_REVIEW_SOURCES })
     expect(first).not.toHaveProperty('transcripts')
     expect(content()).toContain('收集资料')
@@ -86,7 +88,7 @@ describe('calendar review interaction', () => {
     vi.mocked(callArkme).mockImplementationOnce(() => new Promise(r => { resolve = r }) as never)
     await mount()
     const oldSignal = vi.mocked(callArkme).mock.calls[0]![2]!
-    vi.mocked(callArkme).mockResolvedValueOnce({ supported: true, result: null, job: null, versions: [], hasNewContent: false })
+    vi.mocked(callArkme).mockResolvedValueOnce({ supported: true, result: null, job: null, versions: [], freshness: 'unknown' })
     await act(async () => view!.update(<ArkmeCalendarDayReview query={{ ...query, bucketDate: '2026-10-14' }} view="summary" />))
     await act(async () => resolve(current()))
     expect(oldSignal.aborted).toBe(true)
@@ -102,7 +104,7 @@ describe('calendar review interaction', () => {
   })
   it('rechecks durable progress when the calendar signals new data', async () => {
     await mount()
-    vi.mocked(callArkme).mockResolvedValueOnce({ ...current(), hasNewContent: true })
+    vi.mocked(callArkme).mockResolvedValueOnce({ ...current(), freshness: 'changed' })
     await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
     expect(content()).toContain('有新内容可更新')
     expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.state')).toHaveLength(2)

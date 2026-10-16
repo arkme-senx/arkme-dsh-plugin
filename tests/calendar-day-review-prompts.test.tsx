@@ -13,7 +13,7 @@ const defaults = { baseVersion: 'calendar-v1', constraints: '保持来源与人�
 const support = { supported: true, snapshotReuse: true, defaults }
 const result = { id: 'r1', snapshotId: 's1', generatedAtMillis: Date.now(), modelName: '模型', sourceKinds: ['audio'],
   coverage: [], sources: [], summary: [{ text: '旧结果仍然保留', sourceRefs: [] }], timeline: [], promptSnapshot: defaults }
-const state = { supported: true, job: null, result, hasNewContent: false, versions: [] }
+const state = { supported: true, job: null, result, freshness: 'unknown', versions: [] }
 let view: ReactTestRenderer | undefined, storage: Map<string, string>
 const text = (node: any): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node?.children ? text(node.children) : ''
 const content = () => text(view!.toJSON())
@@ -91,7 +91,8 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(first).toMatchObject({ reuseResultId: 'r1', sourceKinds: ['audio'] })
     expect(view!.root.findAllByType('fieldset').every(f => f.props.disabled)).toBe(true)
     await act(async () => button('核对提交').props.onClick())
-    expect(vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')[1]![1]).toEqual(first)
+    expect(vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')).toHaveLength(1)
+    expect(callArkme).toHaveBeenLastCalledWith('calendar.day-review.reconcile', q, expect.any(AbortSignal))
   })
   it('fills offline untouched fields from real defaults without replacing authored instructions', async () => {
     storage.set(reviewPromptStorageKey(q.accountScope), JSON.stringify({ schemaVersion: 1, saved: {

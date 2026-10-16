@@ -807,6 +807,9 @@ export class ArkmeService {
     }) })
     return await this.dayRecapService.generate(input, signal)
   }
+  async reconcileDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.reconcile(input, signal) }
+  async resumeDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.resume(input, signal) }
+  async dayReviewEvidence(input: import('./calendar-day-review.js').DayReviewEvidenceQuery, signal?: AbortSignal) { return this.calendarDayReview.evidence(input, signal) }
   async dayReviewState(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.state(input, signal) }
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
@@ -1007,6 +1010,7 @@ export class ArkmeService {
         revisionPolling: true,
         userProfile: true,
         accountSettings: true,
+        calendarDayReview: true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         imageRead: true,

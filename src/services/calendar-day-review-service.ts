@@ -1,20 +1,20 @@
-import { assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery } from '../calendar-day-review.js'
+import { assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery, type DayReviewOriginalEvidence, type DayReviewEvidenceQuery } from '../calendar-day-review.js'
 import { parseReviewPromptConfig, parseReviewPromptSupport, sameReviewPrompts, type ReviewPromptSupport } from '../calendar-day-review-prompts.js'
 import type { ExploreSource } from '../explore-contract.js'
-import type { ArkmeCallDetail } from '../types.js'
+import type { ArkmeCallDetail, ArkmeRecordingWindow } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { RecordingService } from './recording-service.js'
 import type { RecordService } from './record-service.js'
 import type { SourceService } from './source-service.js'
 import type { CallHistoryService } from './call-history-service.js'
 import type { ArkmePrivacyVisibilityService } from './privacy-visibility.js'
-import { ArkmePluginError, ServiceRuntime, objectValue } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue } from './service.js'
 
-export type DayReviewOpenSource = ExploreSource | { kind: 'call'; detail: ArkmeCallDetail }
+export type DayReviewOpenSource = ExploreSource | { kind: 'call'; detail: ArkmeCallDetail } | { kind: 'evidence'; evidence: DayReviewOriginalEvidence }
 const base = '/api/v1/day-review'
 const unavailable = () => new ArkmePluginError('calendar-review-unavailable', '日历回顾服务尚未接通', false, 501)
 
-/** Proposed owner contract; capabilities must opt in before any job submission. */
+/** One account-scoped owner for UI, SDK and tools. */
 export class CalendarDayReviewService {
   private epoch = 0
   private readonly unsubscribe: () => void
@@ -41,7 +41,7 @@ export class CalendarDayReviewService {
   }
   private body(q: DayReviewQuery) { return { schema_version: 1, scope: 'calendar_day', date: q.bucketDate, time_zone: q.timezone } }
   private request(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal, write = false) {
-    return this.runtime.authenticatedAudioPost<unknown>(`${base}/${path}`, body, session, signal,
+    return this.runtime.authenticatedIntelligentPost<unknown>(`${base}/${path}`, body, session, signal,
       { lane: write ? 'write' : 'interactive-read', bypassCache: true, cacheMs: 0 })
   }
   private async capabilities(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
@@ -54,7 +54,7 @@ export class CalendarDayReviewService {
     const v = reviewObject(value)
     if (v.supported === false) return null
     if (v.supported !== true || v.schema_version !== 1 || v.scope !== 'calendar_day'
-      || v.durable_jobs !== true || v.source_navigation !== true || v.idempotent_create !== true
+      || v.resume !== true || v.freshness_v1 !== true || v.durable_jobs !== true || v.source_navigation !== true || v.idempotent_create !== true
       || reviewKinds(v.source_kinds).length !== 5) throw new ArkmePluginError('calendar-review-contract', '日历回顾服务版本暂不兼容，请更新后重试', false, 409)
     return v
   }
@@ -65,7 +65,24 @@ export class CalendarDayReviewService {
     if (!supported) return emptyDayReviewState()
     const value = await this.request('state', this.body(query), session, signal)
     await this.guard(query, session, epoch, signal)
-    return parseDayReviewState(value, query)
+    const state = parseDayReviewState(value, query)
+    const pending = await this.pending(query)
+    if (pending) state.pendingRequestId = reviewText(pending.requestId)
+    await this.guard(query, session, epoch, signal)
+    return state
+  }
+  private day(q: DayReviewQuery) { return JSON.stringify([q.bucketDate, q.timezone]) }
+  private storage() {
+    const store = this.runtime.stateStore
+    if (!store?.readDayReviewPending || !store.prepareDayReview || !store.acknowledgeDayReview) throw new ArkmePluginError('calendar-review-storage', '日回顾提交恢复存储不可用，未创建任务', false, 503)
+    return { read: store.readDayReviewPending.bind(store), prepare: store.prepareDayReview.bind(store), acknowledge: store.acknowledgeDayReview.bind(store) }
+  }
+  private async pending(q: DayReviewQuery): Promise<Record<string, unknown> | undefined> {
+    const value = await this.storage().read(q.accountScope, this.day(q))
+    if (value === undefined) return undefined
+    const pending = reviewObject(value), old = parseDayReviewQuery(pending)
+    if (JSON.stringify(old) !== JSON.stringify(q)) throw new Error('提交恢复记录的账号或日期不匹配')
+    return pending
   }
   async create(input: unknown, signal?: AbortSignal) {
     const v = reviewObject(input), { query, epoch, session } = await this.context(input, signal)
@@ -73,24 +90,59 @@ export class CalendarDayReviewService {
     if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestId)) throw new Error('生成请求标识无效')
     const promptConfig = v.promptConfig === undefined ? undefined : parseReviewPromptConfig(v.promptConfig)
     const reuseResultId = v.reuseResultId === undefined ? undefined : reviewText(v.reuseResultId)
-    const capability = await this.capabilities(session, signal)
-    if (!capability) throw unavailable()
-    if ((promptConfig && capability.prompt_config_v1 !== true) || (reuseResultId && capability.snapshot_reuse !== true)) {
-      throw new ArkmePluginError('calendar-review-prompt-unsupported', '服务尚不支持自定义提示词或复用资料，未提交生成', false, 409)
+    const request = { ...query, sourceKinds: sources, requestId, ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
+    const pending = await this.pending(query)
+    if (!pending) {
+      const capability = await this.capabilities(session, signal)
+      if (!capability) throw unavailable()
+      if ((promptConfig && capability.prompt_config_v1 !== true) || (reuseResultId && capability.snapshot_reuse !== true)) throw new ArkmePluginError('calendar-review-prompt-unsupported', '服务尚不支持自定义提示词或复用资料，未提交生成', false, 409)
     }
     await this.guard(query, session, epoch, signal)
-    const value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId,
-      outputs: ['summary', 'timeline'], ...(promptConfig ? { prompt_config: promptConfig } : {}),
-      ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
+    await this.storage().prepare(query.accountScope, this.day(query), request)
     await this.guard(query, session, epoch, signal)
-    const state = parseDayReviewState(value, query)
-    if (promptConfig || reuseResultId) {
-      const receipt = reviewObject(reviewObject(value).submission)
-      if (receipt.request_id !== requestId || (promptConfig && !sameReviewPrompts(parseReviewPromptConfig(receipt.prompt_config), promptConfig))
-        || (reuseResultId && receipt.reuse_result_id !== reuseResultId)) throw new Error('生成配置尚未确认，请核对同一次请求')
+    let value: unknown
+    try {
+      value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: ['summary', 'timeline'], ...(promptConfig ? { prompt_config: promptConfig } : {}), ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
+    } catch (error) {
+      // A definite domain rejection is not a lost acknowledgement. Unknown
+      // transport/settlement outcomes keep the immutable request for reconciliation.
+      if (error instanceof ArkmeUpstreamResponseError && ['invalid_request', 'day_busy', 'request_conflict', 'source_changed', 'source_revoked', 'not_found'].includes(String(objectValue(error.responseData).review_error))) {
+        await this.storage().acknowledge(query.accountScope, this.day(query), requestId)
+        throw new ArkmePluginError('calendar-review-not-accepted', '本次生成未受理，请检查日期、资料权限或进行中的任务后重试', false, 409)
+      }
+      throw error
     }
-    if (!state.job && !state.result) throw new Error('生成请求未返回任务，请核对后重试')
+    await this.guard(query, session, epoch, signal)
+    const state = parseDayReviewState(value, query), receipt = reviewObject(reviewObject(value).submission)
+    if (receipt.request_id !== requestId || typeof receipt.job_id !== 'string'
+      || JSON.stringify(reviewKinds(receipt.source_kinds)) !== JSON.stringify(sources)
+      || JSON.stringify(receipt.outputs) !== JSON.stringify(['summary', 'timeline'])
+      || (promptConfig && !sameReviewPrompts(parseReviewPromptConfig(receipt.prompt_config), promptConfig))
+      || (receipt.reuse_result_id ?? '') !== (reuseResultId ?? '')
+      || (state.job && state.job.id !== receipt.job_id) || (state.result && state.result.id !== receipt.job_id)) throw new Error('生成配置尚未确认，请核对同一次请求')
+    parseReviewPromptConfig(receipt.prompt_config)
+    await this.storage().acknowledge(query.accountScope, this.day(query), requestId)
     return state
+  }
+  async reconcile(input: unknown, signal?: AbortSignal) {
+    const { query } = await this.context(input, signal), pending = await this.pending(query)
+    if (!pending) return this.state(query, signal)
+    return this.create(pending, signal)
+  }
+  async resume(input: unknown, signal?: AbortSignal) {
+    const v = reviewObject(input), { query, session, epoch } = await this.context(input, signal), jobId = reviewText(v.jobId)
+    const value = reviewObject(await this.request('resume', { ...this.body(query), job_id: jobId }, session, signal, true))
+    await this.guard(query, session, epoch, signal); assertDayReviewEnvelope(value, query)
+    if (value.job_id !== jobId || !['queued', 'running', 'succeeded'].includes(String(value.status))) throw new Error('恢复任务尚未确认，请检查当天任务状态')
+    return this.state(query, signal)
+  }
+  async evidence(input: DayReviewEvidenceQuery, signal?: AbortSignal): Promise<DayReviewOriginalEvidence> {
+    const { query, session, epoch } = await this.context(input, signal)
+    const v = reviewObject(await this.request('evidence', { ...this.body(query), result_id: reviewText(input.resultId), source_ref: reviewText(input.sourceRef, 4096) }, session, signal))
+    await this.guard(query, session, epoch, signal); assertDayReviewEnvelope(v, query)
+    if (v.ref !== input.sourceRef || v.result_id !== input.resultId) throw new Error('来源引用不匹配')
+    const time = (value: unknown) => value === null ? null : typeof value === 'number' && Number.isSafeInteger(value) ? value : (() => { throw new Error('来源时间无效') })()
+    return { ref: input.sourceRef, resultId: input.resultId, kind: reviewKinds([v.kind])[0]!, subtype: reviewText(v.subtype), label: reviewText(v.label), text: reviewText(v.text, 32 * 1024 * 1024), startAtMillis: time(v.start_at), endAtMillis: time(v.end_at) }
   }
   async prompts(input: unknown, signal?: AbortSignal): Promise<ReviewPromptSupport> {
     const { query, epoch, session } = await this.context(input, signal)
@@ -121,11 +173,12 @@ export class CalendarDayReviewService {
       throw new ArkmePluginError('calendar-review-source-unavailable', '原始内容已删除、已变化或当前不可访问', false, 404)
     }
     // The owner rechecks source membership and access on every open. A citation is not an access grant.
-    const owner = reviewObject(data.owner_ref)
+    const material = reviewObject(data.owner_ref), owner = reviewObject(material.locator)
     let result: DayReviewOpenSource
-    if (owner.provider === 'audio') result = await this.recording.exploreRecordingEvidence(owner, reviewText(data.quote, 10000), signal)
-    else if (owner.provider === 'call') result = { kind: 'call', detail: await this.calls.arrangementCallDetail(reviewText(owner.room_id), signal) }
-    else if (owner.provider === 'record') {
+    if (material.kind === 'audio') result = await this.recording.exploreRecordingEvidence({ container_id: owner.session_id, child_id: owner.child_id, item_ordinal: owner.item_index, transcript_source: owner.transcript_source, start_at: owner.start_at }, reviewText(owner.quote, 10000), signal, reviewObject(material.window) as unknown as ArkmeRecordingWindow)
+    else if (material.kind === 'call' && material.subtype === 'trtc') result = { kind: 'call', detail: await this.calls.arrangementCallDetail(reviewText(owner.id), signal, { ...(typeof material.start_at === 'number' ? { startMillis: material.start_at } : {}), quote: reviewText(material.text, 32 * 1024 * 1024) }) }
+    else if (material.kind === 'call') result = { kind: 'evidence', evidence: await this.evidence({ ...query, resultId, sourceRef }, signal) }
+    else if (['self', 'location'].includes(String(material.kind))) {
       const uid = reviewText(owner.record_uid)
       const raw = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read', bypassCache: true })
       const core = objectValue(raw.record_core)
@@ -136,11 +189,11 @@ export class CalendarDayReviewService {
         if (!source || !Number.isSafeInteger(core.send_at) || Number(core.send_at) <= 0) throw new Error('原消息暂不可定位')
         result = { kind: 'conversation', source, itemUid: uid, sendAtMillis: Number(core.send_at) }
       } else result = { kind: 'record', item: await this.records.personalRecordDetail(uid, signal) }
-    } else if (owner.provider === 'chat') {
+    } else if (material.kind === 'chat') {
       // Non-record-backed chat messages are resolved by the owner before reaching this adapter.
-      const source = await this.sources.searchTargetSource(3, reviewText(owner.session_uid), '', signal)
-      if (!source || !Number.isSafeInteger(owner.send_at) || Number(owner.send_at) <= 0) throw new Error('原消息暂不可定位')
-      result = { kind: 'conversation', source, itemUid: reviewText(owner.message_uid), sendAtMillis: Number(owner.send_at) }
+      const source = await this.sources.searchTargetSource(3, reviewText(owner.chat_session_uid), '', signal)
+      if (!source || !Number.isSafeInteger(material.start_at) || Number(material.start_at) <= 0) throw new Error('原消息暂不可定位')
+      result = { kind: 'conversation', source, itemUid: reviewText(owner.relation_uid), sendAtMillis: Number(material.start_at) }
     } else throw new Error('这条来源暂不支持定位')
     await this.guard(query, session, epoch, signal)
     return result

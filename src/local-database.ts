@@ -918,6 +918,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
 
+  async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }
+
   async listRecordReeditSubmissions(userId: number) {
     return await this.operationalState.listRecordReeditSubmissions(userId)
   }

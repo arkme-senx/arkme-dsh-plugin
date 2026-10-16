@@ -1,3 +1,4 @@
+import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
 import { messageSyncToolModules } from './conversation/message-sync.js'
 import {teamProfileTools} from './contacts/team-profile.js'
 import { officialNotificationToolModules } from './account/official-notifications.js'
@@ -71,6 +72,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...arkoToolModules,
   searchRecordsToolModule,
   ...recordCalendarToolModules,
+  dayReviewReadTool, dayReviewWriteTool,
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
