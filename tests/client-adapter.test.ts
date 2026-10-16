@@ -7,7 +7,7 @@ function installDesktopGateMarker(): () => void {
   const previousWindow = globalThis.window
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: { arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
+    value: { location: { hostname: 'localhost', search: '' }, arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
   })
   return () => {
     if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
@@ -213,6 +213,7 @@ describe('official DSH client adapter', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
+        location: { hostname: 'localhost', search: '' },
         setInterval: vi.fn((callback: () => void) => { tick = callback; return 1 }),
         clearInterval: vi.fn(),
       },

@@ -116,7 +116,10 @@ it('shows one task total and retains individual point charges in the expandable 
 })
 
 it.each([
-  ['arkme', 'DSH 对话'], ['audio_entity', '录音实体识别'], ['agent', 'Agent'], ['', 'AI 调用'], ['future-business', 'AI 调用'],
+  ['personal_profile', '个人档案'], ['record_thought', '阿森有想法（快记）'], ['chat_thought', '阿森有想法（聊天）'],
+  ['arrangement_recognition', '安排'], ['goal_insight', '目标'],
+  ['arkme', 'DSH 对话'], ['agent', 'Agent'], ['', 'AI 调用'], ['future-business', 'AI 调用'],
+  ['audio_entity', '录音实体识别'],
 ])('shows the business purpose for %s and keeps the model in details', async (businessCode, label) => {
   mocks.call.mockImplementation(async (_op, params) => ({ accountScope: 'prod:1', unit: 'ai_points', month: params.month, chargedPoints: row.chargedPoints, items: [{ ...row, businessCode }], nextBeforeId: '' }))
   await render()

@@ -113,14 +113,14 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
-  it('resolves entity evidence from Audio without speaker or profile requests, preserving raw text and day boundaries', async () => {
+  it('resolves entity evidence from full owned sessions without speaker/profile requests or dropping midnight continuation', async () => {
     const profiles = vi.fn(async () => new Map())
     const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'unused' } })
     const date = new Date(2026, 7, 12).getTime()
     fixture.state.presenceMissing = true
     fixture.state.recentDayStart = date
     fixture.state.recentTranscript = {
-      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_400_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_401_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
       child_ls: [{ id: 'c', session_id: 's', start_at: 0,
         asr: [{ s: 1000, e: 2000, n: 1, b: 1, t: '  (背景音) 🙂武汉  ' }, { s: 86_400_000, e: 86_401_000, t: '次日' }],
         doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '豆包原文' }] }],
@@ -129,6 +129,7 @@ describe('RecordingService', () => {
       const session = await fixture.runtime.requireSession()
       expect(await fixture.service.entityTranscriptRows(date, 'system', session)).toMatchObject([
         { sessionId: 's', childId: 'c', asrItemIndex: 0, transcriptSource: 'system', text: '🙂武汉', rawTranscriptText: '  (背景音) 🙂武汉  ' },
+        { sessionId: 's', childId: 'c', asrItemIndex: 1, transcriptSource: 'system', text: '次日' },
       ])
       expect(await fixture.service.entityTranscriptRows(date, 'doubao', session)).toMatchObject([
         { transcriptSource: 'doubao', text: '豆包原文', asrItemIndex: 0 },

@@ -1,3 +1,4 @@
+import { assertHostCapability } from '../host-policy.js'
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, statSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -48,6 +49,7 @@ export class ArkmeExtensionProfileInstaller {
   constructor(private readonly options: ArkmeExtensionProfileInstallerOptions) {}
 
   async install(bundleDirectory: string): Promise<void> {
+    assertHostCapability('executableExtensionInstall')
     await this.mutate(async () => {
       if (!existsSync(bundleDirectory)) throw new Error('扩展 Bundle 目录不存在')
       const profileDirectory = join(this.options.dshHome, 'profiles', this.options.profileName)
@@ -63,6 +65,7 @@ export class ArkmeExtensionProfileInstaller {
   }
 
   async installTarball(bundlePath: string): Promise<void> {
+    assertHostCapability('executableExtensionInstall')
     await this.mutate(async () => {
       if (!existsSync(bundlePath) || !statSync(bundlePath).isFile()) throw new Error('扩展 Bundle tgz 不存在')
       await this.run([
@@ -92,6 +95,7 @@ export class ArkmeExtensionProfileInstaller {
 
   /** Keep the dependency installed while changing whether its public Profile bundle layer composes at boot. */
   async setEnabled(packageName: string, enabled: boolean): Promise<void> {
+    assertHostCapability('executableExtensionInstall')
     await this.mutate(async () => {
       if (!isArkmeProfilePackageName(packageName)) throw new Error('扩展 Bundle 包名无效')
       const profileDirectory = join(this.options.dshHome, 'profiles', this.options.profileName)
@@ -205,6 +209,7 @@ export class ArkmeExtensionProfileInstaller {
   }
 
   private async run(args: readonly string[]): Promise<void> {
+    assertHostCapability('executableExtensionInstall')
     if (this.options.run !== undefined) return await this.options.run(args)
     if (!existsSync(this.options.execPath) || !existsSync(this.options.dshBinPath)) {
       throw new Error('当前 DSH 运行方式不支持修改 Profile 插件')

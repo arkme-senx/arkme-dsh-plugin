@@ -1,3 +1,4 @@
+import { CapabilityService } from './capability-service.js'
 import { createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { EXPLORE_MODULES, type ExploreModule, type ExploreItem, type ExplorePage, type ExploreDetail, type ExploreEvidence, type ExploreQuery, type ExploreMutation, type ExploreSource, type ExploreAction, type ExploreSettings } from '../explore-contract.js'
@@ -58,6 +59,15 @@ export class ExploreService {
   private home(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Doc> {
     if (module === 'profile') return this.request(module,'/api/v1/personal-profile/v3/experience/home',{},session,signal)
     return this.request(module,'/api/v1/insight/anniversary/home',{source_type:0},session,signal)
+  }
+  private async analysisEnabled(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<boolean> {
+    const result = await new CapabilityService(this.runtime).query(`${this.runtime.config.environment}:${session.userId}`, signal)
+    const setting = result.settings.find(x => x.key === (module === 'profile' ? 'personal_profile' : 'goal_insight'))
+    if (!setting) throw new ArkmePluginError('capability-contract-invalid', '暂时无法确认额度设置，请重试', true, 502)
+    return setting.enabled
+  }
+  private async requireAnalysis(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<void> {
+    if (!await this.analysisEnabled(module, session, signal)) throw new ArkmePluginError('capability-disabled', '请先在「自动使用额度」中开启此功能', false, 409)
   }
   private async relationHome(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Doc> {
     const scope = `${this.runtime.config.environment}:${session.userId}`, epoch = this.epoch
@@ -155,6 +165,16 @@ export class ExploreService {
         if(progress){page.progress=progress;if(progress.active)page.actions=[action('stop','停止本次分析')]}
       } catch(error) { signal?.throwIfAborted(); page.notice=[page.notice,'分析进度暂不可用，已有结果仍可查看。'].filter(Boolean).join(' ');page.actions=[] }
     }
+    if (module === 'profile' || module === 'goals') {
+      try { page.analysisEnabled = await this.analysisEnabled(module, session, signal) }
+      catch { signal?.throwIfAborted(); page.analysisEnabled = null }
+      if (page.analysisEnabled !== true) {
+        // Reading saved results must not depend on optional billing settings.
+        page.actions = page.actions.filter(x => x.id === 'pause' || x.id === 'stop')
+        delete page.progress
+        page.emptyMessage = '还没有相关内容'
+      }
+    }
     page.contextRef=await this.seal(session,{kind:'context',module,...context})
     if(next)page.nextCursor=await this.seal(session,{kind:'cursor',module,filter,query,...next})
     await this.guard(session,epoch,signal);return page
@@ -248,6 +268,7 @@ export class ExploreService {
         await this.detail(input.ref,undefined,signal)
         await request('/api/v1/personal-profile/v3/fact/override',{fact_key:ref.id,action:input.action,...(input.action==='correct'?{value:value()}:{})})
       } else if(kind==='context'&&['activate','refresh','pause','resume'].includes(input.action)) {
+        if (input.action !== 'pause') await this.requireAnalysis(module,session,signal)
         const current=await this.home(module,session,signal),p=doc(current.processing)
         if(input.action==='pause'||input.action==='resume') {
           if(p[input.action==='pause'?'can_pause':'can_resume']!==true||!p.rebuild_run_id)throw missing()
@@ -266,6 +287,7 @@ export class ExploreService {
       else if(kind==='context'&&input.action==='refresh')await request('/api/v1/event/process/trigger',{force:false})
       else throw missing()
     } else if(kind==='context'&&(module==='goals'||module==='anniversaries')&&['refresh','stop'].includes(input.action)) {
+      if (module === 'goals' && input.action === 'refresh') await this.requireAnalysis(module,session,signal)
       await request(input.action==='stop'?'/api/v1/insight/terminate':`/api/v1/insight/${module==='goals'?'goal':'anniversary'}/refresh`,input.action==='stop'?{section_type:module==='goals'?3:4}:{source_type:0})
     } else if(module==='anniversaries'&&kind==='item'&&['confirm','dismiss'].includes(input.action)) {
       await this.detail(input.ref,undefined,signal)
@@ -282,30 +304,36 @@ export class ExploreService {
   }
   async settings(moduleValue: unknown, signal?: AbortSignal): Promise<ExploreSettings> {
     const module=this.module(moduleValue),session=await this.runtime.requireSession(),epoch=this.epoch
-    if(module==='relations')throw missing()
-    const path=module==='profile'?'/api/v1/personal-profile/v3/model/list':module==='events'?'/api/v1/event-model/list':module==='goals'?'/api/v1/insight/goal/model/list':'/api/v1/insight/model-panel/get'
+    if(module==='relations'||module==='goals')throw missing()
+    if(module==='profile') {
+      const home=await this.home(module,session,signal)
+      const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),models:[],sources:list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true}))}
+      await this.guard(session,epoch,signal);return result
+    }
+    const path=module==='events'?'/api/v1/event-model/list':'/api/v1/insight/model-panel/get'
     const raw=await this.runtime.authenticatedIntelligentPost<Doc>(path,module==='anniversaries'?{section_type:4,source_type:0,history_limit:20}:{},session,signal,{lane:'interactive-read',bypassCache:true,cacheMs:0})
     const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.current_route_key,config.active_route_key)
     const options=list(config.items??config.allowed_route_options)
-    const home=module==='profile'?await this.home(module,session,signal):{}
     const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),
       models:await Promise.all(options.map(x=>this.seal(session,{kind:'model',module,route:text(x.route_key)}).then(ref=>({ref,label:first(x.display_name,x.model_key),selected:x.route_key===current})))),
-      sources:list(home.sources).map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true}))}
+      sources:[]}
     await this.guard(session,epoch,signal);return result
   }
   async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true}> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(input.ref,session,'settings'),module=this.module(ref.module)
     if(input.modelRef && input.sources!==undefined)throw missing()
     if(input.modelRef) {
+      if(module==='profile'||module==='goals')throw missing()
       const model=await this.open(input.modelRef,session,'model');if(model.module!==module)throw missing()
       const current=await this.settings(module,signal)
       const available=await Promise.all(current.models.map(x=>this.open(x.ref,session,'model')))
       if(!available.some(x=>x.route===model.route))throw missing()
-      const path=module==='profile'?'/api/v1/personal-profile/v3/model/activate':module==='events'?'/api/v1/event-model/activate':module==='goals'?'/api/v1/insight/goal/model/activate':'/api/v1/insight/anniversary/model/activate'
+      const path=module==='events'?'/api/v1/event-model/activate':'/api/v1/insight/anniversary/model/activate'
       await this.guard(session,epoch,signal)
-      await this.runtime.authenticatedIntelligentPost(path,{route_key:model.route,...(module==='goals'?{trigger_refresh:true}:{})},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+      await this.runtime.authenticatedIntelligentPost(path,{route_key:model.route},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
     } else if(module==='profile'&&Array.isArray(input.sources)) {
-      const home=await this.home(module,session,signal),allowed=list(home.sources).map(x=>x.source)
+      await this.requireAnalysis(module,session,signal)
+      const home=await this.home(module,session,signal),allowed=list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>x.source)
       if(input.sources.some(x=>typeof x!=='string'||!allowed.includes(x))||new Set(input.sources).size!==input.sources.length)throw missing()
       await this.guard(session,epoch,signal)
       await this.request(module,'/api/v1/personal-profile/v3/experience/sources/set',{sources:input.sources},session,signal,true)

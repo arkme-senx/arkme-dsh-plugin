@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { ArkmePluginError } from '../../services/service.js'
+import { publishFailure } from '../../extensions/publish-failure.js'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ArkmeExtensionPublishResult, ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute,
@@ -41,6 +43,8 @@ export interface ArkmeExtensionPublishBatchResult {
     status: 'published' | 'failed'
     extensionId?: string
     message?: string
+    publishSessionId?: string
+    receipt?: ArkmeExtensionPublishResult
     publishRoute: ArkmeExtensionPublishRoute
     artifactContractVersion: 2 | 3
     artifactKind: ArkmeExtensionPublishArtifactKind
@@ -110,7 +114,7 @@ export class ArkmeExtensionPublishConversation {
     return {
       status: 'confirmation_required',
       count: items.length,
-      question: publishQuestion(items),
+      question: `${publishQuestion(items)}（请在 ${String(Math.ceil(this.confirmationTtlMillis / 60_000))} 分钟内确认；过期后可重新准备。）`,
       items: items.map(prepared => {
         const item = prepared.input
         return {
@@ -155,7 +159,7 @@ export class ArkmeExtensionPublishConversation {
       try {
         const result = await this.options.publish(input, signal)
         if (result.status !== 'published') {
-          throw new Error(`扩展发布尚未完成，当前状态：${result.status}`)
+          throw publishFailure(new Error(`扩展发布尚未完成，当前状态：${result.execution_state ?? result.status}`), result)
         }
         items.push({
           ownedRef: input.ownedRef,
@@ -163,17 +167,20 @@ export class ArkmeExtensionPublishConversation {
           version: input.version,
           status: 'published',
           extensionId: result.extension_id,
+          ...(result.publish_session_id === undefined ? {} : { publishSessionId: result.publish_session_id }),
           publishRoute: prepared.publishRoute,
           artifactContractVersion: prepared.artifactContractVersion,
           artifactKind: prepared.artifactKind,
         })
       } catch (error) {
+        const receipt = error instanceof ArkmePluginError ? error.publishReceipt : undefined
         items.push({
           ownedRef: input.ownedRef,
           name: input.name,
           version: input.version,
           status: 'failed',
           message: error instanceof Error ? error.message : String(error),
+          ...(receipt === undefined ? {} : { receipt, extensionId: receipt.extension_id, ...(receipt.publish_session_id === undefined ? {} : { publishSessionId: receipt.publish_session_id }) }),
           publishRoute: prepared.publishRoute,
           artifactContractVersion: prepared.artifactContractVersion,
           artifactKind: prepared.artifactKind,
