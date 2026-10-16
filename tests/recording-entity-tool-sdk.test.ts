@@ -43,6 +43,7 @@ it('registers a read-only Tool with the same owner and rejects ambiguous inputs'
 it('registers manual recognition separately with the explicit user write grant', async () => {
   const ports = { startRecordingEntities: vi.fn(async () => ({ status: 'accepted' })) }
   const tool = createArkmeCoreToolDefinitions(ports as unknown as ArkmeCoreToolPorts).find(tool => tool.name === 'arkme_recording_entities_start')!
+  expect(tool.description).toContain('consumes the current user’s AI points')
   expect(arkmeToolCatalog.modulesFor('business').find(module => module.meta.toolName === tool.name)?.meta).toMatchObject({ effect: 'write', grant: 'explicit-user-write' })
   await tool.execute({ date_stamp: 123 }, { signal: new AbortController().signal } as never)
   expect(ports.startRecordingEntities).toHaveBeenCalledWith({ dateStamp: 123, transcriptSource: 'system' }, expect.any(AbortSignal))

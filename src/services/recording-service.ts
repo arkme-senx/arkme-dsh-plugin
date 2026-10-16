@@ -1971,12 +1971,12 @@ export class RecordingService {
 
   /** Host-only evidence reader: never expose Audio owner IDs through a consumer DTO. */
   async entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]> {
-    const dayStart = this.recordingDayStart(dateStamp), dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+    const dayStart = this.recordingDayStart(dateStamp)
     const response = await this.readRecordingTranscriptData(dayStart, session, signal)
-    // Mentions need exact text/identity, not speaker names, profiles or avatar references.
+    // Audio owns the selected sessions, including their continuation past midnight.
+    // Keep exact source rows for entity anchors; the ordinary day view stays bounded.
     return projectRecordingTranscripts(response, [], new Map(), {
-      viewerUserId: session.userId, dayStartMillis: dayStart.getTime(), dayEndMillis: dayEnd.getTime(), transcriptSource: source,
+      viewerUserId: session.userId, transcriptSource: source,
     })
   }
 

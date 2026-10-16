@@ -33,9 +33,9 @@ export const recordingEntityStartToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.recordings.entities.start.v1', toolName: 'arkme_recording_entities_start', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
     name: 'arkme_recording_entities_start',
-    description: 'Start entity recognition for a recording day in the current account, only when the user asks to recognize it. Uses the backend idempotent ensure operation; repeated calls reuse the job. Does not repair failed transcription. accepted means queued, not finished. Read progress and existing entities with arkme_recording_entities; on an unknown write outcome refresh before retrying.',
+    description: 'Start entity recognition for a recording day in the current account, only when the user asks to recognize it. Recognition is manual only and consumes the current user’s AI points. Uses the explicit backend start operation; repeated calls reuse the same job. Never start on page visits, transcript updates, schedules or read requests. Does not repair failed transcription. accepted means queued, not finished. Read progress and existing entities with arkme_recording_entities; on an unknown write outcome refresh before retrying.',
     parameters: {
-      date_stamp: { type: 'integer', required: true, description: 'Selected day start, Unix milliseconds.' },
+      date_stamp: { type: 'integer', required: true, description: 'Selected recording day start from the recording calendar, Unix milliseconds. Resolve the user-requested date in their recording timezone; never substitute today or start other dates.' },
       transcript_source: { type: 'string', enum: ['system', 'doubao'] },
     },
     output: TEXT_OUTPUT,

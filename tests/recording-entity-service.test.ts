@@ -27,7 +27,7 @@ function fixture() {
       const path = new URL(String(url)).pathname; paths.push(path)
       if (state.fail) throw new Error('offline')
       const body = JSON.parse(String(init?.body)); requests.push({ path, body })
-      const data = path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/ensure') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
+      const data = path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/start') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
         official_entity_id: body.official_entity_id, result_version: body.result_version, projection_entity_id: body.projection_entity_id,
         projection_revision: body.projection_revision, personalization: state.day.personalization, occurrences: state.occurrences }
       if (path.endsWith('/occurrences')) state.afterOccurrences()
@@ -39,6 +39,18 @@ function fixture() {
   return { runtime, service, state, reader, paths, requests }
 }
 describe('recording entity Host owner', () => {
+  it('returns a verified midnight source preview without an extra day fetch or timestamp fallback', async () => {
+    const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
+    const nextDay = new Date(date); nextDay.setDate(nextDay.getDate() + 1)
+    f.state.rows = [{ ...row, startAtMillis: nextDay.getTime() + 1000, endAtMillis: nextDay.getTime() + 2000 }]
+    f.state.occurrences = [{ ...occurrence(), start_ms: nextDay.getTime() + 1000, end_ms: nextDay.getTime() + 2000 }]
+    const result = await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })
+    expect(result.items[0]?.target).toMatchObject({ sourceText: '🙂武汉', start: 1, length: 2 })
+    expect(f.reader.entityTranscriptRows).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(result)).not.toMatch(/session:child|private-mention/)
+    f.state.rows = [{ ...f.state.rows[0]!, rawTranscriptText: '原文已修改', text: '原文已修改' }]
+    expect((await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })).items[0]?.target).toBeUndefined()
+  })
   it('reads mentions and original text together, then checks the live version once', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
     f.paths.length = 0
@@ -70,7 +82,7 @@ describe('recording entity Host owner', () => {
     const mentions = await f.service.recordingEntityOccurrences(refs)
     expect(mentions.items[0]).toMatchObject({ observedText: '武汉', text: '🙂武汉', target: { start: 1, length: 2, transcriptSource: 'system' } })
     expect(JSON.stringify(mentions)).not.toMatch(/private-mention|session:child/)
-    expect(f.paths.every(path => !path.endsWith('/ensure'))).toBe(true)
+    expect(f.paths.every(path => !path.endsWith('/start'))).toBe(true)
   })
   it('rejects cross-account, tampered and obsolete projection references', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date }), ref = initial.entities![0]!.entityRef
@@ -134,7 +146,7 @@ it('starts explicitly through an uncached owner command and hides internal IDs',
   const f = fixture()
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
-  expect(f.paths).toEqual(['/api/v1/entity/audio-day/ensure', '/api/v1/entity/audio-day/ensure'])
+  expect(f.paths).toEqual(['/api/v1/entity/audio-day/start', '/api/v1/entity/audio-day/start'])
   f.state.start = { status: 'failed', retryable: true, error_code: 'private-detail' }
   await expect(f.service.startRecordingEntities({ dateStamp: date })).rejects.toMatchObject({ code: 'recording-entities-start-failed', retryable: true })
   await expect(f.service.startRecordingEntities({ dateStamp: date }, AbortSignal.abort())).rejects.toThrow()
@@ -256,4 +268,13 @@ it('rejects incomplete counts and duplicate speaker identities instead of presen
   await expect(f.service.recordingEntities({ dateStamp: date })).rejects.toThrow()
   participation.participants[1] = { ...participant, speaker_key: 'distinct-speaker' }
   expect((await f.service.recordingEntities({ dateStamp: date })).entities![0]!.participation?.participants).toHaveLength(2)
+})
+
+it('passes owner system speakers through while keeping unknown audio source and identities private', async () => {
+  const f = fixture(); personalize(f)
+  f.state.occurrences = [{ ...occurrence(), context: { speaker_key: 'private-system-track', speaker_label: '说话人 3', relevance: 'unknown', accuracy: 'unverified', sound_source: 'unknown' } }]
+  const list = await f.service.recordingEntities({ dateStamp: date })
+  const detail = await f.service.recordingEntityOccurrences({ entityRef: list.entities![0]!.entityRef })
+  expect(detail.items[0]!.context).toMatchObject({ speakerLabel: '说话人 3', soundSource: 'unknown', relevance: 'unknown' })
+  expect(JSON.stringify(detail)).not.toContain('private-system-track')
 })
