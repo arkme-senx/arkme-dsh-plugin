@@ -39,6 +39,18 @@ function fixture() {
   return { runtime, service, state, reader, paths, requests }
 }
 describe('recording entity Host owner', () => {
+  it('returns a verified midnight source preview without an extra day fetch or timestamp fallback', async () => {
+    const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
+    const nextDay = new Date(date); nextDay.setDate(nextDay.getDate() + 1)
+    f.state.rows = [{ ...row, startAtMillis: nextDay.getTime() + 1000, endAtMillis: nextDay.getTime() + 2000 }]
+    f.state.occurrences = [{ ...occurrence(), start_ms: nextDay.getTime() + 1000, end_ms: nextDay.getTime() + 2000 }]
+    const result = await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })
+    expect(result.items[0]?.target).toMatchObject({ sourceText: '🙂武汉', start: 1, length: 2 })
+    expect(f.reader.entityTranscriptRows).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(result)).not.toMatch(/session:child|private-mention/)
+    f.state.rows = [{ ...f.state.rows[0]!, rawTranscriptText: '原文已修改', text: '原文已修改' }]
+    expect((await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })).items[0]?.target).toBeUndefined()
+  })
   it('reads mentions and original text together, then checks the live version once', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
     f.paths.length = 0

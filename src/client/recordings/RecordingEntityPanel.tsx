@@ -43,6 +43,7 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
   const [feedbackKey, setFeedbackKey] = useState('')
   const feedback = useRecordingEntityFeedback(onRefresh)
   const [locateError, setLocateError] = useState(false)
+  const [sourceKey, setSourceKey] = useState('')
   const body = useRef<HTMLDivElement>(null), sentinel = useRef<HTMLDivElement>(null)
   const scroll = useRef(0), expandedTitle = useRef<HTMLButtonElement>(null)
   const appliedReveal = useRef<typeof reveal>(), pendingReveal = useRef(false)
@@ -55,7 +56,7 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
   const showStatus = data?.status !== 'succeeded' || error || paused || startError
     || (data.transcriptHealth?.failedUnits ?? 0) > 0 || (data.transcriptHealth?.unavailableUnits ?? 0) > 0
   useEffect(() => { if (open) setVisited(true) }, [open])
-  useEffect(() => { setLocateError(false) }, [expanded, data?.version])
+  useEffect(() => { setLocateError(false); setSourceKey('') }, [expanded, data?.version])
   useLayoutEffect(() => {
     if (open && body.current) body.current.scrollTop = scroll.current
   }, [open])
@@ -146,11 +147,26 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
           {expanded === item.key && <div className="arkme-entity-occurrences">
             <ArkmeDirectoryWindow active={open} scrollRootRef={body}>
               {(mentions.detail?.items ?? []).map(occurrence => <div key={occurrence.key} className="arkme-entity-mention">
-                <button className="arkme-entity-occurrence" type="button" disabled={!occurrence.target} onClick={() => { const located = onLocate(occurrence, item.key); setLocateError(!located); if (located && compact) onClose() }}>
-                  <time>{new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}</time>
+                <button className="arkme-entity-occurrence" type="button" disabled={!occurrence.target}
+                  {...(occurrence.target?.sourceText !== undefined ? { 'aria-expanded': sourceKey === occurrence.key } : {})}
+                  onClick={() => {
+                    if (occurrence.target?.sourceText !== undefined) { setSourceKey(sourceKey === occurrence.key ? '' : occurrence.key); setLocateError(false); return }
+                    const located = onLocate(occurrence, item.key); setLocateError(!located); if (located && compact) onClose()
+                  }}>
+                  <time>{occurrence.target?.sourceText !== undefined
+                    ? new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hour12: false })
+                    : new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}</time>
                   {occurrence.context && <small>{tr(entityOccurrenceSourceLabel(occurrence.context))}{occurrence.context.speakerLabel && <> · {occurrence.context.speakerLabel}</>}{occurrence.context.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small>}
                   <span>{occurrence.text}</span>{!occurrence.target && <small>{tr('原文位置已不可用')}</small>}
                 </button>
+                {sourceKey === occurrence.key && occurrence.target?.sourceText !== undefined && <div className="arkme-entity-source" role="region" aria-label={tr('提及原文')}>
+                  <small>{tr('原文')} · {new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hour12: false })}</small>
+                  <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                    {Array.from(occurrence.target.sourceText).slice(0, occurrence.target.start).join('')}
+                    <mark data-recording-entity-highlight>{Array.from(occurrence.target.sourceText).slice(occurrence.target.start, occurrence.target.start + occurrence.target.length).join('')}</mark>
+                    {Array.from(occurrence.target.sourceText).slice(occurrence.target.start + occurrence.target.length).join('')}
+                  </p>
+                </div>}
                 <button type="button" className="arkme-entity-feedback-toggle" aria-expanded={feedbackKey === occurrence.key} onClick={() => setFeedbackKey(feedbackKey === occurrence.key ? '' : occurrence.key)}>{tr('反馈')}</button>
                 {feedbackKey === occurrence.key && <div className="arkme-entity-feedback-actions" role="group" aria-label={tr('这次提及的反馈')}>
                   <p>{tr(occurrence.feedbackRef ? '仅影响这次提及，保存后可撤销。' : '暂不支持保存反馈。')}</p>

@@ -62,6 +62,8 @@ export interface RecordingEntityTarget {
   transcriptSource: ArkmeRecordingTranscriptSource
   start: number
   length: number
+  /** Exact current source row outside the selected day, for an anchored source preview. */
+  sourceText?: string
 }
 export interface RecordingEntityOccurrence {
   key: string

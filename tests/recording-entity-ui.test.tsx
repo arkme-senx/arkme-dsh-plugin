@@ -17,6 +17,26 @@ const day = (overrides: Partial<RecordingEntityDay> = {}): RecordingEntityDay =>
 beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); host = document.createElement('div'); document.body.append(host); root = createRoot(host); mocks.call.mockReset() })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
+
+it('opens a dated exact source preview for midnight continuation without navigating to another same-name row', async () => {
+  const onLocate = vi.fn(() => false), onClose = vi.fn()
+  const at = new Date(2026, 9, 13, 0, 52, 7).getTime()
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'midnight', startAtMillis: at,
+    observedText: '武汉', text: '武汉', target: { identityHash: 'hash', transcriptVersion: 'v', transcriptSource: 'system', start: 2, length: 2, sourceText: '抵达武汉，原文还在。' } }] })
+  const render = (version = 'v1') => root.render(<RecordingEntityPanel data={day({ version, status: 'succeeded' })} loading={false} error={false} paused={false} compact
+    onClose={onClose} onRefresh={() => {}} onLocate={onLocate} />)
+  await act(async () => { render(); await tick() })
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  const button = host.querySelector<HTMLButtonElement>('.arkme-entity-occurrence')!
+  expect(button.disabled).toBe(false)
+  expect(button.querySelector('time')?.textContent).toContain('2026')
+  await act(async () => button.click())
+  expect(host.querySelector('[aria-label="提及原文"]')?.textContent).toContain('抵达武汉，原文还在。')
+  expect(host.querySelector('[data-recording-entity-highlight]')?.textContent).toBe('武汉')
+  expect(onLocate).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled()
+  await act(async () => render('v2'))
+  expect(host.querySelector('[aria-label="提及原文"]')).toBeNull()
+})
 let owner: ReturnType<typeof useRecordingEntities>
 function Harness({ account = 'test:42', date = 123, active = true }) { owner = useRecordingEntities(account, date, active, '0'); return <div>{owner.data?.entities?.map(e => e.name).join(',')}</div> }
 

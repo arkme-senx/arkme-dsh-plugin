@@ -182,6 +182,8 @@ export class RecordingEntityService implements RecordingEntityPort {
       .sort((a, b) => integer(a.start_ms) - integer(b.start_ms))
     const page = occurrences.slice(offset, offset + limit)
     const byIdentity = new Map(rows.map(row => [`${row.sessionId}:${row.childId}:${row.asrItemIndex}:${row.transcriptSource}`, row]))
+    const dayStart = new Date(dayQuery.dateStamp); dayStart.setHours(0, 0, 0, 0)
+    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
     const items: RecordingEntityOccurrences['items'] = []
     for (const occurrence of page) {
       const rowId = string(occurrence.row_id), observedText = string(occurrence.observed_text, 20000)
@@ -194,6 +196,7 @@ export class RecordingEntityService implements RecordingEntityPort {
       const target = row && range ? {
         identityHash: recordingSearchIdentityHash({ sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: row.transcriptSource }),
         transcriptVersion: recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
+        ...(row.startAtMillis < dayStart.getTime() || row.endAtMillis > dayEnd.getTime() ? { sourceText: row.text } : {}),
       } : undefined
       const excerpt = row && range ? Array.from(row.text).slice(Math.max(0, range.start - 30), range.start + range.length + 60).join('') : observedText
       const context = ref.personalizationRevision !== undefined ? entityOccurrenceContext(occurrence.context, participantKeys.get(occurrence)) : undefined
