@@ -1,5 +1,4 @@
 import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
-import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -156,15 +155,10 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
-  const [lockAvailable, setLockAvailable] = useState(false)
+  const lockAvailable = typeof window !== 'undefined'
+    && (window as Window & { arkmeDesktop?: { deviceLock?: { version?: number } } }).arkmeDesktop?.deviceLock?.version === 1
   const [lockBusy, setLockBusy] = useState(false)
   const [lockError, setLockError] = useState('')
-  useEffect(() => {
-    if (!profileOpen || authState.auth?.status !== 'authenticated') { setLockAvailable(false); return }
-    let active = true
-    void callArkme<ArkmeDeviceLockSnapshot>('device.lock.status').then(value => { if (active) setLockAvailable(value.available) }).catch(() => { if (active) setLockAvailable(false) })
-    return () => { active = false }
-  }, [profileOpen, authState.auth?.userId])
   const lockCurrentDevice = async () => {
     if (lockBusy) return
     setLockBusy(true); setLockError('')
