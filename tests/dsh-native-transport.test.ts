@@ -29,6 +29,17 @@ it('rejects foreign sessions and privileged services before native dispatch', as
   await f.relay.request({ mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'mine', content: [] } } } }, f.scope)
   expect(f.fetch).toHaveBeenCalledOnce()
 })
+it('retries an account-owned session handed to another executor without admitting foreign or missing sessions', async () => {
+  const f = fixture()
+  const request = { mode: 'pull', streamRef: 'handoff', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'moved' } } } } }
+  for (const account of ['3016', 'other', undefined]) {
+    await expect(f.relay.request(request, { ...f.scope, ownerAccountId: async () => account })).rejects.toMatchObject(
+      account === '3016' ? { code: 'SESSION_STATE_CHANGED', retryable: true } : { code: 'REMOTE_NOT_FOUND', retryable: false },
+    )
+  }
+  expect(f.open).not.toHaveBeenCalled()
+  expect(f.fetch).not.toHaveBeenCalled()
+})
 it('filters session lists, control baselines and workspace snapshots at the source', async () => {
   const f = fixture([], { ok: true, value: { items: [{ sessionId: 'mine' }, { sessionId: 'foreign' }] } })
   expect(await f.relay.request({ mode: 'call', endpoint: 'session/list', payload: { args: { _request: {} } } }, f.scope)).toEqual({ ok: true, value: { items: [{ sessionId: 'mine' }] } })
@@ -50,7 +61,7 @@ it('rejects stale accounts and closes native subscriptions', async () => {
   await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, { ...f.scope, accountId: 'other' })).rejects.toMatchObject({ code: 'REMOTE_REQUEST_INVALID' })
   f.relay.close()
   await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce())
-  await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, f.scope)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
+  await expect(f.relay.request({ mode: 'pull', streamRef: 'control-001' }, f.scope)).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND', retryable: true })
   f.controller.abort()
   await expect(f.relay.request({ mode: 'call', endpoint: 'session/list', payload: { args: {} } }, f.scope)).rejects.toThrow()
 })
@@ -88,4 +99,116 @@ it('validates history resume cursors without accepting them on writes or unrelat
   expect(parse(body).body.afterSeq).toBe(10)
   for (const invalid of [-2, 0.5, '10', Number.MAX_SAFE_INTEGER + 1]) expect(() => parse({ ...body, afterSeq: invalid })).toThrow()
   expect(() => parse({ ...body, mode: 'call', endpoint: 'session/prompt' })).toThrow()
+})
+
+it('keeps an established native lease beyond the first pull deadline and cancels only its active pull', async () => {
+  vi.useFakeTimers()
+  const f = fixture([{ type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }])
+  const first = f.relay.request({ mode: 'pull', streamRef: 'long-lived', endpoint: 'session/control', payload: { args: {} } }, f.scope)
+  await vi.advanceTimersByTimeAsync(3)
+  await expect(first).resolves.toMatchObject({ items: [{ type: 'baseline' }] })
+  // The completed request's 30s deadline must not own this live subscription.
+  await vi.advanceTimersByTimeAsync(30_000)
+  f.controller.abort(new Error('completed request expired'))
+  expect(f.open.mock.calls[0]![2].aborted).toBe(false)
+  const active = new AbortController()
+  for (let i = 0; i < 2; i++) {
+    const renewed = f.relay.request({ mode: 'pull', streamRef: 'long-lived' }, { ...f.scope, signal: active.signal })
+    await vi.advanceTimersByTimeAsync(20_001)
+    await expect(renewed).resolves.toEqual({ items: [] })
+  }
+  expect(f.open.mock.calls[0]![2].aborted).toBe(false)
+  const next = f.relay.request({ mode: 'pull', streamRef: 'long-lived' }, { ...f.scope, signal: active.signal })
+  const cancelled = expect(next).rejects.toThrow('active pull cancelled')
+  await vi.advanceTimersByTimeAsync(1)
+  active.abort(new Error('active pull cancelled'))
+  await cancelled
+  expect(f.open).toHaveBeenCalledOnce()
+  expect(f.open.mock.calls[0]![2].aborted).toBe(true)
+})
+
+it('still expires idle native leases and closes a source whose opening request is cancelled', async () => {
+  vi.useFakeTimers()
+  const f = fixture([{ type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }])
+  const first = f.relay.request({ mode: 'pull', streamRef: 'idle', endpoint: 'session/control', payload: { args: {} } }, f.scope)
+  await vi.advanceTimersByTimeAsync(3); await first
+  await vi.advanceTimersByTimeAsync(45_001)
+  expect(f.open.mock.calls[0]![2].aborted).toBe(true)
+  const opening = fixture()
+  opening.open.mockImplementation(async (_endpoint, _payload, signal) => {
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    signal.throwIfAborted()
+    return { async *[Symbol.asyncIterator]() {} }
+  })
+  const pending = opening.relay.request({ mode: 'pull', streamRef: 'opening', endpoint: 'session/control', payload: { args: {} } }, opening.scope)
+  const aborted = expect(pending).rejects.toThrow('opening cancelled')
+  await vi.advanceTimersByTimeAsync(1)
+  opening.controller.abort(new Error('opening cancelled'))
+  await aborted
+})
+
+it('does not let a cancelled old pull release its replacement with the same stream ref', async () => {
+  vi.useFakeTimers()
+  const f = fixture([{ type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }])
+  let finishOld!: (value: IteratorResult<unknown>) => void
+  f.open.mockImplementationOnce(async () => {
+    let initial = true
+    return { [Symbol.asyncIterator]: () => ({
+      next: () => initial ? (initial = false, Promise.resolve({ done: false as const, value: { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } } }))
+        : new Promise<IteratorResult<unknown>>(resolve => { finishOld = resolve }),
+      return: async () => ({ done: true as const, value: undefined }),
+    }) }
+  })
+  const body = { mode: 'pull', streamRef: 'reused', endpoint: 'session/control', payload: { args: {} } }
+  const first = f.relay.request(body, f.scope)
+  await vi.advanceTimersByTimeAsync(3); await first
+  const active = new AbortController()
+  const old = f.relay.request({ mode: 'pull', streamRef: 'reused' }, { ...f.scope, signal: active.signal })
+  const cancelled = expect(old).rejects.toThrow('old cancelled')
+  await vi.advanceTimersByTimeAsync(1)
+  active.abort(new Error('old cancelled'))
+  const replacement = f.relay.request(body, f.scope)
+  await vi.advanceTimersByTimeAsync(3); await replacement
+  finishOld({ done: true, value: undefined }); await cancelled
+  expect(f.open).toHaveBeenCalledTimes(2)
+  expect(f.open.mock.calls[1]![2].aborted).toBe(false)
+})
+
+it.each([1, 2, 4, 8])('shares one native history page for %i concurrent authorized observers', async observers => {
+  const snapshot = { type: 'snapshot', cursor: 10, records: [{ type: 'event', event: { seq: 10, type: 'turn/start' } }], hasMore: true }
+  const older = { records: Array.from({ length: 10 }, (_, seq) => ({ type: 'event', event: { seq, type: seq % 2 ? 'assistant/message' : 'turn/start' } })), hasMore: false }
+  const f = fixture([snapshot], { ok: true, value: older })
+  const results = await Promise.all(Array.from({ length: observers }, (_, i) => f.relay.request({ mode: 'pull', streamRef: `observer-${i}`, endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'mine' } } } } }, f.scope)))
+  console.log(JSON.stringify({ workload: 'native-follow-page', observers, nativePages: f.fetch.mock.calls.length, nativeStreams: f.open.mock.calls.length }))
+  expect(f.fetch).toHaveBeenCalledOnce()
+  expect(f.open).toHaveBeenCalledTimes(observers)
+  expect(results.every(value => JSON.stringify(value) === JSON.stringify(results[0]))).toBe(true)
+})
+
+it('separates page scopes and cursors, detaches a reader, and closes outstanding native reads', async () => {
+  const page = { records: [], hasMore: false }, f = fixture([], { ok: true, value: page })
+  const signals: AbortSignal[] = [], resolve: Array<() => void> = []
+  f.fetch.mockImplementation(async (request: Request) => {
+    signals.push(request.signal)
+    await new Promise<void>((yes, no) => { resolve.push(yes); request.signal.addEventListener('abort', () => no(request.signal.reason), { once: true }) })
+    return Response.json({ result: { ok: true, value: page } })
+  })
+  const body = (throughSeq = 20) => ({ mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: 'mine' }, throughSeq } } } })
+  const departing = new AbortController()
+  const first = f.relay.request(body(), { ...f.scope, signal: departing.signal }).catch(error => error)
+  const second = f.relay.request(body(), f.scope)
+  const otherAccount = f.relay.request(body(), { ...f.scope, accountId: 'other' })
+  const otherCursor = f.relay.request(body(21), f.scope)
+  await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledTimes(3))
+  departing.abort(new Error('departed'))
+  expect(await first).toMatchObject({ message: 'departed' })
+  expect(signals.every(signal => !signal.aborted)).toBe(true)
+  resolve.splice(0).forEach(yes => yes())
+  await Promise.all([second, otherAccount, otherCursor])
+  const fresh = f.relay.request(body(), f.scope).catch(error => error)
+  await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledTimes(4))
+  f.relay.close()
+  expect(await fresh).toMatchObject({ name: 'AbortError' })
+  expect(signals[3]!.aborted).toBe(true)
+  expect((f.relay as any).historyReads.flights.size).toBe(0)
 })

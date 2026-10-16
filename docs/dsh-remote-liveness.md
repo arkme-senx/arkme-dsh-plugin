@@ -66,3 +66,15 @@ Host 的单一消费者在上批完成后，从当前缓冲取下一批。空闲
 2026-09-16 在独立数据目录、独立凭据前缀、空闲端口的未修改 DSH `0.1.5-rc.2` 中安装本地 `.tgz`：Host 成功创建，未登录时返回登录提示；真实 Gateway 验证了工作区、创建/列举 Session、历史首屏和分页、发送参数进入业务校验，以及问题回答和审批拒绝的往返。审批探针走公共 scoped waterfall，不执行工具。该 CLI 探针没有使用生产账号发送提示词，未验证真实模型响应、生产 Realtime 注册/心跳、移动端消费或 Windows/Linux。
 
 随后使用客户端官方 master 基线 `f5e0c00` 启动独立 App Data 的 macOS 开发实例，加载本次插件与 DSH `0.1.5-rc.2`。实例通过正常登录态读取完成生产 Realtime 注册，`remote.getStatus` 返回 `available/enabled/connected=true`。该证据证明连接和注册，实际远程操作由用户在此常驻实例回归；开发路径运行不等同于正式 Release Set 发布。
+
+## 原生远程订阅与交互回复（2026-09-21）
+
+控制端由 `DshAccountSessions` 持有逻辑订阅的连接引用，同一 Runtime 的连续 pull 和并发订阅共享一条 Realtime 连接。账号内最多 8 条 Runtime 连接、64 条原生订阅；close、done、失败和账号退出释放引用，丢失 close 时按源 Host 同样的 45 秒空闲期限回收。并发路由发现共用一个 flight，单个调用取消只移除自己，最后一个调用退出才取消底层请求。存活连接的路由结果最多复用 5 秒，断开及 Host generation/lease 失效立即废弃；每次实际请求仍由 Realtime 和 Host 校验归属及精确租约。
+
+Browser 将传输中断标记为 DSH 官方 `dshRemoteStreamFailure.kind=carrier`，业务拒绝保留错误码并终止。原生和云端订阅过期属于可重试错误。首帧前失败在当前 opener 内恢复；已经交付快照后交还官方 `RemoteStream` 开启新 generation，避免同一代重复 opening cursor。每个 Runtime 共用一个 250 毫秒起步、5 秒封顶并附加至多 25% 抖动的重试时钟；取消和 pagehide 停止重试，close 最多等待 3 秒。该恢复只作用于订阅，不自动重放写命令。
+
+Host ChannelManager 使用两个有界 FIFO 通道，最多同时等待两个帧 ACK：历史、native pull/page、投影事件沿原 bulk 队列发送；不超过 32 KiB 的交互回复使用保留通道。每通道最多 64 个逻辑载荷，两通道待发原始 JSON 合计最多 64 MiB，超限显式失败。各载荷的分片顺序、重试 ID 和三次发送上限保持不变；事件之间仍按原顺序发布。现有 `queue_ms` / `publish_ack_ms` 分别记录排队与发送时间。
+
+回归覆盖连续拉取连接次数、并发调用独立取消、45 秒回收、换账号、Host 换代、重复断流、鉴权拒绝、发送积压上限和关闭后的排队清理。可选的官方兼容测试通过 `DSH_GATEWAY_PACKAGE=<已安装 dsh-api-gateway 的包目录>` 运行 `tests/harness-native-transport-script.test.ts`，实际装配未修改的官方 Client Gateway 与 RemoteStream，验证传输断开且连续两次重开失败后仍能在下一代恢复。
+
+Tools/SDK 继续使用既有账号 owner，无新增业务入口；UI 只修改既有传输恢复。客户端、后端与 Realtime 服务契约不变。以上确定性测试和官方包兼容测试不等同于双电脑、睡眠唤醒、长时间弱网或 Windows/Linux 实机验收；桌面生效还需正式插件制品被客户端消费。

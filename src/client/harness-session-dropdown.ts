@@ -140,6 +140,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   mark(statusLabel, 'status-label')
   statusLabel.setAttribute('aria-hidden', 'true')
   const labelText = doc.createElement('span')
+  mark(labelText, 'label-text')
   label.append(status, labelText, statusLabel)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -202,6 +203,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
     }
     [${PREFIX}status-label]:not(:empty) { display: inline-block; }
+    [${PREFIX}trigger] > span:first-child { display: flex; align-items: center; }
+    [${PREFIX}label-text] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     [${PREFIX}header] { padding-left: 20px; padding-right: 20px; container: arkme-session-header / inline-size; }
     [${PREFIX}title-row] {
       --arkme-header-side: max(calc((100% - 8px) / 4), var(--arkme-header-utilities-width, 0px));

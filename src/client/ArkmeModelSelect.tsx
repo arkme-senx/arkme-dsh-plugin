@@ -1,7 +1,7 @@
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-session-controller/types'
 import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
 import { ArkmeModelPricing } from './ArkmeModelPricing.js'
 import css from './arkme-model-select.css?inline'

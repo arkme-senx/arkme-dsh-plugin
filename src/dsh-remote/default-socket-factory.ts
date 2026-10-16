@@ -27,7 +27,7 @@ export function createDefaultDshRemoteSocket(input: {
     headers: { Authorization: `Bearer ${accessToken}`, 'X-Request-ID': diagnosticRequestId },
     handshakeTimeout: 10_000,
     maxPayload: DSH_REMOTE_MAX_FRAME_BYTES,
-    perMessageDeflate: false,
+    perMessageDeflate: true,
     followRedirects: false,
   })
   // ws may emit a final error while an aborted CONNECTING socket is closing.

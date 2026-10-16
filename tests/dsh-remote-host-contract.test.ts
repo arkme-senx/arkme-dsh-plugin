@@ -864,6 +864,54 @@ function liveHost() {
   return { host, adapter, published, capture, enqueue, clear }
 }
 
+it.each([false, true])('does not hold live batches behind a 4 second metadata ACK (failed=%s)', async failed => {
+  vi.useFakeTimers()
+  const { host, adapter, published, capture, clear } = liveHost()
+  const internal = host as unknown as {
+    publishProjectionEvent(event: DshRemoteApiProjectionEvent): Promise<void>
+    scheduleProjectionSnapshot(force?: boolean): void
+  }
+  const directory = vi.spyOn(internal, 'scheduleProjectionSnapshot').mockImplementation(() => {})
+  const sessions = vi.spyOn(adapter, 'sessions').mockResolvedValue({ items: [{
+    sessionId: 'session-01', title: 'New session', updatedAt: 1, running: true, blank: false,
+  }], hasMore: false })
+  let metadataCompleted = false
+  published.mockImplementation(async value => {
+    if (value.operation !== 'snapshot.get') return
+    await new Promise(resolve => setTimeout(resolve, 4_000))
+    if (failed) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Metadata ACK failed', true)
+  })
+  // The official added/activity/status/title source already owns metadata.
+  const metadata = internal.publishProjectionEvent({ kind: 'session-metadata', sessionId: 'session-01' })
+    .then(() => { metadataCompleted = true })
+  const flushes: Promise<void>[] = []
+  try {
+    await vi.advanceTimersByTimeAsync(0)
+    for (const [index, type] of ['user/message', 'assistant/chunk', 'turn/end'].entries()) {
+      const seq = index + 1
+      await internal.publishProjectionEvent({ kind: 'session-event', sessionId: 'session-01',
+        entry: { event: { type, seq, time: seq, data: {} } } })
+      flushes.push(flushLive(host))
+      await vi.advanceTimersByTimeAsync(0)
+      const history = published.mock.calls.filter(([value]) => value.operation === 'session.history')
+      expect(history.map(([value]) => value.session_seq)).toEqual(Array.from({ length: seq }, (_, i) => i + 1))
+      expect(capture.mock.calls.flatMap(([, entries]) => entries.map(entry => entry.event.seq)))
+        .toEqual(Array.from({ length: seq }, (_, i) => i + 1))
+    }
+    expect(metadataCompleted).toBe(false)
+    expect(sessions).toHaveBeenCalledOnce()
+    expect(directory.mock.calls).toEqual([[true, 'session-01'], [true, 'session-01'], [true, 'session-01']])
+    await vi.advanceTimersByTimeAsync(4_000)
+    await metadata
+    expect(published.mock.calls.filter(([value]) => value.operation === 'session.history')).toHaveLength(3)
+    expect(published.mock.calls.filter(([value]) => value.operation === 'snapshot.get')).toHaveLength(1)
+  } finally {
+    clear()
+    await vi.advanceTimersByTimeAsync(4_000)
+    await Promise.all([metadata, ...flushes])
+  }
+})
+
 it('awaits capture once, consumes exhausted wire failures and lets the next batch proceed', async () => {
   vi.useFakeTimers()
   const { host, published, capture, enqueue, clear } = liveHost()

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -12,6 +12,33 @@ import {
 } from '../src/dsh-remote/types.js'
 
 function ok<T>(value: T, rpcId = 'rpc') { return { rpcId, result: { ok: true as const, value } } }
+
+it.each([10, 100, 1000])('reads one native catalog for a %i-session snapshot without changing pages', async count => {
+  const list = vi.fn(async () => ok({ items: Array.from({ length: count }, (_, i) => ({
+    sessionId: `session-${i}`, updatedAt: count - i, running: false, blank: false,
+  })) }))
+  const adapter = new DshApiProxyAdapter({ sessions: { list } })
+  const workspaceInventory = { items: [], archivedSessionIds: [] }
+  const pages = async (sessionInventory?: Awaited<ReturnType<DshApiProxyAdapter['sessionInventory']>>) => {
+    let cursor: string | undefined
+    const ids: string[] = []
+    do {
+      const page = await adapter.sessions({ workspaceInventory, sessionInventory, includeUngrouped: true, limit: 50, cursor })
+      ids.push(...page.items.map(row => row.sessionId)); cursor = page.nextCursor
+    } while (cursor)
+    return ids
+  }
+  const before = await pages(), beforeReads = list.mock.calls.length
+  list.mockClear()
+  const inventory = await adapter.sessionInventory(workspaceInventory)
+  expect(await pages(inventory)).toEqual(before)
+  expect(list).toHaveBeenCalledOnce()
+  const delta = await adapter.sessions({ sessionInventory: inventory, sessionIds: ['session-0'], includeUngrouped: true })
+  expect(delta.items.map(row => row.sessionId)).toEqual(['session-0'])
+  expect(list).toHaveBeenCalledOnce()
+  if (process.env.DSH_WORKLOAD_REPORT) await appendFile(process.env.DSH_WORKLOAD_REPORT,
+    JSON.stringify({ kind: 'catalog', sessions: count, beforeNativeReads: beforeReads, afterNativeReads: list.mock.calls.length, deltaRows: delta.items.length }) + '\n')
+})
 
 function expectFitsFrames(operation: 'model.list' | 'session.list' | 'session.history' | 'snapshot.get', result: unknown): void {
   const response = {

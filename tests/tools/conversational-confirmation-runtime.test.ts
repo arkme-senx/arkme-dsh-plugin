@@ -1,5 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+// Keep the existing 0.1.0 inbox fixture while the takeover matrix uses 0.1.5 Agents.
+import { Inbox } from 'dsh-agent-legacy-test'
 import CodeRuntime, { type CodeRunRequest } from '@deepseek-ai/dsh-code-runtime'
 import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
