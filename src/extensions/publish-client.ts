@@ -355,10 +355,14 @@ export class ExtensionPublishClient {
   }
 
   async publishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
-    const result = await this.post<ArkmeExtensionPublishResult>('/api/v1/extensions/publish-session/status', {
+    const result = await this.post<unknown>('/api/v1/extensions/publish-session/status', {
       publish_session_id: publishSessionId,
     }, signal)
-    return { ...result, publish_session_id: publishSessionId }
+    const receipt = publishReceipt({ ...record(result), publish_session_id: publishSessionId })
+    if (receipt === undefined) {
+      throw new ArkmePluginError('extension-publish-status-invalid', '发布状态回执格式无效，请稍后重新查询', false, 502)
+    }
+    return receipt
   }
 
 	async rotateShareLink(extensionId: string, clientMutationId: string, signal?: AbortSignal): Promise<ArkmeExtensionShare> {
