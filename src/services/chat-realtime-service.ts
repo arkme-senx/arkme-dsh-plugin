@@ -232,6 +232,7 @@ export class ChatRealtimeService {
     this.chatClientListeners.clear()
   }
 
+  offlineContextInvalidation?: () => Promise<void>
   selfRoleInvalidation?: () => Promise<void>
 
   startChatRealtime(): () => void {
@@ -327,6 +328,15 @@ export class ChatRealtimeService {
       void this.reconcileChatConnectionBaseline(generation, notice.connectionUserId)
       void this.refreshAttentionSummary()
       void this.invalidateRecordProjection()
+      return
+    }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'offline_context') {
+      void this.runtime.sessionStore.read().then(async session => {
+        if (!session || notice.connectionSignal?.aborted || notice.connectionUserId !== session.userId) return
+        await this.offlineContextInvalidation?.()
+        if (notice.connectionSignal?.aborted) return
+        this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'offline_context', revision: this.nextChatClientRevision() })
+      }).catch(() => undefined)
       return
     }
     if (notice.cause === 'projection-invalidation'

@@ -4,7 +4,7 @@ import { reconcileUnifiedTimeline } from '../src/unified-timeline-reconcile.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineEvent, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelinePage } from '../src/types.js'
 const event = (eventId: string, text = eventId, source: ArkmeUnifiedTimelineEvent['source'] = 'world_public'): ArkmeUnifiedTimelineEvent => ({ eventId, text, source, kind: 'notice', orderTie: eventId, occurredAtMillis: 1, contentStatus: 'available' })
-const window = (events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 1, events,
+const window = (events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 2, events,
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })), complete: true,
   windowTokens: ['window'], hasMore: false, olderHasMore: true, newerHasMore: false, olderCursor: 'history-frontier', newerCursor: 'tail-frontier' })
 const page = (unified: ArkmeUnifiedTimelineWindow): ArkmeTimelinePage => ({ source: {} as never, items: [], unified, hasMore: unified.hasMore })

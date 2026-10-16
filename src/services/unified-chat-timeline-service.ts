@@ -1,3 +1,4 @@
+import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
 import { reconcileUnifiedTimeline } from '../unified-timeline-reconcile.js'
 import { join } from 'node:path'
@@ -13,12 +14,12 @@ import type { InterwovenService } from './interwoven-service.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 
-const ROUTE = '/api/v1/chat/timeline/unified'
+const ROUTE = '/api/v1/chat/timeline/unified/v2'
 function invalid(): ArkmePluginError { return new ArkmePluginError('chat-timeline-contract-invalid', '时间线响应不完整，请重试', true, 502) }
 
 export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string) {
   const data = objectValue(raw)
-  if (data.protocol_version !== 1 || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
+  if (data.protocol_version !== 2 || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
     || data.timeline_items.length > 100 || !Array.isArray(data.sources) || typeof data.complete !== 'boolean'
     || typeof data.has_more !== 'boolean' || typeof data.older_has_more !== 'boolean' || typeof data.newer_has_more !== 'boolean'
     || typeof data.window_token !== 'string' || !data.window_token) throw invalid()
@@ -62,7 +63,8 @@ export class UnifiedChatTimelineService {
   reset(): void { this.epoch++; this.knownSources.clear() }
   constructor(private readonly runtime: ServiceRuntime, private readonly source: SourceService,
     private readonly chat: ChatService, private readonly interwoven: InterwovenService,
-    private readonly createCache: (directory: string) => TimelineCachePort = directory => new TimelineCacheWorker(directory)) {
+    private readonly createCache: (directory: string) => TimelineCachePort = directory => new TimelineCacheWorker(directory),
+    private readonly offlineContexts?: Pick<OfflineContextService, 'timelineReference' | 'timelineAnchor' | 'messageAnchor' | 'messageReference'>) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => this.reset())
   }
 
@@ -109,6 +111,10 @@ export class UnifiedChatTimelineService {
   }
 
   /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
+  async refreshKnownWindows(): Promise<void> {
+    for (const sourceKey of [...this.knownSources.keys()]) await this.refreshHint(sourceKey)
+  }
+
   async refreshHint(sourceKey: string): Promise<void> {
     await this.queueInvalidation(sourceKey, undefined, false, true)
   }
@@ -203,7 +209,10 @@ export class UnifiedChatTimelineService {
       || query.cursor !== undefined && (typeof query.cursor !== 'string' || !query.cursor || query.cursor.length > 32768)
       || ['older', 'newer'].includes(mode) && !query.cursor
       || mode === 'refresh' && !query.cursor && !query.windowTokens?.length
-      || mode === 'around' && (typeof query.itemUid !== 'string' || !query.itemUid.trim() || !recordOwnerId(query.recordOwnerUserId))) {
+      || (query.messageRef !== undefined || query.contextRef !== undefined) && !this.offlineContexts
+      || query.messageRef !== undefined && (mode !== 'around' || typeof query.messageRef !== 'string' || !query.messageRef || query.messageRef.length > 32768 || query.contextRef !== undefined || query.itemUid !== undefined || query.recordOwnerUserId !== undefined)
+      || query.contextRef !== undefined && (mode !== 'around' || typeof query.contextRef !== 'string' || !query.contextRef || query.contextRef.length > 32768 || query.itemUid !== undefined || query.recordOwnerUserId !== undefined)
+      || mode === 'around' && !query.contextRef && !query.messageRef && (typeof query.itemUid !== 'string' || !query.itemUid.trim() || !recordOwnerId(query.recordOwnerUserId))) {
       throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     }
     const key = await this.runtime.stateStore.uniqueCode()
@@ -217,7 +226,7 @@ export class UnifiedChatTimelineService {
     while (this.knownSources.size > 512) this.knownSources.delete(this.knownSources.keys().next().value!)
     const revision = state.revision
     const refreshRevision = state.refreshRevision
-    const requestKey = createHmac('sha256', key).update('projection:5\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
+    const requestKey = createHmac('sha256', key).update('projection:6\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
     const invalidating = this.invalidating
     if (invalidating) await new Promise<void>((resolve, reject) => {
       const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
@@ -258,7 +267,7 @@ export class UnifiedChatTimelineService {
           const cursor = local.before ? codec.seal(String(local.before), 'local-message') : undefined
           cached = { source: sourceItem, items: local.events.flatMap(e => e.kind === 'message' ? [e.item] : []),
             cache: { origin: 'local', persistence: 'committed', revision: local.revision, stale: true },
-            unified: { protocolVersion: 1, events: local.events, sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'gap', itemCount: source === 'messages' ? local.events.length : 0 })),
+            unified: { protocolVersion: 2, events: local.events, sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'gap', itemCount: source === 'messages' ? local.events.length : 0 })),
               complete: false, windowTokens: [], olderHasMore: Boolean(cursor), newerHasMore: false, hasMore: Boolean(cursor), ...(cursor ? { olderCursor: cursor, nextCursor: cursor } : {}) },
             hasMore: Boolean(cursor), ...(cursor ? { nextCursor: { unified: { mode: 'older', cacheOnly: true, cursor } } } : {}) }
         }
@@ -276,7 +285,9 @@ export class UnifiedChatTimelineService {
     const body = { chat_session_uid: source.ownerRef, mode, limit: pageQuery.limit ?? 40,
       ...(pageQuery.cursor ? { cursor: codec.open(pageQuery.cursor, mode) } : {}),
       ...(pageQuery.windowTokens ? { window_tokens: pageQuery.windowTokens.map(token => codec.open(token, 'window')) } : {}),
-      ...(mode === 'around' ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
+      ...(mode === 'around' && pageQuery.contextRef ? { anchor_source: 'offline_context', anchor_id: await this.offlineContexts?.timelineAnchor(pageQuery.contextRef, source.ownerRef) } : {}),
+      ...(mode === 'around' && pageQuery.messageRef ? await this.offlineContexts?.messageAnchor(pageQuery.messageRef, source.ownerRef) : {}),
+      ...(mode === 'around' && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {
@@ -308,7 +319,12 @@ export class UnifiedChatTimelineService {
       const order = { eventId: eventId(String(event.event_id)), source: event.source as ArkmeTimelineSourceStatus['source'],
         occurredAtMillis: Number(event.occurred_at), orderTie: String(event.order_tie),
         contentStatus: event.content_status as 'available' | 'unavailable', windowToken: codec.seal(String(data.window_token), 'window') }
-      if (order.contentStatus === 'unavailable') {
+      if (event.source === 'offline_context') {
+        if (!this.offlineContexts || !stringValue(payload.association_id) || !Number.isSafeInteger(payload.revision) || Number(payload.revision) < 1) throw invalid()
+        projected.push({ ...order, kind: 'offline-context',
+          entryRef: await this.offlineContexts.timelineReference(String(payload.association_id), source.ownerRef, source.kind as 'private_chat' | 'group_chat', source.displayName),
+          revision: String(payload.revision), title: stringValue(payload.title), summary: stringValue(payload.summary) })
+      } else if (order.contentStatus === 'unavailable') {
         const relation = objectValue(payload.relation)
         const uid = stringValue(relation.record_uid)
         if (event.source === 'messages' && uid) {
@@ -326,7 +342,8 @@ export class UnifiedChatTimelineService {
         if (!item) throw invalid()
         const owner = recordOwnerId(relation.record_owner_user_id)
         projected.push({ ...order, kind: 'message', item: { ...item, timelineEventId: order.eventId, sendAtMillis: order.occurredAtMillis,
-          ...(owner ? { recordOwnerUserId: owner } : {}) } })
+          ...(owner ? { recordOwnerUserId: owner } : {}),
+          ...(owner && this.offlineContexts ? { offlineContextMessageRef: await this.offlineContexts.messageReference(source.ownerRef, stringValue(relation.rel_uid), item.itemUid, Number(owner)) } : {}) } })
       } else if (event.source === 'interwoven') {
         const preview = Array.isArray(payload.group_preview_items) ? objectValue(payload.group_preview_items[0]) : {}
         const moment = momentById.get(await this.interwoven.interwovenStableMomentId(stringValue(preview.moment_id)))
@@ -358,7 +375,7 @@ export class UnifiedChatTimelineService {
       }
     }
     signal?.throwIfAborted()
-    const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 1, events: projected.sort(compareUnifiedTimelineEvents), sources,
+    const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: projected.sort(compareUnifiedTimelineEvents), sources,
       complete: data.complete as boolean, windowTokens: [codec.seal(String(data.window_token), 'window')],
       ...(stringValue(data.older_cursor) ? { olderCursor: codec.seal(String(data.older_cursor), 'older') } : {}),
       ...(stringValue(data.newer_cursor) ? { newerCursor: codec.seal(String(data.newer_cursor), 'newer') } : {}),

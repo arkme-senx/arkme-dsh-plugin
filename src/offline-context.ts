@@ -1,4 +1,6 @@
-/** Proposed view contract. No endpoint is implied; Chat remains the timeline owner. */
+import type { OfflineContextPreview, OfflineContextRangeOptions } from './offline-context-contract.js'
+
+/** Browser view contract; Chat remains the timeline owner. */
 export interface OfflineContextEvidence {
   id: string
   startAtMillis: number
@@ -32,6 +34,7 @@ export interface OfflineContextEntry {
   reason: string
   state: 'suggested' | 'linked' | 'dismissed'
   visibility: 'private' | 'shared'
+  hasSharedSnapshot?: boolean
   sourceState: 'available' | 'changed' | 'unavailable'
   messages: OfflineContextMessage[]
   evidence: OfflineContextEvidence[]
@@ -42,9 +45,10 @@ export type OfflineContextChange =
   | { kind: 'confirm' }
   | { kind: 'dismiss'; reason: 'unrelated' | 'playback' | 'remove' }
   | { kind: 'restore' }
-  | { kind: 'range'; evidenceIds: string[] }
+  | { kind: 'withdraw' }
+  | { kind: 'range'; evidenceIds: string[]; startOffset?: number; endOffset?: number }
   | { kind: 'relink'; messageRef: string }
-  | { kind: 'share'; includeTranscript: boolean }
+  | { kind: 'share'; includeTranscript: boolean; previewRef?: string }
 
 export interface OfflineContextAction {
   requestId: string
@@ -55,8 +59,10 @@ export interface OfflineContextAction {
 }
 
 /** An ambiguous write cannot be treated as failure or automatically replayed. */
-export type OfflineContextReceipt = { status: 'applied' } | { status: 'unknown' }
+export type OfflineContextReceipt = { status: 'applied' } | { status: 'unknown' } | { status: 'not_applied' }
 export interface OfflineContextActions {
+  rangeOptions?(entry: OfflineContextEntry, signal: AbortSignal): Promise<OfflineContextRangeOptions>
+  preview?(entry: OfflineContextEntry, includeTranscript: boolean, signal: AbortSignal): Promise<OfflineContextPreview>
   change(action: OfflineContextAction): Promise<OfflineContextReceipt>
   reconcile(action: OfflineContextAction): Promise<'applied' | 'not_applied' | 'pending'>
   openMessage(messageRef: string): void | Promise<void>
@@ -79,7 +85,7 @@ export function offlineEvidenceRange(entry: OfflineContextEntry, first: string, 
 
 export function canShareOfflineContext(entry: OfflineContextEntry): boolean {
   const evidence = selectedOfflineEvidence(entry)
-  return entry.state === 'linked' && entry.visibility === 'private' && entry.sourceState === 'available'
+  return !entry.hasSharedSnapshot && entry.state === 'linked' && entry.visibility === 'private' && entry.sourceState === 'available'
     && evidence.length > 0 && evidence.length === new Set(entry.selectedEvidenceIds).size
     && evidence.every(item => item.soundSource !== 'playback')
 }

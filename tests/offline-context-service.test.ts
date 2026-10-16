@@ -1,0 +1,96 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, it, vi } from 'vitest'
+import { ArkmeLocalDatabase } from '../src/local-database.js'
+import { ArkmeStateStore } from '../src/state-store.js'
+import { OfflineContextService } from '../src/services/offline-context-service.js'
+import type { ServiceRuntime, StateStore } from '../src/services/service.js'
+import type { OfflineContextList, OfflineContextPreview } from '../src/offline-context-contract.js'
+
+const databases: ArkmeLocalDatabase[] = []
+const directories: string[] = []
+afterEach(async () => { for (const db of databases.splice(0)) db.close(); await Promise.all(directories.splice(0).map(p => rm(p, { recursive: true, force: true }))) })
+const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat' as const, ownerRef: 'private-chat-id', displayName: '项目群' })), sealSourceRef: vi.fn(async () => 'source-ref') }
+const association = { id: 'private-association', revision: 2, chat_session_uid: 'private-chat-id', state: 'linked', occurred_start: 1000, occurred_end: 2000, title: '测算讨论', summary: '尚未确认', reason: '回复测算问题', evidence: [{ id: 'private-evidence', version: 'asr-version', occurred_start: 1000, occurred_end: 2000, text: ' A🙂尚未确认 ', from: 2, to: 7, sound_source: 'unknown', contains_playback: false }], messages: [{ chat_session_uid: 'private-chat-id', relation_uid: 'private-relation', record_uid: 'private-record', record_owner: 8, occurred_at: 900, quote: '测算完成了吗？' }] }
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'offline context scope ')); directories.push(directory)
+  const store = new ArkmeStateStore(directory)
+  const database = new ArkmeLocalDatabase(directory, store); databases.push(database)
+  let user = 7
+  const post = vi.fn(async (path: string, body: Record<string, unknown>): Promise<unknown> => {
+    if (path.endsWith('/capability')) return { supported: true, version: 1, timeline_version: 2 }
+    if (path.endsWith('/list')) return { items: [association], has_more: false }
+    if (path.endsWith('/read')) return association
+    if (path.endsWith('/preview')) return { token: 'private-backend-preview', expires_at: Date.now() + 60000, body: { title: '服务端冻结标题', summary: '服务端冻结摘要', transcript: ['🙂尚未确认'] } }
+    if (path.endsWith('/result')) return { request_id: body.request_id, outcome: 'unknown' }
+    throw new Error('lost acknowledgement')
+  })
+  const runtime = { stateStore: database as unknown as StateStore, config: { environment: 'test' }, requireSession: async () => ({ userId: user, refreshToken: 'fixture-session' }), subscribeAccountScope: () => () => {}, authenticatedChatPost: post } as unknown as ServiceRuntime
+  return { directory, store, runtime, post, switchUser: (id: number) => { user = id }, service: new OfflineContextService(runtime, source) }
+}
+it('projects exact Unicode evidence without exposing internal ids or inventing speaker identities', async () => {
+  const f = await fixture()
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!
+  expect(entry.evidence[0]?.text).toBe('🙂尚未确认')
+  expect(entry.conversationKind).toBe('group_chat')
+  expect(entry.participants).toEqual([])
+  expect(JSON.stringify(page)).not.toContain('private-')
+  expect(await f.service.offlineContext({ operation: 'read', entryRef: entry.id })).toMatchObject({ conversationKind: 'group_chat' })
+  f.switchUser(9)
+  await expect(f.service.offlineContext({ operation: 'read', entryRef: entry.id })).rejects.toThrow()
+  f.service.dispose()
+})
+it('persists an ambiguous command across restart and reconciles without sending it again', async () => {
+  const f = await fixture(), page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!, cmd = { entryRef: entry.id, revision: entry.revision, requestId: 'command-1', action: 'dismiss' as const, reason: 'remove' as const }
+  expect(await f.service.offlineContext({ operation: 'command', command: cmd })).toEqual({ requestId: 'command-1', outcome: 'unknown' })
+  expect(Object.keys(await f.store.readOfflineContextJournal('test:7'))).toEqual(['command:command-1'])
+  expect(await readFile(join(f.directory, 'state.json'), 'utf8')).not.toContain('private-association')
+  f.service.dispose()
+  const restarted = new OfflineContextService({ ...f.runtime, stateStore: new ArkmeStateStore(f.directory) as unknown as StateStore }, source)
+  expect(await restarted.offlineContext({ operation: 'pending' })).toEqual([expect.objectContaining({ requestId: 'command-1', outcome: 'unknown' })])
+  await restarted.offlineContext({ operation: 'command', command: cmd })
+  expect(f.post.mock.calls.filter(([path]) => path.endsWith('/apply'))).toHaveLength(1)
+  f.switchUser(8)
+  expect(await restarted.offlineContext({ operation: 'pending' })).toEqual([])
+  restarted.dispose()
+})
+it('shares only the frozen preview and registers recovery before transmitting', async () => {
+  const f = await fixture(), page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!
+  const preview = await f.service.offlineContext({ operation: 'preview', entryRef: entry.id, revision: entry.revision, includeTranscript: true }) as OfflineContextPreview
+  expect(preview).toMatchObject({ title: '服务端冻结标题', summary: '服务端冻结摘要', transcript: ['🙂尚未确认'] })
+  expect(JSON.stringify(preview)).not.toContain('private-backend-preview')
+  f.post.mockImplementation(async (path, body) => {
+    if (!path.endsWith('/share')) throw new Error('unexpected')
+    expect(Object.keys(await f.store.readOfflineContextJournal('test:7'))).toContain('command:share-1')
+    expect(body).toEqual({ preview_token: 'private-backend-preview', request_id: 'share-1' })
+    return { request_id: 'share-1', outcome: 'pending', revision: 3 }
+  })
+  expect(await f.service.offlineContext({ operation: 'command', command: { action: 'share', entryRef: entry.id, revision: entry.revision, requestId: 'share-1', previewRef: preview.previewRef } })).toEqual({ requestId: 'share-1', outcome: 'pending', revision: '3' })
+  f.service.dispose()
+})
+
+it('loads current range options and maps Unicode boundaries without accepting caller text', async () => {
+  const f = await fixture()
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!
+  f.post.mockImplementation(async(path, body) => {
+    if (path.endsWith('/range-options')) return {revision:2,evidence:[{...association.evidence[0], id:'restored-speech',version:'fresh-version',text:'甲🙂乙丙',from:0,to:4}]}
+    if (path.endsWith('/apply')) {
+      expect(body.selections).toEqual([{evidence_id:'restored-speech',version:'fresh-version',from:1,to:3}])
+      return {request_id:body.request_id,outcome:'applied',revision:3}
+    }
+    throw new Error('unexpected request')
+  })
+  const range = await f.service.offlineContext({operation:'range-options',entryRef:entry.id,revision:entry.revision}) as import('../src/offline-context-contract.js').OfflineContextRangeOptions
+  expect(range.evidence[0]?.text).toBe('甲🙂乙丙')
+  expect(JSON.stringify(range)).not.toContain('restored-speech')
+  const command = {action:'range' as const,requestId:'range-1',entryRef:entry.id,revision:entry.revision,evidenceRefs:[range.evidence[0]!.id],startOffset:1,endOffset:3}
+  expect(await f.service.offlineContext({operation:'command',command})).toMatchObject({outcome:'applied'})
+  await expect(f.service.offlineContext({operation:'command',command:{...command,requestId:'range-2',endOffset:5}})).rejects.toThrow()
+  expect(f.post.mock.calls.filter(([path])=>path.endsWith('/apply'))).toHaveLength(1)
+  f.service.dispose()
+})

@@ -1150,6 +1150,16 @@ export class ArkmeChatTimelineDeltaStore {
     this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
     for (const listener of this.listeners) listener()
   }
+  invalidateWindows(sourceKeys: readonly string[]): void {
+    for (const sourceKey of new Set([...this.sourceSnapshots.keys(), ...sourceKeys])) {
+      if (!sourceKey) continue
+      const previous = this.getSnapshotForSource(sourceKey)
+      this.sourceSnapshots.set(sourceKey, { ...previous, revision: previous.revision + 1, invalidationRevision: previous.invalidationRevision + 1 })
+    }
+    retainNewestMapEntries(this.sourceSnapshots)
+    this.snapshot = { ...this.snapshot, revision: this.snapshot.revision + 1 }
+    for (const listener of this.listeners) listener()
+  }
   localCacheUpdated(sourceKeys: readonly string[]): void {
     for (const sourceKey of new Set(sourceKeys.slice(0, 50))) {
       if (!sourceKey) continue
