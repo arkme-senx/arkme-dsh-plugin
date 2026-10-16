@@ -71,11 +71,18 @@ function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }:
       const result = await sdk.offlineContext({ operation: 'command', command }) as OfflineContextCommandResult
       if (result.outcome === 'applied') { changed(); return { status: 'applied' } }
       if (result.outcome === 'not_applied') { changed(); return { status: 'not_applied' } }
+      if (!lifecycle.current?.signal.aborted) {
+        setPending(values => [...(values ?? []).filter(value => value.requestId !== result.requestId), { ...result, entryRef: action.entryId }])
+      }
       return { status: 'unknown' }
     },
     reconcile: async action => {
       const result = await sdk.offlineContext({ operation: 'result', entryRef: action.entryId, requestId: action.requestId }) as OfflineContextCommandResult
       if (result.outcome === 'applied' || result.outcome === 'not_applied') { changed(); return result.outcome }
+      const operations = await sdk.offlineContext({ operation: 'pending' }) as OfflineContextCommandResult[]
+      if (!lifecycle.current?.signal.aborted) {
+        setPending(operations.filter(value => value.entryRef === action.entryId && (value.outcome === 'pending' || value.outcome === 'unknown')))
+      }
       return 'pending'
     },
     openMessage: async messageRef => {

@@ -35,3 +35,15 @@
 本轮复验：相关 5 文件 / 27 项通过；正式 `pnpm test --maxWorkers=4` 全量 1,030 文件 / 12,052 项通过，15 文件 / 20 项跳过；typecheck 通过。日志 `/tmp/offline-context-ui-preservation-focused.log`、`/tmp/offline-context-ui-preservation-full-pnpm.log`、`/tmp/offline-context-ui-preservation-types.log`。首次误用 npm 导致 5 项 pnpm 生命周期/打包测试失败，保留日志并用仓库正确命令完整重跑；没有修改测试断言来掩盖失败。
 
 构建、tgz 打包及未修改官方 DSH 0.1.5-rc.2 隔离 Profile 安装通过；包内公开入口存在，已撤掉的字符序号控件不在最终 client bundle。日志 `/tmp/offline-context-ui-preservation-build.log`、`/tmp/offline-context-ui-preservation-pack.log`、`/tmp/offline-context-ui-preservation-install.log`。安装成功不计作实际浏览器交互通过。
+
+
+## 第二轮复核补充（2026-10-16）
+
+已挂载卡片写入返回 unknown 后，立即展示既有待确认/原操作重试入口，避免必须重进页面；原 requestId、Host journal 和只读核对语义不变，无新 UI 布局或生产接口。回归先失败后修复通过。
+
+新增 `tests/offline-context-native-chain.test.tsx`，用真实卡片组件 → 公开 SDK → 官方 DSH Host → 原生五服务完成确认关联、冻结预览、确认分享、更多菜单撤回；断言否定语义、预览无副作用、分享/撤回后的原生状态和私人证据。测试通过（`/tmp/offline-context-review2-component-native-final.log`）。需显式传入 `ARKME_OFFLINE_CONTEXT_NATIVE_HOST`（隔离 loopback HTTP Host）和 `ARKME_OFFLINE_CONTEXT_NATIVE_CHAT`（新建合成会话名称，只有一个 suggested 条目）。不对真实账号执行；合成依赖不作为模型质量证据。
+
+本轮正式全量 12,053 项通过 / 21 跳过（1,030 文件通过 / 16 跳过），原生链路测试已单独运行通过。日志 `/tmp/offline-context-review2-plugin-full.log`。上述组件操作运行于 React renderer，浏览器获取环境再次超时；实际页面、音频播放和完整上线门禁继续待验收，不以组件或 SDK 测试替代。
+
+
+追加断网复核：Host 已登记但浏览器未收到响应时，现有“核对状态”只读查询 result 和 pending journal，再显示原请求恢复入口。失败复现与修复日志 `/tmp/offline-context-review2-transport-before.log`、`/tmp/offline-context-review2-transport-after.log`；无自动写、无新 requestId，不将无回执当作未执行。
