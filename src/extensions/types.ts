@@ -338,6 +338,7 @@ export interface ArkmeExtensionPublishResult {
   signing_key_id?: string
   published_at?: number
   artifact_sha256?: string
+  manifest_sha256?: string
   artifact_contract_version?: 2 | 3
   artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string

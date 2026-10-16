@@ -1,5 +1,10 @@
 import { ArkmePluginError, ArkmeUpstreamResponseError } from '../services/service.js'
-import type { ArkmeExtensionPublishResult } from './types.js'
+import type { ArkmeExtensionPublishResult, ArkmeNativeCapability } from './types.js'
+
+const nativeCapabilities = new Set<ArkmeNativeCapability>([
+  'runtime_dependencies', 'optional_dependencies', 'bundled_dependencies', 'peer_dependencies',
+  'lifecycle_scripts', 'bin', 'native_addon', 'profile_patch_override', 'external_package_reference',
+])
 
 /** Explicit projection: never serialize arbitrary upstream bodies, signed URLs or source evidence. */
 export function publishReceipt(value: unknown): ArkmeExtensionPublishResult | undefined {
@@ -22,8 +27,18 @@ export function publishReceipt(value: unknown): ArkmeExtensionPublishResult | un
   }
   // Keep immutable-artifact evidence used by SDK recovery verification, without
   // copying upload credentials, source bodies or arbitrary audit/debug fields.
-  for (const key of ['artifact_sha256', 'bundle_sha256', 'package_json_sha256', 'source_sha256'] as const) {
+  for (const key of ['artifact_sha256', 'manifest_sha256', 'bundle_sha256', 'package_json_sha256', 'source_sha256'] as const) {
     if (typeof record[key] === 'string' && /^[a-fA-F0-9]{64}$/.test(record[key])) result[key] = record[key]
+  }
+  if (record.artifact_contract_version === 2 || record.artifact_contract_version === 3) result.artifact_contract_version = record.artifact_contract_version
+  if (record.artifact_kind === 'dsh-bundle-tgz' || record.artifact_kind === 'dsh-native-package-tgz') result.artifact_kind = record.artifact_kind
+  if (typeof record.package_name === 'string' && record.package_name.length <= 214
+    && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(record.package_name)) result.package_name = record.package_name
+  if (record.execution_model === 'arkme-sandboxed' || record.execution_model === 'dsh-native') result.execution_model = record.execution_model
+  if (Array.isArray(record.native_capabilities) && record.native_capabilities.length <= nativeCapabilities.size
+    && record.native_capabilities.every((value): value is ArkmeNativeCapability => nativeCapabilities.has(value))) {
+    // Preserve the signed order and the empty set; never filter or sort a signature input.
+    result.native_capabilities = [...record.native_capabilities]
   }
   for (const key of ['audit_checked_at', 'published_at'] as const) {
     if (typeof record[key] === 'number' && Number.isSafeInteger(record[key]) && record[key] >= 0) result[key] = record[key]

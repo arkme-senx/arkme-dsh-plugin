@@ -48,6 +48,7 @@ describe('publish failure receipts and explicit recovery', () => {
     const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...receipt,
       bundle_sha256: 'not-a-digest', source_sha256: 'a'.repeat(65), artifact_sha256: null, package_json_sha256: {},
       audit_checked_at: 'PRIVATE', audit_model: ['PRIVATE'], signature: 'https://objects.test/SECRET', signing_key_id: 'x'.repeat(129), published_at: -1,
+      artifact_contract_version: 4, artifact_kind: 'PRIVATE', package_name: 'https://objects.test/SECRET', execution_model: 'unknown', native_capabilities: ['bin', 'PRIVATE'], manifest_sha256: 'not-a-digest',
     }) as T)
     await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual(receipt)
   })
