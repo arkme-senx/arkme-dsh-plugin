@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SpeakerDirectoryService } from '../../src/services/speaker-directory-service.js'
 import { UnmarkedSpeakerService } from '../../src/services/unmarked-speaker-service.js'
 import type { ServiceRuntime } from '../../src/services/service.js'
+import { ArkmePluginError } from '../../src/services/service.js'
 import type { RecordingService } from '../../src/services/recording-service.js'
 const base = { state: 'fresh', coverage: 'complete', retry_after_ms: 0 }
 const summary = { ...base, total_count: 43, marked_count: 10, unmarked_count: 33, unseen_count: 3, snapshot_version: 'version', seen_version: 2, updated_at: 1, not_modified: false }
@@ -15,6 +16,55 @@ function fixture() {
   const unmarked = { directoryCandidateRef: vi.fn(async () => 'candidate-reference') } as unknown as Pick<UnmarkedSpeakerService, 'directoryCandidateRef'>
   return { service: new SpeakerDirectoryService(runtime, recording, unmarked), post, runtime, recording, unmarked, switchUser: () => { userId = 9 } }
 }
+const consistency = { state: 'ready', score: 93, analyzed_count: 8, total_count: 8, review_count: 0 }
+const similarResponse = () => ({ supported: true, schema_version: 1, metric: 'cosine_distance', state: 'ready', version: 'e1', model_version: 'model1', aggregation: 'robust', score_definition: 'cohesion-v1',
+  anchor: candidate, anchor_consistency: consistency, searched_count: 100, total_count: 1000,
+  items: [{ person: { ...candidate, person_key: 'other', detail_ref: { type: 'candidate', id: 'other-id' } }, distance: .12, consistency }], has_more: false, next_cursor: '' })
+describe('speaker similarity read adapter', () => {
+  it('unseals the anchor, binds the returned identity, and seals candidate details', async () => {
+    const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+    f.post.mockResolvedValue(similarResponse() as never)
+    const result = await f.service.similar({ detailRef: ref })
+    expect(f.post).toHaveBeenLastCalledWith('/api/v1/audio/speaker-directory/similar', expect.objectContaining({ detail_ref: { type: 'candidate', id: candidate.detail_ref.id, expected_version: undefined }, limit: 20, cursor: '', version: '' }), expect.any(Object), undefined, expect.any(Object))
+    expect(result).toMatchObject({ items: [{ distance: .12, consistency: { score: 93 } }] })
+    expect(result.supported && result.items[0]!.person.detailRef).toMatch(/^arkme-speaker-directory-detail-v1\./)
+    f.switchUser()
+    await expect(f.service.similar({ detailRef: ref })).rejects.toMatchObject({ code: 'speaker-directory-account-mismatch' })
+  })
+  it.each([404, 501, 503])('classifies HTTP %s without hiding network failures', async status => {
+    const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+    f.post.mockRejectedValue(new ArkmePluginError('upstream', 'error', true, status))
+    if (status === 503) await expect(f.service.similar({ detailRef: ref })).rejects.toThrow()
+    else expect(await f.service.similar({ detailRef: ref })).toEqual({ supported: false })
+  })
+  it('rejects a changed version, wrong anchor and late account response', async () => {
+    const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+    f.post.mockResolvedValue(similarResponse() as never)
+    await expect(f.service.similar({ detailRef: ref, version: 'e0', cursor: 'next' })).rejects.toMatchObject({ code: 'speaker-similarity-stale' })
+    f.post.mockResolvedValue({ ...similarResponse(), anchor: { ...candidate, detail_ref: { type: 'candidate', id: 'wrong' } } } as never)
+    await expect(f.service.similar({ detailRef: ref })).rejects.toThrow()
+    f.post.mockImplementation(async () => { f.switchUser(); return similarResponse() as never })
+    await expect(f.service.similar({ detailRef: ref })).rejects.toMatchObject({ code: 'speaker-directory-account-changed' })
+  })
+  it('uses existing account-bound unmarked clips when representative samples are unavailable', async () => {
+    const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+    const segments = vi.fn(async () => ({ items: [{ segmentRef: 'segment', date: '2026-10-14', timeRange: '12:00', durationMillis: 4000, transcript: '片段', mediaRef: 'sealed-media' }], total: 1, hasMore: false }))
+    const service = new SpeakerDirectoryService(f.runtime, f.recording, { ...f.unmarked, segments })
+    f.post.mockRejectedValue(new ArkmePluginError('missing', 'missing', false, 404))
+    expect(await service.voiceSamples({ detailRef: ref })).toMatchObject({ supported: true, items: [{ sampleKey: 'segment', mediaRef: 'sealed-media' }] })
+    expect(segments).toHaveBeenCalledWith('candidate-reference', { limit: 3 })
+  })
+  it('issues media through the existing scoped signer and never forwards backend URLs', async () => {
+    const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+    const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'sealed-playback') }
+    const service = new SpeakerDirectoryService(f.runtime, f.recording, f.unmarked, media)
+    f.post.mockResolvedValue({ supported: true, schema_version: 1, detail_ref: candidate.detail_ref, items: [{ sample_key: 's1', time_label: '10月14日', transcript: '片段', remote_url: 'https://untrusted.invalid', locator: { session_id: 'session', child_id: 'child', start_at: 1000, end_at: 5000, num: 7 } }] } as never)
+    const result = await service.voiceSamples({ detailRef: ref })
+    expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({ viewerUserId: 7, sessionId: 'session', childId: 'child', asrItemStartAt: 1000, asrItemEndAt: 5000, speakerNumber: 7 }, undefined)
+    expect(result).toMatchObject({ items: [{ durationMillis: 4000, mediaRef: 'sealed-playback' }] })
+    expect(JSON.stringify(result)).not.toContain('untrusted.invalid')
+  })
+})
 describe('speaker-directory owner contract', () => {
   it('uses existing authenticated audio transport, empty JSON and authoritative counts', async () => {
     const { service, post } = fixture()

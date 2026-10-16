@@ -1,3 +1,4 @@
+import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
@@ -33,6 +34,9 @@ import type { TeamAppOperation } from './team-app-contract.js'
 import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
+import { ConversationActivityService } from './services/conversation-activity-service.js'
+import { ConversationWordFrequencyService } from './services/conversation-word-frequency-service.js'
+import { RecordingSpeechStatisticsService } from './services/recording-speech-statistics-service.js'
 import { CalendarDayReviewService } from './services/calendar-day-review-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
 import { ArkmeDesktopScreenshot } from './desktop-screenshot.js'
@@ -374,6 +378,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly statistics: StatisticsService
   private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
@@ -438,6 +443,8 @@ export class ArkmeService {
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
   }
+  async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
+
   async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
   async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
   async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
@@ -467,6 +474,9 @@ export class ArkmeService {
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
+  private readonly conversationActivity: ConversationActivityService
+  private readonly conversationWords: ConversationWordFrequencyService
+  private readonly speechStatistics: RecordingSpeechStatisticsService
   private readonly calendarDayReview: CalendarDayReviewService
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -663,10 +673,14 @@ export class ArkmeService {
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
+    this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
+    this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
+    this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
     this.calendarDayReview = new CalendarDayReviewService(this.runtime, this.recording, this.record, this.source, this.callHistory, this.privacy)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
-    this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
+    this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
       resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
@@ -807,6 +821,19 @@ export class ArkmeService {
     }) })
     return await this.dayRecapService.generate(input, signal)
   }
+  async conversationActivityRead(input: unknown, signal?: AbortSignal) { return this.conversationActivity.read(input, signal) }
+  async conversationActivityParticipants(input: unknown, signal?: AbortSignal) { return this.conversationActivity.participants(input, signal) }
+  async conversationActivityMessages(input: unknown, signal?: AbortSignal) { return this.conversationActivity.messages(input, signal) }
+  async conversationActivitySource(input: unknown, signal?: AbortSignal) { return this.conversationActivity.source(input, signal) }
+  async conversationWordsState(input: unknown, signal?: AbortSignal) { return this.conversationWords.state(input, signal) }
+  async conversationWordsCreate(input: unknown, signal?: AbortSignal) { return this.conversationWords.create(input, signal) }
+  async conversationWordsParticipants(input: unknown, signal?: AbortSignal) { return this.conversationWords.participants(input, signal) }
+  async conversationWordsMessages(input: unknown, signal?: AbortSignal) { return this.conversationWords.messages(input, signal) }
+  async conversationWordsSource(input: unknown, signal?: AbortSignal) { return this.conversationWords.source(input, signal) }
+  async recordingSpeechState(input: unknown, signal?: AbortSignal) { return this.speechStatistics.state(input, signal) }
+  async recordingSpeechCreate(input: unknown, signal?: AbortSignal) { return this.speechStatistics.create(input, signal) }
+  async recordingSpeechOccurrences(input: unknown, signal?: AbortSignal) { return this.speechStatistics.occurrences(input, signal) }
+  async recordingSpeechSource(input: unknown, signal?: AbortSignal) { return this.speechStatistics.source(input, signal) }
   async dayReviewState(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.state(input, signal) }
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
@@ -1171,6 +1198,9 @@ export class ArkmeService {
     this.recordingEntitiesOwner.dispose()
     this.explore.dispose()
     this.calendarDayReview.dispose()
+    this.conversationActivity.dispose()
+    this.conversationWords.dispose()
+    this.speechStatistics.dispose()
     this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()
@@ -1256,6 +1286,8 @@ export class ArkmeService {
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
+  async speakerDirectorySimilar(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.similar(input, signal) }
+  async speakerDirectoryVoiceSamples(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.voiceSamples(input, signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }
   async speakerDirectoryAvatars(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.avatars(input, signal) }
   async speakerDirectoryList(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.list(input, signal) }
@@ -1272,6 +1304,8 @@ export class ArkmeService {
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string) { return await this.recording.recordingSpeakerMembers(speakerRef, signal, expectedVersion) }
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> { return await this.recording.recordingSpeakerRecommendation(itemRef, signal) }
   async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
+  async recordingSpeakerEvidence(input: import('./types.js').ArkmeRecordingSpeakerEvidenceInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerEvidence(input, signal) }
+  async recordingSpeakerConsistency(input: import('./types.js').ArkmeRecordingSpeakerConsistencyInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerConsistency(input, signal) }
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) { return this.recording.recordingSpeakerCorrectionItems(query, signal) }
   async recordingSpeakerCorrectionResult(query: import('./types.js').ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionResult(query, signal) }
   async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionContext(itemRef, signal) }
@@ -2781,6 +2815,10 @@ export class ArkmeService {
 
   async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceTarget> {
     return await this.arrangementSource.arrangementSourceOpen(arrangementRef, evidenceId, signal)
+  }
+
+  async arrangementSourceRead(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceRead> {
+    return await this.arrangementSource.arrangementSourceRead(arrangementRef, evidenceId, signal)
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {

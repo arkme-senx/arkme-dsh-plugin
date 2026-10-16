@@ -45,6 +45,7 @@ import {
   recordingDoubaoProgress,
   type ArkmeRecordingPrivateTranscriptItem,
 } from '../recording-presentation.js'
+import { parseRecordingSpeakerEvidence, parseRecordingSpeakerConsistency } from '../recording-speaker-evidence.js'
 import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingComparison,
@@ -558,6 +559,72 @@ export class RecordingService {
     return { optionKey: this.recordingSpeakerOptionKey(
       await this.recordingRefKey('arkme-recording-speaker-v1'), session.userId, 'speaker', speakerId,
     ) }
+  }
+
+  /** Group summaries are computed over the server's complete daily membership, never this UI page. */
+  async recordingSpeakerConsistency(input: import('../types.js').ArkmeRecordingSpeakerConsistencyInput, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingSpeakerConsistency> {
+    this.assertWorkbenchEnabled()
+    if ([input.anchorRefs, input.itemRefs].some(list => !Array.isArray(list) || list.some(ref => typeof ref !== 'string' || !ref) || new Set(list).size !== list.length)
+      || input.anchorRefs.length < 1 || input.anchorRefs.length > 100 || input.itemRefs.length > 50 || (input.itemRefs.length > 0 && input.anchorRefs.length !== 1)) {
+      throw new ArkmePluginError('recording-consistency-invalid', '一致性查询范围无效', false)
+    }
+    const session = await this.runtime.requireSession(), revision = this.speakerCacheRevision
+    const refs = await Promise.all([...input.anchorRefs, ...input.itemRefs].map(ref => this.openRecordingItemRef(ref)))
+    const anchor = refs[0]!
+    if (refs.some(item => item.viewerUserId !== session.userId || item.dateStamp !== anchor.dateStamp || item.transcriptSource !== anchor.transcriptSource)) {
+      throw new ArkmePluginError('recording-consistency-scope', '请在同一账号、日期和转写版本内核对一致性', false, 409)
+    }
+    let raw: unknown
+    try {
+      raw = await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-evidence/consistency', {
+        schema_version: 1, date_stamp: anchor.dateStamp,
+        groups: refs.slice(0, input.anchorRefs.length).map((ref, client_index) => ({ client_index, ...this.correctionLocator(ref) })),
+        items: refs.slice(input.anchorRefs.length).map((ref, client_index) => ({ client_index, ...this.correctionLocator(ref) })),
+      }, session, signal, { bypassCache: true, lane: 'interactive-read' })
+    } catch (error) {
+      await this.assertSpeakerReadCurrent(session, revision, signal)
+      if (error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)) return { supported: false }
+      throw error
+    }
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    try { return parseRecordingSpeakerConsistency(raw, input) }
+    catch { throw new ArkmePluginError('recording-consistency-contract-invalid', '一致性证据格式不完整，暂不能用于判断', true, 502) }
+  }
+
+  /** Proposed read-only API. Never fall back to a session aggregate for an interval score. */
+  async recordingSpeakerEvidence(input: import('../types.js').ArkmeRecordingSpeakerEvidenceInput, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingSpeakerEvidence> {
+    this.assertWorkbenchEnabled()
+    const lists = [input.itemRefs, input.referenceA, input.referenceB]
+    if (lists.some(list => !Array.isArray(list) || list.some(ref => typeof ref !== 'string' || !ref) || new Set(list).size !== list.length)
+      || input.itemRefs.length < 1 || input.itemRefs.length > 50 || input.referenceA.length < 1 || input.referenceA.length > 3
+      || input.referenceB.length > 3 || input.referenceA.some(ref => input.referenceB.includes(ref))) {
+      throw new ArkmePluginError('recording-evidence-invalid', '请选择不同的甲乙参照，每组最多 3 段，每次最多对比 50 段', false)
+    }
+    const session = await this.runtime.requireSession()
+    const revision = this.speakerCacheRevision
+    const all = await Promise.all(lists.flat().map(ref => this.openRecordingItemRef(ref)))
+    const anchor = all[0]!
+    if (all.some(item => item.viewerUserId !== session.userId || item.dateStamp !== anchor.dateStamp || item.transcriptSource !== anchor.transcriptSource)) {
+      throw new ArkmePluginError('recording-evidence-scope', '请在同一账号、日期和转写版本内对比声音', false, 409)
+    }
+    const rows = all.slice(0, input.itemRefs.length)
+    const a = all.slice(input.itemRefs.length, input.itemRefs.length + input.referenceA.length)
+    const b = all.slice(input.itemRefs.length + input.referenceA.length)
+    let raw: unknown
+    try {
+      raw = await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-evidence/compare', {
+        schema_version: 1, date_stamp: anchor.dateStamp,
+        items: rows.map((item, client_index) => ({ client_index, ...this.correctionLocator(item) })),
+        reference_a: a.map(item => this.correctionLocator(item)), reference_b: b.map(item => this.correctionLocator(item)),
+      }, session, signal, { bypassCache: true, lane: 'interactive-read' })
+    } catch (error) {
+      await this.assertSpeakerReadCurrent(session, revision, signal)
+      if (error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)) return { supported: false }
+      throw error
+    }
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    try { return parseRecordingSpeakerEvidence(raw, input) }
+    catch { throw new ArkmePluginError('recording-evidence-contract-invalid', '声纹证据格式不完整，暂不能用于判断', true, 502) }
   }
 
   /** Explicit time selection creates opaque references; no inferred acoustic membership. */

@@ -18,7 +18,7 @@ describe('native World integration', () => {
     expect(productNavigation).toMatch(/id: 'calendar'[\s\S]*id: 'explore'[\s\S]*id: 'extensions'/)
     expect(productNavigation).toContain('<ExploreNavigation')
     const explore = await source('src/client/explore/ExploreNavigation.tsx')
-    expect(explore).toContain("[...EXPLORE_MODULES,'world' as const]")
+    expect(explore).toContain("...EXPLORE_MODULES,'world' as const]")
     expect(explore).toContain("module==='world'?arkmeUi.showWorld()")
   })
 
