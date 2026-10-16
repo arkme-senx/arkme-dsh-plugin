@@ -20,6 +20,22 @@ export function publishReceipt(value: unknown): ArkmeExtensionPublishResult | un
   for (const key of ['retry_after_millis', 'attempt_deadline', 'recovery_expires_at'] as const) {
     if (typeof record[key] === 'number' && Number.isFinite(record[key]) && record[key] >= 0) result[key] = record[key]
   }
+  // Keep immutable-artifact evidence used by SDK recovery verification, without
+  // copying upload credentials, source bodies or arbitrary audit/debug fields.
+  for (const key of ['artifact_sha256', 'bundle_sha256', 'package_json_sha256', 'source_sha256'] as const) {
+    if (typeof record[key] === 'string' && /^[a-fA-F0-9]{64}$/.test(record[key])) result[key] = record[key]
+  }
+  for (const key of ['audit_checked_at', 'published_at'] as const) {
+    if (typeof record[key] === 'number' && Number.isSafeInteger(record[key]) && record[key] >= 0) result[key] = record[key]
+  }
+  if (typeof record.audit_checked_at === 'string' && /^\d{4}-\d{2}-\d{2}T.{1,40}$/.test(record.audit_checked_at)
+    && Number.isFinite(Date.parse(record.audit_checked_at))) result.audit_checked_at = record.audit_checked_at
+  for (const key of ['audit_model', 'signing_key_id'] as const) {
+    if (typeof record[key] === 'string' && /^[A-Za-z0-9._:/-]{1,128}$/.test(record[key])) result[key] = record[key]
+  }
+  if (typeof record.signature === 'string' && record.signature.length <= 1024
+    && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(record.signature)
+    && record.signature.length > 0) result.signature = record.signature
   return result
 }
 
