@@ -384,7 +384,7 @@ export function ArkmeProductNavigation({
           </button>
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
-            {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr(lockBusy ? '正在锁定' : '锁定')}</strong></span><CaretRight size={15} /></button>}
+            {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr('锁定')}</strong></span><CaretRight size={15} /></button>}
             {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>

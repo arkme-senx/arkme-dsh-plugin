@@ -107,8 +107,11 @@ export class DeviceLockService {
     return this.project(native, this.boundToken !== '')
   }
   async lock(): Promise<ArkmeDeviceLockSnapshot> {
-    await this.refresh()
-    if (!this.state.available) throw new ArkmePluginError('device-lock-unavailable', '设备锁定暂不可用，请稍后重试', true, 503)
+    if (this.disposed || !await this.nativeSupported()) throw new ArkmePluginError('device-lock-unavailable', '当前桌面暂不支持锁定', false, 501)
+    const native = await this.bridge('device.lock.status')
+    const session = await this.runtime.accountScopedSession()
+    if (this.disposed || session === undefined || (native.sessionId !== undefined && !sameLogin(session, native)) || native.sessionEnded) throw new ArkmePluginError('login-context-changed', '登录状态已变化，请重试', true, 409)
+    // Only local identity and native capability gate locking, never remote I/O.
     return this.project(await this.bridge('device.lock.lock'), true)
   }
   async requestUnlock(): Promise<ArkmeDeviceLockSnapshot> {

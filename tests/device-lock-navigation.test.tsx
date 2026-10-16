@@ -34,3 +34,13 @@ it('does not offer a lock command in a browser or legacy desktop without native 
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="个人资料"]')!.click())
   expect(lockButton()).toBeUndefined()
 })
+it('keeps the local action label stable while suppressing duplicate clicks', async () => {
+  (window as any).arkmeDesktop = {deviceLock: {version: 1}}
+  await act(async () => root.render(<ArkmeProductNavigation compact={false} />))
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="个人资料"]')!.click())
+  await act(async () => lockButton()!.click())
+  expect(lockButton()?.disabled).toBe(true)
+  expect(document.body.textContent).not.toContain('正在锁定')
+  await act(async () => lockButton()!.click())
+  expect(mocks.call.mock.calls.filter(([action]) => action === 'device.lock.lock')).toHaveLength(1)
+})

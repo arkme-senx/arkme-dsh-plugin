@@ -28,6 +28,24 @@ function fixture() {
   return { owner, fetchImpl, logout, native, getSession: () => session, legacy: () => { legacy = true }, failRevoke: () => { fail = true }, replace: () => { session = {...session!, accessToken: token('replacement_session_001')} }, locks: () => locks, cleanups: () => cleanups }
 }
 describe('device lock Host lifecycle', () => {
+  it('does not require the first remote registration to protect the current local login', async () => {
+    const f = fixture(); Object.assign(f.native, {sessionId: undefined, userId: undefined, clientId: undefined})
+    expect(await f.owner.lock()).toMatchObject({locked: true})
+    expect(f.locks()).toBe(1)
+    expect(f.fetchImpl.mock.calls.some(([, init]) => JSON.parse(String(init?.body)).action === 'device.lock.bind')).toBe(false)
+  })
+  it('locks without requesting remote synchronization and rejects a replaced login', async () => {
+    const f = fixture(); const original = f.fetchImpl.getMockImplementation()!
+    f.fetchImpl.mockImplementation(async (url, init) => {
+      const action = JSON.parse(String(init?.body)).action
+      if (action === 'device.lock.sync' || action === 'device.lock.bind') throw new Error('remote unavailable')
+      return original(url, init)
+    })
+    expect(await f.owner.lock()).toMatchObject({locked: true})
+    expect(f.locks()).toBe(1)
+    f.replace(); await expect(f.owner.lock()).rejects.toThrow('登录状态已变化')
+    expect(f.locks()).toBe(1)
+  })
   it('reconciles an idle healthy realtime connection once a minute', async () => {
     vi.useFakeTimers()
     vi.spyOn(DeviceControlRealtime.prototype, 'connected', 'get').mockReturnValue(true)
