@@ -5,6 +5,24 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { expect, it, vi } from 'vitest'
 import { registerArkmeExtensionTools } from '../../src/tools/extensions/index.js'
 import { recordToolResults, sessionEvents } from '../helpers/tool-session.js'
+import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
+
+it('keeps registry upload and audit internals out of the status tool result', async () => {
+  const ctx = new Context(); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime); recordToolResults(ctx)
+  const events = sessionEvents([])
+  const agent = { id: 'publish-status-agent', session: { get events() { return events } } } as never
+  const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({
+    publish_session_id: 'pub_status', extension_id: 'ext_status', version: '1.0.0', status: 'published',
+    upload_url: 'https://objects.test/SECRET', audit_evidence: ['PRIVATE SOURCE'],
+  }) as T)
+  registerArkmeExtensionTools(ctx, { publishStatus: (id: string) => client.publishStatus(id) } as never, {} as never, {} as never, 'business')
+  try {
+    const result = await ctx.tools.execute({ callId: CallId('read-status'), name: 'arkme_extension_publish_status', arguments: { publish_session_id: 'pub_status' }, agent, signal: new AbortController().signal })
+    expect(result.isError).toBe(false)
+    expect(JSON.stringify(result)).toContain('published')
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE|upload_url|audit_evidence/)
+  } finally { await ctx.fiber.dispose() }
+})
 
 it('exposes read-only publication receipts and confirms recovery in the DSH runtime', async () => {
   const ctx = new Context(); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime); recordToolResults(ctx)
