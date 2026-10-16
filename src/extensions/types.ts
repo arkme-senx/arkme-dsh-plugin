@@ -141,6 +141,7 @@ export interface ArkmeExtensionMetadataUpdateResult {
 }
 
 export interface ArkmeExtensionCatalogPage {
+  publication_capabilities?: { publish_recovery?: boolean }
   items: ArkmeExtensionCatalogItem[]
   total: number
   next_cursor?: string
@@ -322,7 +323,15 @@ export interface ArkmeExtensionPublishResult {
   publish_session_id?: string
   extension_id: string
   version: string
-  status: 'uploading' | 'validating' | 'published' | 'rejected' | 'expired'
+  status: 'uploading' | 'validating' | 'published' | 'rejected' | 'audit_rejected' | 'revoked' | 'expired'
+  execution_state?: 'uploading' | 'running' | 'failed' | 'interrupted' | 'published' | 'rejected' | 'audit_rejected' | 'revoked' | 'expired' | 'unknown'
+  phase?: string
+  error_code?: string
+  error_message?: string
+  can_resume?: boolean
+  retry_after_millis?: number
+  attempt_deadline?: number
+  recovery_expires_at?: number
   artifact_sha256?: string
   artifact_contract_version?: 2 | 3
   artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
@@ -336,6 +345,13 @@ export interface ArkmeExtensionPublishResult {
   validation_error_message?: string
 	source?: ArkmeExtensionSource
 	share?: ArkmeExtensionShare
+}
+
+export interface ArkmeExtensionPublishPage {
+  items: ArkmeExtensionPublishResult[]
+  limit: number
+  offset: number
+  has_more: boolean
 }
 
 export interface ArkmeExtensionDeleteResult {

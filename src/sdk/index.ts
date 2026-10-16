@@ -448,6 +448,8 @@ export class ArkmeClientError extends Error {
   }
 }
 
+export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
+
 export interface ArkmeSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
@@ -1165,6 +1167,30 @@ export class ArkmeSdk {
         ? {}
         : { currentSessionId: options.currentSessionId.trim() }),
     }, options.signal)
+  }
+
+  /** List this account's publication receipts without starting validation or audit. */
+  async extensionPublishSessions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<import('../extensions/types.js').ArkmeExtensionPublishPage> {
+    await this.requireExtensionPublishRecovery(options.signal)
+    return await this.call('extensions.publish.list', { limit: options.limit ?? 20, offset: options.offset ?? 0 }, options.signal)
+  }
+
+  /** Read-only: this never starts an audit or retries publication. */
+  async extensionPublishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.status', { publishSessionId }, signal)
+  }
+
+  /** Write: call only for an explicit current human action. Never automatically retry. */
+  async resumeExtensionPublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.resume', { publishSessionId }, signal)
+  }
+
+  private async requireExtensionPublishRecovery(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.extensionPublishRecovery !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持发布状态查询与恢复', retryable: false })
   }
 
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */

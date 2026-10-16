@@ -72,7 +72,7 @@ export class RecordingEntityService implements RecordingEntityPort {
     const { dateStamp, source } = this.query(query)
     signal?.throwIfAborted()
     const session = await this.runtime.requireSession(), revision = this.revision
-    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/ensure', {
+    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/start', {
       day_stamp: dateStamp, transcript_source: source,
     }, session, signal, { lane: 'write', bypassCache: true, cacheMs: 0 })
     await this.assertCurrent(session, revision, signal)
@@ -182,6 +182,8 @@ export class RecordingEntityService implements RecordingEntityPort {
       .sort((a, b) => integer(a.start_ms) - integer(b.start_ms))
     const page = occurrences.slice(offset, offset + limit)
     const byIdentity = new Map(rows.map(row => [`${row.sessionId}:${row.childId}:${row.asrItemIndex}:${row.transcriptSource}`, row]))
+    const dayStart = new Date(dayQuery.dateStamp); dayStart.setHours(0, 0, 0, 0)
+    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
     const items: RecordingEntityOccurrences['items'] = []
     for (const occurrence of page) {
       const rowId = string(occurrence.row_id), observedText = string(occurrence.observed_text, 20000)
@@ -194,6 +196,7 @@ export class RecordingEntityService implements RecordingEntityPort {
       const target = row && range ? {
         identityHash: recordingSearchIdentityHash({ sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: row.transcriptSource }),
         transcriptVersion: recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
+        ...(row.startAtMillis < dayStart.getTime() || row.endAtMillis > dayEnd.getTime() ? { sourceText: row.text } : {}),
       } : undefined
       const excerpt = row && range ? Array.from(row.text).slice(Math.max(0, range.start - 30), range.start + range.length + 60).join('') : observedText
       const context = ref.personalizationRevision !== undefined ? entityOccurrenceContext(occurrence.context, participantKeys.get(occurrence)) : undefined
