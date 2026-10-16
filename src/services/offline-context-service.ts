@@ -32,7 +32,7 @@ export class OfflineContextService implements OfflineContextPort {
   private capabilityCache?: { scope: string; expires: number; supported: boolean }
   private readonly unsubscribe: () => void
   private readonly journalCodec: EncryptedReferenceCodec
-  constructor(private readonly runtime: ServiceRuntime, private readonly sources: Pick<SourceService, 'openSourceRef' | 'sealSourceRef'>, private readonly media?: Pick<MediaService, 'issueContextPlayback'>) {
+  constructor(private readonly runtime: ServiceRuntime, private readonly sources: Pick<SourceService, 'openSourceRef' | 'sealSourceRef'>, private readonly media?: Pick<MediaService, 'issueContextPlayback'>, private readonly invalidateProjection?: (userId: number) => Promise<void>) {
     this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++ })
     this.journalCodec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid, 1024 * 1024)
   }
@@ -125,7 +125,10 @@ export class OfflineContextService implements OfflineContextPort {
       const parsed = receipt(raw, requestId)
       if (parsed.outcome === 'applied' || parsed.outcome === 'not_applied') {
         const saved = (await journal())[`command:${requestId}`]
-        if (saved) await this.runtime.stateStore.deleteOfflineContextJournal!(scope, `command:${requestId}`, saved.fingerprint)
+        if (saved) {
+          await this.runtime.stateStore.deleteOfflineContextJournal!(scope, `command:${requestId}`, saved.fingerprint)
+          if (parsed.outcome === 'applied') await this.invalidateProjection?.(session.userId)
+        }
       }
       return parsed
     }
@@ -248,6 +251,7 @@ export class OfflineContextService implements OfflineContextPort {
         if (replayed.outcome === 'applied' || replayed.outcome === 'not_applied') {
           await this.runtime.stateStore.deleteOfflineContextJournal!(scope, key, pending[key].fingerprint)
         }
+        await this.invalidateProjection?.(session.userId)
         return replayed
       } catch {
         await current()
@@ -295,9 +299,12 @@ export class OfflineContextService implements OfflineContextPort {
       await current()
       const reason = error instanceof ArkmeUpstreamResponseError ? objectValue(error.responseData).reason : undefined
       if (['invalid_request', 'access_denied', 'source_unavailable', 'revision_conflict', 'request_conflict'].includes(String(reason))) parsed = { requestId, outcome: 'not_applied' }
-      else return { requestId, outcome: 'unknown' }
+      else { await this.invalidateProjection?.(session.userId); return { requestId, outcome: 'unknown' } }
     }
     if (parsed.outcome === 'applied' || parsed.outcome === 'not_applied') await this.runtime.stateStore.deleteOfflineContextJournal!(scope, key, fp)
+    // Host owns the commit invalidation, including writes started from Tools or
+    // a card that has since unmounted. An old in-flight read cannot cover it.
+    await this.invalidateProjection?.(session.userId)
     return parsed
   }
 }
