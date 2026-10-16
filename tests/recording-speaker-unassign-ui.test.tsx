@@ -56,6 +56,36 @@ describe('speaker removal interaction', () => {
     expect(mocks.call).toHaveBeenCalledWith('recordings.speaker.unassign-item', { itemRef: 'sealed', scope: 'item', expectedCount: 1 }, expect.any(AbortSignal))
   })
 
+  it('keeps correction single-fragment even when ordinary marking opens with the whole-day scope', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation(async (operation, ...args) => {
+      if (operation === 'recordings.speaker.correction.context') return {
+        supported: true, version: 'v1', maxItems: 100, soundSource: 'unknown', excludedSpeakers: [],
+      }
+      if (operation === 'recordings.speaker.correction.apply') return {
+        affectedCount: 1, version: 'v2', undoRef: 'undo',
+        day: { dateStamp: 1, transcript: { items: [item] } },
+      }
+      return original(operation, ...args)
+    })
+    await open(item, true)
+    expect(remove().children.join('')).toBe('取消 3 处标记')
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => button.children.join('') === '不是 万宇')!.props.onClick()
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    const writes = mocks.call.mock.calls.filter(([operation]) => operation === 'recordings.speaker.correction.apply')
+    expect(writes).toHaveLength(1)
+    expect(writes[0]![1]).toMatchObject({
+      itemRef: 'sealed', itemRefs: ['sealed'], rejectCurrent: true, detach: true,
+    })
+    expect(writes[0]![1]).not.toHaveProperty('scope')
+    expect(mocks.call.mock.calls.some(([operation]) => operation === 'recordings.speaker.unassign-item'
+      || operation === 'recordings.speaker.assign-item')).toBe(false)
+    expect(onUpdated).toHaveBeenCalledOnce()
+    expect(renderer.root.findAllByType('button').some(button => button.children.join('') === '撤销这次纠错')).toBe(true)
+  })
+
   it('keeps the dialog and error on failure, and never sends duplicate writes', async () => {
     await open()
     let reject!: (error: Error) => void
