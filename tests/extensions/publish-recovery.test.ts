@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,10 +7,48 @@ import { ArkmeExtensionInstallStore } from '../../src/extensions/install-store.j
 import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError } from '../../src/services/service.js'
 import { publishFailure } from '../../src/extensions/publish-failure.js'
+import { materializeCordisBundle } from '../../src/extensions/bundle-materializer.js'
+import { packLocalNativeBundleDirectoryV3 } from '../../src/extensions/bundle-artifact.js'
 
 const receipt = { publish_session_id: 'pub_recovery', extension_id: 'ext_recovery', version: '1.0.0', status: 'validating' as const, execution_state: 'failed' as const, error_code: 'audit_model_unavailable', error_message: '审核模型不可用', can_resume: true }
 
 describe('publish failure receipts and explicit recovery', () => {
+  it.each(['publish', 'bundle', 'native'] as const)('%s preserves completion evidence when the recovery read fails', async (entry) => {
+    const root = mkdtempSync(join(tmpdir(), 'publish-recovery-'))
+    const store = new ArkmeExtensionInstallStore(join(root, 'state'))
+    const outcome = { ...receipt, status: 'audit_rejected' as const, execution_state: 'interrupted' as const }
+    let completionError: Error = new ArkmeUpstreamResponseError('audit-error', '审核中断', true, 503, { ...outcome, token: 'SECRET' })
+    let recovered = false
+    const client = new ExtensionPublishClient(async <T>(path: string): Promise<T> => {
+      if (path.endsWith('/create')) return { ...receipt, status: 'validating' } as T
+      if (path.endsWith('/complete')) throw completionError
+      if (path.endsWith('/status') && recovered) return { ...receipt, status: 'published', execution_state: 'published' } as T
+      throw new Error('status unavailable')
+    })
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: (_agent, pluginId, packageId) => ({ pluginId, packageId, name: '示例', purpose: '示例', code: { host: 'return { name: "x", apply() {} }' } }),
+      define: () => { throw new Error('unused') }, run: async () => { throw new Error('unused') },
+    }, { artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' })
+    const input = { name: '示例', description: '示例', version: '1.0.0', visibility: 'private' as const, idempotencyKey: 'same-session' }
+    const source = materializeCordisBundle({ packageName: '@example/recovery', ...input, hostCode: 'return { name: "x", apply() {} }' })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@example/recovery', version: '1.0.0', files: ['cordis.patch.yml'], dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+    writeFileSync(join(root, 'cordis.patch.yml'), '- id: compaction-basic\n  disabled: true\n')
+    const nativeSource = packLocalNativeBundleDirectoryV3(root)
+    const publish = () => entry === 'publish'
+      ? manager.publish({ ...input, agent: {}, pluginId: 'plug-1', packageId: 'pkg-1' })
+      : entry === 'bundle' ? manager.publishBundleSource({ ...input, source })
+        : manager.publishNativeBundleSource({ ...input, source: nativeSource })
+    try {
+      await expect(publish()).rejects.toMatchObject({ publishReceipt: outcome, retryable: false })
+      await publish().catch(error => expect(JSON.stringify(error.publishReceipt)).not.toContain('SECRET'))
+      recovered = true
+      await expect(publish()).resolves.toMatchObject({ status: 'published', execution_state: 'published' })
+      recovered = false
+      completionError = new Error('response lost')
+      await expect(publish()).rejects.toMatchObject({ message: 'response lost', publishReceipt: { publish_session_id: receipt.publish_session_id, status: 'validating', execution_state: 'unknown' } })
+    } finally { store.close(); rmSync(root, { recursive: true, force: true }) }
+  })
+
   it('retains the audit failure when status still says validating', async () => {
     const root = mkdtempSync(join(tmpdir(), 'publish-recovery-'))
     const store = new ArkmeExtensionInstallStore(root)

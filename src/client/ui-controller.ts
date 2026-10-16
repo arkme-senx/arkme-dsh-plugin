@@ -252,16 +252,16 @@ export class ArkmeUiController {
   showCalendar(): void {
     this.leaveContacts()
     if (this.state.calendarOpen === true) {
-      const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+      const { calendarInitialDate: _calendarInitialDate, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
       this.publish(rest)
       return
     }
-    const { productMode: _productMode, ...rest } = this.state
+    const { calendarInitialDate: _calendarInitialDate, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, calendarOpen: true })
   }
 
   hideCalendar(): void {
-    const { calendarOpen: _calendarOpen, ...rest } = this.state
+    const { calendarInitialDate: _calendarInitialDate, calendarOpen: _calendarOpen, ...rest } = this.state
     this.publish(rest)
   }
 
