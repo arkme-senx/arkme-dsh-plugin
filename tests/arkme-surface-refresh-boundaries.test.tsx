@@ -21,6 +21,7 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 describe('Arkme surface refresh boundaries', () => {
   let renderer: ReactTestRenderer | undefined
   beforeEach(() => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
     state.worldRenders = 0
     state.callArkme.mockReset()
     state.callArkme.mockImplementation(async (operation: string) => {

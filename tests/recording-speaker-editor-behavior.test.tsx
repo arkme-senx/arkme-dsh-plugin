@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn(), cached: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => operation === 'recordings.speaker.correction.context' ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => ['recordings.speaker.correction.context', 'recordings.speaker.consistency'].includes(operation) ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
