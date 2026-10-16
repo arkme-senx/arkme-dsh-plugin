@@ -28,3 +28,14 @@ describe('arrangement source provenance',()=>{
     expect(exactSummaryEvidence(item,[{...summary,answer:'相似但不是原文'}])).toBeUndefined()
   })
 })
+
+it('requests protected quotes only for cloud evidence and preserves local/cloud precedence', () => {
+  const e = { id: 'local', kind: 'call', role: 'initial', text: '本机旧原句', room_id: 'local-room' }
+  const local = arrangementEvidence({ source_type: 6 }, e)[0]!
+  expect(projectEvidence(local)).toMatchObject({ canOpen: true })
+  expect(projectEvidence(local).readOnExpand).toBeUndefined()
+  const cloud = arrangementEvidence({ source_type: 6, source_provenance: { version: 1, items: [{ ...e, id: 'cloud', room_id: 'cloud-room', text: '' }] } }, e)[0]!
+  expect(cloud).toMatchObject({ id: 'cloud', room_id: 'cloud-room' })
+  expect(projectEvidence(cloud)).toMatchObject({ canOpen: true, readOnExpand: true, text: '' })
+  expect(JSON.stringify(projectEvidence(cloud))).not.toContain('cloud-room')
+})

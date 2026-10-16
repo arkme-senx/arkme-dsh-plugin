@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
+  'statisticsRead',
+  'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
+  'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
   'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
   'messageSyncStatus', 'retryMessageSync',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
@@ -18,6 +22,8 @@ const expectedPublicMethods = [
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
   'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
+  'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewPrompts',
+  'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -87,7 +93,7 @@ const expectedPublicMethods = [
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages', 'searchLocations',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
-  'arrangementSourceOpen', 'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
+  'arrangementSourceRead', 'arrangementSourceOpen', 'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
@@ -105,6 +111,8 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'conversation-activity-service.ts',
+  'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
   'explore-projection.ts', 'explore-service.ts',
   'chat-message-sync-service.ts',
   'profile-image.ts',
@@ -138,6 +146,7 @@ const expectedServiceFiles = [
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
+  'calendar-day-review-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
   'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',

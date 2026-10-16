@@ -18,15 +18,18 @@ export function nearbyCorrectionItems(items: readonly ArkmeRecordingWorkbenchIte
   return nearby.slice(0, 100).sort((a, b) => a.startAtMillis - b.startAtMillis)
 }
 
-export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCurrent, intent, autoReject = false, onUpdated, onClose, onPlay }: {
+export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCurrent, intent, autoReject = false, initialSelectedIds, onUpdated, onClose, onPlay, onBack }: {
   item: ArkmeRecordingWorkbenchItem
   items: readonly ArkmeRecordingWorkbenchItem[]
   target?: Pick<ArkmeRecordingSpeakerCandidate, 'label' | 'speakerRef' | 'optionKey'>
   rejectCurrent: boolean
   intent: 'reject' | 'source' | 'review'
   autoReject?: boolean
+  /** Explicit selection from evidence review; never infer membership by time or name. */
+  initialSelectedIds?: string[]
   onUpdated(day: ArkmeRecordingDay): void
   onClose(): void
+  onBack?(): void
   onPlay?(item: ArkmeRecordingWorkbenchItem): void
 }) {
   const [currentItem, setCurrentItem] = useState(item)
@@ -37,7 +40,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const [source, setSource] = useState<ArkmeRecordingSoundSource | ''>('')
   const [detach, setDetach] = useState(intent === 'reject' || intent === 'review')
   const [review, setReview] = useState(intent === 'review')
-  const [selected, setSelected] = useState(new Set([item.itemId]))
+  const [selected, setSelected] = useState(new Set(initialSelectedIds ? [item.itemId, ...initialSelectedIds.filter(id => items.some(row => row.itemId === id))] : [item.itemId]))
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const [outcomeUnknown, setOutcomeUnknown] = useState(false)
@@ -56,7 +59,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     })
     return () => { mounted.current = false; unsubscribe() }
   }, [])
-  const candidates = nearbyCorrectionItems(availableItems, currentItem)
+  const candidates = initialSelectedIds ? availableItems : nearbyCorrectionItems(availableItems, currentItem)
   const personLabel = target?.label ?? (rejectCurrent ? item.speakerLabel : '')
   const maxItems = context?.supported ? context.maxItems : 100
   const canSave = context?.supported === true && !pending && !outcomeUnknown && selected.size > 0 && selected.size <= maxItems
@@ -67,7 +70,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     setNotice(undo ? tr('已撤销这次纠错') : tr('已保存 {v0} 段纠错', { v0: result.affectedCount }))
     if (result.day) {
       onUpdated(result.day)
-      setAvailableItems(result.day.transcript.items)
+      setAvailableItems(initialSelectedIds ? result.day.transcript.items.filter(row => initialSelectedIds.includes(row.itemId)) : result.day.transcript.items)
       setCurrentItem(result.day.transcript.items.find(row => row.itemId === item.itemId) ?? currentItem)
     }
     correction.reload()
@@ -117,9 +120,10 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   return <section aria-label={tr('说话人纠错')} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, gap: 10, fontSize: 12 }}>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
       <strong style={{ fontSize: 14 }}>{tr('纠正说话人')}</strong>
+      {onBack && <button type="button" style={button} disabled={pending || outcomeUnknown || !!notice} onClick={onBack}>{tr('返回核对')}</button>}
       <button type="button" style={button} disabled={pending} onClick={onClose}>{tr('关闭')}</button>
     </div>
-    <div style={{ color: color.secondary }}>{time(currentItem.startAtMillis)} · {tr('默认仅处理当前片段')}</div>
+    <div style={{ color: color.secondary }}>{time(currentItem.startAtMillis)} · {initialSelectedIds ? tr('仅处理手动选择的 {v0} 段', { v0: selected.size }) : tr('默认仅处理当前片段')}</div>
     {correction.loading && <div role="status">{tr('正在读取纠错状态…')}</div>}
     {context?.supported === false && <div role="status" style={{ padding: 9, borderRadius: 6, background: color.layer2, lineHeight: 1.6 }}>
       {tr('说话人纠错暂未开放。可以先查看和选择，当前选择尚未保存。')}
@@ -149,7 +153,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
           <span>{tr('从原说话人分组中拆出')}<small style={{ display: 'block', color: color.secondary, marginTop: 4, lineHeight: 1.6 }}>{tr('保留转写，身份待确认；选中多段不代表它们是同一个人。')}</small></span>
         </label>
         {!review ? <button style={button} disabled={pending || outcomeUnknown} onClick={() => { setReview(true) }}>{tr('核对附近片段')}</button> : <>
-          <div style={{ color: color.secondary, lineHeight: 1.6 }}>{tr('前后 10 分钟，最多 100 段。请试听后手动勾选；附近不代表同一个人。')}</div>
+          <div style={{ color: color.secondary, lineHeight: 1.6 }}>{initialSelectedIds ? tr('仅包含核对面板中手动选中的片段，最多 100 段。仍可取消勾选；不会扩大到整个分组。') : tr('前后 10 分钟，最多 100 段。请试听后手动勾选；附近不代表同一个人。')}</div>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} aria-label={tr('待核对片段')}>
             {candidates.map(row => <li key={row.itemId} style={{ display: 'flex', gap: 7, padding: '9px 3px', borderBottom: `1px solid ${color.border}`, alignItems: 'flex-start' }}>
               <input type="checkbox" aria-label={tr('选择 {v0} 片段', { v0: time(row.startAtMillis) })} checked={selected.has(row.itemId)} disabled={pending || outcomeUnknown || row.itemId === currentItem.itemId || (!selected.has(row.itemId) && selected.size >= maxItems)}

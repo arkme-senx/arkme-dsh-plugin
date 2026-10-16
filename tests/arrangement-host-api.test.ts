@@ -125,3 +125,10 @@ it('keeps creation identity and recognition queries on the opaque host contract'
  await dispatchArkmeHostOperation(service as never,'arrangements.recognition',{arrangementRefs:['opaque'],uids:['not-allowed']})
  expect(service.arrangementRecognition).toHaveBeenCalledWith(['opaque'])
 })
+
+it('reads a source quote with opaque references and forwards cancellation', async () => {
+  const arrangementSourceRead = vi.fn(async () => ({ state: 'ready', evidenceId: 'e', text: '原句' }))
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation({ arrangementSourceRead } as unknown as ArkmeService, 'arrangements.source.read', { arrangementRef: 'a', evidenceId: 'e', userId: 99, uid: 'must-not-cross-host' }, undefined, undefined, undefined, undefined, signal)
+  expect(arrangementSourceRead).toHaveBeenCalledWith('a', 'e', signal)
+})

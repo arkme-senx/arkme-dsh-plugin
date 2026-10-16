@@ -47,7 +47,9 @@ export interface ArkmeUiState {
   recordRevision: number
   topicDirectoryRevision: number
   mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'harness' | 'codex' | 'team' | 'explore'
+    | 'harness' | 'codex' | 'team' | 'explore' | 'statistics'
+  statisticsMonth?: string
+  calendarInitialDate?: string
   exploreModule?: ExploreModule
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
@@ -282,6 +284,18 @@ export class ArkmeUiController {
       return
     }
     this.showWorld()
+  }
+
+  showStatistics(month?: string): void {
+    this.leaveContacts()
+    const { selectedSource: _source, calendarOpen: _calendar, productMode: _product, statisticsMonth: _month, ...rest } = this.state
+    this.publish({ ...rest, mode: 'statistics', ...(month ? { statisticsMonth: month } : {}) })
+  }
+
+  openCalendarDate(date: string): void {
+    this.leaveContacts()
+    const { productMode: _product, ...rest } = this.state
+    this.publish({ ...rest, calendarOpen: true, calendarInitialDate: date })
   }
 
   showExplore(module: ExploreModule): void {
@@ -551,6 +565,8 @@ export class ArkmeUiController {
     }
     const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
+      && next.statisticsMonth === this.state.statisticsMonth
+      && next.calendarInitialDate === this.state.calendarInitialDate
       && next.exploreModule === this.state.exploreModule
       && next.codexTarget === this.state.codexTarget
       && next.teamIntent === this.state.teamIntent

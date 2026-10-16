@@ -166,7 +166,7 @@ function ExploreMutationDialog({module,request,detail,onClose,onSaved}:{module:E
   </form></ArkmeDetailShell>
 }
 
-function ExploreRecordingSource({source,onClose}:{source:Extract<ExploreSource,{kind:'recording'}>;onClose:()=>void}) {
+export function ExploreRecordingSource({source,onClose}:{source:Extract<ExploreSource,{kind:'recording'}>;onClose:()=>void}) {
   const auth=useSyncExternalStore(arkmeAuthStore.subscribe,arkmeAuthStore.getSnapshot,arkmeAuthStore.getSnapshot)
   const playback=useRecordingPlayback(auth.config?.mediaPath??'/arkme-self/api/media'),root=useRef<HTMLDivElement>(null)
   useEffect(()=>{root.current?.querySelector('[data-selected="true"]')?.scrollIntoView({block:'center'})},[])

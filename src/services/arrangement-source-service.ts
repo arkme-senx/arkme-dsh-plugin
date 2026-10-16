@@ -1,4 +1,4 @@
-import type { ArkmeArrangementSourceTarget } from '../types.js'
+import type { ArkmeArrangementSourceRead, ArkmeArrangementSourceTarget } from '../types.js'
 import type { ArrangementService } from './arrangement-service.js'
 import type { CallHistoryService } from './call-history-service.js'
 import type { ArkmePrivacyVisibilityService } from './privacy-visibility.js'
@@ -10,12 +10,24 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 export class ArrangementSourceService {
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly arrangement: Pick<ArrangementService, 'sourceEvidence' | 'sourceDocument'>,
+    private readonly arrangement: Pick<ArrangementService, 'sourceEvidence'>,
     private readonly privacy: Pick<ArkmePrivacyVisibilityService, 'lockedRecordUids'>,
     private readonly record: Pick<RecordService, 'personalRecordDetail'>,
     private readonly callHistory: Pick<CallHistoryService, 'arrangementCallDetail'>,
     private readonly source: Pick<SourceService, 'searchTargetSource'>,
   ) {}
+
+  async arrangementSourceRead(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArkmeArrangementSourceRead> {
+    try {
+      const evidence = await this.arrangement.sourceEvidence(arrangementRef, evidenceId, signal)
+      return { evidenceId, state: 'ready', text: evidence.text }
+    } catch (error) {
+      if (error instanceof ArkmePluginError && error.code === 'arrangement-source-unavailable') {
+        return { evidenceId, state: 'unavailable', reason: error.message }
+      }
+      throw error
+    }
+  }
 
   async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArkmeArrangementSourceTarget> {
     const session = await this.runtime.requireSession()
@@ -30,7 +42,7 @@ export class ArrangementSourceService {
       const detail = await this.callHistory.arrangementCallDetail(e.room_id, signal, {quote:e.text,...(typeof e.start_ms === 'number'?{startMillis:e.start_ms}:{})})
       result = { kind:'call', detail, quote:e.text, ...(typeof e.start_ms === 'number' ? {startMillis:e.start_ms>=100_000_000_000?Math.max(0,e.start_ms-detail.startedAtMillis):e.start_ms}: {}) }
     } else if (e.kind === 'agent') {
-      result={kind:'document',title:'来源指令',text:await this.arrangement.sourceDocument(arrangementRef,evidenceId,signal)}
+      result={kind:'document',title:'来源指令',text:e.text}
     } else if (e.kind === 'record' && typeof e.record_uid === 'string') {
       const raw = await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail', {record_uid:e.record_uid},session,signal,{lane:'interactive-read',bypassCache:true})
       const core = objectValue(raw.record_core)

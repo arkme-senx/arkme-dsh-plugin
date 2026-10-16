@@ -996,10 +996,15 @@ export interface ArkmeArrangementEvidence {
   role: 'initial' | 'supplement' | 'related'
   text: string
   canOpen: boolean
+  /** Read protected source text only while the arrangement detail is expanded. */
+  readOnExpand?: boolean
   sourceDate?: string
   createdAtMillis?: number
   unavailableReason?: string
 }
+export type ArkmeArrangementSourceRead =
+  | { evidenceId: string; state: 'ready'; text: string }
+  | { evidenceId: string; state: 'unavailable'; reason: string }
 export type ArkmeArrangementSourceTarget =
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
@@ -3257,6 +3262,55 @@ export interface ArkmeRecordingSpeakerRecommendation {
   optionKey?: string
 }
 
+/** Read-only, interval-bound evidence. Distances are never recognition probabilities. */
+export interface ArkmeRecordingSpeakerEvidenceInput {
+  itemRefs: string[]
+  referenceA: string[]
+  referenceB: string[]
+}
+
+export interface ArkmeRecordingSpeakerConsistencyInput {
+  anchorRefs: string[]
+  /** Optional current-page intervals; allowed only with one group anchor. */
+  itemRefs: string[]
+}
+
+export interface ArkmeRecordingSpeakerConsistencyGroup {
+  anchorRef: string
+  version: string
+  modelVersion: string
+  scoreDefinition: string
+  referenceMethod: string
+  state: 'ready' | 'partial' | 'building' | 'insufficient'
+  score: number | null
+  analyzedCount: number
+  totalCount: number
+  reviewCount: number | null
+  suspectedVoices?: number
+  items: Array<{ itemRef: string; deviation: number | null; status: 'ready' | 'insufficient'; reason?: string }>
+}
+
+export type ArkmeRecordingSpeakerConsistency = { supported: false } | { supported: true; groups: ArkmeRecordingSpeakerConsistencyGroup[] }
+
+export type ArkmeRecordingSpeakerEvidence = { supported: false } | {
+  supported: true
+  version: string
+  modelVersion: string
+  metric: 'cosine_distance'
+  aggregation: 'nearest_reference' | 'mean_reference' | 'centroid'
+  state: 'ready' | 'building'
+  reviewThreshold?: number
+  ambiguityMargin?: number
+  items: Array<{
+    itemRef: string
+    status: 'ready' | 'insufficient'
+    distanceA: number | null
+    distanceB: number | null
+    effectiveSpeechMillis: number
+    reason?: string
+  }>
+}
+
 export interface ArkmeRecordingSpeakerOption extends ArkmeRecordingSpeakerCandidate {
   currentAssignment: boolean
   recommended: boolean
@@ -4016,6 +4070,8 @@ export type ArkmePluginOperation =
   | 'speaker-directory.seen'
   | 'speaker-directory.open'
   | 'speaker-directory.avatars'
+  | 'speaker-directory.similar'
+  | 'speaker-directory.voice-samples'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'self-roles.list'
@@ -4136,6 +4192,27 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'statistics.detail'
+  | 'statistics.active'
+  | 'statistics.long'
+  | 'chat.activity.read'
+  | 'chat.activity.participants'
+  | 'chat.activity.messages'
+  | 'chat.activity.source'
+  | 'chat.word-frequency.state'
+  | 'chat.word-frequency.create'
+  | 'chat.word-frequency.participants'
+  | 'chat.word-frequency.messages'
+  | 'chat.word-frequency.source'
+  | 'recordings.speech-statistics.state'
+  | 'recordings.speech-statistics.create'
+  | 'recordings.speech-statistics.occurrences'
+  | 'recordings.speech-statistics.source'
+  | 'calendar.day-review.state'
+  | 'calendar.day-review.create'
+  | 'calendar.day-review.result'
+  | 'calendar.day-review.source'
+  | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'
   | 'user.profile.refresh'
@@ -4176,6 +4253,7 @@ export type ArkmePluginOperation =
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.source.open'
+  | 'arrangements.source.read'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'
@@ -4406,6 +4484,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.playback.open'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
+  | 'recordings.speaker.evidence'
+  | 'recordings.speaker.consistency'
   | 'recordings.speaker.assign-item'
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
