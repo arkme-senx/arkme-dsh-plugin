@@ -234,6 +234,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
+      'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_entities', 'arkme_recording_entities_start',
       'arkme_recording_notifications',
       'arkme_recording_notifications_read',

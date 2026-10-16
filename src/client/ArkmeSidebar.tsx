@@ -1,3 +1,4 @@
+import { OfflineContextCandidates, OfflineContextConnected, offlineRelinkOptions } from './offline-context/OfflineContextConnected.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
@@ -6687,7 +6688,8 @@ export function ArkmeSurface({
     kind: 'member-join'; id: string; occurredAtMillis: number; item: ArkmeTimelineMemberJoinEvent
   } | {
     kind:'member-event-gap'; id:string; occurredAtMillis:number; gapId:string
-  } | { kind: 'world-public'; id: string; occurredAtMillis: number; recordRef: string; authorName: string }>>(
+  } | { kind: 'world-public'; id: string; occurredAtMillis: number; recordRef: string; authorName: string }
+    | { kind: 'offline-context'; id: string; occurredAtMillis: number; entryRef: string; revision: string; title: string; summary: string }>>(
     () => {
       if (unifiedWindow) {
         const messageByEvent = new Map(displayItems.filter(item => item.timelineEventId !== undefined).map(item => [item.timelineEventId, item]))
@@ -6698,7 +6700,7 @@ export function ArkmeSurface({
           ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || !source || recordMutations.project(event.item, source, selfSources) !== undefined).map(event => event.kind === 'message'
             ? { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(messageByEvent.get(event.eventId) ?? event.item), occurredAtMillis: event.occurredAtMillis,
               item: messageByEvent.get(event.eventId) ?? (source ? recordMutations.project(event.item, source, selfSources)! : event.item) }
-            : event.kind === 'world-public' ? { ...event, id: event.eventId }
+            : event.kind === 'world-public' || event.kind === 'offline-context' ? { ...event, id: event.eventId }
             : event.kind === 'moment' ? { kind: 'moment' as const, id: `moment:${event.item.momentId}`, occurredAtMillis: event.occurredAtMillis, item: event.item }
               : event.kind === 'member-event' ? { kind: 'member-event' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, item: event.item }
                 : event.kind === 'member-join' ? { kind: 'member-join' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, item: event.item }
@@ -8169,6 +8171,10 @@ export function ArkmeSurface({
                   startsGroup={previous?.kind !== 'member-join'}
                   onOpenMember={(...args) => timelineActions.current.openMemberProfile(...args)}
                 />
+                if (row.kind === 'offline-context') return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
+                  <li data-arkme-conversation-row={row.id} style={{ listStyle: 'none' }}><OfflineContextConnected entryRef={row.entryRef} revision={row.revision} title={row.title} source={source} relinkOptions={offlineRelinkOptions(displayItems)} onChanged={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => {}) }} /></li>
+                </Fragment>
                 if (row.kind === 'world-public') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
                   <li data-arkme-conversation-row={row.id} style={{ listStyle: 'none' }}><ArkmeTimelinePublicNote recordRef={row.recordRef} authorName={row.authorName} isGroup={source?.kind === 'group_chat'} /></li>
@@ -8737,6 +8743,7 @@ export function ArkmeSurface({
           {selfWorkspaceSelected && <div data-arkme-header-selector="self" style={{
             gridColumn: 2, gridRow: 1, justifySelf: 'center', minWidth: 0, maxWidth: '100%',
           }}>{selfTopicMenuOwner}</div>}
+          {authenticated && activeConversation && sourceIsChat && source !== undefined && <OfflineContextCandidates key={`offline-context:${authenticatedAccountKey}:${conversationKey}`} source={source} items={displayItems} onChanged={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => {}) }} />}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeChatCalendar
             key={`chat-calendar:${authenticatedAccountKey}:${conversationKey}`}
             sourceRef={source.sourceRef} scopeKey={conversationKey} accountScope={authenticatedAccountKey}

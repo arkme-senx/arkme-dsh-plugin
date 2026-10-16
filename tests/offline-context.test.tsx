@@ -13,7 +13,7 @@ const entry: OfflineContextEntry = {
     { id: 's2', startAtMillis: 200, endAtMillis: 300, speaker: '你', text: '第二句话', soundSource: 'unknown' }],
 }
 function actions(): OfflineContextActions {
-  return { change: vi.fn(async () => ({ status: 'applied' as const })), reconcile: vi.fn(async () => 'applied' as const), openMessage: vi.fn(), openTranscript: vi.fn(), play: vi.fn() }
+  return { preview: vi.fn(async () => ({ previewRef: 'frozen', title: entry.title, summary: entry.summary.join('\n'), transcript: [], expiresAtMillis: Date.now() + 300000 })), change: vi.fn(async () => ({ status: 'applied' as const })), reconcile: vi.fn(async () => 'applied' as const), openMessage: vi.fn(), openTranscript: vi.fn(), play: vi.fn() }
 }
 function text(value: unknown): string {
   if (Array.isArray(value)) return value.map(text).join('')
@@ -63,6 +63,12 @@ describe('offline context boundaries', () => {
 })
 
 describe('offline context actions', () => {
+  it('does not offer confirmation before a changed selection has a new summary', async () => {
+    const renderer = await mount(actions(), { state: 'suggested', summary: [], title: '' })
+    expect(button(renderer, '是这次交流').props.disabled).toBe(true)
+    expect(renderer.root.findAllByProps({ role: 'status' }).some(node => text(node.props.children).includes('摘要尚待重新核对'))).toBe(true)
+    await act(async () => renderer.unmount())
+  })
   it('previews the recipient and content before sending a version-bound action', async () => {
     const transport = actions()
     const renderer = await mount(transport)
@@ -70,7 +76,7 @@ describe('offline context actions', () => {
     expect(transport.change).not.toHaveBeenCalled()
     expect(renderer.root.findByProps({ role: 'dialog' })).toBeTruthy()
     await act(async () => { button(renderer, '确认分享').props.onClick() })
-    expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ entryId: 'e', expectedRevision: 'v1', conversationKey: 'private:a', change: { kind: 'share', includeTranscript: false } }))
+    expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ entryId: 'e', expectedRevision: 'v1', conversationKey: 'private:a', change: { kind: 'share', includeTranscript: false, previewRef: 'frozen' } }))
     await act(async () => renderer.unmount())
   })
   it('locks duplicate clicks synchronously while a mutation is pending', async () => {
@@ -118,4 +124,20 @@ describe('offline context actions', () => {
     expect(transport.change).toHaveBeenCalledTimes(1)
     await act(async () => renderer.unmount())
   })
+})
+
+it('reads fresh range options and submits Unicode character boundaries', async () => {
+  const transport = actions()
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: [{ ...entry.evidence[0]!, id: 'fresh', text: '甲🙂乙丙' }] }))
+  const renderer = await mount(transport)
+  const more = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === '线下交流更多操作')
+  expect(more).toBeTruthy()
+  await act(async () => more!.props.onClick())
+  await act(async () => button(renderer, '调整录音范围').props.onClick())
+  expect(transport.rangeOptions).toHaveBeenCalled()
+  const inputs = renderer.root.findAllByType('input').filter(node => node.props.type === 'number')
+  await act(async () => { inputs[0]!.props.onChange({target:{value:'2'}}); inputs[1]!.props.onChange({target:{value:'3'}}) })
+  await act(async () => button(renderer, '保存').props.onClick())
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({change:{kind:'range',evidenceIds:['fresh'],startOffset:1,endOffset:3}}))
+  await act(async () => renderer.unmount())
 })

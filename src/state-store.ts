@@ -1,3 +1,4 @@
+import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
 import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
@@ -30,6 +31,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+ offlineContextJournal?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
 
   version: 2
@@ -41,6 +43,22 @@ interface PersistedState {
   recordReeditSubmissionsByUser: unknown
   recordReeditDraftRevision: unknown
   recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>>
+}
+
+function offlineContextJournalScope(state:PersistedState,scope:string):Record<string,OfflineContextJournalEntry> {
+ const fail=()=>new Error('本地上下文操作记录损坏，已保留恢复信息')
+ if(!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw fail()
+ if(state.offlineContextJournal===undefined)state.offlineContextJournal={}
+ const journal=state.offlineContextJournal
+ if(!journal || typeof journal!=='object' || Array.isArray(journal))throw fail()
+ const scoped=journal as Record<string,unknown>
+ if(scoped[scope]===undefined)scoped[scope]={}
+ const entries=scoped[scope]
+ if(!entries || typeof entries!=='object' || Array.isArray(entries))throw fail()
+ for(const value of Object.values(entries)) {
+  if(!value || typeof value!=='object' || typeof value.fingerprint!=='string' || typeof value.sealed!=='string' || value.expiresAtMillis!==undefined && !Number.isSafeInteger(value.expiresAtMillis))throw fail()
+ }
+ return entries as Record<string,OfflineContextJournalEntry>
 }
 
 function emptyState(): PersistedState {
@@ -343,6 +361,7 @@ function parseState(raw: string): PersistedState {
       ? source.uniqueCode
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
+    offlineContextJournal:source.offlineContextJournal,
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -458,6 +477,23 @@ export class ArkmeStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
+  async readOfflineContextJournal(scope: string): Promise<Record<string, OfflineContextJournalEntry>> {
+    return this.read(state => structuredClone(offlineContextJournalScope(state,scope)))
+  }
+  async putOfflineContextJournal(scope:string,id:string,entry:OfflineContextJournalEntry):Promise<void> {
+    await this.update(state=>{
+      const entries=offlineContextJournalScope(state,scope)
+      const prior=entries[id]
+      if(prior && prior.fingerprint!==entry.fingerprint) throw new Error('操作编号已用于其他内容')
+      if(prior) return
+      for(const [key,value] of Object.entries(entries)) if(value.expiresAtMillis!==undefined && value.expiresAtMillis<Date.now()) delete entries[key]
+      if(Object.keys(entries).length>=64) throw new Error('请先核对尚未完成的操作')
+      entries[id]=structuredClone(entry)
+    })
+  }
+  async deleteOfflineContextJournal(scope:string,id:string,fingerprint:string):Promise<void> {
+    await this.update(state=>{const entries=offlineContextJournalScope(state,scope);if(entries[id]?.fingerprint===fingerprint)delete entries[id]})
+  }
   async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     return await this.read(state => [...(state.pendingByUser[String(userId)] ?? [])])
   }

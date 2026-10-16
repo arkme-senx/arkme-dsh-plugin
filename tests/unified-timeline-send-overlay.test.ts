@@ -11,7 +11,7 @@ function item(sequence: number, extra: Partial<ArkmeTimelineItem> = {}): ArkmeTi
     textContent: '', senderName: '我', isMe: true, status: 1, ...extra }
 }
 function window(items = [item(1843), item(1882)]): ArkmeUnifiedTimelineWindow {
-  return { protocolVersion: 1, events: items.map(item => ({ kind: 'message', item, eventId: `event-${item.itemUid}`,
+  return { protocolVersion: 2, events: items.map(item => ({ kind: 'message', item, eventId: `event-${item.itemUid}`,
     source: 'messages', occurredAtMillis: item.sendAtMillis, orderTie: item.itemUid, contentStatus: 'available' })),
     sources: [{ source: 'messages', status: 'ready', itemCount: items.length }], complete: true,
     windowTokens: ['opaque'], olderHasMore: true, newerHasMore: false, hasMore: true }

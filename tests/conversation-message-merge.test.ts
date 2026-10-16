@@ -12,7 +12,7 @@ const canonical = (id = 'local', sequence = 9, version = 1): ArkmeTimelineItem =
   recordVersion: version, textContent: `canonical ${version}` })
 const ack = (id = 'local'): ArkmeSourceSendResult => ({ sourceRef: source, itemUid: id, status: 1, sequence: 9, localState: 'synced' })
 function page(items: ArkmeTimelineItem[]): ArkmeUnifiedTimelineWindow {
-  return { protocolVersion: 1, complete: true, hasMore: false, olderHasMore: false, newerHasMore: false, windowTokens: ['window'],
+  return { protocolVersion: 2, complete: true, hasMore: false, olderHasMore: false, newerHasMore: false, windowTokens: ['window'],
     sources: [{ source: 'messages', status: 'ready', itemCount: items.length }],
     events: items.map(item => ({ kind: 'message', eventId: item.timelineEventId!, item, source: 'messages',
       occurredAtMillis: item.sendAtMillis, orderTie: item.timelineOrderTie!, contentStatus: 'available', windowToken: 'window' })) }

@@ -304,6 +304,16 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.operationalState.writeCancellationCompletion(completion)
   }
 
+  async readOfflineContextJournal(scope: string) {
+    return await this.operationalState.readOfflineContextJournal(scope)
+  }
+  async putOfflineContextJournal(scope: string, id: string, entry: import('./offline-context-contract.js').OfflineContextJournalEntry): Promise<void> {
+    await this.operationalState.putOfflineContextJournal(scope, id, entry)
+  }
+  async deleteOfflineContextJournal(scope: string, id: string, fingerprint: string): Promise<void> {
+    await this.operationalState.deleteOfflineContextJournal(scope, id, fingerprint)
+  }
+
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
   }
