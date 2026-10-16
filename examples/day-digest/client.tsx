@@ -37,7 +37,7 @@ function DayDigest() {
       // No await before this call: it must retain the current browser gesture.
       const receipt = await sdk.generateDayDigest({ ...query, kinds: ['summary', 'timeline'], sources: ['audio', 'call', 'chat', 'self'], idempotencyKey: key.current }, abort.signal)
       if (current !== epoch.current) return
-      setState(previous => ({ ...previous, ...receipt, result: receipt.result ?? previous?.result ?? null })); key.current = ''
+      setState(receipt); key.current = ''
     } catch (reason) {
       // Preserve the exact key after a lost acknowledgement. Never auto-retry.
       if (current === epoch.current) setError(String(reason))
