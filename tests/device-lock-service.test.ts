@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeviceLockService } from '../src/services/device-lock-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
 import { DeviceControlRealtime } from '../src/services/device-control-realtime.js'
 const owners: DeviceLockService[] = []
+beforeEach(() => { vi.spyOn(DeviceControlRealtime.prototype, 'connect').mockImplementation(() => undefined) })
 afterEach(() => { for (const owner of owners.splice(0)) owner.dispose(); vi.restoreAllMocks(); vi.useRealTimers() })
 const sid = 'session_00000000000001'
 const token = (sessionId = sid) => `e30.${Buffer.from(JSON.stringify({user_id: 1, client_id: 2, session_id: sessionId})).toString('base64url')}.signature`

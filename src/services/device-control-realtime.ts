@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import { dshRemoteRealtimeEndpoint } from '../dsh-remote/default-socket-factory.js'
+import type { ArkmeServiceConfig } from './service.js'
+
+// Device control stays available in profiles that do not configure DSH remote.
+export function deviceControlRealtimeOrigin(config: Pick<ArkmeServiceConfig, 'environment' | 'dshRemoteRealtimeBaseUrl'>): string {
+  return config.dshRemoteRealtimeBaseUrl?.trim() || (config.environment === 'prod'
+    ? 'https://realtime.jotmo.cc' : 'https://jotmo-realtime.senguo.me')
+}
 
 /** Only account-scoped hints cross this transport; every hint triggers an owner snapshot read. */
 export class DeviceControlRealtime {

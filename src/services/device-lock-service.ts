@@ -2,7 +2,7 @@ import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
 import { arkmeDesktopBridgeConfigFromEnv, requestArkmeDesktopBridge, type ArkmeDesktopBridgeAction, type ArkmeDesktopBridgeConfig } from './desktop-attention-bridge.js'
-import { DeviceControlRealtime } from './device-control-realtime.js'
+import { DeviceControlRealtime, deviceControlRealtimeOrigin } from './device-control-realtime.js'
 
 interface NativeSnapshot {
   supported: boolean; locked: boolean; sessionEnded: boolean; needsCredentials: boolean; message: string
@@ -29,7 +29,7 @@ export class DeviceLockService {
   private readonly realtime: DeviceControlRealtime
   constructor(private readonly runtime: ServiceRuntime, private readonly localLogout: (expected: ArkmeSessionCredentials) => Promise<unknown>,
     private readonly config: ArkmeDesktopBridgeConfig | undefined = arkmeDesktopBridgeConfigFromEnv(process.env)) {
-    this.realtime = new DeviceControlRealtime(runtime.config.dshRemoteRealtimeBaseUrl, () => {
+    this.realtime = new DeviceControlRealtime(deviceControlRealtimeOrigin(runtime.config), () => {
       if (this.disposed) return
       if (this.task !== undefined) this.refreshAgain = true
       else void this.refresh().catch(() => undefined)

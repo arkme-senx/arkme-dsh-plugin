@@ -12,10 +12,15 @@ vi.mock('ws', async () => {
     terminate() { if (!this.ended) { this.ended = true; this.emit('close') } }
   } }
 })
-import { DeviceControlRealtime } from '../src/services/device-control-realtime.js'
+import { DeviceControlRealtime, deviceControlRealtimeOrigin } from '../src/services/device-control-realtime.js'
 const connections: DeviceControlRealtime[] = []
 afterEach(() => { connections.splice(0).forEach(c => c.close()); state.sockets.splice(0) })
 describe('device control realtime wire', () => {
+  it('resolves the matching environment without requiring DSH remote configuration', () => {
+    expect(deviceControlRealtimeOrigin({environment: 'test'})).toBe('https://jotmo-realtime.senguo.me')
+    expect(deviceControlRealtimeOrigin({environment: 'prod', dshRemoteRealtimeBaseUrl: '  '})).toBe('https://realtime.jotmo.cc')
+    expect(deviceControlRealtimeOrigin({environment: 'test', dshRemoteRealtimeBaseUrl: ' https://custom.example.test '})).toBe('https://custom.example.test')
+  })
   it('uses explicit module identity for subscription and registration and only refreshes its own account', () => {
     const changed = vi.fn()
     const owner = new DeviceControlRealtime('https://realtime.example.test', changed); connections.push(owner)
