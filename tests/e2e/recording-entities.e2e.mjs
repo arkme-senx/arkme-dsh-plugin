@@ -27,11 +27,12 @@ const parts = [{ alg: 'HS256', typ: 'JWT' }, { user_id: userID, client_id: 20001
 const token = `${parts}.${createHmac('sha256', 'local-entity-fixture-only').update(parts).digest('base64url')}`
 const date = new Date(); date.setHours(0, 0, 0, 0)
 const stamp = date.getTime(), speechStart = stamp + 9 * 3600000
+const midnightStart = stamp + 86400000 + 52 * 60000
 const rawText = '  (背景音) 🙂武汉欢迎你。张三正在介绍黄鹤楼。  '
 const base = () => ({ day_stamp: stamp, transcript_source: 'system', status: 'succeeded', view_mode: 'official', state_revision: 3,
   projection_revision: 2, job_id: '650000000000000000000001', result_version: 'fixture-version-one', pollable: false,
   recognition_progress: { stage: 'succeeded', completed_units: 1, total_units: 1 }, entities: [
-    { entity_key: 'place', official_entity_id: '650000000000000000000002', canonical_name: '武汉', type: 3, occurrence_count: 1 },
+    { entity_key: 'place', official_entity_id: '650000000000000000000002', canonical_name: '武汉', type: 3, occurrence_count: 2 },
     { entity_key: 'person', official_entity_id: '650000000000000000000003', canonical_name: '张三', type: 1, occurrence_count: 1 },
   ] })
 
@@ -57,12 +58,15 @@ describe('packaged recording entities', () => {
         if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: token, refresh_token: 'fixture-refresh' }
         else if (req.url === '/api/v1/auth/get-user-info') data = { user_id: userID, nick_name: '实体页面验收', phone: '13800000000' }
         else if (req.url.endsWith('/audio-day/list')) data = { ...result, day_stamp: body.day_stamp, ...(body.day_stamp !== stamp ? { status: startedDays.has(body.day_stamp) ? 'processing' : 'not_started', can_start: !startedDays.has(body.day_stamp), pollable: startedDays.has(body.day_stamp), recognition_progress: { stage: startedDays.has(body.day_stamp) ? 'queued' : 'not_started' }, entities: [] } : {}) }
-        else if (req.url.endsWith('/audio-day/ensure')) { startedDays.add(body.day_stamp); data = { status: 'accepted', job_id: 'internal-job' } }
+        else if (req.url.endsWith('/audio-day/start')) { startedDays.add(body.day_stamp); data = { status: 'accepted', job_id: 'internal-job' } }
         else if (req.url.endsWith('/audio-day/occurrences')) data = { job_id: body.job_id, view_mode: 'official', result_version: body.result_version, official_entity_id: body.official_entity_id,
           occurrences: [{ occurrence_id: 'mention', row_id: 'session:child:0:system', session_id: 'session', child_id: 'child', item_index: 0,
-            transcript_source: 'system', start_ms: speechStart, end_ms: speechStart + 10000, rune_start: 9, rune_end: 11, observed_text: '武汉' }] }
-        else if (req.url.endsWith('/one-day-trans')) data = { session_ls: [{ id: 'session', belong_usr: userID, start_at: speechStart, end_at: speechStart + 10000, duration: 10000 }],
-          child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 10000, n: 1, b: 1, t: rawText }] }] }
+            transcript_source: 'system', start_ms: speechStart, end_ms: speechStart + 10000, rune_start: 9, rune_end: 11, observed_text: '武汉' },
+            { occurrence_id: 'midnight', row_id: 'session:child:1:system', session_id: 'session', child_id: 'child', item_index: 1,
+              transcript_source: 'system', start_ms: midnightStart, end_ms: midnightStart + 1000, rune_start: 2, rune_end: 4, observed_text: '武汉' }] }
+        else if (req.url.endsWith('/one-day-trans')) data = { session_ls: [{ id: 'session', belong_usr: userID, start_at: speechStart, end_at: midnightStart + 1000, duration: midnightStart + 1000 - speechStart }],
+          child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 10000, n: 1, b: 1, t: rawText },
+            { s: midnightStart - speechStart, e: midnightStart - speechStart + 1000, n: 1, t: '抵达武汉，跨日原文仍可查看。' }] }] }
         else if (req.url.endsWith('/get-calender-summary')) data = { duration_ls: Array.from({ length: Math.round((body.to_stamp - body.from_stamp) / 86400000) }, (_, i) => body.from_stamp + i * 86400000 === stamp ? 10000 : 0), un_click_session_ids_per_day: [] }
         else if (req.url.endsWith('/get-speaker-ls')) data = { spk_ls: [] }
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 200, data }))
@@ -86,6 +90,7 @@ describe('packaged recording entities', () => {
       const list = await sdk.recordingEntities({ dateStamp: stamp }); expect(list.entities.map(item => item.name)).toEqual(['武汉', '张三'])
       const mentions = await sdk.recordingEntityOccurrences({ entityRef: list.entities[0].entityRef })
       expect(mentions.items[0]).toMatchObject({ observedText: '武汉', target: { start: 1, length: 2 } })
+      expect(mentions.items[1]).toMatchObject({ observedText: '武汉', target: { start: 2, length: 2, sourceText: '抵达武汉，跨日原文仍可查看。' } })
       expect(JSON.stringify([list, mentions])).not.toMatch(/65000000000000000000000|session:child|fixture-version/)
       const handle = await scaffold.ctx.agents.create({ sessionId: `entities-${randomUUID()}`, meta: { cwd: scaffold.workspaceCwd }, agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } })
       expect(scaffold.ctx.tools.get('arkme_recording_entities', handle.agent)).toBeDefined()
@@ -94,8 +99,10 @@ describe('packaged recording entities', () => {
         expect(output.isError).toBe(false); expect(JSON.stringify(output)).toContain('武汉')
       }
       expect(scaffold.ctx.tools.get('arkme_recording_entities_start', handle.agent)).toBeDefined()
-      const started = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_entities_start', arguments: { date_stamp: stamp }, agent: handle.agent, signal: new AbortController().signal })
+      const requestedDate = new Date(stamp); requestedDate.setDate(requestedDate.getDate() - 2)
+      const started = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_recording_entities_start', arguments: { date_stamp: requestedDate.getTime() }, agent: handle.agent, signal: new AbortController().signal })
       expect(started.isError).toBe(false); expect(JSON.stringify(started)).toContain('accepted')
+      expect([...startedDays].sort()).toEqual([requestedDate.getTime(), stamp].sort())
       phase('tools-ready')
       browser = await chromium.launch({ channel: 'chrome', headless: true }); page = await browser.newPage({ viewport: { width: 1680, height: 1050 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' })
       phase('browser-ready')
@@ -110,9 +117,12 @@ describe('packaged recording entities', () => {
       expect(await panel.locator('.arkme-entity-item').count()).toBe(1)
       await panel.getByRole('button', { name: '地点', exact: true }).click()
       await panel.locator('.arkme-entity-item-title').click()
-      await expect.poll(() => panel.locator('.arkme-entity-occurrence').count(), { timeout: 15000 }).toBe(1)
-      await panel.locator('.arkme-entity-occurrence').click()
+      await expect.poll(() => panel.locator('.arkme-entity-occurrence').count(), { timeout: 15000 }).toBe(2)
+      await panel.locator('.arkme-entity-occurrence').first().click()
       await expect.poll(() => page.locator('[data-recording-entity-highlight]').allTextContents(), { timeout: 15000 }).toEqual(['武汉'])
+      await panel.locator('.arkme-entity-occurrence').nth(1).click()
+      expect(await panel.getByRole('region', { name: '提及原文' }).innerText()).toContain('抵达武汉，跨日原文仍可查看。')
+      expect(await panel.locator('.arkme-entity-source [data-recording-entity-highlight]').allTextContents()).toEqual(['武汉'])
       const artifacts = process.env.ARKME_E2E_ARTIFACTS
       if (artifacts) { await mkdir(artifacts, { recursive: true }); await page.screenshot({ path: join(artifacts, 'entities-wide.png') }) }
       await panel.getByRole('button', { name: '关闭实体列表' }).click()
@@ -142,10 +152,12 @@ describe('packaged recording entities', () => {
       await page.getByRole('button', { name: '查看录音实体' }).click()
       await expect.poll(() => panel.innerText(), { timeout: 15000 }).toContain('尚未识别实体')
       expect(await panel.locator('.arkme-entity-item').count()).toBe(0)
-      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(2)
+      expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(2)
+      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(0)
+      expect(await panel.innerText()).toContain('仅支持手动识别，并且会消耗AI额度的积分')
       await panel.getByRole('button', { name: '开始识别', exact: true }).click()
       await expect.poll(() => panel.innerText()).toContain('等待实体识别')
-      expect(calls.filter(path => path.endsWith('/ensure'))).toHaveLength(3)
+      expect(calls.filter(path => path.endsWith('/start'))).toHaveLength(3)
       phase('ui-manual-start-ready')
       if (artifacts) await page.screenshot({ path: join(artifacts, 'manual-start-queued.png') })
     } catch (error) {

@@ -183,6 +183,7 @@ export interface ArkmeRemoteRequestOptions {
 }
 
 export class ArkmePluginError extends Error {
+  readonly publishReceipt?: ArkmePluginErrorBody['publishReceipt']
   readonly upstreamStatus?: number
   readonly retryAfterMillis?: number
   readonly failureKind?: ArkmePluginErrorBody['failureKind']
@@ -197,11 +198,12 @@ export class ArkmePluginError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean;
+    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean; publishReceipt?: ArkmePluginErrorBody['publishReceipt'];
       failureKind?: ArkmePluginErrorBody['failureKind']; retryScope?: ArkmePluginErrorBody['retryScope']; recovery?: ArkmePluginErrorBody['recovery']; imageFailures?: ArkmePluginErrorBody['imageFailures'] },
   ) {
     super(message, options)
     this.name = 'ArkmePluginError'
+    if (options?.publishReceipt !== undefined) this.publishReceipt = options.publishReceipt
     if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
     if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
     if (options?.failureKind !== undefined) this.failureKind = options.failureKind
@@ -741,7 +743,11 @@ export class ServiceRuntime {
     const abort = (): void => controller.abort(signal.reason)
     if (signal.aborted) abort()
     else signal.addEventListener('abort', abort, { once: true })
-    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs)
+    // Publication performs synchronous validation and audit within a 90s server
+    // budget. Keep its receipt reachable instead of aborting at the 30s default.
+    const publishing = baseUrl === this.config.extensionPublishBaseUrl?.trim()
+      && ['/api/v1/extensions/publish-session/complete', '/api/v1/extensions/publish-session/resume'].includes(path)
+    const timeout = setTimeout(() => controller.abort(), publishing ? Math.max(100_000, this.config.requestTimeoutMs) : this.config.requestTimeoutMs)
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
@@ -775,13 +781,14 @@ export class ServiceRuntime {
             ? errorEnvelope.code
             : undefined
           const serviceMessage = clippedText(errorEnvelope?.message, 1_000)
-          throw new ArkmePluginError(
+          throw new ArkmeUpstreamResponseError(
             serviceCode === undefined ? 'arkme-http-error' : `arkme-code-${serviceCode}`,
             serviceMessage === ''
               ? `Arkme 服务返回 HTTP ${response.status}`
               : `${serviceMessage}（服务错误码 ${serviceCode ?? response.status}）`,
             response.status === 408 || response.status === 429 || response.status >= 500,
             response.status,
+            errorEnvelope?.data,
             {
               upstreamStatus: response.status,
               ...(retryAfter === undefined ? {} : { retryAfterMillis: retryAfter }),

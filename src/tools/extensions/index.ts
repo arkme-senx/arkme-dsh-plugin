@@ -63,8 +63,11 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'extensions, call arkme_extension_publish with action=prepare once with the complete batch. It only validates and returns a question. '
   + 'Show that question in ordinary conversation and wait for a later direct human message that clearly confirms it in any natural wording. '
   + 'Never call action=confirm in the prepare turn. After that clear confirmation, call the same tool with action=confirm '
-  + 'and no items; do not claim publication for the prepare result. When the user asks to create or replace an extension icon and an '
-  + 'image already exists inside this current Agent workspace, call arkme_extension_icon_set with its relative workspace_path; safe SVG '
+  + 'and no items; do not claim publication for the prepare result. When an '
+  + 'upload has failed or is validating, use arkme_extension_publish_status (omit publish_session_id to list this account\'s receipts). '
+  + 'Do not use marketplace inspect as publication status, change versions blindly, or assume validating is a running background task. '
+  + 'Use arkme_extension_publish_resume only after showing the exact failed session and receiving the current human\'s confirmation. '
+  + 'When the user asks to create or replace an extension icon and an image already exists inside this current Agent workspace, call arkme_extension_icon_set with its relative workspace_path; safe SVG '
   + 'is accepted and normalized by the Host. For extension preview galleries, arkme_extension_preview_add accepts workspace_paths for one '
   + 'or more PNG, JPEG, WebP, or safe SVG files generated inside this current Agent workspace, as well as direct user-message attachments. '
   + 'For icon replacement or preview addition, first call the matching Tool with action=prepare and the exact source. Show its question in '
@@ -280,6 +283,45 @@ export function registerArkmeExtensionTools(
         ...(clean(item.changelog) === '' ? {} : { changelog: clean(item.changelog) }),
 		...(clean(item.github_repository_url) === '' ? {} : { githubRepositoryUrl: clean(item.github_repository_url) }),
       })), exec.signal)
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_publish_status',
+    description: 'Read a current-account publication receipt, including safe failure, execution state and recovery deadline. Omit publish_session_id to list receipts, including unpublished extensions. This never starts an audit. Do not infer publish state from marketplace inspect.',
+    parameters: {
+      publish_session_id: { type: 'string', description: 'Exact publish_session_id from a receipt. Omit to list recent sessions.' },
+      limit: { type: 'integer', description: 'Page size 1-100, default 20.' },
+      offset: { type: 'integer', description: 'Page offset, default 0.' },
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const id = clean(args.publish_session_id)
+      const result = id === '' ? await manager.publishSessions(args.limit ?? 20, args.offset ?? 0, exec.signal) : await manager.publishStatus(id, exec.signal)
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_publish_resume',
+    description: 'Explicitly resume one failed publication using its original immutable uploads. First call returns a conversational confirmation. Show it, wait for a later direct human confirmation, then call with the same exact session ID. Never automatically retry or replace the version. Errors retain a receipt for status queries.',
+    parameters: { publish_session_id: { type: 'string', required: true, description: 'Exact owned publish_session_id from publish status.' } },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const id = clean(args.publish_session_id)
+      const result = await actionConversation.prepareOrExecute({
+        agent: requireAgent(exec) as Agent, callId: exec.callId, rootCallId: exec.rootCallId,
+        operationKey: 'arkme_extension_publish_resume', arguments: { publish_session_id: id },
+        prepare: async () => {
+          const status = await manager.publishStatus(id, exec.signal)
+          if (status.can_resume !== true) throw new Error(status.error_message || '该发布会话当前不可恢复，请刷新状态')
+          return status
+        },
+        question: status => `是否恢复扩展 ${status?.extension_id ?? ''} 的 ${status?.version ?? ''} 版本发布（会话 ${id}）？将重新校验和审核原上传材料。`,
+        execute: async () => await manager.resumePublish(id, exec.signal),
+      })
       return JSON.stringify(result, undefined, 2)
     },
   }))

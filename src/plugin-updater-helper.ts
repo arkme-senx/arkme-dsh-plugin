@@ -1,3 +1,4 @@
+import { assertHostCapability } from './host-policy.js'
 import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'node:fs'
 import { readFile, unlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -436,6 +437,7 @@ async function rollbackAndRestart(
 }
 
 export async function runPluginUpdater(planPath: string): Promise<void> {
+  assertHostCapability('runtimeSelfUpdate')
   const plan = completeReceiptMetadata(
     parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown),
   )

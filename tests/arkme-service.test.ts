@@ -1216,6 +1216,10 @@ describe('ArkmeService', () => {
     })
 
     expect(service.clientConfig()).toEqual({
+      hostPolicy: {
+        distribution: 'website',
+        capabilities: { clientSelfUpdate: true, runtimeSelfUpdate: true, executableExtensionInstall: true },
+      },
       captchaId: 'captcha-test-id-1234567890',
       baiduMapBrowserAk: '',
       environment: 'test',
@@ -1228,6 +1232,26 @@ describe('ArkmeService', () => {
       shareWebsite: 'https://app.arkme.ai',
       recordingWorkbenchEnabled: true,
     })
+  })
+
+  it('publishes MAS capabilities without exposing the credential namespace', () => {
+    vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
+      schemaVersion: 1,
+      distribution: 'mas',
+      capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      credentialServicePrefix: 'com.senqisi.dsh-arkme.mas',
+    }))
+    try {
+      const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), async () => {
+        throw new Error('not used')
+      })
+      expect(service.clientConfig().hostPolicy).toEqual({
+        distribution: 'mas',
+        capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {

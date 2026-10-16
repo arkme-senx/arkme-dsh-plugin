@@ -1,3 +1,4 @@
+import { ArkmeAutomaticAiSettings } from './ArkmeAutomaticAiSettings.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import { arkmeAuthStore } from './auth-store.js'
@@ -21,6 +22,7 @@ function UsageSettings({ scope, userId }: { scope: string; userId: number }) {
   return <div className="arkme-usage-settings" data-arkme-settings-page="usage">
     <ArkmeAccountUsageDetails accountScope={scope} onViewMembership={() => setMemberOpen(true)} />
     <button ref={membershipTrigger} type="button" className="arkme-settings-link" onClick={() => setMemberOpen(true)}>{tr("查看会员权益 ›")}</button>
+    <ArkmeAutomaticAiSettings accountScope={scope} />
     {memberOpen && <ArkmeMembershipDialog userId={userId} state={membership.state} onRefresh={membership.refresh} onClose={() => setMemberOpen(false)} returnFocusRef={membershipTrigger} />}
   </div>
 }

@@ -1,6 +1,10 @@
 import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
 export type { OfflineContextRangeOptions,OfflineContextRequest,OfflineContextCommand,OfflineContextPreview,OfflineContextCommandResult,OfflineContextList,OfflineContextPort,OfflineContextTranscript,OfflineContextPlayback,OfflineContextCapability,OfflineContextCoverage } from '../offline-context-contract.js'
 export type { OfflineContextEntry,OfflineContextEvidence,OfflineContextMessage } from '../offline-context.js'
+import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
+export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
+import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
 import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
@@ -444,6 +448,8 @@ export class ArkmeClientError extends Error {
   }
 }
 
+export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
+
 export interface ArkmeSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
@@ -547,6 +553,25 @@ export class ArkmeSdk {
     return await this.call('recordings.speaker.options', {}, signal)
   }
 
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
+    return this.call('recordings.speaker.correction.items', { ...query }, signal)
+  }
+
+  /** Human correction uses the same account-bound item references as the UI. */
+  /** Read only: null means no committed receipt was observed, not a failed write. */
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    return this.call('recordings.speaker.correction.result', { ...query }, signal)
+  }
+  async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext> {
+    return this.call('recordings.speaker.correction.context', { itemRef }, signal)
+  }
+  async applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.apply', { ...input }, signal)
+  }
+  async undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.undo', { ...input }, signal)
+  }
+
   async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> {
     await this.requireSpeakerPresence(signal)
     return await this.call('recordings.speaker.presence', {}, signal)
@@ -570,6 +595,15 @@ export class ArkmeSdk {
     return capabilities
   }
 
+  async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.query', { expectedAccountScope }, signal)
+  }
+  /** Enable only after a human explicitly accepts ongoing actual-usage charges. */
+  async updateAutomaticCapability(expectedAccountScope: string, input: ArkmeCapabilityUpdate, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.update', { expectedAccountScope, ...input }, signal)
+  }
   async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
     if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
     return this.call('account.points.query', { expectedAccountScope }, signal)
@@ -1137,6 +1171,30 @@ export class ArkmeSdk {
         ? {}
         : { currentSessionId: options.currentSessionId.trim() }),
     }, options.signal)
+  }
+
+  /** List this account's publication receipts without starting validation or audit. */
+  async extensionPublishSessions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<import('../extensions/types.js').ArkmeExtensionPublishPage> {
+    await this.requireExtensionPublishRecovery(options.signal)
+    return await this.call('extensions.publish.list', { limit: options.limit ?? 20, offset: options.offset ?? 0 }, options.signal)
+  }
+
+  /** Read-only: this never starts an audit or retries publication. */
+  async extensionPublishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.status', { publishSessionId }, signal)
+  }
+
+  /** Write: call only for an explicit current human action. Never automatically retry. */
+  async resumeExtensionPublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.resume', { publishSessionId }, signal)
+  }
+
+  private async requireExtensionPublishRecovery(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.extensionPublishRecovery !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持发布状态查询与恢复', retryable: false })
   }
 
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
