@@ -69,6 +69,24 @@ describe('device lock Host lifecycle', () => {
   it('preserves old native host logout compatibility', async () => {
     const f = fixture(); f.legacy(); expect(await f.owner.refresh()).toMatchObject({available: false}); expect(await f.owner.beforeLogout()).toBe(false)
   })
+  it('reaches native unlock without requiring remote refresh', async () => {
+    const f = fixture(); f.native.locked = true
+    const original = f.fetchImpl.getMockImplementation()!
+    f.fetchImpl.mockImplementation(async (url, init) => {
+      const action = JSON.parse(String(init?.body)).action
+      if (action === 'device.lock.sync' || action === 'device.lock.bind') throw new Error('remote unavailable')
+      return original(url, init)
+    })
+    expect(await f.owner.requestUnlock()).toMatchObject({available: true, locked: true})
+    const actions = f.fetchImpl.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).action)
+    expect(actions).toContain('device.lock.unlock')
+    expect(actions).not.toContain('device.lock.sync'); expect(actions).not.toContain('device.lock.bind')
+  })
+  it('does not route a replaced account to the previous native binding', async () => {
+    const f = fixture(); f.native.locked = true; f.replace()
+    await expect(f.owner.requestUnlock()).rejects.toThrow('登录状态已变化')
+    expect(f.fetchImpl.mock.calls.some(([, init]) => JSON.parse(String(init?.body)).action === 'device.lock.unlock')).toBe(false)
+  })
   it('does not label a server revocation failure as successful logout', async () => {
     const f = fixture(); await f.owner.refresh(); f.failRevoke(); await expect(f.owner.beforeLogout()).rejects.toThrow(); expect(f.getSession()).toBeDefined(); expect(f.cleanups()).toBe(0)
   })

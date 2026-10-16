@@ -112,8 +112,13 @@ export class DeviceLockService {
     return this.project(await this.bridge('device.lock.lock'), true)
   }
   async requestUnlock(): Promise<ArkmeDeviceLockSnapshot> {
-    await this.refresh()
-    if (!this.state.available) throw new ArkmePluginError('device-lock-unavailable', '设备解锁暂不可用，请稍后重试', true, 503)
+    if (this.disposed || !await this.nativeSupported()) throw new ArkmePluginError('device-lock-unavailable', '当前桌面暂不支持解锁', false, 501)
+    const native = await this.bridge('device.lock.status')
+    const session = await this.runtime.accountScopedSession()
+    if (this.disposed || session === undefined || !sameLogin(session, native)) throw new ArkmePluginError('login-context-changed', '登录状态已变化，请重试', true, 409)
+    if (native.sessionEnded) return this.refresh()
+    // Local OS authentication must remain reachable while remote sync is down.
+    // The native owner alone verifies credentials and applies the unlock fact.
     return this.project(await this.bridge('device.lock.unlock'), true)
   }
   async beforeLogout(expected?: ArkmeSessionCredentials): Promise<boolean> {
