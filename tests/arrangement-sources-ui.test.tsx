@@ -1,10 +1,13 @@
 import { act, create } from 'react-test-renderer'
+import type { ReactNode } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 const mock=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',async original=>({...await original<typeof import('../src/client/api.js')>(),callArkme:mock.call}))
+vi.mock('../src/client/ArkmeDetailShell.js', () => ({ ArkmeDetailShell: ({ children, title }: { children: ReactNode; title: string }) => <section aria-label={title}>{children}</section> }))
 import { ArkmeArrangementSources } from '../src/client/ArkmeArrangementSources.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeArrangementEvidence } from '../src/types.js'
+import { ArkmeClientError } from '../src/client/api.js'
 beforeEach(() => { mock.call.mockReset() })
 it('opens the verified historical summary version and separates later attachments',async()=>{
   mock.call.mockResolvedValue({kind:'audio_summary',dateStamp:1791734400000,tzOffsetMillis:28800000,summaryId:'original-version'})
@@ -109,4 +112,96 @@ it('bounds automatic source reads to two and stops queued work when closed', asy
   expect(mock.call.mock.calls.every(call => call[2].aborted)).toBe(true)
   await act(async () => requests[1]!.resolve({ evidenceId: '1', state: 'ready', text: '已关闭' }))
   expect(mock.call).toHaveBeenCalledTimes(3)
+})
+
+const callSources: ArkmeArrangementEvidence[] = ['first', 'second', 'third'].map(id => ({ id, kind: 'call', role: 'initial', canOpen: true, readOnExpand: true }))
+const unavailable = () => new ArkmeClientError({ code: 'arrangement-source-unavailable', message: '原通话已删除或当前无权查看', retryable: false })
+const sourceTarget = { kind: 'document', title: '已核验来源', text: '后续有效依据' }
+function openedEvidence() { return mock.call.mock.calls.filter(([op]) => op === 'arrangements.source.open').map(([, params]) => params.evidenceId) }
+
+it('opens later verified original evidence from a collapsed card and revalidates it on the next click', async () => {
+  mock.call.mockRejectedValueOnce(unavailable()).mockRejectedValueOnce(unavailable()).mockResolvedValue(sourceTarget)
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={callSources} expanded={false} />) })
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first', 'second', 'third'])
+  expect(JSON.stringify(view.toJSON())).toContain('后续有效依据')
+  expect(JSON.stringify(view.toJSON())).not.toContain('原通话已删除')
+  const sourceButton = view.root.findAllByType('button').find(button => button.props.className === 'arkme-arrangement-recording-source')!
+  await act(async () => sourceButton.props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first', 'second', 'third', 'third'])
+  await act(async () => view.unmount())
+})
+
+it('starts with an openable original source instead of an unavailable first row', async () => {
+  mock.call.mockResolvedValue(sourceTarget)
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={callSources.map((e,i) => ({ ...e, canOpen: i > 0 }))} expanded={false} />) })
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['second'])
+  await act(async () => view.unmount())
+})
+
+it('reports all original evidence unavailable without opening supplementary or related material, and retries', async () => {
+  mock.call.mockRejectedValue(unavailable())
+  let view!: ReturnType<typeof create>
+  const sources: ArkmeArrangementEvidence[] = [...callSources, { ...callSources[0]!, id: 'attachment', role: 'related' }, { ...callSources[0]!, id: 'later', role: 'supplement' }]
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={sources} expanded={false} />) })
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first', 'second', 'third'])
+  expect(JSON.stringify(view.toJSON())).toContain('暂未找到可打开的原文，请展开核对来源')
+  expect(JSON.stringify(view.toJSON())).not.toContain('原通话已删除')
+  mock.call.mockResolvedValue(sourceTarget)
+  await act(async () => view.root.findByProps({ role: 'alert' }).findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first', 'second', 'third', 'first'])
+  expect(JSON.stringify(view.toJSON())).toContain('后续有效依据')
+  await act(async () => view.unmount())
+})
+
+it.each(['auth-http-401', 'arkme-network-error', 'arrangement-source-mismatch'])('stops alternative reads on %s instead of hiding an account, network or identity error', async code => {
+  mock.call.mockRejectedValue(new ArkmeClientError({ code, message: '需要重新核验', retryable: true }))
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={callSources} expanded={false} />) })
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first'])
+  expect(JSON.stringify(view.toJSON())).toContain('需要重新核验')
+  await act(async () => view.unmount())
+})
+
+it('keeps an explicit expanded quote bound to that evidence even when opening it fails', async () => {
+  mock.call.mockImplementation(async (op, params) => {
+    if (op === 'arrangements.source.read') return { evidenceId: params.evidenceId, state: 'ready', text: '已核验原句' }
+    throw unavailable()
+  })
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={callSources} expanded />) })
+  await act(async () => view.root.findAllByType('button')[0]!.props.onClick({ stopPropagation() {} }))
+  expect(openedEvidence()).toEqual(['first'])
+  expect(JSON.stringify(view.toJSON())).toContain('这条通话依据暂未通过核验')
+  expect(JSON.stringify(view.toJSON())).not.toContain('原通话已删除')
+  await act(async () => view.unmount())
+})
+
+it('does not turn an ambiguous call read failure into a deletion claim and allows rechecking', async () => {
+  mock.call.mockResolvedValueOnce({ evidenceId: 'first', state: 'unavailable', reason: '原通话已删除或当前无权查看' }).mockResolvedValue({ evidenceId: 'first', state: 'ready', text: '重新核验的原句' })
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" sources={[callSources[0]!]} expanded />) })
+  expect(JSON.stringify(view.toJSON())).toContain('这条通话依据暂未通过核验')
+  await act(async () => view.root.findByProps({ 'aria-label': '重新核验通话来源' }).props.onClick({ stopPropagation() {} }))
+  expect(JSON.stringify(view.toJSON())).toContain('重新核验的原句')
+  await act(async () => view.unmount())
+})
+
+it('aborts alternative source selection when the arrangement changes', async () => {
+  const pending = deferred<unknown>()
+  mock.call.mockReturnValue(pending.promise)
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="old" sources={callSources} expanded={false} />) })
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  await act(async () => view.update(<ArkmeArrangementSources arrangementRef="new" sources={callSources} expanded={false} />))
+  expect(mock.call.mock.calls[0]![2].aborted).toBe(true)
+  await act(async () => pending.resolve(sourceTarget))
+  expect(openedEvidence()).toEqual(['first'])
+  expect(JSON.stringify(view.toJSON())).not.toContain('后续有效依据')
+  await act(async () => view.unmount())
 })

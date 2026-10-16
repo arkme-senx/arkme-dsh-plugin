@@ -39,6 +39,7 @@ import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-s
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
   arkmeConversationComposerLayout,
 } from './conversation-composer-presentation.js'
@@ -419,6 +420,7 @@ export function ArkmeArkoSurface() {
   )
   const profileUserId = authSnapshot.auth?.status === 'authenticated' ? authSnapshot.auth.userId : undefined
   const composerDraftKey = arkmeArkoComposerDraftKey(profileUserId)
+  useConversationDraftPresence(composerDraftKey)
   useSyncExternalStore(
     arkmeComposerDraftStore.subscribe,
     arkmeComposerDraftStore.getRevision,

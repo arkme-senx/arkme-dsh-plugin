@@ -30,6 +30,8 @@ export interface ArkmeComposerEmoji {
 export interface ArkmeComposerDraftSnapshot {
   /** Last content edit, preserved when hydrating, replicating or restoring a failed send. */
   editedAtMillis?: number
+  /** Last departure after editing. Zero means this draft has not left its conversation yet. */
+  leftAtMillis?: number
   extensionTarget?: ArkmeComposerExtensionTarget
   markdown?: ArkmeMarkdownDraft
   text: string
@@ -62,6 +64,12 @@ const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
 
 export function arkmeDraftEditedAtMillis(draft: ArkmeComposerDraftSnapshot): number {
   const value = draft.editedAtMillis
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000 ? value : 0
+}
+
+export function arkmeDraftActivityAtMillis(draft: ArkmeComposerDraftSnapshot): number {
+  // Older saved drafts have no departure field. Retain their old time, never hydration time.
+  const value = draft.leftAtMillis ?? draft.editedAtMillis
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000 ? value : 0
 }
 
@@ -342,6 +350,9 @@ export class ArkmeComposerDraftStore {
   private pendingPersisted: string | undefined
   private revision = 0
   private readonly changeRevisions = new Map<string, number>()
+  private readonly contentEditRevisions = new Map<string, number>()
+  private readonly departures = new Map<string, number>()
+  private contentEditRevision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
   beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
@@ -370,9 +381,11 @@ export class ArkmeComposerDraftStore {
         const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
         if (draft.extensionTarget !== undefined && extensionTarget === undefined) continue
         if (attachments.length > 0 || draft.markdown?.document?.type === 'doc' || extensionTarget !== undefined) {
-          const { editedAtMillis: _savedTime, ...content } = draft
+          const { editedAtMillis: _savedTime, leftAtMillis: _savedDeparture, ...content } = draft
           const editedAtMillis = arkmeDraftEditedAtMillis(draft)
-          this.drafts.set(entry[0], { ...content, attachments, ...(editedAtMillis ? { editedAtMillis } : {}), ...(extensionTarget === undefined ? {} : { extensionTarget }) })
+          this.drafts.set(entry[0], { ...content, attachments, ...(editedAtMillis ? { editedAtMillis } : {}),
+            ...(draft.leftAtMillis === undefined ? {} : { leftAtMillis: arkmeDraftActivityAtMillis(draft) }),
+            ...(extensionTarget === undefined ? {} : { extensionTarget }) })
           this.restoredKeys.add(entry[0])
         }
       }
@@ -398,6 +411,14 @@ export class ArkmeComposerDraftStore {
 
   /** Session-local edit order for aggregate previews; restored drafts do not become new activity. */
   getChangeRevision(key: string | undefined): number { return key === undefined ? 0 : this.changeRevisions.get(key) ?? 0 }
+
+  getContentEditRevision(key: string): number { return this.contentEditRevisions.get(key) ?? 0 }
+
+  markConversationLeft(key: string, atMillis: number): void {
+    this.departures.set(key, atMillis)
+    const draft = this.drafts.get(key)
+    if (draft !== undefined) this.store(key, { ...draft, leftAtMillis: atMillis }, 'preserve')
+  }
 
   readonly subscribe = (listener: (key?: string) => void): (() => void) => {
     this.listeners.add(listener)
@@ -630,8 +651,10 @@ export class ArkmeComposerDraftStore {
     const restoreIdentity = restoreOriginal ? snapshot.fileSendIdentity : undefined
     const extensionTarget = restoreOriginal ? snapshot.extensionTarget : current.extensionTarget
     const editedAtMillis = Math.max(arkmeDraftEditedAtMillis(current), arkmeDraftEditedAtMillis(snapshot))
+    const leftAtMillis = Math.max(arkmeDraftActivityAtMillis(current), arkmeDraftActivityAtMillis(snapshot), this.departures.get(key) ?? 0)
     this.storeOrDelete(key, {
       text, attachments: merged, mentions, emojis,
+      leftAtMillis,
       ...(editedAtMillis ? { editedAtMillis } : {}),
       ...(extensionTarget === undefined ? {} : { extensionTarget }),
       ...((current.text === '' ? snapshot.markdown : current.markdown) === undefined ? {} : { markdown: (current.text === '' ? snapshot.markdown : current.markdown)! }),
@@ -651,6 +674,8 @@ export class ArkmeComposerDraftStore {
   clearAccount(userId: number): void {
     if (!validUserId(userId)) return
     const prefix = accountPrefix(userId)
+    for (const key of this.contentEditRevisions.keys()) if (key.startsWith(prefix)) this.contentEditRevisions.delete(key)
+    for (const key of this.departures.keys()) if (key.startsWith(prefix)) this.departures.delete(key)
     let changed = false
     for (const [key, snapshot] of this.drafts) {
       if (!key.startsWith(prefix)) continue
@@ -675,12 +700,17 @@ export class ArkmeComposerDraftStore {
 
   private store(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
     const current = this.get(key)
+    if (timing === 'edit' && !sameDraftContent(current, snapshot)) this.contentEditRevisions.set(key, ++this.contentEditRevision)
+    if (timing === 'edit' && current === EMPTY_DRAFT) this.departures.delete(key)
     const editedAtMillis = timing === 'preserve' ? arkmeDraftEditedAtMillis(snapshot)
       : sameDraftContent(current, snapshot) ? arkmeDraftEditedAtMillis(current) : Date.now()
+    const leftAtMillis = timing === 'preserve' ? snapshot.leftAtMillis
+      : current === EMPTY_DRAFT ? 0 : current.leftAtMillis ?? (arkmeDraftActivityAtMillis(current) || undefined)
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
       ...(editedAtMillis ? { editedAtMillis } : {}),
+      ...(leftAtMillis === undefined ? {} : { leftAtMillis: arkmeDraftActivityAtMillis({ ...snapshot, leftAtMillis }) }),
       ...(snapshot.extensionTarget === undefined ? {} : { extensionTarget: snapshot.extensionTarget }),
       ...(snapshot.markdown === undefined ? {} : { markdown: snapshot.markdown }),
       attachments: Object.freeze([...snapshot.attachments]),

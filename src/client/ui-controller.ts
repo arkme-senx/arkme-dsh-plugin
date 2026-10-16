@@ -122,6 +122,8 @@ export class ArkmeUiController {
   private viewState: ArkmeUiViewState = viewStateOf(this.state)
   /** Runtime-only conversation memory. A fresh client always starts in Harness. */
   private lastConversationDestination: ArkmeConversationDestination | undefined
+  /** Personal topic selection survives other conversations, but never an account/client session. */
+  private lastSelfSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
   private settingsOpener: ((section?: ArkmeSettingsSection) => void) | undefined
   private conversationTargetRevision = 0
@@ -152,15 +154,30 @@ export class ArkmeUiController {
 
   focusSendToSelf(): void {
     this.leaveContacts()
+    this.lastSelfSource = undefined
     this.lastConversationDestination = { kind: 'send_to_self' }
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget,
+      calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source' })
+  }
+
+  resumeSendToSelf(): void {
+    if (this.lastSelfSource === undefined) this.focusSendToSelf()
+    else this.selectSource(this.lastSelfSource)
+  }
+
+  private rememberSelfSource(source: ArkmeSourceItem): void {
+    if (source.kind === 'topic' || source.kind === 'default_category') this.lastSelfSource = source
+    else if (source.kind === 'send_to_self') this.lastSelfSource = undefined
   }
 
   authChanged(authenticated = false, resetSelection = false): void {
     this.leaveContacts()
     if (authenticated) {
-      if (resetSelection) this.lastConversationDestination = undefined
+      if (resetSelection) {
+        this.lastConversationDestination = undefined
+        this.lastSelfSource = undefined
+      }
       const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
       const { calendarOpen: _activeCalendar, productMode: _activeProductMode, webLoginDialogOpen: _dialogFromCalendar, ...stateWithoutCalendar } = this.state
       const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
@@ -175,6 +192,7 @@ export class ArkmeUiController {
       return
     }
     this.lastConversationDestination = undefined
+    this.lastSelfSource = undefined
     const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({
       ...rest,
@@ -481,6 +499,7 @@ export class ArkmeUiController {
 
   selectSource(source: ArkmeSourceItem): void {
     this.leaveContacts()
+    this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', selectedSource: source })
@@ -490,6 +509,7 @@ export class ArkmeUiController {
     const selectedSource = this.state.selectedSource
     if (selectedSource === undefined
       || arkmeSourceIdentityKey(selectedSource) !== arkmeSourceIdentityKey(source)) return false
+    this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     this.publish({ ...this.state, selectedSource: source })
     return true
@@ -497,6 +517,7 @@ export class ArkmeUiController {
 
   activateNotificationSource(source: ArkmeSourceItem): void {
     this.leaveContacts()
+    this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const {
       selectedBot: _selectedBot,
@@ -531,6 +552,7 @@ export class ArkmeUiController {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
+    this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({

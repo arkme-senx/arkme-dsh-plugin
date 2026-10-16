@@ -3,7 +3,7 @@ import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { tr } from './locale.js'
 import {
-  arkmeAttachmentMetadata, arkmeSourceComposerDraftKey, serializeArkmeComposerDraft, arkmeDraftEditedAtMillis,
+  arkmeAttachmentMetadata, arkmeSourceComposerDraftKey, serializeArkmeComposerDraft, arkmeDraftActivityAtMillis,
   type ArkmeComposerDraftSnapshot, type ArkmeComposerDraftStore,
 } from './composer-draft-store.js'
 
@@ -26,21 +26,23 @@ export function conversationDraftPreview(draft: ArkmeComposerDraftSnapshot): str
 
 export function selfConversationDraftPreview(store: ArkmeComposerDraftStore, userId: number | undefined,
   sources: readonly ArkmeSourceItem[],
-): { source: ArkmeSourceItem; preview: string; editedAtMillis: number } | undefined {
-  let selected: { source: ArkmeSourceItem; preview: string; revision: number; editedAtMillis: number } | undefined
+): { source: ArkmeSourceItem; preview: string; activityAtMillis: number } | undefined {
+  let selected: { source: ArkmeSourceItem; preview: string; revision: number; activityAtMillis: number } | undefined
   for (const source of sources) {
     if (source.kind !== 'send_to_self' && source.kind !== 'default_category' && source.kind !== 'topic') continue
     const key = arkmeSourceComposerDraftKey(userId, source)
-    const preview = conversationDraftPreview(store.get(key))
+    const draft = store.get(key)
+    if (draft.leftAtMillis === 0) continue
+    const preview = conversationDraftPreview(draft)
     if (preview === undefined) continue
-    const editedAtMillis = arkmeDraftEditedAtMillis(store.get(key))
+    const activityAtMillis = arkmeDraftActivityAtMillis(draft)
     const revision = store.getChangeRevision(key)
-    if (selected && (editedAtMillis < selected.editedAtMillis || (editedAtMillis === selected.editedAtMillis
+    if (selected && (activityAtMillis < selected.activityAtMillis || (activityAtMillis === selected.activityAtMillis
       && (revision < selected.revision || (revision === selected.revision && source.kind !== 'send_to_self'))))) continue
-    selected = { source, preview, revision, editedAtMillis }
+    selected = { source, preview, revision, activityAtMillis }
   }
   if (!selected) return undefined
-  return { source: selected.source, editedAtMillis: selected.editedAtMillis, preview: selected.source.kind === 'send_to_self' ? selected.preview
+  return { source: selected.source, activityAtMillis: selected.activityAtMillis, preview: selected.source.kind === 'send_to_self' ? selected.preview
     : [selected.source.displayName, selected.preview].filter(Boolean).join(' · ') }
 }
 
@@ -51,7 +53,7 @@ export function withConversationDraftActivity<T extends { activeAtMillis: number
   return rows.map(row => {
     if (!row.source) return row
     const draft = store.get(arkmeSourceComposerDraftKey(userId, row.source))
-    const editedAtMillis = conversationDraftPreview(draft) === undefined ? 0 : arkmeDraftEditedAtMillis(draft)
-    return editedAtMillis > row.activeAtMillis ? { ...row, activeAtMillis: editedAtMillis } : row
+    const activityAtMillis = conversationDraftPreview(draft) === undefined ? 0 : arkmeDraftActivityAtMillis(draft)
+    return activityAtMillis > row.activeAtMillis ? { ...row, activeAtMillis: activityAtMillis } : row
   }).sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis)
 }
