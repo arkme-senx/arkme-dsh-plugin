@@ -963,7 +963,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (request.operation === 'calendar.day-recap' && origin === undefined) {
+      if (['calendar.day-recap', 'calendar.day-review.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
       if (request.operation === 'remote.session.observe') {
@@ -1644,6 +1644,11 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
+    case 'calendar.day-review.state': return await service.dayReviewState(params, requestSignal)
+    case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
+    case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
+    case 'calendar.day-review.source': return await service.dayReviewSource(params, requestSignal)
+    case 'calendar.day-review.prompts': return await service.dayReviewPrompts(params, requestSignal)
     case 'calendar.record-location': return await service.calendarRecordLocation(stringParam(params, 'locationRef'), requestSignal)
     case 'calendar.records': {
       const cursor = cursorParam(params)
