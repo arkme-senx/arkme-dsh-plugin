@@ -14,7 +14,7 @@ vi.mock('ws', async () => {
 })
 import { DeviceControlRealtime, deviceControlRealtimeOrigin } from '../src/services/device-control-realtime.js'
 const connections: DeviceControlRealtime[] = []
-afterEach(() => { connections.splice(0).forEach(c => c.close()); state.sockets.splice(0) })
+afterEach(() => { connections.splice(0).forEach(c => c.close()); state.sockets.splice(0); vi.useRealTimers() })
 describe('device control realtime wire', () => {
   it('resolves the matching environment without requiring DSH remote configuration', () => {
     expect(deviceControlRealtimeOrigin({environment: 'test'})).toBe('https://jotmo-realtime.senguo.me')
@@ -44,5 +44,41 @@ describe('device control realtime wire', () => {
     expect(socket.ended).toBe(true)
     receive({type: 'channel.event', module: 'device_control', namespace: 'device_control', channel_ref: '42'})
     expect(changed).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('device transport recovery boundaries', () => {
+  it('bounds registration even when transport heartbeats keep arriving', () => {
+    vi.useFakeTimers()
+    const changed = vi.fn()
+    const owner = new DeviceControlRealtime('https://realtime.example.test', changed); connections.push(owner)
+    owner.connect(42, 'current_session_12345', 'token')
+    const socket = state.sockets[0]
+    socket.emit('open')
+    for (let n = 0; n < 3; n++) { vi.advanceTimersByTime(4000); socket.emit('ping') }
+    vi.advanceTimersByTime(3000)
+    expect(socket.ended).toBe(true)
+    expect(owner.connected).toBe(false)
+    expect(changed).toHaveBeenCalledTimes(1)
+    for (let n = 0; n < 100; n++) owner.connect(42, 'current_session_12345', 'token')
+    expect(state.sockets).toHaveLength(1)
+    vi.advanceTimersByTime(5000)
+    owner.connect(42, 'current_session_12345', 'token')
+    expect(state.sockets).toHaveLength(2)
+    owner.close()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('never keeps two owned sockets and does not carry retry delay across logins', () => {
+    vi.useFakeTimers()
+    const owner = new DeviceControlRealtime('https://realtime.example.test', vi.fn()); connections.push(owner)
+    for (let n = 0; n < 100; n++) {
+      owner.connect(42, `current_session_${n}`, 'token')
+      owner.connect(42, `current_session_${n}`, 'token')
+      expect(state.sockets.filter(s => !s.ended)).toHaveLength(1)
+      state.sockets.at(-1).emit('error', new Error('network unavailable'))
+    }
+    expect(state.sockets).toHaveLength(100)
+    owner.close()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
