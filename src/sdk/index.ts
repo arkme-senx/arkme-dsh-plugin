@@ -1,3 +1,6 @@
+import type { ArkmeDayDigestQuery, ArkmeDayDigestGenerateInput, ArkmeDayDigestState } from '../day-digest.js'
+export type { ArkmeDayDigestQuery, ArkmeDayDigestGenerateInput, ArkmeDayDigestState, ArkmeDayDigestKind } from '../day-digest.js'
+export type { DayReviewSource, DayReviewResult, DayReviewEvent, DayReviewCoverage } from '../calendar-day-review.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
@@ -503,6 +506,69 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  /** Pure read: no implicit generation, repair or write retries. */
+  async dayDigest(query: ArkmeDayDigestQuery, signal?: AbortSignal): Promise<ArkmeDayDigestState> {
+    const features = (await this.capabilities(signal)).features
+    if (features.dayDigestRead !== true && features.dayDigestGeneration !== true) return { supported: false, generationEnabled: false, job: null, result: null, hasNewContent: false, versions: [] }
+    return this.call('day-digest.read', { ...query }, signal)
+  }
+
+  /** Call synchronously from a human click. The Host separately confirms the
+   * exact date/sources in a script-free page; background callers cannot submit. */
+  generateDayDigest(input: ArkmeDayDigestGenerateInput, signal?: AbortSignal): Promise<ArkmeDayDigestState> {
+    if (!/^[a-zA-Z0-9_-]{16,100}$/.test(input.idempotencyKey)) return Promise.reject(new TypeError('idempotencyKey is required'))
+    return this.confirmDayReview({ ...input }, signal)
+  }
+
+  /** @internal Existing calendar UI uses the same Host confirmation boundary. */
+  async confirmDayReview(input: Record<string, unknown>, signal?: AbortSignal, legacy = false): Promise<ArkmeDayDigestState> {
+    signal?.throwIfAborted()
+    if (typeof window === 'undefined' || globalThis.navigator?.userActivation?.isActive !== true) throw new ArkmeClientError({ code: 'day-digest-human-required', message: '请通过当前的人类点击发起生成', retryable: false })
+    const id = crypto.randomUUID(), url = new URL(this.route, window.location.href)
+    url.searchParams.set('dayDigestConfirmation', id)
+    url.searchParams.set('dayDigestIntent', JSON.stringify(input))
+    if (legacy) url.searchParams.set('dayDigestLegacy', '1')
+    if (!window.open(url.href, '_blank')) throw new Error('请允许打开宿主确认页后重试')
+    const deadline = Date.now() + 5 * 60_000, initialDeadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      signal?.throwIfAborted()
+      await new Promise<void>((resolve, reject) => {
+        const done = () => { signal?.removeEventListener('abort', abort); resolve() }
+        const timer = setTimeout(done, 1000)
+        const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason ?? new Error('已取消等待')) }
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+      let status: { status: string; result?: ArkmeDayDigestState; message?: string }
+      try { status = await this.call('day-digest.confirmation', { confirmationId: id }, signal) }
+      catch (error) { if (error instanceof ArkmeClientError && error.body.code === 'day-digest-human-required' && Date.now() < initialDeadline) continue; throw error }
+      if (status.status === 'ready' && status.result) return status.result
+      if (status.status === 'failed') throw new Error(status.message ?? '提交未确认，请查询状态后手动重试')
+    }
+    throw new Error('确认已过期，请重新发起；不会自动生成')
+  }
+
+  /** Subscribe by bounded reads only; disposing aborts the current read. */
+  subscribeDayDigest(query: ArkmeDayDigestQuery, listener: (state: ArkmeDayDigestState) => void, options: ArkmeSubscribeOptions = {}): () => void {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const interval = typeof options.intervalMs === 'number' && Number.isFinite(options.intervalMs)
+      ? Math.min(60000, Math.max(3000, options.intervalMs)) : undefined
+    let nextRead = interval ?? 5000
+    const poll = async () => {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { nextRead = 60000; return }
+        const state = await this.dayDigest(query, controller.signal)
+        nextRead = interval ?? (state.job && !['ready', 'failed'].includes(state.job.status) ? 5000 : 60000)
+        if (!controller.signal.aborted) listener(state)
+      }
+      catch (error) { if (!controller.signal.aborted) options.onError?.(error) }
+      finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, nextRead) }
+    }
+    if (options.immediate === false) timer = setTimeout(() => { void poll() }, nextRead)
+    else void poll()
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
 
   /** Explicit user command; idempotently starts recognition for the current account/day. */
@@ -2675,3 +2741,6 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
+
+/** @internal Built-in calendar uses the same human confirmation flow as public consumers. */
+export function confirmCalendarDayReview(input: Record<string, unknown>, signal?: AbortSignal): Promise<ArkmeDayDigestState> { return defaultSdk.confirmDayReview(input, signal, true) }

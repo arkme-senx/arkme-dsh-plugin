@@ -1142,6 +1142,17 @@ describe('RecordService', () => {
       async openSourceRef() { throw new Error('unexpected') },
     })
 
+    let releaseRead!: () => void
+    let started!: () => void
+    const readStarted = new Promise<void>(resolve => { started = resolve })
+    const pendingRead = runtime.runOwnerRead('calendar.day-review', { day: 'fixture' }, async signal => {
+      started()
+      await new Promise<void>(resolve => { releaseRead = resolve })
+      signal.throwIfAborted()
+      return 'still-authorized'
+    }).then(value => ({ value }), error => ({ error }))
+    await readStarted
+
     await expect(service.createDSHAgentInputText(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
       '用户在 DSH 的输入',
@@ -1156,6 +1167,9 @@ describe('RecordService', () => {
       send_at: 1713830400000,
     })
     expect(requestBody).not.toHaveProperty('creation_source')
+    releaseRead()
+    expect(await pendingRead).toEqual({ value: 'still-authorized' })
+    runtime.dispose()
   })
 
   it('excludes DSH Agent input records from the default category page', async () => {

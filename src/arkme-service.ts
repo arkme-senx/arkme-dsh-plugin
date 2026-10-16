@@ -1,3 +1,4 @@
+import { dayDigestQuery } from './day-digest.js'
 import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
@@ -821,6 +822,14 @@ export class ArkmeService {
     }) })
     return await this.dayRecapService.generate(input, signal)
   }
+  async dayDigestGenerationSupported(signal?: AbortSignal) { return this.calendarDayReview.generationSupported(signal) }
+  async dayDigestAccountScope() { return this.calendarDayReview.accountScope() }
+  async dayDigestRead(input: unknown, signal?: AbortSignal) { return this.dayReviewState(dayDigestQuery(input, await this.dayDigestAccountScope()), signal) }
+  async prepareDayDigest(input: unknown, signal?: AbortSignal) {
+    const v = objectValue(input)
+    return this.prepareDayReview({ ...dayDigestQuery(input, await this.dayDigestAccountScope()), requestId: v.idempotencyKey, sourceKinds: v.sources ?? ['chat','self','call','audio'], kinds: v.kinds, routeKey: v.routeKey }, signal)
+  }
+  async prepareDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prepare(input, signal) }
   async conversationActivityRead(input: unknown, signal?: AbortSignal) { return this.conversationActivity.read(input, signal) }
   async conversationActivityParticipants(input: unknown, signal?: AbortSignal) { return this.conversationActivity.participants(input, signal) }
   async conversationActivityMessages(input: unknown, signal?: AbortSignal) { return this.conversationActivity.messages(input, signal) }
@@ -1036,6 +1045,7 @@ export class ArkmeService {
         accountSettings: true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
+        dayDigestRead: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,

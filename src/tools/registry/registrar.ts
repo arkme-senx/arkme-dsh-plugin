@@ -9,11 +9,13 @@ import {
   ARKME_CONVERSATIONAL_CONFIRMATION_PROMPT,
   ArkmeConversationalConfirmation,
   arkmeConfirmationContextHooks,
+  hasCurrentDirectUserTurn,
 } from '../shared/conversational-confirmation.js'
 import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation } from './group-governance-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_day_digest_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
   'arkme_team_profile_update',
@@ -213,6 +215,9 @@ function withCoreConversationalConfirmation(
         return await definition.execute(args, exec)
       }
       if (exec.agent === undefined) throw new Error('该 Arkme 操作必须在一个真实 DSH Agent 会话中执行')
+      if (definition.name === 'arkme_day_digest_generate' && !hasCurrentDirectUserTurn(exec.agent as Agent)) {
+        throw new Error('日总结生成必须由当前直接的人类请求发起，后台回合不能借用历史授权')
+      }
       const hooks = arkmeConfirmationContextHooks(definition)
       const request = hooks?.confirmationRequest?.(args)
       const result = await conversation.prepareOrExecute({

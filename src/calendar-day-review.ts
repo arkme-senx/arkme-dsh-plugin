@@ -1,5 +1,5 @@
 import { parseReviewPromptSnapshot, type ReviewPromptSnapshot } from './calendar-day-review-prompts.js'
-/** Calendar review v1: separate from recording-only summaries. Backend contract is proposed. */
+/** Calendar review v1: separate from recording-only summaries. Provider-owned durable jobs and source access checks. */
 export const DAY_REVIEW_SOURCES = ['chat', 'location', 'self', 'call', 'audio'] as const
 export type DayReviewSource = typeof DAY_REVIEW_SOURCES[number]
 export const DAY_REVIEW_LABELS: Record<DayReviewSource, string> = {
@@ -8,20 +8,22 @@ export const DAY_REVIEW_LABELS: Record<DayReviewSource, string> = {
 export interface DayReviewQuery { accountScope: string; bucketDate: string; timezone: string }
 export interface DayReviewEvidence { ref: string; kind: DayReviewSource; label: string }
 export interface DayReviewPoint { text: string; sourceRefs: string[] }
-export interface DayReviewEvent extends DayReviewPoint { title: string; startAtMillis: number; endAtMillis: number }
+export interface DayReviewEvent extends DayReviewPoint { title: string; startAtMillis: number; endAtMillis: number; scene?: string; roles?: string[]; events?: string[]; mood?: string; todos?: string[]; quotes?: string[] }
 export interface DayReviewCoverage {
   kind: DayReviewSource; status: 'complete' | 'partial' | 'unavailable' | 'empty'; count: number; note: string
 }
 export interface DayReviewResult {
   id: string; snapshotId: string; generatedAtMillis: number; modelName: string; sourceKinds: DayReviewSource[]
   coverage: DayReviewCoverage[]; summary: DayReviewPoint[]; timeline: DayReviewEvent[]; sources: DayReviewEvidence[]
+  sourceScope?: DayReviewSource[]; timeZoneOffsetMillis?: number
   promptSnapshot?: ReviewPromptSnapshot
 }
 export interface DayReviewJob {
-  id: string; status: 'queued' | 'collecting' | 'organizing' | 'generating' | 'failed'; message: string
+  id: string; status: 'queued' | 'running' | 'collecting' | 'organizing' | 'generating' | 'ready' | 'failed'; message: string; stage?: string; errorCode?: string; requestId?: string
 }
 export interface DayReviewState {
-  supported: boolean; job: DayReviewJob | null; result: DayReviewResult | null; hasNewContent: boolean
+  supported: boolean; generationEnabled?: boolean; sourceKinds?: DayReviewSource[]; job: DayReviewJob | null; result: DayReviewResult | null; hasNewContent: boolean
+  resultUnavailableReason?: 'source_access_changed'
   versions: Array<{ id: string; generatedAtMillis: number }>
 }
 export const emptyDayReviewState = (): DayReviewState => ({ supported: false, job: null, result: null, hasNewContent: false, versions: [] })
@@ -74,10 +76,14 @@ export function parseDayReviewResult(value: unknown, q: DayReviewQuery): DayRevi
   const timeline = array(v.timeline, 500).map(x => {
     const event = reviewObject(x), startAtMillis = number(event.start_at), endAtMillis = number(event.end_at)
     if (endAtMillis < startAtMillis || dateAt(startAtMillis) !== q.bucketDate || dateAt(Math.max(startAtMillis, endAtMillis - 1)) !== q.bucketDate) invalid()
-    return { ...point(event), title: reviewText(event.title, 200), startAtMillis, endAtMillis }
+    return { ...point(event), title: reviewText(event.title, 200), startAtMillis, endAtMillis,
+      ...(event.scene === undefined ? {} : { scene: reviewText(event.scene), mood: reviewText(event.mood),
+        ...Object.fromEntries(['roles','events','todos','quotes'].map(key => [key, array(event[key], 100).map(x => reviewText(x, 10000))])) }) }
   }).sort((a, b) => a.startAtMillis - b.startAtMillis)
   return { id: reviewText(v.id), snapshotId: reviewText(v.snapshot_id), generatedAtMillis: number(v.generated_at),
     modelName: reviewText(v.model_name, 200), sourceKinds, coverage, sources, summary: array(v.summary, 100).map(point), timeline,
+    ...(v.source_scope === undefined ? {} : { sourceScope: array(v.source_scope, 5).map(x => { if (!sourceKinds.includes(x as DayReviewSource)) invalid(); return x as DayReviewSource }) }),
+    ...(v.time_zone_offset_millis === undefined ? {} : { timeZoneOffsetMillis: typeof v.time_zone_offset_millis === 'number' && Number.isSafeInteger(v.time_zone_offset_millis) && Math.abs(v.time_zone_offset_millis) <= 86400000 ? v.time_zone_offset_millis : invalid() }),
     ...(v.prompt_snapshot === undefined ? {} : { promptSnapshot: parseReviewPromptSnapshot(v.prompt_snapshot) }) }
 }
 export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayReviewState {
@@ -86,14 +92,16 @@ export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayRevie
   let job: DayReviewJob | null = null
   if (v.job !== null) {
     const j = reviewObject(v.job), status = j.status as DayReviewJob['status']
-    if (!['queued', 'collecting', 'organizing', 'generating', 'failed'].includes(status)) invalid()
-    job = { id: reviewText(j.id), status, message: j.message ? reviewText(j.message, 1000) : '' }
+    if (!['queued', 'running', 'collecting', 'organizing', 'generating', 'ready', 'failed'].includes(status)) invalid()
+    job = { id: reviewText(j.id), status, message: j.message ? reviewText(j.message, 1000) : '', ...(j.stage ? { stage: reviewText(j.stage) } : {}), ...(j.error_code ? { errorCode: reviewText(j.error_code) } : {}), ...(j.request_id ? { requestId: reviewText(j.request_id) } : {}) }
   }
   const versions = array(v.versions, 30).map(x => {
     const version = reviewObject(x)
     return { id: reviewText(version.id), generatedAtMillis: number(version.generated_at) }
   })
   if (new Set(versions.map(x => x.id)).size !== versions.length) invalid()
-  return { supported: true, job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
+  if (v.result_unavailable_reason !== undefined && (v.result_unavailable_reason !== 'source_access_changed' || v.result !== null)) invalid()
+  return { supported: true, ...(v.generation_enabled === undefined ? {} : { generationEnabled: flag(v.generation_enabled) }), job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
+    ...(v.result_unavailable_reason === undefined ? {} : { resultUnavailableReason: 'source_access_changed' as const }),
     hasNewContent: flag(v.has_new_content), versions }
 }

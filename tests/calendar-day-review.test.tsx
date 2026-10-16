@@ -48,6 +48,18 @@ const mount = async () => act(async () => { view = create(<ArkmeCalendarDayRevie
 beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockResolvedValue(current()) })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
+  it('keeps regeneration available while withholding a revoked result', async () => {
+    const raw = { ...rawState(), result: null, versions: [], result_unavailable_reason: 'source_access_changed', generation_enabled: true,
+      job: { id: 'old', status: 'ready', message: '' } }
+    const state = parseDayReviewState(raw, query)
+    vi.mocked(callArkme).mockResolvedValue(state)
+    await mount()
+    expect(content()).toContain('来源已变化或当前不可访问')
+    expect(content()).not.toContain('讨论了录音存储方案')
+    expect(button('生成当天回顾').props.disabled).toBe(false)
+    expect(() => parseDayReviewState({ ...raw, result: rawResult() }, query)).toThrow()
+    expect(() => parseDayReviewState({ ...raw, result_unavailable_reason: 'unknown' }, query)).toThrow()
+  })
   it('shows unavailable support clearly and never automatically submits AI work', async () => {
     vi.mocked(callArkme).mockResolvedValue({ supported: false, job: null, result: null, versions: [], hasNewContent: false })
     await mount()
@@ -113,3 +125,5 @@ describe('calendar review interaction', () => {
     expect(callArkme).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('../src/sdk/index.js', async importOriginal => ({ ...await importOriginal<typeof import('../src/sdk/index.js')>(), confirmCalendarDayReview: (input: Record<string, unknown>, signal?: AbortSignal) => callArkme('calendar.day-review.create', input, signal) }))

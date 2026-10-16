@@ -27,6 +27,11 @@ function hostCases(source: string): Set<string> {
         node.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
         ['request.operation', 'operation'].includes(node.expression.left.getText(file)) &&
         ts.isStringLiteral(node.expression.right)) operations.add(node.expression.right.text)
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === 'includes' && ts.isArrayLiteralExpression(node.expression.expression)
+        && node.arguments[0] && ['request.operation', 'operation'].includes(node.arguments[0].getText(file))) {
+      for (const item of node.expression.expression.elements) if (ts.isStringLiteral(item)) operations.add(item.text)
+    }
     node.forEachChild(visit)
   }
   visit(file)

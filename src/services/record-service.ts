@@ -1547,6 +1547,7 @@ export class RecordService {
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
     const normalizedSendAt = Math.max(0, Math.trunc(sendAtMillis))
+    const effectiveSendAt = normalizedSendAt > 0 ? normalizedSendAt : Date.now()
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
       throw new ArkmePluginError('record-uid-invalid', '写入标识无效，请重试', false)
     }
@@ -1567,7 +1568,7 @@ export class RecordService {
         template_kind: 1,
         title: '',
         text_content: normalizedText,
-        send_at: normalizedSendAt > 0 ? normalizedSendAt : Date.now(),
+        send_at: effectiveSendAt,
       },
       session,
       undefined,
@@ -1576,7 +1577,12 @@ export class RecordService {
         key: `dsh-agent-input:${normalizedUid}`,
       },
     )
-    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
+    // Archiving a new human message changes record data, not account identity.
+    // Detach stale read/cache entries without cancelling unrelated authorized
+    // reads (including the digest read immediately after a Tool confirmation).
+    const scope = this.runtime.requestScope(session.userId)
+    this.runtime.invalidateKey(scope, '')
+    this.runtime.invalidateCalendarDates(scope, [effectiveSendAt])
     return {
       recordUid: stringValue(data.record_uid) || normalizedUid,
       status: numberValue(data.status),

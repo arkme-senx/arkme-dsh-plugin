@@ -118,3 +118,5 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(parseReviewPromptConfig({ ...defaults, baseVersion: '' }, true).baseVersion).toBe('')
   })
 })
+
+vi.mock('../src/sdk/index.js', async importOriginal => ({ ...await importOriginal<typeof import('../src/sdk/index.js')>(), confirmCalendarDayReview: (input: Record<string, unknown>, signal?: AbortSignal) => callArkme('calendar.day-review.create', input, signal) }))

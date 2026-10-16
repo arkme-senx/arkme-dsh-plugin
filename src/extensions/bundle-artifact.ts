@@ -233,6 +233,18 @@ function readManifest(bytes: Buffer): BundleManifest {
   return value as BundleManifest
 }
 
+function v2CapabilityMessage(manifest: BundleManifest, files: ReadonlyMap<string, Buffer>): string {
+  const capabilities: string[] = []
+  if (Object.keys(manifest.scripts ?? {}).length) capabilities.push('scripts')
+  if (Object.keys(manifest.dependencies ?? {}).length) capabilities.push('dependencies')
+  if (Object.keys(manifest.optionalDependencies ?? {}).length) capabilities.push('optionalDependencies')
+  if ((manifest.bundledDependencies?.length ?? 0) || (manifest.bundleDependencies?.length ?? 0)) capabilities.push('bundledDependencies')
+  if (manifest.bin !== undefined && manifest.bin !== null) capabilities.push('bin')
+  if (Object.keys(manifest.peerDependencies ?? {}).some(name => !name.startsWith('@deepseek-ai/') && !['@senguoyun/dsh-arkme','react','react-dom'].includes(name))) capabilities.push('unsupportedPeerDependencies')
+  if ([...files.keys()].some(name => name.toLowerCase().endsWith('.node'))) capabilities.push('nativeAddon')
+  return `V2 Bundle 不支持的能力清单：${capabilities.sort().join(', ')}。需要这些能力时请使用 Profile 原生包的 V3 发布路线；消费插件可通过 Browser SDK 调用 Provider。`
+}
+
 function validateManifest(manifest: BundleManifest, files: ReadonlyMap<string, Buffer>): ArkmeBundleExecutionModel {
   if (typeof manifest.name !== 'string' || manifest.name.length > 214 || !PACKAGE_NAME.test(manifest.name)
     || manifest.name.startsWith('@deepseek-ai/') || manifest.name === '@senguoyun/dsh-arkme'
@@ -246,20 +258,21 @@ function validateManifest(manifest: BundleManifest, files: ReadonlyMap<string, B
     throw new ArkmeBundleArtifactError('bundle-files-missing', 'Bundle 必须显式声明 files')
   }
   if (manifest.scripts !== undefined && Object.keys(manifest.scripts).length > 0) {
-    throw new ArkmeBundleArtifactError('bundle-scripts-forbidden', 'Bundle 不允许携带 scripts')
+    throw new ArkmeBundleArtifactError('bundle-scripts-forbidden', v2CapabilityMessage(manifest, files))
   }
   if (Object.keys(manifest.dependencies ?? {}).length > 0 || Object.keys(manifest.optionalDependencies ?? {}).length > 0
     || (manifest.bundledDependencies?.length ?? 0) > 0 || (manifest.bundleDependencies?.length ?? 0) > 0) {
-    throw new ArkmeBundleArtifactError('bundle-dependencies-forbidden', 'Bundle 不允许携带运行时或捆绑依赖')
+    throw new ArkmeBundleArtifactError('bundle-dependencies-forbidden', v2CapabilityMessage(manifest, files))
   }
   if (manifest.bin !== undefined && manifest.bin !== null) {
-    throw new ArkmeBundleArtifactError('bundle-bin-forbidden', 'Bundle 不允许声明 bin')
+    throw new ArkmeBundleArtifactError('bundle-bin-forbidden', v2CapabilityMessage(manifest, files))
   }
   for (const name of Object.keys(manifest.peerDependencies ?? {})) {
     if (!name.startsWith('@deepseek-ai/') && name !== '@senguoyun/dsh-arkme' && name !== 'react' && name !== 'react-dom') {
-      throw new ArkmeBundleArtifactError('bundle-peer-forbidden', `Bundle peer dependency 不受支持：${name}`)
+      throw new ArkmeBundleArtifactError('bundle-peer-forbidden', v2CapabilityMessage(manifest, files))
     }
   }
+  if ([...files.keys()].some(name => name.toLowerCase().endsWith('.node'))) throw new ArkmeBundleArtifactError('bundle-native-addon-forbidden', v2CapabilityMessage(manifest, files))
   const patch = manifest.dsh?.bundle?.patch
   if (typeof patch !== 'string' || patch.trim() === '') {
     throw new ArkmeBundleArtifactError('bundle-patch-missing', 'Bundle 必须声明 dsh.bundle.patch')

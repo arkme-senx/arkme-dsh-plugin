@@ -1,0 +1,3 @@
+- insert:
+    - id: day-digest-example
+      name: '@arkme-examples/day-digest'
