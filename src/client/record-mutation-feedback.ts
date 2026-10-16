@@ -95,7 +95,9 @@ export class RecordMutationFeedback {
   }
   project(item: ArkmeTimelineItem, source: ArkmeSourceItem, directory: readonly ArkmeSourceItem[]): ArkmeTimelineItem | undefined {
     const entry = this.entries.get(item.itemUid)
-    if (!entry || !personal(source)) return item
+    // Topic membership belongs to personal views. A chat deletion still needs
+    // its optimistic projection, but only in the conversation it came from.
+    if (!entry || !personal(source) && (entry.kind !== 'delete' || !sameSource(source, entry.source))) return item
     if (entry.kind === 'delete' && entry.phase === 'confirmed' && (item.recordVersion ?? 0) > (entry.version ?? 0)) return item
     if (entry.phase === 'pending' || entry.phase === 'confirmed') {
       if (entry.kind === 'delete' || !topicMutationBelongs(source, entry.target, directory)) return undefined

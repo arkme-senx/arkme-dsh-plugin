@@ -45,7 +45,7 @@ const expectedPublicMethods = [
   'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
-  'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
+  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTranscript', 'recordingProjection',
   'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording',
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',

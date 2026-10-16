@@ -1,4 +1,5 @@
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
+import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
 import { screenshotWindowRequested } from './native-screenshot.js'
@@ -110,6 +111,18 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  // Explicit loopback-only review surface; never inject synthetic events into a real chat.
+  if (typeof window !== 'undefined' && offlineContextPreviewRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: offline context preview language')
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<OfflineContextPreview />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: offline context interaction preview')
+    return
+  }
   if (!deepSeekHarnessEmbedRequested() && !screenshotWindowRequested()) {
     ctx.effect(() => {
       const host = document.createElement('div')

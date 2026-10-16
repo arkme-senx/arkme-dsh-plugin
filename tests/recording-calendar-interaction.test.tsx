@@ -181,11 +181,11 @@ describe('recording calendar selection', () => {
       return day
     })
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
-    expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 暂不可用')
+    expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 统计中')
     await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     if (scenario === 'transcript-finishes') {
       expect(JSON.stringify(renderer.toJSON())).toContain('已完成文本')
-      expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 暂不可用')
+      expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 统计中')
       await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     }
     expect(JSON.stringify(renderer.toJSON())).toContain('转写输入时长 6秒')

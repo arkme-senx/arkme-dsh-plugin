@@ -76,6 +76,19 @@ describe('optimistic personal record operations', () => {
     expect(owner.getSnapshot().receipts[0]?.phase).toBe('confirmed')
     expect(owner.project(item(), self, directory)).toBeUndefined()
   })
+  it.each(['private_chat', 'group_chat'] as const)('projects deletion immediately in its %s and restores an uncertain outcome', kind => {
+    const owner = new RecordMutationFeedback(), original = item()
+    const chat = { kind, sourceRef: 'chat', sourceKey: 'chat:1' } as ArkmeSourceItem
+    const unrelated = { ...chat, sourceRef: 'other-chat', sourceKey: 'chat:2' }
+    const id = owner.begin('delete', chat, [original])
+    expect(owner.projectWindow([original], chat, [])).toEqual([])
+    expect(owner.project(original, unrelated, [])).toBe(original)
+    owner.fail(id, new Error('network'))
+    expect(owner.projectWindow([], chat, [])[0]?.recordDeletionRef).toBeUndefined()
+    expect(owner.projectWindow([], unrelated, [])).toEqual([])
+    owner.settleDeletion(id, { items: [{ recordUid: 'a', version: 3, result: 'deleted' }] })
+    expect(owner.projectWindow([original], chat, [])).toEqual([])
+  })
   it('does not alter chat occurrences and isolates accounts', () => {
     const owner = new RecordMutationFeedback(), original = item()
     owner.begin('delete', self, [original])

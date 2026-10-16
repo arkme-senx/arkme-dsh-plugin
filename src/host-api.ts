@@ -1465,6 +1465,8 @@ export async function dispatchArkmeHostOperation(
         recordingId: stringParam(params, 'recordingId'), startedAt: numberParam(params, 'startedAt', 0),
         elapsedMillis: numberParam(params, 'elapsedMillis', 0), reason: stringParam(params, 'reason') },
     )
+    case 'recordings.totals.index': return await service.recordingTotalsIndex(stringParam(params, 'account'), numberParam(params, 'toMillis', Number.NaN), numberParam(params, 'offset', Number.NaN), requestSignal)
+    case 'recordings.totals.bucket': return await service.recordingTotalsBucket(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),

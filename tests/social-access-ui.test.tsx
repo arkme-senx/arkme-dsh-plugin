@@ -28,7 +28,8 @@ afterEach(() => {
 })
 const labels = () => renderer!.root.findAllByType('button').map(button => button.props['data-arkme-home-tour-target']).filter(Boolean)
 const expectSocial = (visible: boolean) => {
-  for (const name of ['contacts', 'world', 'calls']) expect(labels().includes(name)).toBe(visible)
+  for (const name of ['contacts', 'calls']) expect(labels().includes(name)).toBe(visible)
+  expect(renderer!.root.findAllByType('button').some(button => button.props['aria-label'] === '探索')).toBe(visible)
 }
 const mount = async () => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })

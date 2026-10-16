@@ -134,7 +134,7 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { candidate.props.onClick(); await tick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('本地说话人')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('正在读取候选')
-    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!.props.disabled).toBe(false)
+    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!.props.disabled).toBe(false)
   })
 
   it('shares cached candidates with another item while refresh is pending', async () => {
@@ -173,10 +173,10 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { renderer = create(editor); await tick() })
     const second = renderer.root.findAll(node => node.type === 'button' && node.findAll(child => child.type === 'span' && child.children.includes('乙')).length > 0)[0]!
     await act(async () => { second.props.onClick(); await tick() })
-    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!.props.disabled).toBe(false)
+    expect(renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!.props.disabled).toBe(false)
     await act(async () => { finish(options.map(option => ({ ...option, speakerRef: `${option.speakerRef}-renewed` }))); await tick() })
     mocks.callArkme.mockResolvedValueOnce({ day: { dateStamp: 1 } })
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
     expect(confirm.props.disabled).toBe(false)
     await act(async () => { confirm.props.onClick(); confirm.props.onClick(); await tick() })
     const writes = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.speaker.assign-item')
@@ -204,7 +204,7 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => { renderer = create(editor); await tick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('已缓存候选')
     expect(renderer.root.findByProps({ 'aria-label': '重试读取说话人候选' })).toBeDefined()
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
     expect(confirm.props.disabled).toBe(true)
   })
 
@@ -261,7 +261,7 @@ describe('recording speaker editor failure recovery', () => {
 
     const input = renderer.root.findByProps({ 'aria-label': '说话人名称' })
     await act(async () => { input.props.onChange({ target: { value: '林老师' } }); await tick() })
-    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '确认')[0]!
+    const confirm = renderer.root.findAll(node => node.type === 'button' && node.children.join('') === '保存标记')[0]!
 
     expect(confirm.props.disabled).toBe(true)
     await act(async () => { confirm.props.onClick(); await tick() })
