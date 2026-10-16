@@ -163,7 +163,15 @@ export class ArkmeAccountSessionOwner {
       finally { this.setReady(previousIdentity) }
       throw error
     }
-    const committed = await this.bridge.commit(prepared.transitionRef)
+    let committed: { status: 'ready' | 'relaunch' }
+    try { committed = await this.bridge.commit(prepared.transitionRef) }
+    catch (commitError) {
+      // Credentials may already be persisted. Verify their identity with the
+      // desktop owner without repeating the mutation or assuming readiness.
+      try { await this.attestCurrent() }
+      catch { throw commitError }
+      return
+    }
     this.setReady(committed.status === 'ready' ? identityKey(identity) : undefined)
   }
 

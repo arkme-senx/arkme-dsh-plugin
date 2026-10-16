@@ -1,3 +1,4 @@
+import { assertHostCapability, hostAllows } from './host-policy.js'
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
@@ -193,7 +194,7 @@ export class ArkmePluginUpdateManager {
   private disposed = false
 
   constructor(options: ArkmePluginUpdateManagerOptions) {
-    this.enabled = options.enabled
+    this.enabled = options.enabled && hostAllows('runtimeSelfUpdate')
     this.channel = options.channel
     this.updateServiceOrigin = validatePluginUpdateServiceOrigin(options.updateServiceBaseUrl || DEFAULT_UPDATE_SERVICE_BASE_URL)
     this.updateArtifactOrigin = options.updateArtifactBaseUrl?.trim()
@@ -307,6 +308,7 @@ export class ArkmePluginUpdateManager {
   }
 
   async install(): Promise<ArkmePluginUpdateInstallSnapshot> {
+    assertHostCapability('runtimeSelfUpdate')
     if (this.installInFlight !== undefined) return await this.installInFlight
     const task = this.installOnce()
     this.installInFlight = task
@@ -318,6 +320,7 @@ export class ArkmePluginUpdateManager {
   }
 
   private async installOnce(): Promise<ArkmePluginUpdateInstallSnapshot> {
+    assertHostCapability('runtimeSelfUpdate')
     const status = await this.status({ refreshIfStale: false })
     if (status.availability !== 'available' || status.latestVersion === undefined) {
       throw new ArkmePluginUpdateError('plugin-update-not-available', '当前没有可安装的插件更新', false)
@@ -603,6 +606,7 @@ export class ArkmePluginUpdateManager {
     plan: PluginUpdaterPlan,
     runtime: PluginUpdateInstallRuntime,
   ): Promise<void> {
+    assertHostCapability('runtimeSelfUpdate')
     const add = runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this)
     const remove = runtime.runProfilePluginRemove ?? this.runProfilePluginRemove.bind(this)
     const rollback = runtime.runProfilePluginRollback ?? this.runProfilePluginRollback.bind(this)
