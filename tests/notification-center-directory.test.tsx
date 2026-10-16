@@ -337,9 +337,11 @@ describe('notification directory stability', () => {
   })
 })
 
-it.each(['missing conversation', 'missing message', 'network error', 'success'])(
+it.each(['missing conversation', 'missing message', 'network error', 'success', 'unloaded conversation'])(
  'reaction notification: %s preserves history and validates the navigation target independently of reading', async outcome => {
-  const reaction = { id: 'a'.repeat(64), revision: 1, actorUserId: 2, sourceKey: outcome === 'missing conversation' ? 'missing' : sources[0]!.sourceKey,
+  const success = outcome === 'success' || outcome === 'unloaded conversation'
+  const reaction = { id: 'a'.repeat(64), revision: 1, actorUserId: 2, sourceKey: outcome === 'missing conversation' || outcome === 'unloaded conversation' ? 'missing' : sources[0]!.sourceKey,
+    ...(outcome === 'unloaded conversation' ? { source: { ...sources[0]!, sourceKey: 'missing', sourceRef: 'resolved-old-source', displayName: '旧会话' }, actorName: '备注名' } : {}),
     itemUid: 'target-message', recordOwnerUserId: 7001, sendAtMillis: timestamp, text: 'original message',
     selections: [{ key: 'b'.repeat(64), expression: { text: '赞' }, at: timestamp }], unread: true }
   const original = mocks.callArkme.getMockImplementation()!
@@ -350,7 +352,7 @@ it.each(['missing conversation', 'missing message', 'network error', 'success'])
     }
     if (operation === 'source.timeline-around') {
       if (outcome === 'network error') throw Error('offline')
-      return { items: outcome === 'success' ? [{ itemUid: reaction.itemUid }] : [] }
+      return { items: success ? [{ itemUid: reaction.itemUid }] : [] }
     }
     return original(operation, input, ...rest)
   })
@@ -361,10 +363,11 @@ it.each(['missing conversation', 'missing message', 'network error', 'success'])
   await act(async () => { row().findByType('button').props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
   const acks = mocks.callArkme.mock.calls.filter(([operation, input]) => operation === 'reactions' && input.action === 'notifications-read')
   expect(acks).toHaveLength(0)
-  expect(open).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0)
+  expect(open).toHaveBeenCalledTimes(success ? 1 : 0)
+  if (outcome === 'unloaded conversation') expect(open).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'resolved-old-source' }), reaction.itemUid, reaction.sendAtMillis, reaction.recordOwnerUserId, undefined, true)
   expect(row()).toBeDefined()
   expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(0)
-  if (outcome !== 'success') expect(renderer!.root.findAll(node => node.props.role === 'alert').length).toBeGreaterThan(0)
+  if (!success) expect(renderer!.root.findAll(node => node.props.role === 'alert').length).toBeGreaterThan(0)
   await act(async () => { renderer!.unmount(); renderer = undefined })
   await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
   expect(row()).toBeDefined()

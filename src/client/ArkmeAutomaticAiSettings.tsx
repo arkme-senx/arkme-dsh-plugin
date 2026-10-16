@@ -5,11 +5,11 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 
 const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
-  personal_profile: '手机「探索 → 个人档案」',
+  personal_profile: '「探索 → 个人档案」',
   record_thought: '手机快记列表或详情',
   chat_thought: '手机聊天页面',
   arrangement_recognition: '左侧「安排」',
-  goal_insight: '手机「探索 → 目标」',
+  goal_insight: '「探索 → 目标」',
 }
 
 export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: string }) {

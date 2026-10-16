@@ -4,12 +4,12 @@ import { taggedJSON, TEXT_OUTPUT } from '../../shared/output.js'
 import { withArkmeConfirmationContext } from '../../shared/conversational-confirmation.js'
 import type { ArkmeCapabilitySettings, AutomaticCapabilityKey } from '../../../capabilities.js'
 
-const safe = (value: ArkmeCapabilitySettings) => ({ settings: value.settings.map(({ key, title, enabled }) => ({ key, title, enabled })), enableFrom: '由用户进入「用量与额度 → AI 自动分析」，阅读 AI 额度使用说明后开启。' })
+const safe = (value: ArkmeCapabilitySettings) => ({ settings: value.settings.map(({ key, title, enabled }) => ({ key, title, enabled })), enableFrom: '由用户进入「用量与额度 → 自动使用额度」，阅读 AI 额度使用说明后开启。' })
 
 export const automaticCapabilityQueryToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.account.automatic-capabilities.v1', toolName: 'arkme_automatic_ai_settings', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
-    name: 'arkme_automatic_ai_settings', description: 'Read optional automatic AI settings for the signed-in user. Defaults are off. Enabling creates ongoing AI point charges and requires human consent in interactive settings; this tool cannot enable or analyze.',
+    name: 'arkme_automatic_ai_settings', description: 'Read optional automatic AI settings for the signed-in user. Record thoughts, chat thoughts and arrangement recognition default to on; personal profile and goals default to off. Always use the returned current settings. Enabling creates ongoing AI allowance usage and requires human consent in interactive settings; this tool cannot enable or analyze.',
     parameters: {}, output: TEXT_OUTPUT, isConcurrencySafe: () => true,
     execute: async (_, exec) => taggedJSON('自动 AI 设置', safe(await ports.automaticCapabilities(undefined, exec.signal))),
   }),

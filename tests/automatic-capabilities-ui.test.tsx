@@ -33,7 +33,7 @@ it('requires human billing consent, carries the observed version, and closes dir
   expect(help.open).toBe(false)
   await act(async () => help.querySelector('summary')!.click())
   expect(help.open).toBe(true)
-  expect(help.textContent).toContain('手机「探索 → 个人档案」')
+  expect(help.textContent).toContain('「探索 → 个人档案」')
   expect(help.textContent).not.toContain('额度规则')
   expect(help.textContent).not.toContain('已开始的分析')
   expect(writes()).toHaveLength(0)

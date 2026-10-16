@@ -1,10 +1,12 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
-手机「探索 → 个人档案」|Mobile: Explore → Personal profile
+尚未开启分析|Analysis is off
+暂时无法确认分析设置|Analysis settings are temporarily unavailable
+「探索 → 个人档案」|Explore → Personal profile
 手机快记列表或详情|Mobile: note list or details
 手机聊天页面|Mobile: chat page
 左侧「安排」|Plans in the left navigation
-手机「探索 → 目标」|Mobile: Explore → Goals
+「探索 → 目标」|Explore → Goals
 开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
@@ -275,6 +277,10 @@ AI识别中…|AI recognition in progress…
 安排提醒|Arrangement reminder
 表态|Reactions
 收到表态|Received a reaction
+收到{name}的表态|Received a reaction from {name}
+会话暂不可用|Conversation temporarily unavailable
+私聊|Direct chat
+群聊|Group chat
 新通知|New notification
 点击查看原消息|Click to view the original message
 世界互动暂时无法加载|World interactions are temporarily unavailable
@@ -596,6 +602,14 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+音频文件列表|Audio files
+当天暂无音频文件|No audio files for this day
+暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
+共 {v0} 个文件|{v0} files
+已找到 {v0} 个文件|{v0} files found so far
+文件列表未能继续加载，请重试|Could not load more files. Please retry.
+部分未完成文件暂未同步，请重试|Some unfinished files could not be synced. Please retry.
+未完成文件加载失败，请重试|Could not load unfinished files. Please retry.
 重试加载|Retry loading
 仅筛选已确认地点的活动。列表自动补读最多 8 个可见活动的地点，其他活动可展开后手动查看；没有地点标签不代表当时没有位置。|Shows confirmed locations only. Locations load for up to 8 visible activities; expand others to check manually. No label does not mean no location was recorded.
 正在加载原始记录…|Loading original records…
@@ -1822,6 +1836,11 @@ Arkme 账号|Arkme account
 暂无可用额度|No allowance remaining
 余量较少|Running low
 已识别说话人|Recognized speakers
+已标记 {marked} · 未标记 {unmarked}|Labeled {marked} · Unlabeled {unmarked}
+统计待更新|Counts awaiting update
+统计待更新，当前显示上次整理的目录。|Counts are awaiting an update. Showing the last prepared directory.
+目录更新暂未完成，请刷新重试。|Directory update could not finish. Refresh to retry.
+正在同步最新人物与统计…|Updating people and counts…
 查看录音中已标记和未标记的说话人|See labeled and unlabeled speakers from your recordings
 搜索说话人|Search speakers
 搜索已加载的说话人|Search loaded speakers
@@ -1920,4 +1939,38 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 等待处理|Waiting for processing
 调整实体列表宽度|Resize entity list
 加载更多提及|Load more mentions
+正在提交反馈…|Submitting feedback…
+实体相关性|Entity relevance
+当前显示全部实体，提及者汇总待补充。|Showing all entities. Speaker summaries are not available yet.
+{name}的提及者|Speakers mentioning {name}
+{name} {count} 次|{name}: {count} mentions
+含 {count} 次播放|{count} from playback
+另 {count} 位说话人|{count} more speakers
+{count} 次说话人待确认|{count} mentions with unknown speaker
+查看所有人的提及|Show everyone's mentions
+与你相关|Relevant to you
+暂未提供相关性信息，当前显示全部实体。|Relevance information is not available yet. Showing all entities.
+暂未发现与你相关的实体，可展开其他内容。|No related entities yet. Expand other content to see more.
+你提到|Mentioned by you
+与你交流时提到|Mentioned in conversation with you
+你关注的|Your interest
+其他提及|Other mentions
+背景内容|Background content
+来源待确认|Source unconfirmed
+现场提及|In-person mention
+待核实|Needs verification
+其他内容 · {count}|Other content · {count}
+收起其他内容 · {count}|Collapse other content · {count}
+这次提及的反馈|Feedback on this mention
+仅影响这次提及，保存后可撤销。|Applies only to this mention. You can undo after saving.
+暂不支持保存反馈。|Saving feedback is not available yet.
+与我有关|Relevant to me
+播放内容|Playback content
+识别有误|Incorrect recognition
+反馈已保存，仅影响这次提及|Feedback saved for this mention only
+已撤销这次反馈|Feedback undone
+撤销反馈|Undo feedback
+重试这次反馈|Retry this feedback
+暂未确认操作结果，请重试这次反馈。|The result is not confirmed. Retry this same feedback.
+这次操作未生效，请刷新后再操作。|This operation was not applied. Refresh and try again.
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

@@ -24,6 +24,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { reactionNotifications } from './reaction-notifications.js'
+import { expressionLabel } from './reaction-expression.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 
 export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai' | 'recording'
@@ -33,6 +34,7 @@ export interface ArkmeNotificationItem {
   kind: ArkmeNotificationKind
   title: string
   preview: string
+  sourceLabel?: string
   atMillis: number
   unread: boolean
   arrangement?: ArkmeArrangementReminderEvent
@@ -108,12 +110,17 @@ function arrangementItem(event: ArkmeArrangementReminderEvent): ArkmeNotificatio
   }
 }
 
-function reactionItem(item: ReactionNotification): ArkmeNotificationItem {
-  const expression = item.selections.at(-1)?.expression.text || tr('表态')
+export function reactionItem(item: ReactionNotification): ArkmeNotificationItem {
+  const selected = item.selections.at(-1)?.expression
+  const expression = selected ? expressionLabel(selected) || tr('表态') : tr('表态')
+  const source = item.source
+  const sourceLabel = source && (source.kind === 'private_chat' || source.kind === 'group_chat')
+    ? `${tr(source.kind === 'group_chat' ? '群聊' : '私聊')} · ${source.displayName}` : tr('会话暂不可用')
   return {
     id: `reaction:${item.id}:${item.revision}`,
     kind: 'reaction',
-    title: `${item.actorUserId > 0 ? tr('收到表态') : tr('新通知')} · ${expression}`,
+    title: `${item.actorName ? tr('收到{name}的表态', { name: item.actorName }) : tr('收到表态')} · ${expression}`,
+    sourceLabel,
     preview: item.text || tr('点击查看原消息'),
     atMillis: item.selections.at(-1)?.at || item.sendAtMillis,
     unread: item.unread !== false,
@@ -451,7 +458,7 @@ function NotificationConversation({ data }: { data: ReturnType<typeof useNotific
       if (item.kind === 'world' && item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
       else if (item.reaction && scope) {
         const reaction = item.reaction
-        const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === reaction.sourceKey)
+        const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === reaction.sourceKey) ?? reaction.source
         if (!source) throw new Error('Missing source')
         const page = await callArkme<import('../types.js').ArkmeTimelineAroundPage>('source.timeline-around', {
           sourceRef: source.sourceRef, itemUid: reaction.itemUid, recordOwnerUserId: reaction.recordOwnerUserId, beforeLimit: 1, afterLimit: 1,

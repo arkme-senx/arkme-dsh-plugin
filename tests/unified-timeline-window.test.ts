@@ -91,3 +91,17 @@ describe('bounded live tail reads', () => {
     expect(result.unified!.olderCursor).toBe('history-frontier')
   })
 })
+
+it('reopens a local-only window around the actual reading anchor and rejects movement outside the returned window', async () => {
+  const { readConversationTimelineWindow } = await import('../src/client/conversation-timeline-refresh.js')
+  const messages = Array.from({length:80},(_,i)=>({ eventId:String(i),kind:'message',source:'messages',contentStatus:'available',orderTie:String(i),occurredAtMillis:i,
+    item:{itemUid:String(i),recordOwnerUserId:2,timelineItemKey:`key:${i}`} })) as ArkmeUnifiedTimelineEvent[]
+  const previous={...window(messages),windowTokens:[]}
+  let anchor='message:5'
+  const read=vi.fn(async()=>page(window(messages.slice(0,20))))
+  await readConversationTimelineWindow({unified:previous,items:[],mode:'latest'},read,signal(),()=>false,()=>anchor)
+  expect(read).toHaveBeenCalledExactlyOnceWith({unified:{mode:'around',itemUid:'5',recordOwnerUserId:2}})
+  read.mockImplementationOnce(async()=>{anchor='message:70';return page(window(messages.slice(0,20)))})
+  await expect(readConversationTimelineWindow({unified:previous,items:[],mode:'latest'},read,signal(),()=>false,()=>anchor)).rejects.toThrow('已保留当前窗口')
+  expect(previous.events).toHaveLength(80)
+})

@@ -2,13 +2,14 @@ import { RecordingEntityPanel } from './recordings/RecordingEntityPanel.js'
 import { useRecordingEntities } from './recordings/use-recording-entities.js'
 import type { RecordingEntityOccurrence } from '../recording-entity-contract.js'
 import { createRecordingEntityUnderliner } from './recordings/recording-entity-underlines.js'
+import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch'
 import { FileAudio } from '@phosphor-icons/react/dist/icons/FileAudio'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ArkmeRecordingFiles } from './recordings/ArkmeRecordingFiles.js'
+import { ArkmeRecordingFiles, type RecordingFilesCount } from './recordings/ArkmeRecordingFiles.js'
 import { ArkmeRecordingPresence } from './recordings/ArkmeRecordingPresence.js'
 import { resolveRecordingSearchTarget } from './recordings/recording-search-target.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
@@ -45,7 +46,8 @@ import { ArkmeRecordingImportTrigger, type RecordingImportButtonStatus } from '.
 import { ArkmeRecordingMobileGuideDialog } from './recordings/ArkmeRecordingMobileGuideDialog.js'
 import { ArkmeDirectRecordingButton, ArkmeDirectRecordingStatus } from './recordings/ArkmeDirectRecording.js'
 import { useLocalRecordingCoverage } from './recordings/recording-coverage.js'
-import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor } from './recordings/ArkmeRecordingSpeakerEditor.js'
+import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor, type RecordingSpeakerUpdateFeedback } from './recordings/ArkmeRecordingSpeakerEditor.js'
+import { captureRecordingScrollAnchor } from './recordings/recording-scroll-anchor.js'
 import { recordingDayIsEmpty } from './recordings/recording-day-empty.js'
 import { RecordingTranscriptTimeline } from './recordings/RecordingTranscriptTimeline.js'
 import { RecordingDayArrangements } from './recordings/RecordingDayArrangements.js'
@@ -126,20 +128,21 @@ const styles: Record<string, CSSProperties> = {
   tabActive: { color: colors.text, fontWeight: 500 },
   tabIndicator: { position: 'absolute', left: '50%', bottom: 4, width: 10, height: 2, transform: 'translateX(-50%)', borderRadius: 22, background: colors.text },
   actionCluster: { display: 'flex', flex: 'none', alignItems: 'center', gap: 4 },
-  transcriptToolbar: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${colors.border}`, minWidth: 0 },
+  analysisBody: { position: 'relative', display: 'grid', gridTemplateRows: 'minmax(0,1fr)', minWidth: 0, minHeight: 0 },
+  transcriptToolbar: { position: 'absolute', top: 8, right: 12, zIndex: 2, display: 'flex', alignItems: 'center', gap: 4, maxWidth: 'calc(100% - 24px)', minWidth: 0, padding: 4, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10, background: colors.base },
   actionButton: { width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
   pane: { minWidth: 0, minHeight: 0, padding: '14px 18px 24px', boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain', border: `1px solid ${colors.border}`, borderBottom: 0, borderRadius: '10px 10px 0 0', background: colors.base },
   transcriptPane: { padding: 0 },
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { padding: '12px 14px', borderRadius: 10, background: colors.dangerSoft, color: colors.danger, fontSize: 13 },
   transcriptList: { width: '100%', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: '10px 12px 0', boxSizing: 'border-box', listStyle: 'none' },
-  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr) 40px', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '34px' },
+  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'fit-content(min(128px, 45%)) minmax(0, 1fr) 24px', columnGap: 4, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' },
   transcriptContent: { minWidth: 0, minHeight: 22, width: 'fit-content', maxWidth: '100%', justifySelf: 'start', padding: '6px 10px', boxSizing: 'border-box', borderRadius: '4px 12px 12px', background: arkmeTheme.messageOther, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
   transcriptTime: { display: 'inline-block', marginLeft: 8, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
-  transcriptSpeaker: { maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
+  transcriptSpeaker: { position: 'relative', maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
   transcriptSpeakerName: { minWidth: 0, marginLeft: 4, whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', fontWeight: 500, letterSpacing: '.02px' },
   transcriptNamedSpeaker: { maxWidth: 112, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  transcriptEditSlot: { width: 12, height: 12, flex: 'none', marginLeft: 2, display: 'grid', placeItems: 'center' },
+  transcriptEditSlot: { position: 'absolute', left: 'calc(100% - 2px)', top: '50%', transform: 'translateY(-50%)', zIndex: 1, width: 16, height: 20, display: 'grid', placeItems: 'center', borderRadius: 4, background: colors.base },
   speakerDot: { flex: 'none', width: 16, height: 16, borderRadius: 999 },
   transcriptLoadingList: { margin: 0, padding: '0 12px', listStyle: 'none' },
   transcriptLoadingItem: { padding: '8px 6px' },
@@ -347,13 +350,14 @@ export function recordingTranscriptDurationLabel(startAtMillis: number, endAtMil
   return tr("{v0}小时{v1}分", { v0: Math.floor(durationSeconds / 3_600), v1: Math.floor((durationSeconds % 3_600) / 60) })
 }
 
-export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false, searchHighlighted = false, repeatedSpeaker = false, speakerEditing = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
+export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false, searchHighlighted = false, repeatedSpeaker = false, speakerEditing = false, speakerUpdated = false, onEditSpeaker, onSelect, text, selectionControl, onToggleSelection, readOnly = false }: {
   item: ArkmeRecordingWorkbenchItem
   selected: boolean
   isPlaying?: boolean
   searchHighlighted?: boolean
   repeatedSpeaker?: boolean
   speakerEditing?: boolean
+  speakerUpdated?: boolean
   readOnly?: boolean
   onEditSpeaker?(event: MouseEvent<HTMLButtonElement>): void
   onSelect?(): void
@@ -382,10 +386,12 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
     data-recording-speaker-self={item.isSelf || undefined}
     data-recording-search-highlight={searchHighlighted || undefined}
     data-recording-playing={isPlaying || undefined}
+    data-recording-speaker-updated={speakerUpdated || undefined}
     style={{
       ...styles.transcript,
-      ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr) 24px', contentVisibility:'visible' as const } : {}),
+      ...(readOnly ? { gridTemplateColumns:'fit-content(min(64px, 45%)) minmax(0,1fr) 24px', contentVisibility:'visible' as const } : {}),
       ...(selected ? { background: colors.input } : {}),
+      ...(speakerUpdated ? { background: `color-mix(in srgb, ${colors.base} 92%, ${colors.accent} 8%)` } : {}),
       ...(searchHighlighted ? { background: `color-mix(in srgb, ${colors.base} 88%, ${colors.text} 12%)` } : {}),
       ...(isPlaying ? { background: `color-mix(in srgb, ${colors.base} 92%, ${colors.accent} 8%)`, boxShadow: `inset 2px 0 ${colors.accent}` } : {}),
       ...(selectionControl ? { paddingLeft: 27 } : {}),
@@ -409,13 +415,14 @@ export function ArkmeRecordingTranscriptRow({ item, selected, isPlaying = false,
       onDoubleClick={event => { event.stopPropagation() }}
     >
       {speakerIdentity}
-      <span aria-hidden="true" style={{ ...styles.transcriptEditSlot, ...(item.isSelf ? { marginLeft: 0, marginRight: 2 } : {}) }}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
+      <span aria-hidden="true" className="arkme-recording-transcript-edit" style={{ ...styles.transcriptEditSlot, ...(item.isSelf ? { left: 'auto', right: 'calc(100% - 2px)' } : {}) }}><PencilSimple size={12} /></span>
     </button>}
     <div className="arkme-recording-transcript-content" style={{
       ...styles.transcriptContent,
       ...(item.isSelf ? { gridColumn: '1 / 3', gridRow: 1, justifySelf: 'end', maxWidth: 'calc(100% - 24px)', borderRadius: '12px 4px 12px 12px', background: arkmeTheme.messageOwn, textAlign: 'left' } : {}),
       ...(isPlaying ? { boxShadow: `inset 0 0 0 1px ${colors.accent}` } : {}),
     }}>
+      {item.soundSource === 'playback' && <span title={tr('用户确认来自手机或电视播放')} style={{ display: 'inline-block', marginRight: 6, padding: '0 4px', borderRadius: 3, fontSize: 11, color: colors.tertiary, border: `1px solid ${colors.border}` }}>{tr('播放内容')}</span>}
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
         <span style={{ position: 'relative', display: 'inline-block' }}>
@@ -746,9 +753,43 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [timelineDetailEvent, setTimelineDetailEvent] = useState<ArkmeRecordingTimelineEvent>()
   const [editingSpeaker, setEditingSpeaker] = useState<{ item: ArkmeRecordingWorkbenchItem; anchor: RecordingSpeakerPopoverAnchor; forceBatchUpdate: boolean }>()
   const [exportNotice, setExportNotice] = useState('')
+  const [audioFileCount, setAudioFileCount] = useState<RecordingFilesCount>()
   const [transcriptSearch, setTranscriptSearch] = useState('')
   const [transcriptMatchIndex, setTranscriptMatchIndex] = useState(0)
   const transcriptRootRef = useRef<HTMLDivElement>(null)
+  const speakerMutationRevision = useRef(0)
+  const speakerScrollAnchor = useRef<ReturnType<typeof captureRecordingScrollAnchor>>()
+  const [speakerFeedback, setSpeakerFeedback] = useState<{ itemId: string; message: string; visible: boolean }>()
+  useEffect(() => { setSpeakerFeedback(undefined); speakerScrollAnchor.current = undefined }, [selectedDate, auth.auth?.environment, auth.auth?.userId])
+  useEffect(() => {
+    if (!speakerFeedback?.visible) return
+    const timer = setTimeout(() => { setSpeakerFeedback(current => current ? { ...current, visible: false } : current) }, 4_000)
+    return () => { clearTimeout(timer) }
+  }, [speakerFeedback])
+  useLayoutEffect(() => {
+    const anchor = speakerScrollAnchor.current
+    speakerScrollAnchor.current = undefined
+    if (!anchor) return
+    anchor.restore()
+    const scrollTop = anchor.pane.scrollTop
+    if (typeof requestAnimationFrame === 'undefined') return
+    // content-visibility may finish layout in the next frame. Respect any intervening user scroll.
+    const frame = requestAnimationFrame(() => { if (anchor.pane.scrollTop === scrollTop) anchor.restore() })
+    return () => { cancelAnimationFrame(frame) }
+  }, [day])
+  const applySpeakerUpdate = (next: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback) => {
+    if (next.dateStamp !== (notificationWindow?.dateStamp ?? selectedDateRef.current)) return
+    speakerMutationRevision.current += 1
+    speakerScrollAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current, removal?.itemId ?? editingSpeaker?.item.itemId)
+    setDay(next)
+    setSpeakerFeedback(undefined)
+    if (removal && !removal.warning) {
+      const item = next.transcript.items.find(candidate => candidate.itemId === removal.itemId)
+      if (item && !item.assignedSpeakerOptionKey) setSpeakerFeedback({ itemId: item.itemId, visible: true,
+        message: removal.scope === 'speaker' ? tr('已取消 {v0} 处标记', { v0: removal.count })
+          : tr('已取消标记，恢复为「{v0}」', { v0: item.speakerLabel }) })
+    }
+  }
   const [comparison, setComparison] = useState<PreparedRecordingComparison>()
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const comparisonRequest = useRef<AbortController>()
@@ -841,10 +882,11 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   useEffect(() => {
     const controller = new AbortController()
     setDay(undefined); setDayLoading(true); setDayError('')
+    const mutationRevision = speakerMutationRevision.current
     setSummaryVersionId(''); setTimelineVersionId('')
     void callArkme<ArkmeRecordingDay>('recordings.day', { dateStamp: selectedDate.getTime(), ...(notificationWindow ? { window: notificationWindow } : {}) }, controller.signal)
       .then(value => {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || mutationRevision !== speakerMutationRevision.current) return
         setDay(value)
         setSummaryVersionId(notificationWindow && ui.recordingTarget?.summary?.versionId ? ui.recordingTarget.summary.versionId : value.summary.items.find(version => version.selectable)?.id ?? '')
         setTimelineVersionId(notificationWindow && ui.recordingTarget?.timeline?.versionId ? ui.recordingTarget.timeline.versionId : value.timeline.items.find(version => version.selectable)?.id ?? '')
@@ -862,6 +904,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const poll = async () => {
       if (controller.signal.aborted) return
       attempts += 1
+      const mutationRevision = speakerMutationRevision.current
       try {
         const next = await callArkme<ArkmeRecordingDay>(
           'recordings.day',
@@ -869,6 +912,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           controller.signal,
         )
         if (controller.signal.aborted) return
+        if (mutationRevision !== speakerMutationRevision.current) {
+          timer = setTimeout(() => { void poll() }, 1_500)
+          return
+        }
         setDay(next)
         setSummaryVersionId(current => notificationWindow && current === ui.recordingTarget?.summary?.versionId ? current : reconcileRecordingVersionId(current, next.summary.items))
         setTimelineVersionId(current => notificationWindow && current === ui.recordingTarget?.timeline?.versionId ? current : reconcileRecordingVersionId(current, next.timeline.items))
@@ -1118,6 +1165,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       const editSpeaker = (event: MouseEvent<HTMLButtonElement>) => {
         if (!workbenchEnabled) return
         const rect = event.currentTarget.getBoundingClientRect()
+        if (speakerFeedback?.itemId !== item.itemId) setSpeakerFeedback(undefined)
         setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : {
           item,
           anchor: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
@@ -1127,7 +1175,8 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       return <ArkmeRecordingTranscriptRow
         key={item.itemId}
         item={item}
-        repeatedSpeaker={recordingTranscriptContinuesSpeaker(section.items[index - 1], item)}
+        repeatedSpeaker={speakerFeedback?.itemId !== item.itemId && recordingTranscriptContinuesSpeaker(section.items[index - 1], item)}
+        speakerUpdated={speakerFeedback?.itemId === item.itemId && speakerFeedback.visible}
         speakerEditing={editingSpeaker?.item.itemRef === item.itemRef}
         isPlaying={playback.isPlaying && playback.activeItemRef === item.itemRef}
         selected={preciseItem?.itemId === item.itemId || selected}
@@ -1271,10 +1320,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"]:hover,
       .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"]:focus-visible,
       .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"][aria-expanded="true"] { opacity: 1; }
-      .arkme-recording-transcript-edit { opacity: 0; }
+      .arkme-recording-transcript-edit { opacity: 0; pointer-events: none; }
       .arkme-recording-transcript-speaker:hover .arkme-recording-transcript-edit,
       .arkme-recording-transcript-speaker:focus-visible .arkme-recording-transcript-edit,
-      .arkme-recording-transcript-speaker[aria-expanded="true"] .arkme-recording-transcript-edit { opacity: 1; }
+      .arkme-recording-transcript-speaker[aria-expanded="true"] .arkme-recording-transcript-edit { opacity: 1; pointer-events: auto; }
       @media (hover: none) {
         .arkme-recording-transcript-speaker[data-recording-speaker-repeated="true"] { opacity: 1; }
       }
@@ -1316,7 +1365,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <span>{tr('当天暂无录音')}</span>
       </div> : <>
       {!selectionMode && <div style={styles.dayTimeline}>{workbenchEnabled && <RecordingTranscriptTimeline key={selectedDate.getTime()} transcriptRoot={transcriptRootRef} followTranscript={active && activeTab === 'transcript' && !tour.sample && !dayLoading} onNavigateAtMillis={navigateTranscript} arrangementEntry={!tour.sample && <RecordingDayArrangements dateStamp={selectedDate.getTime()} accountScope={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''} active={active && ui.mode === 'recordings'} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />} items={transcriptItems} coverage={coverage} dailyMetrics={dayError || day?.dateStamp !== selectedDate.getTime() ? undefined : day?.transcript.dailyMetrics} coverageState={dayError || day?.transcript.state === 'error' ? 'error' : day?.coverage?.state ?? 'partial'} dayStartMillis={selectedDate.getTime()} loading={dayLoading} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { tour.finish(false); setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : { item, anchor, forceBatchUpdate: true }) }} onImportAudio={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} playbackLoading={playback.isLoading} onSelectAtMillis={value => { tour.finish(false); navigateTranscript(value); void playback.selectAt(transcriptItems, value) }} onTogglePlayback={() => { tour.finish(false); if (transcriptItems[0] !== undefined) void playback.toggleAt(transcriptItems, selectedTimelineMillis ?? transcriptItems[0].startAtMillis) }} />}{workbenchEnabled && playback.isLoading && <div role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr("录音加载中…")}</div>}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}</div>}
-      {tour.sample ? <RecordingTourSample tab={sampleTab} onTab={setSampleTab} /> : <div style={{ position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}><div style={{ ...styles.analysis, flex: 1, minWidth: 0, ...(activeTab === 'transcript' ? { gridTemplateRows: `40px auto minmax(0,1fr)${selectionMode ? ' 72px' : ''}` } : {}) }}><nav style={styles.tabs} aria-label={tr("录音内容")}><span style={{ ...styles.tabList, flex: 1, minWidth: 0, overflowX: 'auto' }}>{([['transcript', '转写'], ['summary', '总结'], ['timeline', '时间轴'], ['files', '音频文件']] as const).filter(([id]) => id !== 'files' || workbenchEnabled).map(([id, label]) => <span key={id} style={{ ...styles.tabSlot, width: 100, minWidth: 80 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setSelectionMode(false); setEditingSpeaker(undefined); setExportNotice('') }}>{id === 'files' ? <FileAudio size={14} aria-hidden /> : <RecordingDesktopIcon name={id} size={14} />}{label}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span></nav>{activeTab === 'transcript' && <div role="group" aria-label={tr('转写操作')} style={styles.transcriptToolbar}>
+      {tour.sample ? <RecordingTourSample tab={sampleTab} onTab={setSampleTab} /> : <div style={{ position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}><div style={{ ...styles.analysis, flex: 1, minWidth: 0, ...(activeTab === 'transcript' ? { gridTemplateRows: `40px minmax(0,1fr)${selectionMode ? ' 72px' : ''}` } : {}) }}><nav style={styles.tabs} aria-label={tr("录音内容")}><span style={{ ...styles.tabList, flex: 1, minWidth: 0, overflowX: 'auto' }}>{([['transcript', '转写'], ['summary', '总结'], ['timeline', '时间轴'], ['files', '音频文件']] as const).filter(([id]) => id !== 'files' || workbenchEnabled).map(([id, label]) => <span key={id} style={{ ...styles.tabSlot, width: id === 'files' ? 'auto' : 100, minWidth: 80 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setSelectionMode(false); setEditingSpeaker(undefined); setExportNotice('') }}>{id === 'files' ? <FileAudio size={14} aria-hidden /> : <RecordingDesktopIcon name={id} size={14} />}{label}{id === 'files' && audioFileCount?.dateStamp === selectedDate.getTime() && (audioFileCount.count > 0 || audioFileCount.complete) && <span aria-label={tr(audioFileCount.complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(audioFileCount.count) })} title={tr(audioFileCount.complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(audioFileCount.count) })} style={{ marginLeft: 2, fontSize: 11, fontWeight: 400, color: colors.tertiary, fontVariantNumeric: 'tabular-nums' }}>{audioFileCount.count}{!audioFileCount.complete && '+'}</span>}{id === 'files' && audioFileCount?.loading && <CircleNotch size={12} className="arkme-icon-spin" aria-label={tr('正在查找音频文件…')} />}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span></nav><div style={styles.analysisBody}>{activeTab === 'transcript' && <div role="group" aria-label={tr('转写操作')} style={styles.transcriptToolbar}>
         <RecordingTranscriptSearch key={selectedDate.getTime()} query={transcriptSearch} position={transcriptMatches.length === 0 ? 0 : activeMatchIndex + 1} count={transcriptMatches.length} onChange={value => { setTranscriptSearch(value); setTranscriptMatchIndex(0) }} onFind={() => { setTranscriptMatchIndex(0); transcriptRootRef.current?.querySelector('[data-recording-match="0"]')?.scrollIntoView({ block: 'center' }) }} onPrevious={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + transcriptMatches.length - 1) % transcriptMatches.length) }} onNext={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + 1) % transcriptMatches.length) }} />
         <span style={styles.actionCluster}>
           {workbenchEnabled && <>
@@ -1341,23 +1390,25 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
             <button data-arkme-feedback="neutral" type="button" aria-label={tr('导出')} style={styles.actionButton} onClick={downloadCurrent}><RecordingDesktopIcon name="export" size={20} /></button>
           </Tooltip>
         </span>
-      </div>}<div ref={transcriptRootRef} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}{activeTab === 'files' ? <ArkmeRecordingFiles
+      </div>}{activeTab === 'transcript' && speakerFeedback?.visible && <div role="status" aria-live="polite" data-recording-speaker-feedback style={{ position: 'absolute', right: 18, bottom: 12, zIndex: 3, maxWidth: 'calc(100% - 36px)', padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.base, color: colors.text, boxShadow: '0 2px 8px rgba(0,0,0,.08)', fontSize: 12, pointerEvents: 'none' }}>{speakerFeedback.message}</div>}<div ref={transcriptRootRef} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}<div hidden={activeTab !== 'files'}><ArkmeRecordingFiles
         accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined}
-        dateStamp={selectedDate.getTime()} active={active} refreshRevision={recordingRefreshRevision}
-        onImport={() => onOpenRecordingImport(selectedDate.getTime())}
-        onChanged={() => { playback.stop(); setComparison(undefined); setFileRefreshRevision(value => value + 1) }} />
+        dateStamp={selectedDate.getTime()} active={active && activeTab === 'files'} refreshRevision={recordingRefreshRevision}
+        onCountChange={setAudioFileCount}
+        onChanged={() => { playback.stop(); setComparison(undefined); setFileRefreshRevision(value => value + 1) }} /></div>{activeTab === 'files' ? null
         : dayError !== '' ? <div style={styles.error} role="alert">{dayError}</div>
         : emptyDay && !(exactTargetActive && ui.recordingTarget?.window && activeTab !== 'transcript') ? <ArkmeRecordingEmptyState recorded={coverage.length > 0} />
-        : activeTab === 'transcript' ? renderTranscript() : activeTab === 'summary' ? renderSummary() : renderTimeline()}{analysisFooter}</div>{selectionMode && <footer aria-label={tr("录音多选操作")} style={{ height: 72, display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) auto minmax(20px,1fr)', alignItems: 'center', borderTop: `1px solid ${colors.border}`, padding: '0 24px' }}><span style={{ fontSize: 13 }}>{tr("已选择")} {selectedForwardItems.length}/150</span><span style={{ display: 'flex', gap: 8 }}>{(['forward', 'exit'] as const).map(action => <button data-arkme-feedback="neutral" type="button" key={action} aria-label={action === 'forward' ? tr("转发录音片段") : tr("退出多选")} disabled={action === 'forward' && selectedForwardItems.length === 0} onClick={() => { if (action === 'forward') setForwardOpen(true); else { setSelectionMode(false); setForwardAttempt(createRecordingForwardAttempt([])) } }} style={{ width: 64, border: 0, padding: 0, background: 'transparent', color: colors.text, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: action === 'forward' && selectedForwardItems.length === 0 ? .4 : 1 }}><span style={{ width: 36, height: 36, borderRadius: 7, display: 'grid', placeItems: 'center', background: arkmeTheme.elevated }}><RecordingDesktopIcon name={action} size={22} /></span><span style={{ fontSize: 12 }}>{action === 'forward' ? tr("转发") : tr("退出")}</span></button>)}</span><span /></footer>}</div><RecordingEntityPanel key={entities.scope} open={entities.open} {...(currentEntityReveal ? { reveal: currentEntityReveal } : {})} data={entities.data} loading={entities.loading} error={entities.error} paused={entities.paused} starting={entities.starting} startError={entities.startError} onStart={() => { void entities.start() }} compact={entityDrawer} onClose={() => entities.setOpen(false)} onRefresh={entities.refresh} onLocate={locateEntity} /></div>}
+        : activeTab === 'transcript' ? renderTranscript() : activeTab === 'summary' ? renderSummary() : renderTimeline()}{analysisFooter}</div></div>{selectionMode && <footer aria-label={tr("录音多选操作")} style={{ height: 72, display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) auto minmax(20px,1fr)', alignItems: 'center', borderTop: `1px solid ${colors.border}`, padding: '0 24px' }}><span style={{ fontSize: 13 }}>{tr("已选择")} {selectedForwardItems.length}/150</span><span style={{ display: 'flex', gap: 8 }}>{(['forward', 'exit'] as const).map(action => <button data-arkme-feedback="neutral" type="button" key={action} aria-label={action === 'forward' ? tr("转发录音片段") : tr("退出多选")} disabled={action === 'forward' && selectedForwardItems.length === 0} onClick={() => { if (action === 'forward') setForwardOpen(true); else { setSelectionMode(false); setForwardAttempt(createRecordingForwardAttempt([])) } }} style={{ width: 64, border: 0, padding: 0, background: 'transparent', color: colors.text, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: action === 'forward' && selectedForwardItems.length === 0 ? .4 : 1 }}><span style={{ width: 36, height: 36, borderRadius: 7, display: 'grid', placeItems: 'center', background: arkmeTheme.elevated }}><RecordingDesktopIcon name={action} size={22} /></span><span style={{ fontSize: 12 }}>{action === 'forward' ? tr("转发") : tr("退出")}</span></button>)}</span><span /></footer>}</div><RecordingEntityPanel key={entities.scope} open={entities.open} {...(currentEntityReveal ? { reveal: currentEntityReveal } : {})} data={entities.data} loading={entities.loading} error={entities.error} paused={entities.paused} starting={entities.starting} startError={entities.startError} onStart={() => { void entities.start() }} compact={entityDrawer} onClose={() => entities.setOpen(false)} onRefresh={entities.refresh} onLocate={locateEntity} /></div>}
       </>}
     </section>
     {workbenchEnabled && comparison !== undefined && <RecordingTranscriptComparison key={`${String(selectedDate.getTime())}:${String(auth.auth?.userId)}`} dateStamp={selectedDate.getTime()} mediaPath={recordingMediaPath} prepared={comparison} onClose={() => { setComparison(undefined) }} />}
     {workbenchEnabled && forwardOpen && <RecordingTranscriptForward attempt={forwardAttempt} onClose={() => { setForwardOpen(false) }} onComplete={message => { setForwardOpen(false); setSelectionMode(false); setExportNotice(message) }} />}
     {workbenchEnabled && editingSpeaker !== undefined && <ArkmeRecordingSpeakerEditor
       item={editingSpeaker.item}
+      items={transcriptItems}
+      onPlay={item => { void playback.playItem(item) }}
       anchor={editingSpeaker.anchor}
       forceBatchUpdate={editingSpeaker.forceBatchUpdate}
-      onUpdated={setDay}
+      onUpdated={applySpeakerUpdate}
       onClose={() => { setEditingSpeaker(undefined) }}
     />}
     {workbenchEnabled && timelineDetailEvent !== undefined && <RecordingTimelineDetailDialog event={timelineDetailEvent} onClose={() => { setTimelineDetailEvent(undefined) }} />}

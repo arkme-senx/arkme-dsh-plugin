@@ -6,6 +6,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
 } from '../types.js'
+import { unifiedTimelineMessageSequence } from './unified-timeline-send-overlay.js'
 
 export interface ArkmeConversationTimelineSnapshot {
   cache?: import('../types.js').ArkmeTimelinePage['cache'] | undefined
@@ -31,12 +32,7 @@ export interface ArkmeConversationTimelineSequenceRange {
   maximumSequence: number
 }
 
-export interface ArkmeConversationViewportSnapshot {
-  scrollTop: number
-  stickToBottom: boolean
-  anchorId?: string
-  anchorOffset?: number
-}
+export type ArkmeConversationViewportSnapshot = import('../conversation-viewport-state.js').ConversationViewportState
 
 export const ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS = 15_000
 
@@ -104,7 +100,8 @@ export function arkmeShouldRefreshChatTimeline(
   latestSequence?: number,
 ): boolean {
   if (arkmeConversationTimelineExpired(snapshot, nowMillis)) return true
-  const cachedLatestSequence = Math.max(snapshot?.latestSequence ?? 0, latestTimelineSequence(snapshot?.items ?? []))
+  const cachedLatestSequence = snapshot?.unified ? unifiedTimelineMessageSequence(snapshot.unified)
+    : Math.max(snapshot?.latestSequence ?? 0, latestTimelineSequence(snapshot?.items ?? []))
   return latestSequence !== undefined && latestSequence > cachedLatestSequence
 }
 

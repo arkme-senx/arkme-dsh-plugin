@@ -6,8 +6,8 @@ import { withArkmeReadDeadline } from '../read-deadline.js'
 interface LoadedMentions { key: string; items: RecordingEntityOccurrence[]; nextOffset: number; hasMore: boolean }
 
 /** One expanded entity owns a cancellable request and a version-bound, bounded prefix. */
-export function useRecordingEntityOccurrences(entity: RecordingEntityItem | undefined, version: string | undefined, active: boolean) {
-  const key = JSON.stringify([version, entity?.key])
+export function useRecordingEntityOccurrences(entity: RecordingEntityItem | undefined, version: string | undefined, active: boolean, participantKey?: string) {
+  const key = JSON.stringify([version, entity?.key, participantKey])
   const owner = useRef({ key, active })
   owner.current = { key, active }
   const reference = useRef(entity?.entityRef)
@@ -27,6 +27,7 @@ export function useRecordingEntityOccurrences(entity: RecordingEntityItem | unde
     setLoading(true); setError(false)
     void withArkmeReadDeadline(signal => callArkme<RecordingEntityOccurrences>('recordings.entities.occurrences', {
       entityRef: reference.current!, offset, limit: 50,
+      ...(participantKey ? { participantKey } : {}),
     }, signal), controller.signal).then(value => {
       if (controller.signal.aborted) return
       const nextOffset = offset + value.items.length
@@ -40,7 +41,7 @@ export function useRecordingEntityOccurrences(entity: RecordingEntityItem | unde
         pending.current = undefined
         if (!controller.signal.aborted) setLoading(false)
       })
-  }, [key, version, active])
+  }, [key, version, active, participantKey])
   useEffect(() => {
     setLoading(false); setError(false)
     if (loaded.current?.key !== key) { loaded.current = undefined; setDetail(undefined) }

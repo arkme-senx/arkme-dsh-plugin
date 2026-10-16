@@ -188,3 +188,12 @@ describe('assignment uses the shared topic menu and account directory', () => {
     expect(invalidated).toHaveBeenCalledOnce()
   })
 })
+
+it('hands off selected target immediately without waiting in or coupling the request to the picker', async () => {
+  const props = { ...setup(), onSubmit: vi.fn() }
+  await render(props); await click('指定到工作')
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(topic)
+  expect(props.port.assign).not.toHaveBeenCalled()
+  await act(async () => root.render(null))
+  expect(props.onAssigned).not.toHaveBeenCalled()
+})

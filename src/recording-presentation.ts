@@ -11,6 +11,7 @@ import type {
 import { isRecordingInstantOnOrAfterUnixEpoch } from './recording-time.js'
 
 export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTranscriptItem {
+  soundSource?: import('./types.js').ArkmeRecordingSoundSource
   childAsrItemStartAt: number
   childAsrItemEndAt: number
   formalSpeakerId: string
@@ -355,9 +356,10 @@ export function projectRecordingTranscripts(
         || (itemAssignedSpeakerId === '' && stringValue(row.q_unassigned_spk_id).trim() === sessionSpeakerId && sessionSpeakerId !== '' && !hasEffectiveIdentity)
       const formalSpeakerId = explicitlyUnassigned ? '' : hasEffectiveIdentity ? effectiveSpeakerId : itemAssignedSpeakerId || sessionSpeakerId
       const innerDisplay = stringValue(assignmentSessionSpeaker.inner_display).trim()
+      const partitionId = stringValue(row.speaker_partition_id).trim()
       const speakerIdentity = formalSpeakerId !== ''
         ? `speaker:${formalSpeakerId}`
-        : innerDisplay !== ''
+        : partitionId !== '' ? `partition:${partitionId}` : innerDisplay !== ''
           ? `inner:${innerDisplay}`
           : `session:${sessionId}:${String(assignmentSpeakerNumber)}`
       const formalSpeaker = speakers.get(formalSpeakerId) ?? {}
@@ -367,7 +369,8 @@ export function projectRecordingTranscripts(
       const profile = speakerUserId === undefined ? undefined : profilesByUserId.get(speakerUserId)
       const isSelf = speakerUserId !== undefined && speakerUserId === options.viewerUserId
       const persistentSpeakerNumber = optionalNumberValue(
-        assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
+        (partitionId !== '' && formalSpeakerId === '' ? row.speaker_display_number : undefined)
+          ?? assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
       )
       const speakerNumber = persistentSpeakerNumber !== undefined && persistentSpeakerNumber > 0
         ? persistentSpeakerNumber
@@ -400,6 +403,7 @@ export function projectRecordingTranscripts(
         childAsrItemStartAt: startOffset,
         childAsrItemEndAt: endOffset,
         formalSpeakerId,
+        ...(['unknown', 'in_person', 'playback'].includes(String(row.sound_source)) ? { soundSource: row.sound_source as 'unknown' | 'in_person' | 'playback' } : {}),
         sourceSpeakerNumber,
         assignmentSpeakerNumber,
         speakerIdentity,

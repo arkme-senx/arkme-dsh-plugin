@@ -34,6 +34,8 @@ describe('automatic capability consent through packed official DSH',()=>{
  it('shares actual Record consent between UI and SDK and rejects stale writes',async()=>{
   const root=await mkdtemp(join(tmpdir(),'automatic capabilities browser '))
   const tls={key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:await readFile(process.env.NODE_EXTRA_CA_CERTS)}
+  let profileActivated=false
+  const profileWrites=[]
   const proxy=createServer(tls,async(req,res)=>{
    try {
     const chunks=[];for await(const chunk of req)chunks.push(chunk)
@@ -42,6 +44,10 @@ describe('automatic capability consent through packed official DSH',()=>{
      res.statusCode=upstream.status;res.setHeader('content-type','application/json');res.end(await upstream.text());return
     }
     let data={items:[],users:[],has_more:false}
+    if(req.url.startsWith('/api/v1/personal-profile/v3/experience/')) {
+     if(req.url.endsWith('/activate')){profileActivated=true;profileWrites.push('activate')}
+     data={activated:profileActivated,section_catalog:[],sources:[],processing:profileActivated?{phase:'running',can_pause:true,rebuild_run_id:'fixture-run'}:{}}
+    }
     if(req.url==='/api/public/v1/auth/the-best-api-for-testing')data={access_token:token,refresh_token:'isolated-test-refresh'}
     if(req.url==='/api/v1/auth/get-user-info')data={user_id:10001,nick_name:'自动 AI 验收',phone:'13800000000',phone_binding_policy:{mode:'none'}}
     res.setHeader('content-type','application/json');res.end(JSON.stringify({code:200,data}))
@@ -52,7 +58,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    proxy.listen(0,'127.0.0.1');await once(proxy,'listening')
    const origin=`https://127.0.0.1:${proxy.address().port}`
    const config={environment:'test',stateDirectory:join(root,'state'),fileStateDirectory:join(root,'files'),keychainServicePrefix:`com.senqisi.capability-e2e-${randomUUID()}`,allowProduction:false,updateCheckEnabled:false,openApiMcpEnabled:false,dshRemoteFeatureEnabled:false,extensionShareDiscoveryEnabled:false,toolProfile:'business'}
-   for(const key of ['auth','subject','record','data','chat','bot','im','webrtc','world','relation','intelligent','audio','openApi','extensionPublish','updateService'])config[`${key}BaseUrl`]=origin
+   for(const key of ['memoryCore','auth','subject','record','data','chat','bot','im','webrtc','world','relation','intelligent','audio','openApi','extensionPublish','updateService'])config[`${key}BaseUrl`]=origin
    config.shareWebsite=origin
    const overlay=join(root,'overlay.json');await writeFile(overlay,JSON.stringify([{insert:[{id:'arkme-capability-e2e',name:'@senguoyun/dsh-arkme',config}]}]))
    scaffold=await launchWebScaffold({extraOverlayPath:overlay,extraInstallAnchors:[join(profile,'package.json')],replayFixture:resolve(dshRoot,'snapshots/web/fresh-round-trip/session.v2.jsonl'),compareReplaySession:false})
@@ -105,7 +111,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
    await expect.poll(()=>toggle.getAttribute('aria-checked')).toBe('false')
    await page.setViewportSize({width:800,height:600})
-   const automatic=page.getByRole('region',{name:/^(AI 自动分析|Automatic AI analysis)$/})
+   const automatic=page.getByRole('region',{name:/^(自动使用额度|Automatic allowance usage)$/})
    expect(await automatic.getByRole('switch').count()).toBe(5)
    for(const item of await automatic.getByRole('switch').all()) {
     await item.click()
@@ -119,17 +125,34 @@ describe('automatic capability consent through packed official DSH',()=>{
     expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    }
    await automatic.scrollIntoViewIfNeeded()
-   expect(await automatic.getByRole('heading',{name:'AI 自动分析'}).isVisible()).toBe(true)
+   expect(await automatic.getByRole('heading',{name:'自动使用额度'}).isVisible()).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})
    const help=automatic.locator('details')
    expect(await help.getAttribute('open')).toBeNull()
    await help.locator('summary').click()
    expect(await help.getAttribute('open')).not.toBeNull()
-   expect(await help.getByText('手机「探索 → 个人档案」').isVisible()).toBe(true)
+   expect(await help.getByText('「探索 → 个人档案」').isVisible()).toBe(true)
    expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT.replace('.png','-help.png')})
    await help.locator('summary').click()
    expect(await help.getAttribute('open')).toBeNull()
+   await page.keyboard.press('Escape')
+   await page.setViewportSize({width:1280,height:900})
+   await page.getByRole('button',{name:'探索',exact:true}).click()
+   await page.locator('#arkme-explore-menu').getByRole('button',{name:'个人档案',exact:true}).click()
+   const profileView=page.getByRole('region',{name:'个人档案',exact:true})
+   await profileView.getByText('尚未开启分析').waitFor()
+   expect(profileWrites).toEqual([])
+   await profileView.getByRole('button',{name:'自动使用额度',exact:true}).click()
+   const profileToggle=page.getByRole('switch',{name:'个人档案',exact:true})
+   await profileToggle.click()
+   expect(profileWrites).toEqual([])
+   await page.getByRole('button',{name:/^(同意并开启|Agree and enable)$/}).click()
+   await expect.poll(()=>profileToggle.getAttribute('aria-checked')).toBe('true')
+   expect(profileWrites).toEqual(['activate'])
+   expect((await sdk.automaticCapabilities(scope)).settings.find(s=>s.key==='personal_profile').enabled).toBe(true)
+   await page.keyboard.press('Escape')
+   await profileView.getByText('尚未开启分析').waitFor({state:'hidden'})
   }catch(error){
    failure=error
    if(page && process.env.ARKME_E2E_SCREENSHOT){

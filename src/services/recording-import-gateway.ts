@@ -69,6 +69,13 @@ const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
 const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
 const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
 const AUDIO_DIRECTORY_IMPORT_SCAN_LIMIT = 10_000
+const OWNER_SCAN_TTL = 5 * 60_000
+interface OwnerScan {
+  tasks: RecordingImportOwnerTaskSnapshot[]
+  remoteOffset: number
+  exhausted: boolean
+  touchedAt: number
+}
 
 const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'upload',
@@ -210,6 +217,14 @@ function remoteFileName(job: RecordingImportJob): string {
 }
 
 export class AudioRecordingImportGateway implements RecordingImportGateway, RecordingImportOwnerGateway {
+  private readonly ownerScans = new Map<string, OwnerScan>()
+  private ownerScanRevision = 0
+
+  private invalidateOwnerScans() {
+    this.ownerScanRevision++
+    this.ownerScans.clear()
+  }
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly createOssClient: AudioOssClientFactory = options => new OSS(options) as unknown as AudioOssClient,
@@ -328,11 +343,22 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     const offset = Math.max(0, Math.trunc(input.offset))
     const limit = Math.max(0, Math.trunc(input.limit))
     if (limit === 0) return { tasks: [], hasMore: false }
-    const scoped: RecordingImportOwnerTaskSnapshot[] = []
+    input.signal?.throwIfAborted()
+    await this.requireViewerSession(input.viewerUserId)
+    const now = Date.now()
+    for (const [key, scan] of this.ownerScans) {
+      if (now - scan.touchedAt > OWNER_SCAN_TTL) this.ownerScans.delete(key)
+    }
+    const key = `${input.viewerUserId}:${input.scope}:${input.toMillis}`
+    // Offset zero is an explicit refresh. Continuations reuse the raw-server
+    // cursor, including rows filtered out of the uploaded-file projection.
+    const cached = offset > 0 ? this.ownerScans.get(key) : undefined
+    const revision = this.ownerScanRevision
+    const scoped = cached ? [...cached.tasks] : []
     const targetCount = offset + limit + 1
-    let remoteOffset = 0
-    let exhausted = false
-    while (scoped.length < targetCount) {
+    let remoteOffset = cached?.remoteOffset ?? 0
+    let exhausted = cached?.exhausted ?? false
+    while (!exhausted && scoped.length < targetCount) {
       const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
         input.viewerUserId,
         '/api/v1/audio/get-session-ls',
@@ -394,6 +420,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         exhausted = true
         break
       }
+    }
+    input.signal?.throwIfAborted()
+    await this.requireViewerSession(input.viewerUserId)
+    if (revision === this.ownerScanRevision) {
+      this.ownerScans.set(key, { tasks: scoped, remoteOffset, exhausted, touchedAt: Date.now() })
+      // Keep only a few live scans; these are transient, account-scoped reads.
+      while (this.ownerScans.size > 8) this.ownerScans.delete(this.ownerScans.keys().next().value!)
     }
     return {
       tasks: scoped.slice(offset, offset + limit),
@@ -765,13 +798,16 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     signal?: AbortSignal,
     options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
-    return await this.runtime.authenticatedAudioPost<T>(
+    if (options.lane === 'write') this.invalidateOwnerScans()
+    try { return await this.runtime.authenticatedAudioPost<T>(
       path,
       body,
       await this.requireViewerSession(viewerUserId),
       signal,
       options,
-    )
+    ) } finally {
+      if (options.lane === 'write') this.invalidateOwnerScans()
+    }
   }
 
   private isAccountMismatch(error: unknown): boolean {

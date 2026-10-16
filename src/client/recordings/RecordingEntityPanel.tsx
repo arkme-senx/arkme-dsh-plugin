@@ -4,6 +4,8 @@ import { ArkmeDetailShell } from '../ArkmeDetailShell.js'
 import { ArkmeDirectoryWindow } from '../ArkmeDirectoryWindow.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import { RECORDING_ENTITY_STYLE } from './recording-entities-style.js'
+import { entityOccurrenceSourceLabel, entityRelevanceLabel, relatedEntitiesFirst } from './recording-entity-relevance.js'
+import { useRecordingEntityFeedback } from './use-recording-entity-feedback.js'
 import { useRecordingEntityOccurrences } from './use-recording-entity-occurrences.js'
 
 const TYPES = ['全部', '人物', '组织', '地点', '宠物', '事件', '项目', '作品', '品牌', '其他']
@@ -37,13 +39,19 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
   useArkmeLocale()
   const [type, setType] = useState(0), [expanded, setExpanded] = useState('')
   const [visited, setVisited] = useState(open)
+  const [participantFilter, setParticipantFilter] = useState<{ entity: string; key: string }>()
+  const [feedbackKey, setFeedbackKey] = useState('')
+  const feedback = useRecordingEntityFeedback(onRefresh)
   const [locateError, setLocateError] = useState(false)
   const body = useRef<HTMLDivElement>(null), sentinel = useRef<HTMLDivElement>(null)
   const scroll = useRef(0), expandedTitle = useRef<HTMLButtonElement>(null)
   const appliedReveal = useRef<typeof reveal>(), pendingReveal = useRef(false)
-  const all = data?.entities ?? [], entities = all.filter(item => !type || item.type === type)
+  const all = data?.entities ?? [], personalized = !!data?.personalization
+  const typed = all.filter(item => !type || item.type === type)
+  const entities = relatedEntitiesFirst(typed)
   const entity = all.find(item => item.key === expanded)
-  const mentions = useRecordingEntityOccurrences(entity, data?.version, open)
+  const participantKey = participantFilter?.entity === expanded && entity?.participation?.participants.some(p => p.key === participantFilter.key) ? participantFilter.key : undefined
+  const mentions = useRecordingEntityOccurrences(entity, data?.version, open, participantKey)
   const showStatus = data?.status !== 'succeeded' || error || paused || startError
     || (data.transcriptHealth?.failedUnits ?? 0) > 0 || (data.transcriptHealth?.unavailableUnits ?? 0) > 0
   useEffect(() => { if (open) setVisited(true) }, [open])
@@ -57,6 +65,7 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
     if (!target) return
     appliedReveal.current = reveal; pendingReveal.current = true
     if (type && type !== target.type) setType(0)
+    setParticipantFilter(undefined)
     setExpanded(reveal.key)
   }, [open, reveal, all, type])
   useEffect(() => {
@@ -98,6 +107,13 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
         {error && <p role="alert">{tr('实体更新失败，请刷新重试')}</p>}
         {paused && <p>{tr('自动更新已暂停，请手动刷新')}</p>}
       </div>}
+      {data && !all.some(item => item.participation) && <p className="arkme-entity-hint">{tr('当前显示全部实体，提及者汇总待补充。')}</p>}
+      {(feedback.busy || feedback.notice || feedback.error) && <div className="arkme-entity-feedback-status" aria-live="polite">
+        {feedback.busy && <span>{tr('正在提交反馈…')}</span>}
+        {feedback.notice && <span>{tr(feedback.notice)}</span>}
+        {feedback.receipt && <button type="button" disabled={feedback.busy || feedback.retryPending || Date.now() >= feedback.receipt.undoExpiresAt} onClick={feedback.undo}>{tr('撤销反馈')}</button>}
+        {feedback.error && <p role="alert">{tr(feedback.error)} {feedback.retryPending && <button type="button" disabled={feedback.busy} onClick={feedback.retry}>{tr('重试这次反馈')}</button>}</p>}
+      </div>}
       <div className="arkme-entity-types" role="group" aria-label={tr('实体类型')}>
         {TYPES.map((label, index) => <button key={label} type="button" aria-pressed={type === index} onClick={() => {
           if (type === index) return
@@ -110,16 +126,36 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
         {!loading && entities.length === 0 && <p role="status">{tr(type ? '当前类型下没有实体' : '暂无已识别实体')}</p>}
         <ArkmeDirectoryWindow active={open} scrollRootRef={body} activeKey={expanded}>
         {entities.map(item => <section key={item.key} className="arkme-entity-item">
-          <button ref={expanded === item.key ? expandedTitle : undefined} type="button" className="arkme-entity-item-title" aria-expanded={expanded === item.key} onClick={() => setExpanded(expanded === item.key ? '' : item.key)}>
-            <span><strong>{item.name}</strong><small>{item.type === 9 && item.typeLabel ? item.typeLabel : tr(TYPES[item.type] ?? '其他')}</small></span>
+          <button ref={expanded === item.key ? expandedTitle : undefined} type="button" className="arkme-entity-item-title" aria-expanded={expanded === item.key} onClick={() => { setExpanded(expanded === item.key ? '' : item.key); setParticipantFilter(undefined) }}>
+            <span><strong>{item.name}</strong><small>{item.type === 9 && item.typeLabel ? item.typeLabel : tr(TYPES[item.type] ?? '其他')}{personalized && !item.participation && <> · {tr(entityRelevanceLabel(item))}</>}{item.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small></span>
             <span>{tr('{count} 次提及', { count: item.occurrenceCount })} {expanded === item.key ? '⌄' : '›'}</span>
           </button>
+          {item.participation && <div className="arkme-entity-participants" role="group" aria-label={tr('{name}的提及者', { name: item.name })}>
+            {[...item.participation.participants].sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || b.occurrenceCount - a.occurrenceCount)
+              .slice(0, expanded === item.key ? undefined : 2).map(person => <button key={person.key} type="button"
+                aria-pressed={expanded === item.key && participantKey === person.key}
+                onClick={() => { setExpanded(item.key); setParticipantFilter(participantKey === person.key ? undefined : { entity: item.key, key: person.key }) }}>
+                {tr('{name} {count} 次', { name: person.isSelf ? tr('你') : person.label, count: person.occurrenceCount })}
+                {person.playbackCount > 0 && <small> · {tr('含 {count} 次播放', { count: person.playbackCount })}</small>}
+              </button>)}
+            {expanded !== item.key && item.participation.participants.length > 2 && <button type="button" onClick={() => { setExpanded(item.key); setParticipantFilter(undefined) }}>{tr('另 {count} 位说话人', { count: item.participation.participants.length - 2 })}</button>}
+            {item.participation.unattributedCount > 0 && <span>{tr('{count} 次说话人待确认', { count: item.participation.unattributedCount })}</span>}
+            {expanded === item.key && participantKey && <button type="button" onClick={() => setParticipantFilter(undefined)}>{tr('查看所有人的提及')}</button>}
+          </div>}
           {expanded === item.key && <div className="arkme-entity-occurrences">
             <ArkmeDirectoryWindow active={open} scrollRootRef={body}>
-              {(mentions.detail?.items ?? []).map(occurrence => <button className="arkme-entity-occurrence" key={occurrence.key} type="button" disabled={!occurrence.target} onClick={() => { const located = onLocate(occurrence, item.key); setLocateError(!located); if (located && compact) onClose() }}>
-                <time>{new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}</time>
-                <span>{occurrence.text}</span>{!occurrence.target && <small>{tr('原文位置已不可用')}</small>}
-              </button>)}
+              {(mentions.detail?.items ?? []).map(occurrence => <div key={occurrence.key} className="arkme-entity-mention">
+                <button className="arkme-entity-occurrence" type="button" disabled={!occurrence.target} onClick={() => { const located = onLocate(occurrence, item.key); setLocateError(!located); if (located && compact) onClose() }}>
+                  <time>{new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}</time>
+                  {occurrence.context && <small>{tr(entityOccurrenceSourceLabel(occurrence.context))}{occurrence.context.speakerLabel && <> · {occurrence.context.speakerLabel}</>}{occurrence.context.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small>}
+                  <span>{occurrence.text}</span>{!occurrence.target && <small>{tr('原文位置已不可用')}</small>}
+                </button>
+                <button type="button" className="arkme-entity-feedback-toggle" aria-expanded={feedbackKey === occurrence.key} onClick={() => setFeedbackKey(feedbackKey === occurrence.key ? '' : occurrence.key)}>{tr('反馈')}</button>
+                {feedbackKey === occurrence.key && <div className="arkme-entity-feedback-actions" role="group" aria-label={tr('这次提及的反馈')}>
+                  <p>{tr(occurrence.feedbackRef ? '仅影响这次提及，保存后可撤销。' : '暂不支持保存反馈。')}</p>
+                  {([['relevant', '与我有关'], ['playback', '播放内容'], ['incorrect', '识别有误']] as const).map(([action, label]) => <button key={action} type="button" disabled={!occurrence.feedbackRef || feedback.busy || feedback.retryPending} onClick={() => { if (occurrence.feedbackRef) feedback.apply(occurrence.feedbackRef, action) }}>{tr(label)}</button>)}
+                </div>}
+              </div>)}
             </ArkmeDirectoryWindow>
             {mentions.error && <p role="alert">{tr('提及位置不可用，请刷新实体列表')}</p>}
             {!mentions.error && !mentions.detail && <p role="status">{tr('正在读取提及…')}</p>}

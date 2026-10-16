@@ -20,6 +20,7 @@ import type {
   ArkmeConversationMemberItem,
   ArkmeMessageCopyLinkSnapshotItem,
   ArkmeSourceItem,
+  ArkmeSourceSendResult,
   ArkmeTimelineItem,
 } from '../src/types.js'
 
@@ -36,10 +37,14 @@ function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], mom
   return { source, items, unified, hasMore, ...(cursor ? { nextCursor: { unified: { mode: 'older' as const, cursor: `cursor:${cursor.beforeSequence}` } } } : {}) }
 }
 
-const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), localTimeline: vi.fn() }))
 
-vi.mock('../src/client/api.js', async () => { const { memberPageFixture, emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
-  callArkme: emptyTimelineCacheFixture(memberPageFixture(mocks.callArkme)),
+vi.mock('../src/client/api.js', async () => { const { memberPageFixture, emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js')
+  const remote = emptyTimelineCacheFixture(memberPageFixture(mocks.callArkme))
+  return ({
+  callArkme: (operation: string, ...args: any[]) => operation === 'source.timeline' && args[0]?.cursor?.unified?.cacheOnly
+    && mocks.localTimeline.getMockImplementation() ? mocks.localTimeline(...args)
+    : remote(operation, ...args),
   ArkmeClientError: class ArkmeClientError extends Error {
     constructor(readonly body: { code: string; message: string; retryable: boolean }) {
       super(body.message)
@@ -190,6 +195,61 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkExtensionText = ''
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
+
+  it.each([['background-read', 'private'], ['previous-realtime', 'private'], ['background-read', 'group'], ['previous-realtime', 'group']] as const)('keeps an in-flight send visible through %s in %s chat', async (trigger, kind) => {
+    const selected = kind === 'group' ? { ...group, latestSequence: 8 } : target
+    activeSource = selected; arkmeUi.selectSource(selected)
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<unknown>()
+    const old = { itemUid: 'diag-existing', sequence: 8, senderName: 'peer', isMe: false, sendAtMillis: 8, textContent: 'existing', status: 1 }
+    let reads = 0
+    let sentUid = ''
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline') {
+        if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({code:'chat-timeline-cache-miss',message:'empty',retryable:false}))
+        reads++
+        return Promise.resolve(unifiedFixture(selected, [old])) as any
+      }
+      if (operation === 'source.send-text' || operation === 'source.send-rich') {
+        sentUid = (params as any).recordUid
+        return pending.promise as any
+      }
+      return base(operation, params, signal)
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({top:0,bottom:600}),querySelectorAll:()=>[],scrollTo:vi.fn() }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    act(() => arkmeComposerDraftStore.setText(arkmeSourceComposerDraftKey(42, selected)!, 'in-place send'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(sentUid).not.toBe('')
+    const visible = () => renderer!.root.findAllByProps({'data-arkme-message-item-uid':sentUid}).length
+    const originalRow = renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})
+    const originalBubble = originalRow.findByProps({'aria-label':'打开快记详情'})
+    const before = visible()
+    expect(before).toBe(1)
+    await act(async () => {
+      if (trigger === 'background-read') {
+        arkmeChatTimelineDelta.applyTimelineChange({sourceKey:selected.sourceKey!,timelineItemKey:'diag-existing-key',changeKind:'reedited',changeVersion:1,relationTerminal:false,throughSequence:8})
+        await new Promise(resolve=>setTimeout(resolve,350))
+      } else {
+        arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:9},items:[{...old,itemUid:'previous-arrival',sequence:9,sendAtMillis:9,timelineEventId:'previous-arrival',timelineOrderTie:'9',timelineItemKey:'previous-key'}]}])
+      }
+    })
+    const afterRefresh = visible()
+    const ownSequence = trigger === 'background-read' ? 9 : 10
+    await act(async () => { pending.resolve({sourceRef:selected.sourceRef,itemUid:sentUid,status:1,localState:'synced',sequence:ownSequence}) })
+    const afterAck = visible()
+    await act(async () => { arkmeChatTimelineDelta.publish([{source:{...selected,latestSequence:ownSequence},items:[{...old,itemUid:sentUid,sequence:ownSequence,sendAtMillis:48,textContent:'in-place send',isMe:true,timelineEventId:`canonical:${sentUid}`,timelineOrderTie:'9',timelineItemKey:'diag-new-key',messageActionRef:'diag-action'}]}]) })
+    const afterLive = visible()
+    expect(afterAck).toBe(1)
+    expect(afterLive).toBe(1)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid})).toBe(originalRow)
+    expect(renderer!.root.findByProps({'data-arkme-message-item-uid':sentUid}).findByProps({'aria-label':'打开快记详情'})).toBe(originalBubble)
+    expect(afterRefresh).toBe(1)
+  })
 
   it.each(['stale-bottom', 'offline-history', 'timeout-history', 'browser-timeout-history', 'success-bottom'] as const)('drains realtime hints after an in-flight refresh: %s', async mode => {
     const api = await import('../src/client/api.js')
@@ -1803,6 +1863,7 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(42)
     arkmeUi.selectSource(target)
     mocks.callArkme.mockReset()
+    mocks.localTimeline.mockReset()
     mocks.callArkme.mockImplementation(async (operation: string, params?: {
       sid?: string
       sourceRef?: string
@@ -2047,6 +2108,50 @@ describe('conversation send directory projection', () => {
     expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
   })
 
+  it.each([false, true])('opens unread group at latest only without a saved reading position (saved=%s)', async saved => {
+    const selected = { ...group, unreadCount: 5, latestSequence: 50 }
+    activeSource = selected
+    arkmeChatDirectory.publish([selected]); arkmeUi.selectSource(selected)
+    if (saved) window.localStorage.setItem('arkme:reading:v1:main', JSON.stringify({ account: 'test:42',
+      entries: [[selected.sourceKey, { scrollTop: 730, stickToBottom: false, anchorId: 'message:cached-entry', anchorOffset: 0 }]] }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { body: {}, activeElement: null,
+      visibilityState: 'visible', hasFocus: () => true }))
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    const local = unifiedFixture(selected, [{ itemUid: 'cached-entry', sequence: 10, senderName: '同事', isMe: false,
+      sendAtMillis: 10, textContent: '本地历史', status: 1 }])
+    Object.assign(local.unified, { newerHasMore: true, newerCursor: 'local-tail' })
+    const latest = unifiedFixture(selected, [{ itemUid: 'latest-entry', sequence: 50, senderName: '同事', isMe: false,
+      sendAtMillis: 50, textContent: '最新消息', status: 1 }])
+    const base = memberApi.callArkme
+    const reads: (import('../src/types.js').ArkmeTimelineCursor | undefined)[] = []
+    const acknowledgements: number[] = []
+    vi.spyOn(memberApi, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline') {
+        const cursor = params?.cursor as import('../src/types.js').ArkmeTimelineCursor | undefined
+        reads.push(cursor)
+        return Promise.resolve(cursor?.unified?.cacheOnly || cursor?.unified?.mode === 'refresh' ? local : latest) as any
+      }
+      if (operation === 'source.mark-read') {
+        acknowledgements.push(Number(params?.readSequence))
+        return Promise.resolve({ effectiveReadSequence: params?.readSequence, unreadCount: 0, latestSequence: 50 }) as any
+      }
+      return base(operation, params, signal)
+    })
+    let top = 200
+    const body = { get scrollTop() { return top }, set scrollTop(value: number) { top = Math.max(0, Math.min(1400, value)) },
+      scrollHeight: 2000, clientHeight: 600, scrollTo: vi.fn(), getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'message:cached-entry' },
+        getBoundingClientRect: () => ({ top: 730 - top, bottom: 810 - top }) }] }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    expect(reads.filter(cursor => !cursor?.unified?.cacheOnly)).toEqual(saved
+      ? [expect.objectContaining({ unified: expect.objectContaining({ mode: 'refresh' }) })] : [undefined])
+    expect(body.scrollTop).toBe(saved ? 730 : 1400)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': saved ? 'cached-entry' : 'latest-entry' })).toHaveLength(1)
+    expect(acknowledgements).toEqual(saved ? [] : [50])
+  })
+
   it('retains persisted reading geometry until the cold local page has loaded', async () => {
     const saved = { scrollTop: 730, stickToBottom: false, anchorId: 'message:persisted', anchorOffset: -10 }
     window.localStorage.setItem('arkme:reading:v1:main', JSON.stringify({ account: 'test:42', entries: [[target.sourceKey, saved]] }))
@@ -2084,10 +2189,12 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(730)
   })
 
-  it.each([false, true])('preserves the composer while phone checking completes (edited=%s)', async edited => {
+  it.each([false, true])('preserves the composer while the first phone check completes without cache (edited=%s)', async edited => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
     const pending = deferred<unknown>()
     const base = mocks.callArkme.getMockImplementation()!
-    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile' || operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     const key = arkmeSourceComposerDraftKey(42, target)!
     act(() => arkmeComposerDraftStore.setText(key, '准备发送的草稿'))
@@ -2097,6 +2204,25 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ profile: { userId: 42, contact: { phoneMasked: edited ? '138****0000' : undefined } } }) })
     expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(false)
     expect(arkmeComposerDraftStore.get(key).text).toBe(edited ? '检查过程中修改的内容' : '准备发送的草稿')
+    socialAccessStore.activate(undefined)
+  })
+
+  it('sends from the confirmed phone cache while a background profile request is still pending', async () => {
+    const { socialAccessStore } = await import('../src/client/social-access-store.js')
+    socialAccessStore.activate(undefined)
+    socialAccessStore.confirm('test:42', true)
+    const pending = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, ...args: unknown[]) => operation === 'user.profile.refresh' ? pending.promise : base(operation, ...args))
+    const refreshing = socialAccessStore.refresh()
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const key = arkmeSourceComposerDraftKey(42, target)!
+    act(() => arkmeComposerDraftStore.setText(key, '无需等待资料的消息'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.some(([operation]) => ['source.send-text', 'source.send-rich', 'files.send'].includes(operation))).toBe(true)
+    expect(arkmeComposerDraftStore.get(key).text).toBe('')
+    socialAccessStore.activate(undefined)
+    await refreshing
   })
 
   it('positions the persisted unified page at the bottom before the remote refresh completes', async () => {
@@ -2800,6 +2926,29 @@ describe('conversation send directory projection', () => {
       await act(async () => status.findAllByType('button')[0]!.props.onClick({ stopPropagation: vi.fn() }))
       expect(mocks.callArkme).toHaveBeenCalledWith('files.send.retry', { taskRef: task.taskRef })
     }
+  })
+
+  it('does not resurrect an old sent attachment outside the unified window, including after remount', async () => {
+    const base = mocks.callArkme.getMockImplementation()!
+    const latest: ArkmeTimelineItem = { itemUid: 'latest-1882', sequence: 1882, sendAtMillis: 1882000,
+      textContent: 'latest confirmed', senderName: 'peer', isMe: false, status: 1 }
+    const task = { taskRef: 'old-sent', sourceRef: target.sourceRef, recordUid: 'old-1834', relationUid: 'rel-old',
+      fileRefs: [], files: [], content: { textContent: 'old attachment must stay in history' },
+      createdAtMillis: 1834000, state: 'sent',
+      result: { sourceRef: target.sourceRef, itemUid: 'old-1834', sequence: 1834, status: 1, localState: 'synced' } }
+    mocks.callArkme.mockImplementation(async (op, params, signal) => {
+      if (op === 'files.send.tasks') return [task]
+      if (op === 'source.timeline') return unifiedFixture(target, [latest], [], true)
+      return base(op, params, signal)
+    })
+    for (let mount = 0; mount < 2; mount++) {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      expect(renderedText(renderer.toJSON())).toContain('latest confirmed')
+      expect(renderedText(renderer.toJSON())).not.toContain(task.content.textContent)
+      await act(async () => { renderer?.unmount() })
+      renderer = undefined
+    }
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'files.send.discard' || op === 'files.send.retry')).toBe(false)
   })
 
   it('lets the user remove terminal local file tasks without hiding an unknown remote outcome', async () => {
@@ -3773,7 +3922,7 @@ describe('conversation send directory projection', () => {
     })
   })
 
-  it('hides sender and time metadata for a self-authored quick note', async () => {
+  it('hides the own sender header but retains the original time inside the message bubble', async () => {
     timeline = [{
       itemUid: 'own-message-without-metadata', senderName: '狗才', isMe: true,
       sendAtMillis: 1, title: '', textContent: '自己的快记', status: 1,
@@ -3789,9 +3938,12 @@ describe('conversation send directory projection', () => {
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'own-message-without-metadata' })
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const bubble = row.findByProps({ className: 'arkme-timed-bubble' })
+    expect(bubble.findAllByType('time')).toHaveLength(1)
+    expect(bubble.findByType('time').props.dateTime).toBe(new Date(1).toISOString())
   })
 
-  it('hides sender and time metadata for a received private-chat message', async () => {
+  it('hides the private-chat sender header but retains the original time inside the message bubble', async () => {
     timeline = [{
       itemUid: 'private-message-without-metadata', senderName: '1D3E', isMe: false,
       sendAtMillis: 1, title: '', textContent: '那我就不管了', status: 1,
@@ -3807,6 +3959,9 @@ describe('conversation send directory projection', () => {
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'private-message-without-metadata' })
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const bubble = row.findByProps({ className: 'arkme-timed-bubble' })
+    expect(bubble.findAllByType('time')).toHaveLength(1)
+    expect(bubble.findByType('time').props.dateTime).toBe(new Date(1).toISOString())
   })
 
   it.each([0, 500])('preserves long drafts while forwarding with distance %s from bottom', async distance => {
@@ -5708,7 +5863,7 @@ describe('conversation send directory projection', () => {
     let top = 0
     let deferredHeight = 0
     let contentResized = () => {}
-    const content = { getBoundingClientRect: () => ({ height: body.scrollHeight }) }
+    const content = { getBoundingClientRect: () => ({ height: body.scrollHeight }), querySelectorAll: () => [] }
     vi.stubGlobal('ResizeObserver', class {
       constructor(private callback: () => void) {}
       observe(node: unknown) { if (node === content) contentResized = this.callback }
@@ -8056,10 +8211,17 @@ describe('conversation send directory projection', () => {
     expect(firstNewerRow.getBoundingClientRect().top).toBe(conversationBody.getBoundingClientRect().top)
   })
 
-  it('positions unified newer pages at their first new event and exposes history continuation', async () => {
+  it.each(['success', 'retry', 'switch'] as const)('keeps unified newer pagination quiet and preserves its reading anchor: %s', async outcome => {
+    const firstRead = deferred<void>()
+    const retryRead = deferred<void>()
+    let newerReads = 0
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
       const newer = params?.cursor?.unified?.mode === 'newer'
+      if (operation === 'source.timeline' && newer) {
+        newerReads += 1
+        await (newerReads === 1 ? firstRead.promise : retryRead.promise)
+      }
       const result = await base(operation, newer ? { ...params, cursor: { afterSequence: Number(params.cursor.unified.cursor) } } : params, signal)
       if (operation !== 'source.timeline' && operation !== 'source.timeline-around') return result
       const fixture = unifiedFixture(result.source ?? target, result.items)
@@ -8179,9 +8341,50 @@ describe('conversation send directory projection', () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
     })
 
+    const failureNotice = () => renderer!.root.findAllByProps({ 'data-arkme-newer-load-error': true })
+    expect(newerReads).toBe(1)
+    expect(failureNotice()).toHaveLength(0)
+    expect(renderedText(renderer!.toJSON())).not.toContain('当前为历史记录')
+    expect(renderedText(renderer!.toJSON())).not.toContain('继续加载更新内容')
+    const scrollBefore = scrollTop
+    const staleObserver = newerObservers.at(-1)!
+    await act(async () => {
+      staleObserver([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+      staleObserver([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+    })
+    expect(newerReads).toBe(1)
+    if (outcome === 'switch') {
+      await act(async () => { arkmeUi.selectSource(other) })
+      await act(async () => { firstRead.reject(new Error('late failure from old conversation')) })
+      expect(failureNotice()).toHaveLength(0)
+      expect(renderedText(renderer!.toJSON())).not.toContain('暂时无法加载后续消息')
+      return
+    }
+    if (outcome === 'retry') {
+      await act(async () => { firstRead.reject(new Error('temporary newer read failure')) })
+      expect(failureNotice()).toHaveLength(1)
+      expect(scrollTop).toBe(scrollBefore)
+      await act(async () => {
+        staleObserver([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+        staleObserver([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      })
+      expect(newerReads).toBe(1)
+      const retry = failureNotice()[0]!.findByType('button')
+      await act(async () => { retry.props.onClick(); retry.props.onClick() })
+      expect(newerReads).toBe(2)
+      expect(failureNotice()).toHaveLength(1)
+      expect(failureNotice()[0]!.findByType('button').props.disabled).toBe(true)
+      expect(scrollTop).toBe(scrollBefore)
+      await act(async () => { retryRead.resolve(); await retryRead.promise })
+    } else {
+      await act(async () => { firstRead.resolve(); await firstRead.promise })
+    }
+    expect(failureNotice()).toHaveLength(0)
+
     expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': firstNewerItem.itemUid })).toBeDefined()
     expect(firstNewerRow.getBoundingClientRect().top).toBe(conversationBody.getBoundingClientRect().top)
-    expect(renderedText(renderer!.toJSON())).toContain('继续加载更新内容')
+    expect(renderedText(renderer!.toJSON())).not.toContain('当前为历史记录')
+    expect(renderedText(renderer!.toJSON())).not.toContain('继续加载更新内容')
     expect(renderer!.root.findByProps({ 'aria-label': '回到最新' })).toBeDefined()
 
   })
@@ -9596,4 +9799,109 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': '打开相关快记：刷新后的相关快记' })).toHaveLength(1)
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('相关快记引用已过期，请刷新后重试')
   })
+  it.each(['synced', 'rejected'] as const)('keeps pending text through refresh and settles the %s receipt without flicker', async outcome => {
+    const sent = deferred<ArkmeSourceSendResult>()
+    const base = mocks.callArkme.getMockImplementation()!
+    let reads = 0
+    const existing: ArkmeTimelineItem = { itemUid:'existing-8', sequence:8, senderName:'peer', isMe:false, status:1, sendAtMillis:8, title:'', textContent:'existing' }
+    mocks.callArkme.mockImplementation(async (operation: string, params?: any, signal?: AbortSignal) => {
+      if (operation === 'source.timeline') { reads++; return unifiedFixture(target, [existing]) }
+      if (operation === 'source.send-text') return sent.promise
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('pending text') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick(); await Promise.resolve() })
+    const before = renderedText(renderer!.toJSON()).includes('pending text')
+    expect(before).toBe(true)
+    const priorReads = reads
+    await act(async () => { arkmeChatTimelineDelta.publish([{ source:target, items:[{...existing, textContent:'edited existing'}] }]); await Promise.resolve() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+    expect(reads).toBeGreaterThan(priorReads)
+    const after = renderedText(renderer!.toJSON()).includes('pending text')
+    expect(after).toBe(true)
+    await act(async () => {
+      if (outcome === 'synced') sent.resolve({sourceRef:target.sourceRef,itemUid:'record-new',status:1,sequence:9,localState:'synced'})
+      else sent.reject(new Error('send failed'))
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    if (outcome === 'rejected') expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认')
+    if (outcome === 'synced') {
+      await act(async () => { arkmeInterwovenInvalidation.invalidate(target.sourceKey!) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    } else expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('pending text')
+  })
+
+  it.each([true, false])('displays committed unread bodies while structure is pending with an existing frontier (%s)', async hasFrontier => {
+    const base = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<ReturnType<typeof unifiedFixture>>()
+    const existing: ArkmeTimelineItem = { itemUid: 'old-8', sequence: 8, senderName: 'peer', isMe: false, status: 1, sendAtMillis: 8, title: '', textContent: 'old body' }
+    const incoming: ArkmeTimelineItem = { ...existing, itemUid: 'local-9', sequence: 9, sendAtMillis: 9, textContent: 'committed unread body' }
+    let networkReads = 0
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.timeline') return ++networkReads === 1 ? unifiedFixture(target, hasFrontier ? [existing] : []) : pending.promise
+      if (operation === 'source.send-text') return { sourceRef: target.sourceRef, itemUid: params.recordUid, status: 1, sequence: 10, localState: 'synced' }
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('自己的较新发送回执') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    await act(async () => { arkmeInterwovenInvalidation.invalidate(target.sourceKey!) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+    expect(networkReads).toBeGreaterThan(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.mark-read').every(([, params]) => params.readSequence <= (hasFrontier ? 8 : 0))).toBe(true)
+    const local = unifiedFixture(target, [existing, incoming])
+    local.unified.complete = false; local.unified.windowTokens = []
+    local.unified.sources = local.unified.sources.map(source => ({ ...source, status: 'gap' }))
+    mocks.localTimeline.mockResolvedValue(local)
+    await act(async () => { arkmeChatTimelineDelta.localCacheUpdated([target.sourceKey!]) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    await act(async () => { pending.resolve(unifiedFixture(target, hasFrontier ? [existing] : [])) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.mark-read').every(([, params]) => params.readSequence <= 9)).toBe(true)
+  })
+
+  it('realtime tail survives a subsequent older complete snapshot', async () => {
+    const base = mocks.callArkme.getMockImplementation()!
+    const existing: ArkmeTimelineItem = { itemUid:'existing-8', sequence:8, senderName:'peer', isMe:false, status:1, sendAtMillis:8, title:'', textContent:'existing' }
+    const arrival: ArkmeTimelineItem = { ...existing, itemUid:'new-9', sequence:9, sendAtMillis:9, textContent:'delivered body', timelineEventId:'new-9', timelineOrderTie:'000000000009' }
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: any, signal?: AbortSignal) => {
+      if (operation === 'source.timeline') { reads++; return unifiedFixture(target, [existing]) }
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => { arkmeChatTimelineDelta.publish([{ source:{...target,latestSequence:9}, items:[arrival] }]) })
+    const before = renderedText(renderer!.toJSON()).includes('delivered body')
+    expect(before).toBe(true)
+    const priorReads = reads
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1200)) })
+    const after = renderedText(renderer!.toJSON()).includes('delivered body')
+    expect(reads).toBeGreaterThan(priorReads)
+    expect(after).toBe(true)
+  })
+
+  it('terminal deletion hides confirmed text even when refresh is unavailable', async () => {
+    const base = mocks.callArkme.getMockImplementation()!
+    const existing: ArkmeTimelineItem = { itemUid:'deleted-8', timelineItemKey:'deleted-relation-8', sequence:8, senderName:'peer', isMe:false, status:1, sendAtMillis:8, title:'', textContent:'withdrawn body' }
+    let unavailable = false
+    mocks.callArkme.mockImplementation(async (operation: string, params?: any, signal?: AbortSignal) => {
+      if (operation === 'source.timeline') {
+        if (unavailable) throw new ArkmeClientError({code:'arkme-read-exhausted', message:'offline', retryable:true, recovery:{owner:'host'}} as any)
+        return unifiedFixture(target, [existing])
+      }
+      return base(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderedText(renderer!.toJSON())).toContain('withdrawn body')
+    unavailable = true
+    await act(async () => { arkmeChatTimelineDelta.applyTimelineChange({sourceKey:target.sourceKey!,timelineItemKey:existing.timelineItemKey!,changeKind:'deleted',changeVersion:99,relationTerminal:true,throughSequence:8}) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve,350)) })
+    const visible = renderedText(renderer!.toJSON()).includes('withdrawn body')
+    expect(visible).toBe(false)
+  })
+
 })

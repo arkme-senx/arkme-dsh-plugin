@@ -45,7 +45,7 @@ export class CapabilityService {
   private async activateProfile(scope: string, signal?: AbortSignal): Promise<void> {
     const post = async (suffix: string, body: Record<string, unknown>) => {
       let { session } = await this.session(scope)
-      const host = this.runtime.config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me'
+      const host = this.runtime.config.memoryCoreBaseUrl || (this.runtime.config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me')
       const request = () => this.runtime.post<Record<string, unknown>>(host, `/api/v1/personal-profile/v3/experience/${suffix}`, body, session.accessToken, [200], signal, false,
         this.runtime.authenticatedRequestOptions(session, 'intelligent', 'write', { bypassCache: true, publishServiceCooldown: false }))
       let result: Record<string, unknown>

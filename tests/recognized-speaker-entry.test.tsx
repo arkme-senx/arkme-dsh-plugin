@@ -6,6 +6,20 @@ import { loaders, summary, deferred } from './helpers/speaker-directory.js'
 const flush = async () => { for (let i = 0; i < 25; i++) await Promise.resolve() }
 const text = (renderer: ReactTestRenderer) => JSON.stringify(renderer.toJSON())
 describe('recognized speaker entry', () => {
+  it('keeps old counts visibly pending, then renders the confirmed merged person count', async () => {
+    let result = summary({ state: 'stale', totalCount: 100, markedCount: 0, unmarkedCount: 100 })
+    const api = loaders({ summary: vi.fn(async () => result) }), directory = new RecognizedSpeakerDirectory(api)
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<RecognizedSpeakerEntry accountKey="a" active onOpen={() => {}} style={{}} directory={directory} />); await flush() })
+    expect(text(view)).toContain('统计待更新')
+    expect(text(view)).toContain('100')
+    result = summary({ snapshotVersion: 'merged', totalCount: 1, markedCount: 1, unmarkedCount: 0, unseenCount: 0 })
+    await act(async () => { directory.invalidate('a'); await flush() })
+    expect(text(view)).not.toContain('统计待更新')
+    expect(text(view)).not.toContain('"children":["100"]')
+    expect(text(view)).toContain('已标记 1 · 未标记 0')
+    act(() => view.unmount())
+  })
   it('fetches only summary and never clears unseen merely for displaying the entry', async () => {
     const api = loaders(), directory = new RecognizedSpeakerDirectory(api), open = vi.fn()
     let view!: ReactTestRenderer

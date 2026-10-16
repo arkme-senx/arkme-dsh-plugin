@@ -99,6 +99,7 @@ function MemberReceiptPanelContent(props: MemberReceiptPanelProps & { account: s
 export function ArkmeMessageReadReceipt(props: {
   source: ArkmeSourceItem
   item: ArkmeTimelineItem
+  defaultUnread?: boolean
 }) {
   useArkmeLocale()
   const hostRef = useRef<HTMLSpanElement>(null)
@@ -142,24 +143,29 @@ export function ArkmeMessageReadReceipt(props: {
     }
   }, [target])
 
-  if (target === undefined) return null
-  const entry = arkmeMessageReadReceipts.get(target)
+  const defaultUnread = props.defaultUnread === true && props.item.isMe
+    && (props.source.kind === 'private_chat' || props.source.kind === 'group_chat')
+  if (target === undefined && !defaultUnread) return null
+  const entry = target === undefined ? undefined : arkmeMessageReadReceipts.get(target)
   const summary = entry?.summary
   const hasTruth = summary !== undefined && summary.totalMemberCount > 0
-  const canOpen = hasTruth && target.conversationKind === 'group_chat'
-  const isFailure = entry?.status === 'error' && summary === undefined
-  const isProvisional = entry?.status === 'provisional'
+  const canOpen = hasTruth && target?.conversationKind === 'group_chat'
+  const isFailure = entry?.status === 'error' && !hasTruth
+  const isProvisional = !hasTruth && (defaultUnread || entry?.provisionalUnread === true || entry?.status === 'provisional')
   let indicator: 'unread' | 'all-read' | 'partial-read' | 'error' | 'placeholder'
   let label: string
-  if (isFailure) {
+  if (isProvisional) {
+    indicator = 'unread'
+    label = isFailure ? '已读状态同步失败，点击重试' : '未读'
+  } else if (isFailure) {
     indicator = 'error'
     label = '已读状态同步失败，点击重试'
-  } else if (isProvisional || (hasTruth && summary.readCount <= 0 && summary.unreadCount > 0)) {
+  } else if (hasTruth && summary.readCount <= 0 && summary.unreadCount > 0) {
     indicator = 'unread'
     label = '未读'
   } else if (hasTruth && summary.unreadCount <= 0 && summary.readCount > 0) {
     indicator = 'all-read'
-    label = target.conversationKind === 'group_chat' ? summaryLabel(summary) : '已读'
+    label = target?.conversationKind === 'group_chat' ? summaryLabel(summary) : '已读'
   } else if (hasTruth && summary.readCount > 0) {
     indicator = 'partial-read'
     label = summaryLabel(summary)
@@ -168,15 +174,16 @@ export function ArkmeMessageReadReceipt(props: {
     label = '已读状态同步中'
   }
 
-  return <ArkmeReadReceiptControl hostRef={hostRef} buttonRef={buttonRef} state={indicator} status={entry?.status ?? 'unknown'}
+  return <ArkmeReadReceiptControl hostRef={hostRef} buttonRef={buttonRef} state={indicator} status={entry?.status ?? (defaultUnread ? 'provisional' : 'unknown')}
     {...(indicator === 'partial-read' && summary ? { count: summary.readCount } : {})}
     label={canOpen ? tr("{v0}，查看成员已读详情", { v0: label }) : label}
     {...(canOpen || isFailure ? { onClick: () => {
+      if (target === undefined) return
       if (isFailure) arkmeMessageReadReceipts.retry(target)
       else setDetailOpen(current => !current)
     } } : {})}
     {...(detailOpen ? { onEscape: () => setDetailOpen(false) } : {})}>
-    {detailOpen && canOpen && <ArkmeMessageReadReceiptDetailPanel
+    {detailOpen && canOpen && target !== undefined && <ArkmeMessageReadReceiptDetailPanel
       anchor={buttonRef.current} target={target} source={props.source} onClose={() => setDetailOpen(false)} />}
   </ArkmeReadReceiptControl>
 }
@@ -184,6 +191,7 @@ export function ArkmeMessageReadReceipt(props: {
 export function ArkmeMessageReadReceiptLine(props: {
   source: ArkmeSourceItem
   item: ArkmeTimelineItem
+  defaultUnread?: boolean
   wide?: boolean
   children: ReactNode
 }) {
@@ -200,7 +208,7 @@ export function ArkmeMessageReadReceiptLine(props: {
       ...(props.wide === true ? { width: '100%' } : {}),
     }}
   >
-    {props.item.isMe && <ArkmeMessageReadReceipt source={props.source} item={props.item} />}
+    {props.item.isMe && <ArkmeMessageReadReceipt source={props.source} item={props.item} defaultUnread={props.defaultUnread === true} />}
     {props.children}
   </div></ArkmeMentionReadProvider>
 }

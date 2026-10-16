@@ -96,6 +96,28 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
+  it('opens Explore evidence on the original ASR source and rejects mismatched anchors', async () => {
+    const fixture = await speakerCacheFixture()
+    const date = new Date(2026, 7, 12).getTime(), start = date + 9 * 3600000
+    fixture.state.transcripts = { [date]: {
+      session_ls: [{ id: 's', belong_usr: 42, start_at: start, end_at: start + 3000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
+        asr: [{ s: 1000, e: 2000, n: 1, t: '系统原文' }],
+        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '生日是十月二十八日' }] }],
+    } }
+    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
+    try {
+      const source = await fixture.service.exploreRecordingEvidence(owner, '十月二十八日')
+      expect(source.dateStamp).toBe(date)
+      expect(source.items).toMatchObject([{ text: '生日是十月二十八日', transcriptSource: 'doubao' }])
+      expect(source.segment).toBeUndefined()
+      expect(source.playbackTargets?.[0]?.item).toMatchObject({text:'系统原文',transcriptSource:'system'})
+      await expect(fixture.service.exploreRecordingEvidence({...owner, transcript_source:'system'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, child_id:'wrong'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, start_at:start+5000}, '十月二十八日')).rejects.toThrow('原转写已更新')
+    } finally { await fixture.close() }
+  })
+
   it('validates original civil windows and retains them for transcript and version reads', async () => {
     const fixture = await speakerCacheFixture()
     const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
@@ -1181,6 +1203,35 @@ describe('RecordingService', () => {
       total: 1, offset: 0, hasMore: false,
     })
     expect(JSON.stringify(history)).not.toContain('session-completed')
+  })
+
+  it('exposes explicit active pagination while keeping the default current-task read bounded', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-active-pages-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    const owners = Array.from({ length: 55 }, (_, i) => ({
+      sessionId: `active-${i}`, ownership: 'self' as const, fileName: `${i}.wav`,
+      fileSize: 1_024, parsedSize: 0, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_001_000,
+      hasFinishedUpload: false,
+    }))
+    gateway.listOwnerTasks = vi.fn(async input => ({
+      ...ownerPage(owners.slice(input.offset, input.offset + input.limit)),
+      hasMore: input.offset + input.limit < owners.length,
+    }))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway))
+    expect((await service.recordingImportList()).items).toHaveLength(20)
+    const first = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 0 })
+    expect(first.items).toHaveLength(50)
+    expect(first.owner).toEqual({ state: 'available', hasMore: true, nextOffset: 50 })
+    const last = await service.recordingImportList(undefined, { toMillis: Date.now(), limit: 50, offset: 50 })
+    expect(last.items).toHaveLength(5)
+    expect(last.owner).toEqual({ state: 'available', hasMore: false, nextOffset: 55 })
+    await expect(service.recordingImportList(undefined, { toMillis: Date.now(), limit: 51, offset: 0 })).rejects.toMatchObject({ code: 'recording-import-list-invalid' })
   })
 
   it('does not downgrade an accepted Audio session into a local processing task when owner reads fail', async () => {
