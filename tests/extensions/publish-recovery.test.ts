@@ -13,6 +13,45 @@ import { packLocalNativeBundleDirectoryV3 } from '../../src/extensions/bundle-ar
 const receipt = { publish_session_id: 'pub_recovery', extension_id: 'ext_recovery', version: '1.0.0', status: 'validating' as const, execution_state: 'failed' as const, error_code: 'audit_model_unavailable', error_message: '审核模型不可用', can_resume: true }
 
 describe('publish failure receipts and explicit recovery', () => {
+  it('returns only safe status fields and pins the requested session identity', async () => {
+    const post = vi.fn(async <T>(): Promise<T> => ({
+      ...receipt, publish_session_id: 'pub_unrelated', phase: 'audit', retry_after_millis: 1000,
+      upload_url: 'https://objects.test/SECRET', upload_headers: { authorization: 'SECRET' },
+      audit_evidence: ['PRIVATE SOURCE'], debug: { token: 'SECRET' },
+    }) as T)
+    const client = new ExtensionPublishClient(post)
+    await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual({ ...receipt, phase: 'audit', retry_after_millis: 1000 })
+    expect(post).toHaveBeenCalledWith('/api/v1/extensions/publish-session/status', { publish_session_id: receipt.publish_session_id }, undefined)
+  })
+
+  it.each([null, [], 'invalid', {}, { ...receipt, status: 'unexpected' }, { ...receipt, extension_id: null }, { ...receipt, version: null }])('rejects an invalid status response without echoing its body: %j', async (response) => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => response as T)
+    await expect(client.publishStatus(receipt.publish_session_id)).rejects.toMatchObject({ code: 'extension-publish-status-invalid', httpStatus: 502, retryable: false })
+  })
+
+  it('accepts an older status response without a session ID', async () => {
+    const { publish_session_id: _session, ...legacy } = receipt
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => legacy as T)
+    await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual(receipt)
+  })
+
+  it.each([1_792_166_400_000, '2026-10-16T17:00:00Z'])('preserves validated artifact and audit evidence (%s) across repeated status reads', async (auditCheckedAt) => {
+    const evidence = { bundle_sha256: 'a'.repeat(64), artifact_sha256: 'b'.repeat(64), package_json_sha256: 'c'.repeat(64), source_sha256: 'd'.repeat(64),
+      audit_checked_at: auditCheckedAt, audit_model: 'deepseek-v4-flash', signature: Buffer.alloc(64, 7).toString('base64'), signing_key_id: 'key-v1', published_at: 1_792_166_400_000 }
+    const published = { ...receipt, ...evidence, status: 'published', execution_state: 'published' }
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...published, upload_url: 'SECRET', audit_evidence: ['PRIVATE'] }) as T)
+    await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual(published)
+    await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual(published)
+  })
+
+  it('omits malformed integrity metadata instead of forwarding or truncating it', async () => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...receipt,
+      bundle_sha256: 'not-a-digest', source_sha256: 'a'.repeat(65), artifact_sha256: null, package_json_sha256: {},
+      audit_checked_at: 'PRIVATE', audit_model: ['PRIVATE'], signature: 'https://objects.test/SECRET', signing_key_id: 'x'.repeat(129), published_at: -1,
+    }) as T)
+    await expect(client.publishStatus(receipt.publish_session_id)).resolves.toEqual(receipt)
+  })
+
   it.each(['publish', 'bundle', 'native'] as const)('%s preserves completion evidence when the recovery read fails', async (entry) => {
     const root = mkdtempSync(join(tmpdir(), 'publish-recovery-'))
     const store = new ArkmeExtensionInstallStore(join(root, 'state'))
