@@ -18,7 +18,9 @@ it('hides only the app update action and feedback in MAS About',()=>{
  const mas=renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
  expect(mas).not.toContain('打开 APP 更新');expect(mas).toContain('DeepSeek Harness');expect(mas).toContain('ArkME 插件')
  vi.restoreAllMocks();setChannel(false)
- expect(renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)).toContain('打开 APP 更新')
+ const website = renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
+ const document = new DOMParser().parseFromString(website, 'text/html')
+ expect([...document.querySelectorAll('button')].filter(button => button.textContent === '打开 APP 更新')).toHaveLength(1)
 })
 it('keeps marketplace installation button but shows website-only message without starting installation',async()=>{
  setChannel(true)

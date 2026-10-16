@@ -320,7 +320,7 @@ describe('phone unbind', () => {
     const sessions: ArkmeSessionStore = { read: async () => active, write: async value => { active = value }, delete: async () => { active = undefined } }
     const pending: ArkmeSessionStore = { read: async () => parked, write: async value => { parked = value }, delete: async () => { parked = undefined } }
     const bridge: ArkmeAccountScopeBridge = {
-      attest: async () => ({ status: 'ready' }), prepare: async () => ({ transitionRef: 'test-transition' }),
+      attest: vi.fn(async () => ({ status: 'ready' as const })), prepare: async () => ({ transitionRef: 'test-transition' }),
       commit: async () => { if (commitFails) throw new Error('bridge commit unavailable'); return { status: 'ready' } },
       abort: async () => ({ status: 'ready' }),
     }
@@ -332,11 +332,25 @@ describe('phone unbind', () => {
     const owner = new ArkmeAccountSessionOwner(sessions, bridge)
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl, pending, owner)
     const service = new AuthService(runtime, new ProfileService(runtime), { reconnectChatRealtime() {}, clearAccountState() {} })
-    return { service, runtime, fetchImpl, sessions, pending }
+    return { service, runtime, fetchImpl, sessions, pending, bridge }
   }
 
-  it('recovers a persisted handoff after desktop commit failure without another unlink', async () => {
-    const { service, runtime, fetchImpl, sessions, pending } = realRuntimeFixture(true)
+  it('completes a persisted handoff when desktop commit acknowledgement is lost but re-attestation succeeds', async () => {
+    const { service, runtime, fetchImpl, sessions, pending, bridge } = realRuntimeFixture(true)
+    await expect(service.unbindPhone('123456')).resolves.toEqual({ status: 'binding-required', environment: 'test', userId: 42 })
+    expect(bridge.attest).toHaveBeenLastCalledWith({ kind: 'guest' })
+    expect(await sessions.read()).toBeUndefined()
+    expect(await pending.read()).toEqual(session)
+    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url).endsWith('/phone-unbind'))).toHaveLength(1)
+    runtime.dispose()
+  })
+
+  it('recovers a persisted handoff after commit and re-attestation fail without another unlink', async () => {
+    const { service, runtime, fetchImpl, sessions, pending, bridge } = realRuntimeFixture(true)
+    vi.mocked(bridge.attest).mockImplementation(async identity => {
+      if (identity.kind === 'guest') throw new Error('bridge attest unavailable')
+      return { status: 'ready' }
+    })
     await expect(service.unbindPhone('123456')).rejects.toThrow('bridge commit unavailable')
     expect(await sessions.read()).toBeUndefined()
     expect(await pending.read()).toEqual(session)
