@@ -23,7 +23,7 @@ it('paginates directory and ordinary messages while selecting only a signed mess
   expect(renderer.root.findAllByType('input')).toHaveLength(0)
   await act(async () => { renderer.root.findByType('button').props.onClick() })
   expect(api.readChatTimeline).toHaveBeenLastCalledWith(chat.sourceRef, { mode: 'older', cursor: 'message-next', limit: 40 }, expect.any(AbortSignal))
-  await act(async () => { renderer.root.findByType('input').props.onChange() })
+  await act(async () => { renderer.root.findByProps({ 'aria-label': '目标消息' }).props.onChange({ target: { value: 'signed-message' } }) })
   expect(onSelect).toHaveBeenLastCalledWith('signed-message')
   await act(async () => renderer.unmount())
 })

@@ -43,8 +43,6 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
   const [frozen, setFrozen] = useState<OfflineContextPreview>()
   const [rangeEvidence, setRangeEvidence] = useState(entry.evidence)
   const [rangeReady, setRangeReady] = useState(false)
-  const [startOffset, setStartOffset] = useState(0)
-  const [endOffset, setEndOffset] = useState(0)
   const [first, setFirst] = useState(entry.selectedEvidenceIds[0] ?? '')
   const [last, setLast] = useState(entry.selectedEvidenceIds.at(-1) ?? '')
   const [messageRef, setMessageRef] = useState('')
@@ -57,9 +55,6 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
   const selected = selectedOfflineEvidence(entry)
   const playable = selected.find(item => item.playbackRef)
   const rangeIds = offlineEvidenceRange({ ...entry, evidence: rangeEvidence }, first, last)
-  const firstLength = Array.from(rangeEvidence.find(e => e.id === first)?.text ?? '').length
-  const lastLength = Array.from(rangeEvidence.find(e => e.id === last)?.text ?? '').length
-  const rangeValid = rangeIds.length > 0 && Number.isInteger(startOffset) && Number.isInteger(endOffset) && startOffset >= 0 && startOffset < firstLength && endOffset > 0 && endOffset <= lastLength && (rangeIds.length > 1 || endOffset > startOffset)
   const disabled = busy || unknown || recoveryPending
   const sourceAvailable = entry.sourceState === 'available'
 
@@ -78,14 +73,14 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
   useEffect(() => {
     if (dialog !== 'range') return
     const controller = new AbortController()
-    setRangeReady(false); setStartOffset(0); setError('')
-    if (preview) { setRangeEvidence(entry.evidence); setEndOffset(Array.from(entry.evidence.at(-1)?.text ?? '').length); setRangeReady(true); return }
+    setRangeReady(false); setError('')
+    if (preview) { setRangeEvidence(entry.evidence); setRangeReady(true); return }
     if (!actions.rangeOptions) { setError(tr('范围读取暂不可用')); return }
     void actions.rangeOptions(entry, controller.signal).then(options => {
       if (controller.signal.aborted) return
       setRangeEvidence(options.evidence)
       setFirst(options.evidence[0]?.id ?? ''); setLast(options.evidence.at(-1)?.id ?? '')
-      setEndOffset(Array.from(options.evidence.at(-1)?.text ?? '').length); setRangeReady(true)
+      setRangeReady(true)
     }).catch(() => { if (!controller.signal.aborted) setError(tr('无法读取最新转写范围，请重新打开后重试。')) })
     return () => controller.abort()
   }, [dialog, entry.id, entry.revision, actions.rangeOptions, preview])
@@ -169,7 +164,6 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
     {entry.sourceState !== 'available' && <p role="status" className="arkme-offline-warning">{entry.sourceState === 'changed'
       ? tr('原文已更新，等待重新核对关联。') : tr('原始录音暂不可用，已保留关联位置。')}</p>}
     <footer className="arkme-offline-actions">
-      {entry.hasSharedSnapshot && <button type="button" disabled={disabled} onClick={() => setDialog('withdraw')}>{tr('撤回已分享消息')}</button>}
       <button type="button" disabled={!playable || !sourceAvailable} title={!playable ? tr('当前片段未提供可播放的音频') : undefined}
         onClick={() => playable?.playbackRef && void read(() => actions.play(playable.playbackRef!))}><Play size={14} />{tr('回听')}</button>
       <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}><ChatCircle size={14} />{expanded ? tr('收起原文') : tr('查看原文')}</button>
@@ -197,6 +191,7 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
       }}>{tr('关联其他消息')}</button>
       <button type="button" disabled={disabled || entry.visibility !== 'private'} onClick={() => void change({ kind: 'dismiss', reason: 'playback' })}>{tr('这是播放内容')}</button>
       <button type="button" disabled={disabled || entry.visibility !== 'private'} onClick={() => void change({ kind: 'dismiss', reason: 'remove' })}>{tr('移除关联')}</button>
+      {entry.hasSharedSnapshot && <button type="button" disabled={disabled} onClick={() => { setDialog('withdraw'); setMenu(false) }}>{tr('撤回已分享消息')}</button>}
     </div>}
     {error && <p className="arkme-offline-error" role="alert">{error} {unknown && <button type="button" disabled={busy} onClick={() => void reconcile()}>{tr('核对状态')}</button>}</p>}
     {feedback && <p className="arkme-offline-feedback" role="status">{feedback}</p>}
@@ -206,23 +201,20 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
         : dialog === 'range' ? tr('选择连续的原文片段。修改后会重新核对摘要与关联。') : tr('选择这段交流实际对应的消息。')}
       confirmLabel={dialog === 'withdraw' ? tr('确认撤回') : dialog === 'share' ? preview ? tr('确认分享（演示）') : tr('确认分享') : tr('保存')}
       busyLabel={tr('处理中…')} busy={busy} error={error}
-      confirmDisabled={unknown || recoveryPending || (dialog === 'relink' && !messageRef) || (dialog === 'range' && (!rangeReady || !rangeValid)) || (dialog === 'share' && (!canShareOfflineContext(entry) || !preview && !frozen))}
+      confirmDisabled={unknown || recoveryPending || (dialog === 'relink' && !messageRef) || (dialog === 'range' && (!rangeReady || rangeIds.length === 0)) || (dialog === 'share' && (!canShareOfflineContext(entry) || !preview && !frozen))}
       onClose={() => setDialog(undefined)} onConfirm={() => void change(dialog === 'withdraw' ? { kind: 'withdraw' } : dialog === 'share' ? { kind: 'share', includeTranscript, ...(frozen ? { previewRef: frozen.previewRef } : {}) }
-        : dialog === 'range' ? { kind: 'range', evidenceIds: rangeIds, startOffset, endOffset } : { kind: 'relink', messageRef })}>
+        : dialog === 'range' ? { kind: 'range', evidenceIds: rangeIds } : { kind: 'relink', messageRef })}>
       {dialog === 'withdraw' ? <p>{tr('撤回后如需再次分享，请重新预览并确认。')}</p> : dialog === 'share' ? <div className="arkme-offline-share-preview">
-        {preview ? <><strong>{entry.title}</strong><ul>{entry.summary.map((line, index) => <li key={index}>{line}</li>)}</ul></> : frozen ? <><strong>{frozen.title}</strong><p>{frozen.summary}</p></> : <p role="status">{tr('正在取得分享预览…')}</p>}
+        {preview ? <><strong>{entry.title}</strong><ul>{entry.summary.map((line, index) => <li key={index}>{line}</li>)}</ul></> : frozen ? <><strong>{frozen.title}</strong><ul><li>{frozen.summary}</li></ul></> : <p role="status">{tr('正在取得分享预览…')}</p>}
         <label><input type="checkbox" checked={includeTranscript} onChange={event => setIncludeTranscript(event.target.checked)} />{tr('附上所选转写原文')}</label>
         {includeTranscript && (preview ? selected.map(item => <p key={item.id}>{item.speaker}：{item.text}</p>) : frozen?.transcript.map((line, index) => <p key={index}>{line}</p>))}
         <small>{tr('仅分享以上内容，不包含原始音频或其他录音片段。')}{preview ? ` ${tr('这是交互演示，不会发送消息。')}` : ''}</small>
       </div> : dialog === 'range' ? <div className="arkme-offline-range">
         {!rangeReady && <p role="status">{tr('正在读取最新转写…')}</p>}
-        <label>{tr('从')}<select value={first} onChange={event => { setFirst(event.target.value); setStartOffset(0) }}>{rangeEvidence.map(item => <option key={item.id} value={item.id}>{offlineClock(item.startAtMillis)} · {item.text.slice(0, 28)}</option>)}</select></label>
-        <label>{tr('到')}<select value={last} onChange={event => { setLast(event.target.value); setEndOffset(Array.from(rangeEvidence.find(e => e.id === event.target.value)?.text ?? '').length) }}>{rangeEvidence.map(item => <option key={item.id} value={item.id}>{offlineClock(item.endAtMillis)} · {item.text.slice(0, 28)}</option>)}</select></label>
-        <label>{tr('首段起始字（从 1 开始）')}<input type="number" min={1} max={firstLength} value={startOffset + 1} onChange={event => setStartOffset(Number(event.target.value) - 1)} /></label>
-        <label>{tr('末段结束字（含）')}<input type="number" min={1} max={lastLength} value={endOffset} onChange={event => setEndOffset(Number(event.target.value))} /></label>
-        {!rangeValid && <p role="alert">{tr('请选择有效的连续文字范围。')}</p>}
+        <label>{tr('从')}<select value={first} onChange={event => setFirst(event.target.value)}>{rangeEvidence.map(item => <option key={item.id} value={item.id}>{offlineClock(item.startAtMillis)} · {item.text.slice(0, 28)}</option>)}</select></label>
+        <label>{tr('到')}<select value={last} onChange={event => setLast(event.target.value)}>{rangeEvidence.map(item => <option key={item.id} value={item.id}>{offlineClock(item.endAtMillis)} · {item.text.slice(0, 28)}</option>)}</select></label>
         {rangeIds.length === 0 ? <p role="alert">{tr('结束片段不能早于开始片段。')}</p>
-          : rangeEvidence.filter(item => rangeIds.includes(item.id)).map(item => <p key={item.id}>{Array.from(item.text).slice(item.id === first ? startOffset : 0, item.id === last ? endOffset : undefined).join('')}</p>)}
+          : rangeEvidence.filter(item => rangeIds.includes(item.id)).map(item => <p key={item.id}>{item.text}</p>)}
       </div> : renderMessagePicker ? renderMessagePicker(messageRef, setMessageRef) : <div className="arkme-offline-range"><select aria-label={tr('目标消息')} value={messageRef} onChange={event => setMessageRef(event.target.value)}>
         {relinkOptions.map(option => <option key={option.messageRef} value={option.messageRef}>{option.label}</option>)}
       </select></div>}

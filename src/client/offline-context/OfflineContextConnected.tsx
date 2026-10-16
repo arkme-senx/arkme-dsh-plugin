@@ -16,16 +16,13 @@ export function offlineRelinkOptions(items: ArkmeTimelineItem[]): Options {
   return items.flatMap(item => item.offlineContextMessageRef ? [{ messageRef: item.offlineContextMessageRef, label: (item.textContent || item.title || tr('附件消息')).slice(0, 120) }] : [])
 }
 
-/** Lazy detail reads keep unrelated history independent of Audio availability. */
-export function OfflineContextConnected({ entryRef, revision, title, source, relinkOptions = [], onChanged }: {
+/** Render the original card directly; data loading must not add a user action. */
+export function OfflineContextConnected({ entryRef, revision, source, relinkOptions = [], onChanged }: {
   entryRef: string; revision: string; title: string; source?: ArkmeSourceItem; relinkOptions?: Options; onChanged?(): void
 }) {
-  const [open, setOpen] = useState(false)
-  return <div style={{ padding: '8px 12px' }}>
-    {!open ? <button type="button" onClick={() => setOpen(true)}>{tr('线下交流')} · {title || tr('查看关联')} · {tr('仅你可见')}</button>
-      : <ConnectedCard key={entryRef} entryRef={entryRef} revision={revision} {...(source ? { source } : {})} relinkOptions={relinkOptions} {...(onChanged ? { onChanged } : {})} />}
-  </div>
+  return <ConnectedCard key={entryRef} entryRef={entryRef} revision={revision} {...(source ? { source } : {})} relinkOptions={relinkOptions} {...(onChanged ? { onChanged } : {})} />
 }
+
 function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }: {
   entryRef: string; revision: string; source?: ArkmeSourceItem; relinkOptions: Options; onChanged?: () => void
 }) {
