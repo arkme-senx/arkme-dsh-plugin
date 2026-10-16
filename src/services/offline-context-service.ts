@@ -232,10 +232,31 @@ export class OfflineContextService implements OfflineContextPort {
     const cmd: OfflineContextCommand = input.command
     const requestId = text(cmd.requestId), identity = open(cmd.entryRef, 'entry'), expected = revision(cmd.revision)
     const pending = await journal(), key = `command:${requestId}`, fp = fingerprint(cmd)
+    // Recovery is a write command, never a side effect of read/result/pending.
+    // Reuse the exact encrypted payload and request ID; a new preview or current
+    // revision would turn a transport retry into a different user action.
     if (pending[key]) {
-      if (pending[key].fingerprint !== fp) throw invalid()
-      return result(cmd.entryRef, requestId)
+      if (cmd.action !== 'retry' && pending[key].fingerprint !== fp) throw invalid()
+      const saved = await readJournal(pending[key])
+      if (saved.entryRef !== cmd.entryRef || saved.requestId !== requestId) throw invalid()
+      const observed = await result(cmd.entryRef, requestId)
+      if (observed.outcome !== 'unknown') return observed
+      const route = text(saved.route), body = objectValue(saved.body)
+      if (!['apply', 'share', 'withdraw'].includes(route) || body.request_id !== requestId) throw invalid()
+      try {
+        const replayed = receipt(await post(route, body, true), requestId)
+        if (replayed.outcome === 'applied' || replayed.outcome === 'not_applied') {
+          await this.runtime.stateStore.deleteOfflineContextJournal!(scope, key, pending[key].fingerprint)
+        }
+        return replayed
+      } catch {
+        await current()
+        // A retired server receipt plus a newer revision cannot establish that
+        // the original write never happened. Keep this uncertainty explicit.
+        return { requestId, outcome: 'unknown' }
+      }
     }
+    if (cmd.action === 'retry') return result(cmd.entryRef, requestId)
     let route = 'apply'
     const body: Record<string, unknown> = { association_id: text(identity.id), request_id: requestId, expected_revision: expected, action: cmd.action }
     switch (cmd.action) {

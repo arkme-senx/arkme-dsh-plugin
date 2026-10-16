@@ -42,7 +42,7 @@ it('projects exact Unicode evidence without exposing internal ids or inventing s
   await expect(f.service.offlineContext({ operation: 'read', entryRef: entry.id })).rejects.toThrow()
   f.service.dispose()
 })
-it('persists an ambiguous command across restart and reconciles without sending it again', async () => {
+it('keeps passive recovery read-only and replays the exact command only on explicit retry', async () => {
   const f = await fixture(), page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
   const entry = page.entries[0]!, cmd = { entryRef: entry.id, revision: entry.revision, requestId: 'command-1', action: 'dismiss' as const, reason: 'remove' as const }
   expect(await f.service.offlineContext({ operation: 'command', command: cmd })).toEqual({ requestId: 'command-1', outcome: 'unknown' })
@@ -51,8 +51,20 @@ it('persists an ambiguous command across restart and reconciles without sending 
   f.service.dispose()
   const restarted = new OfflineContextService({ ...f.runtime, stateStore: new ArkmeStateStore(f.directory) as unknown as StateStore }, source)
   expect(await restarted.offlineContext({ operation: 'pending' })).toEqual([expect.objectContaining({ requestId: 'command-1', outcome: 'unknown' })])
-  await restarted.offlineContext({ operation: 'command', command: cmd })
   expect(f.post.mock.calls.filter(([path]) => path.endsWith('/apply'))).toHaveLength(1)
+  const original = f.post.mock.calls.find(([path]) => path.endsWith('/apply'))![1]
+  f.post.mockImplementation(async (path, body) => {
+    if (path.endsWith('/capability')) return { supported: true, version: 1, timeline_version: 2 }
+    if (path.endsWith('/result')) return { request_id: body.request_id, outcome: 'unknown' }
+    if (path.endsWith('/apply')) {
+      expect(body).toEqual(original)
+      return { request_id: body.request_id, outcome: 'applied', revision: 3 }
+    }
+    throw new Error('unexpected request')
+  })
+  expect(await restarted.offlineContext({ operation: 'command', command: { action: 'retry', entryRef: entry.id, revision: entry.revision, requestId: cmd.requestId } })).toMatchObject({ outcome: 'applied', revision: '3' })
+  expect(f.post.mock.calls.filter(([path]) => path.endsWith('/apply'))).toHaveLength(2)
+  expect(await new ArkmeStateStore(f.directory).readOfflineContextJournal('test:7')).toEqual({})
   f.switchUser(8)
   expect(await restarted.offlineContext({ operation: 'pending' })).toEqual([])
   restarted.dispose()
@@ -92,5 +104,39 @@ it('loads current range options and maps Unicode boundaries without accepting ca
   expect(await f.service.offlineContext({operation:'command',command})).toMatchObject({outcome:'applied'})
   await expect(f.service.offlineContext({operation:'command',command:{...command,requestId:'range-2',endOffset:5}})).rejects.toThrow()
   expect(f.post.mock.calls.filter(([path])=>path.endsWith('/apply'))).toHaveLength(1)
+  f.service.dispose()
+})
+
+it('replays an uncertain share from the encrypted journal without changing its preview or recipient', async () => {
+  const f = await fixture()
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!
+  const preview = await f.service.offlineContext({ operation: 'preview', entryRef: entry.id, revision: entry.revision, includeTranscript: true }) as OfflineContextPreview
+  const requestId = 'lost-share'
+  await f.service.offlineContext({ operation: 'command', command: { action: 'share', entryRef: entry.id, revision: entry.revision, requestId, previewRef: preview.previewRef } })
+  const original = f.post.mock.calls.find(([path]) => path.endsWith('/share'))![1]
+  f.post.mockImplementation(async (path, body) => {
+    if (path.endsWith('/result')) return { request_id: requestId, outcome: 'unknown' }
+    if (path.endsWith('/share')) {
+      expect(body).toEqual(original)
+      return { request_id: requestId, outcome: 'pending', revision: 3 }
+    }
+    throw new Error('unexpected')
+  })
+  expect(await f.service.offlineContext({ operation: 'command', command: { action: 'retry', requestId, entryRef: entry.id, revision: '99' } })).toMatchObject({ outcome: 'pending' })
+  expect(Object.keys(await f.store.readOfflineContextJournal('test:7'))).toContain('command:lost-share')
+  f.service.dispose()
+})
+
+it('never converts a retired receipt or a retry failure into proof that the original write was not applied', async () => {
+  const f = await fixture()
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!, command = { action: 'confirm' as const, requestId: 'retired', entryRef: entry.id, revision: entry.revision }
+  await f.service.offlineContext({ operation: 'command', command })
+  expect(await f.service.offlineContext({ operation: 'command', command: { ...command, action: 'retry' } })).toMatchObject({ outcome: 'unknown' })
+  expect(Object.keys(await f.store.readOfflineContextJournal('test:7'))).toContain('command:retired')
+  await expect(f.service.offlineContext({ operation: 'command', command: { ...command, action: 'restore' } })).rejects.toThrow()
+  f.switchUser(8)
+  await expect(f.service.offlineContext({ operation: 'command', command: { ...command, action: 'retry' } })).rejects.toThrow()
   f.service.dispose()
 })

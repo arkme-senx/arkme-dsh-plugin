@@ -1,6 +1,6 @@
 # 录音与聊天上下文：能力矩阵
 
-本任务基于用户指定的 dev 基线 5daf7a0a，所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
+本任务基于用户指定的 dev 分支，合并前已吸收最新基线 4b1ba7ba，所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
 
 | 能力面 | 入口与授权 | 完成证据 |
 | --- | --- | --- |
@@ -16,10 +16,10 @@
 
 ## 本轮验证记录
 
-- 全量测试 11,960 通过、20 跳过；最新 UI 相关 433 项与消息选择器 3 项通过。typecheck、build、tgz 打包通过。
-- 正式 `ArkmeLocalDatabase` 命令 journal 转发已覆盖。跨账号取消、冻结预览、Unicode 范围、未知写入结果、当前源复核、失效后清除详情均有针对性实现与测试。
-- 最终 tgz 已装入未修改的官方 DSH 0.1.5-rc.2 隔离 Profile；真实 Agent 会话执行 `arkme_offline_context_read` 的 capability/pending 成功。
-- 仓外 consumer 仅依赖公开 SDK，从当前安装包类型编译并调用真实 Host；未提供 Origin 时 403，正常调用成功。
-- 后端 fixture 为纯合成 loopback 服务，没有真实账号操作。这是插件运行合同验证，不是五后端完整端到端验收。
-- IAB 访问隔离端口被 `ERR_BLOCKED_BY_CLIENT` 阻止，Chrome 会话连接超时，正式浏览器 UI 的滚动/around/播放验收仍未完成。
-- 证据：`/tmp/offline-context-plugin-tests-final.log`、`/tmp/offline-context-ui-final.log`、`/tmp/offline-context-dsh-runtime-final.log`、`/tmp/offline-context-sdk-consumer-final.log`。
+- 最终全量测试 12,050 通过、20 跳过；1,030 文件通过、15 跳过。typecheck、build、tgz 打包通过。Node 24，4 workers；默认并发一次发布夹具超时记录保留，未跳过失败用例。
+- `OfflineContextService` 共用加密 journal：读 pending/result 无写副作用；明确 retry 使用原 route/body/requestId。UI“重试原操作”、Tools 修改权限和公开 SDK 类型均覆盖；重启、跨账号、分享原预览、回执淘汰后继续 unknown 有回归。
+- 最终 tgz 装入未修改官方 DSH 0.1.5-rc.2 的隔离 Profile。真实 Agent 发现并执行 capability/pending/list Tools，读取原生后端关联成功。
+- 仓外 consumer 只依赖公开 SDK，严格类型编译通过；真实 Host → Chat/Record/Audio/Intelligent/IM 链路中查询、确认、时间线、预览、分享、回执及撤回成功。
+- 五服务均为原生二进制，DB/MQ 隔离；登录、搜索、外部模型和存储配置仍为合成依赖。关联由正式链路生成，源 ASR 为合成材料；这不是模型效果或实际音频播放证据。
+- IAB 返回 ERR_BLOCKED_BY_CLIENT，Chrome 连接超时，实际浏览器的滚动/around/音频播放和完整交互仍未验收。组件测试不能替代该门禁，暂不能确认完整上线验收。
+- 证据：`/tmp/offline-context-premerge-plugin-final-loop.log`、`/tmp/offline-context-premerge-runtime/dsh-final.log`、`/tmp/offline-context-premerge-runtime/sdk-compile-final.log`、`/tmp/offline-context-premerge-runtime/sdk-final.log`、`/tmp/offline-context-premerge-native-final.log`。

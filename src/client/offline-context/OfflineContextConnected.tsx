@@ -96,7 +96,12 @@ function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }:
   return <>
     {error && <p role="alert">{error}<button type="button" onClick={() => setRefresh(n => n + 1)}>{tr('重新读取')}</button></p>}
     {entry ? <OfflineContextCard renderMessagePicker={(selected, onSelect) => <OfflineContextMessagePicker selected={selected} onSelect={onSelect} />} entry={entry} actions={actions} relinkOptions={relinkOptions} recoveryPending={pending === undefined || pending.length > 0} /> : !error && <p role="status">{tr('正在读取关联…')}</p>}
-    {!!pending?.length && <p role="status">{tr('有操作尚未确认，已暂停新的修改。')}<button type="button" onClick={() => setRefresh(n => n + 1)}>{tr('核对状态')}</button></p>}
+    {!!pending?.length && <p role="status">{tr('有操作尚未确认，已暂停新的修改。')}<button type="button" onClick={() => setRefresh(n => n + 1)}>{tr('核对状态')}</button>
+      {entry && pending.filter(operation => operation.outcome === 'unknown').map(operation => <button type="button" key={operation.requestId} onClick={() => {
+        void sdk.offlineContext({ operation: 'command', command: { action: 'retry', entryRef, revision: entry.revision, requestId: operation.requestId } })
+          .then(changed).catch(() => { if (!lifecycle.current?.signal.aborted) setError(tr('重试未能确认结果，请稍后核对状态。')) })
+      }}>{tr('重试原操作')}</button>)}
+    </p>}
     {playback && <ArkmeConfirmDialog layout="picker" titleId={id} title={tr('回听所选原文')} busy={false} onClose={() => setPlayback(undefined)}>
       {playback.clips.map((clip, index) => <audio key={clip.playbackRef} controls aria-label={`${tr('原文音频')} ${index + 1}`} src={sdk.mediaUrl(clip.playbackRef)}
         onLoadedMetadata={event => { event.currentTarget.currentTime = clip.startOffsetMillis / 1000 }}

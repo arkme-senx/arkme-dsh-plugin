@@ -12,7 +12,7 @@ export type OfflineContextCommand = {
   entryRef: string
   revision: string
 } & (
-  | { action: 'confirm' | 'restore' | 'withdraw' }
+  | { action: 'confirm' | 'restore' | 'withdraw' | 'retry' }
   | { action: 'dismiss'; reason: 'unrelated' | 'playback' | 'remove' }
   | { action: 'range'; evidenceRefs: string[]; startOffset?: number; endOffset?: number }
   | { action: 'relink'; messageRef: string }
