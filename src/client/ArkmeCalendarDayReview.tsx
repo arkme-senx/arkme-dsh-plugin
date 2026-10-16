@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
 import type { DayReviewOpenSource } from '../services/calendar-day-review-service.js'
 import { callArkme } from './api.js'
+import { ArkmeClientError } from '../sdk/index.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { arkmeUi } from './ui-controller.js'
@@ -124,7 +125,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       apply(value); setSelectedVersion(''); setHistorical(undefined); setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setReuse(undefined)
     } catch (e) {
       if (!controller.signal.aborted) {
-        const notSubmitted = e && typeof e === 'object' && 'code' in e && ['calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(String(e.code))
+        const notSubmitted = e instanceof ArkmeClientError && ['calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(e.body.code)
         if (notSubmitted) {
           setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setError(errorText(e)); void prompts.read()
         } else { setUncertain(true); setError(`${tr('提交结果尚未确认，请先检查更新。再次提交会核对同一次请求。')} ${errorText(e)}`) }

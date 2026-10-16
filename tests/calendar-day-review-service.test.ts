@@ -4,13 +4,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ArkmeStateStore } from '../src/state-store.js'
 import { CalendarDayReviewService } from '../src/services/calendar-day-review-service.js'
-import { ArkmePluginError, type ServiceRuntime } from '../src/services/service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from '../src/services/service.js'
 
 const query = { accountScope: 'prod:7', bucketDate: '2026-10-15', timezone: 'Asia/Shanghai' }
 const envelope = { schema_version: 1, scope: 'calendar_day', date: query.bucketDate, time_zone: query.timezone }
 const capability = { supported: true, schema_version: 1, scope: 'calendar_day', resume: true, freshness_v1: true, durable_jobs: true, source_navigation: true, idempotent_create: true, source_kinds: ['chat', 'location', 'self', 'call', 'audio'] }
 const defaultConfig = { baseVersion: 'v1', summary: { instruction: 's', chunk: 's', aggregate: 's' }, timeline: { instruction: 't', chunk: 't', aggregate: 't' } }
 const idle = { ...envelope, result: null, job: null, versions: [], freshness: 'unchanged' }
+it('releases a definitively rejected oversized prompt so a corrected request can be submitted', async () => {
+  const f = fixture(), requestId = '00000000-0000-4000-8000-000000000000'
+  f.post.mockResolvedValueOnce(capability).mockRejectedValueOnce(new ArkmeUpstreamResponseError('upstream', 'invalid', false, 400, { review_error: 'material_too_large' }))
+  await expect(f.service.create({ ...query, requestId, sourceKinds: ['self'] })).rejects.toThrow('提示词过长')
+  expect(await f.runtime.stateStore.readDayReviewPending(query.accountScope, JSON.stringify([query.bucketDate, query.timezone]))).toBeUndefined()
+  const corrected = '00000000-0000-4000-8000-000000000001'
+  f.post.mockResolvedValueOnce(capability).mockResolvedValueOnce({ ...idle, job: { id: 'job', status: 'queued' }, submission: { request_id: corrected, job_id: 'job', source_kinds: ['self'], outputs: ['summary', 'timeline'], prompt_config: defaultConfig, reuse_result_id: '' } })
+  await expect(f.service.create({ ...query, requestId: corrected, sourceKinds: ['self'] })).resolves.toMatchObject({ job: { id: 'job' } })
+})
 function fixture() {
   let userId = 7, change = () => {}
   const pending = new Map<string, unknown>()

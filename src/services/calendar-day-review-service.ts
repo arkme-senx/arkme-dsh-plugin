@@ -106,9 +106,10 @@ export class CalendarDayReviewService {
     } catch (error) {
       // A definite domain rejection is not a lost acknowledgement. Unknown
       // transport/settlement outcomes keep the immutable request for reconciliation.
-      if (error instanceof ArkmeUpstreamResponseError && ['invalid_request', 'day_busy', 'request_conflict', 'source_changed', 'source_revoked', 'not_found'].includes(String(objectValue(error.responseData).review_error))) {
+      const rejection = error instanceof ArkmeUpstreamResponseError ? String(objectValue(error.responseData).review_error) : ''
+      if (['invalid_request', 'day_busy', 'request_conflict', 'source_changed', 'source_revoked', 'not_found', 'material_too_large'].includes(rejection)) {
         await this.storage().acknowledge(query.accountScope, this.day(query), requestId)
-        throw new ArkmePluginError('calendar-review-not-accepted', '本次生成未受理，请检查日期、资料权限或进行中的任务后重试', false, 409)
+        throw new ArkmePluginError('calendar-review-not-accepted', rejection === 'material_too_large' ? '提示词过长，本次生成未受理，请缩短提示词后重试' : '本次生成未受理，请检查日期、资料权限或进行中的任务后重试', false, 409)
       }
       throw error
     }
