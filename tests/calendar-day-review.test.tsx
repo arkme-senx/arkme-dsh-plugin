@@ -48,6 +48,26 @@ const mount = async () => act(async () => { view = create(<ArkmeCalendarDayRevie
 beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockResolvedValue(current()) })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
+  it('hides revoked content but preserves new generation and active progress', async () => {
+    const revoked = { ...rawState(), result: null, result_error: 'source_revoked', freshness: 'unknown' }
+    vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState(revoked, query))
+    await mount()
+    expect(content()).toContain('旧结果的来源权限已变化')
+    expect(content()).not.toContain('讨论了录音存储方案')
+    expect(button('生成当天回顾').props.disabled).toBe(false)
+    vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState({ ...revoked, job: { id: 'new-job', status: 'collecting', message: '' } }, query))
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).toContain('收集资料')
+    expect(button('正在生成…').props.disabled).toBe(true)
+    expect(() => parseDayReviewState({ ...revoked, result: rawResult() }, query)).toThrow()
+  })
+  it('accepts the backend Unicode character limit for generated text', () => {
+    const result = rawResult()
+    result.summary[0]!.text = '😀'.repeat(10000)
+    expect(parseDayReviewResult(result, query).summary[0]!.text).toBe(result.summary[0]!.text)
+    result.summary[0]!.text += '😀'
+    expect(() => parseDayReviewResult(result, query)).toThrow()
+  })
   it('shows unavailable support clearly and never automatically submits AI work', async () => {
     vi.mocked(callArkme).mockResolvedValue({ supported: false, job: null, result: null, versions: [], freshness: 'unknown' })
     await mount()

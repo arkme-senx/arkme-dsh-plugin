@@ -44,6 +44,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const pendingSubmission = useRef<Record<string, unknown>>()
   const apply = useCallback((value: DayReviewState) => {
     setState(value)
+    if (value.resultError) setReuse(undefined)
     setUncertain(!!value.pendingRequestId)
     // A new owner check invalidates every previously open derived/source view.
     sourceRequest.current?.abort(); versionRequest.current?.abort()
@@ -177,6 +178,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     {prompts.support?.snapshotReuse && result && <label className="day-review-reuse"><input type="checkbox" checked={!!reuse} disabled={submitting || active || uncertain}
       onChange={event => setReuse(event.target.checked ? result : undefined)} />{tr('沿用当前版本的资料重新生成（便于比较提示词效果）')}</label>}
     {loading && !state && <p role="status" className="day-review-status">{tr('正在读取当天回顾…')}</p>}
+    {state?.resultError === 'source_revoked' && <p role="alert" className="day-review-error">{tr('旧结果的来源权限已变化，请重新选择可用资料生成回顾')}</p>}
     {error && <p role="alert" className="day-review-error">{error}</p>}
     {state && !state.supported && <div className="day-review-empty"><strong>{tr('日历回顾服务尚未接通')}</strong>
       <p>{tr('接通后，可将当天的对话、位置、个人记录、通话和录音整理在一起。')}</p><p>{tr('目前仍可在“活动”中查看原始内容。')}</p></div>}

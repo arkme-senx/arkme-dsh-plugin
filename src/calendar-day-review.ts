@@ -21,14 +21,14 @@ export interface DayReviewJob {
   id: string; status: 'queued' | 'collecting' | 'organizing' | 'generating' | 'failed'; message: string; failureCode: string; resumable: boolean
 }
 export interface DayReviewState {
-  supported: boolean; job: DayReviewJob | null; result: DayReviewResult | null; freshness: 'changed' | 'unchanged' | 'unknown'; pendingRequestId?: string
+  supported: boolean; job: DayReviewJob | null; result: DayReviewResult | null; freshness: 'changed' | 'unchanged' | 'unknown'; pendingRequestId?: string; resultError?: 'source_revoked'
   versions: Array<{ id: string; generatedAtMillis: number }>
 }
 export const emptyDayReviewState = (): DayReviewState => ({ supported: false, job: null, result: null, freshness: 'unknown', versions: [] })
 
 const invalid = (): never => { throw new Error('日历回顾数据格式不完整，请稍后重试') }
 export const reviewObject = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : invalid()
-export const reviewText = (v: unknown, max = 512): string => typeof v === 'string' && v.trim() && v.length <= max ? v : invalid()
+export const reviewText = (v: unknown, max = 512): string => typeof v === 'string' && v.trim() && (v.length <= max || [...v].length <= max) ? v : invalid()
 const array = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.length <= max ? v : invalid()
 const number = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : invalid()
 export function reviewKinds(v: unknown): DayReviewSource[] {
@@ -49,7 +49,7 @@ export function parseDayReviewResult(value: unknown, q: DayReviewQuery): DayRevi
   const v = reviewObject(value)
   assertDayReviewEnvelope(v, q)
   const sourceKinds = reviewKinds(v.source_kinds)
-  const sources = array(v.sources, 5000).map(x => {
+  const sources = array(v.sources, 100000).map(x => {
     const item = reviewObject(x), kind = item.kind as DayReviewSource
     if (!sourceKinds.includes(kind)) invalid()
     return { ref: reviewText(item.ref, 4096), kind, label: reviewText(item.label, 200) }
@@ -94,7 +94,9 @@ export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayRevie
     return { id: reviewText(version.id), generatedAtMillis: number(version.generated_at) }
   })
   if (new Set(versions.map(x => x.id)).size !== versions.length) invalid()
-  return { supported: true, job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
+  if (v.result_error !== undefined && v.result_error !== 'source_revoked') invalid()
+  if (v.result_error && v.result !== null) invalid()
+  return { ...(v.result_error ? { resultError: 'source_revoked' as const } : {}), supported: true, job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
     freshness: ['changed', 'unchanged', 'unknown'].includes(String(v.freshness)) ? v.freshness as DayReviewState['freshness'] : invalid(), versions }
 }
 
