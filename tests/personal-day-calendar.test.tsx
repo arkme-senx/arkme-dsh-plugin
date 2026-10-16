@@ -142,6 +142,27 @@ it('keeps the calendar day visible without an entry to the full arrangement boar
   expect(view!.root.findByProps({ className: 'arkme-personal-day-body' }).props.hidden).toBeUndefined()
 })
 
+it('clears calendar review content immediately on hard privacy invalidation', async () => {
+  const original = mocks.read.getMockImplementation()!
+  let restricted = false
+  mocks.read.mockImplementation(async (operation, ...args) => {
+    if (operation !== 'calendar.day-review.state') return original(operation, ...args)
+    if (restricted) throw new Error('原始资料已锁定')
+    return { supported: true, job: null, hasNewContent: false, versions: [], result: {
+      id: 'review', snapshotId: 'snapshot', generatedAtMillis: dateStamp, modelName: '模型', sourceKinds: ['self'],
+      coverage: [{ kind: 'self', status: 'complete', count: 1, note: '' }], sources: [{ ref: 'r', kind: 'self', label: '原文' }],
+      summary: [{ text: '隐私切换前可见的回顾', sourceRefs: ['r'] }], timeline: [],
+    } }
+  })
+  await mount()
+  await clickText('日总结')
+  expect(text()).toContain('隐私切换前可见的回顾')
+  restricted = true
+  await act(async () => { arkmeCalendarInvalidations.publishAll({ hard: true }) })
+  expect(text()).not.toContain('隐私切换前可见的回顾')
+  expect(text()).toContain('原始资料已锁定')
+})
+
 it('places the arrangements tab between conversations and calls and retains it across dates', async () => {
   await mount()
   const filters = view!.root.findByProps({className:'arkme-day-filters'})

@@ -47,6 +47,7 @@ export interface ArkmeDayTimelineProps {
   arrangementsContent?: ReactNode
   onOpenLocations?(location?: ArkmeRecordLocationObservation): void
   generateRecap?: DayRecapGenerator
+  headerNavigation?: ReactNode
 }
 
 export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
@@ -54,7 +55,7 @@ export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, refreshVersion = 0, renderRecord, renderCallDetail, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent, onAddArrangement }: ArkmeDayTimelineProps) {
+function DayTimelineContent({ headerNavigation, onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, refreshVersion = 0, renderRecord, renderCallDetail, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent, onAddArrangement }: ArkmeDayTimelineProps) {
   useArkmeLocale()
   const data = useDayActivities(query, reader, refreshVersion)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -160,6 +161,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
         {onAddArrangement && <button type="button" className="arkme-day-source" onClick={onAddArrangement}><Plus size={15} aria-hidden /> {tr('添加安排')}</button>}
         {onOpenLocations && <button type="button" className="arkme-day-source" onClick={() => onOpenLocations()}><MapPin size={15} aria-hidden /> {tr("当天位置")}</button>}
       </div>
+      {headerNavigation}
     </header>
 
     {!arrangementsActive && reactionData.busy && !reactionData.events.length && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
