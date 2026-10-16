@@ -1,3 +1,4 @@
+import { confirmCalendarDayReview } from '../sdk/index.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
 import type { DayReviewOpenSource } from '../services/calendar-day-review-service.js'
@@ -20,9 +21,9 @@ export function CalendarDayTabs({ view, onChange }: { view: CalendarDayView; onC
   </nav>
 }
 const errorText = (e: unknown) => e instanceof Error ? e.message : tr('暂时无法读取日历回顾，请重试')
-const stages = { queued: '等待生成', collecting: '收集资料', organizing: '整理内容', generating: '生成回顾', failed: '生成未完成' }
+const stages = { ready: '已生成', running: '正在生成', queued: '等待生成', collecting: '收集资料', organizing: '整理内容', generating: '生成回顾', failed: '生成未完成' }
 const coverageLabels = { complete: '已覆盖', partial: '部分覆盖', unavailable: '暂不可用', empty: '当天无内容' }
-const running = (state: DayReviewState | undefined) => !!state?.job && state.job.status !== 'failed'
+const running = (state: DayReviewState | undefined) => !!state?.job && !['ready', 'failed'].includes(state.job.status)
 
 /** No local material collection or synthetic summaries: durable owner jobs only. */
 export function ArkmeCalendarDayReview({ query, view, refreshVersion = 0 }: { query: DayReviewQuery; view: 'summary' | 'timeline'; refreshVersion?: number }) {
@@ -44,7 +45,13 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const pendingSubmission = useRef<Record<string, unknown>>()
   const apply = useCallback((value: DayReviewState) => {
     setState(value)
-    if (!selectionTouched.current && value.result) setSources(value.result.sourceKinds)
+    if (value.resultUnavailableReason) {
+      versionRequest.current?.abort(); sourceRequest.current?.abort()
+      setSelectedVersion(''); setHistorical(undefined); setSource(undefined); setReuse(undefined)
+      setVersionLoading(false); setSourceLoading('')
+    }
+    if (!selectionTouched.current) setSources(value.result?.sourceKinds ?? value.sourceKinds ?? ['chat','self','call','audio'])
+    else if (value.sourceKinds) setSources(current => current.filter(kind => value.sourceKinds!.includes(kind)))
     // A refreshed job may belong to another client; only the matching create reply acknowledges this submission.
   }, [])
   const read = useCallback(async () => {
@@ -56,7 +63,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     try {
       const value = await withArkmeReadDeadline(signal => callArkme<DayReviewState>('calendar.day-review.state', { ...q }, signal), controller.signal)
       if (!controller.signal.aborted) apply(value)
-    } catch (e) { if (!controller.signal.aborted) setError(errorText(e)) }
+    } catch (e) { if (!controller.signal.aborted) { setState(undefined); setHistorical(undefined); setSource(undefined); setError(errorText(e)) } }
     finally { if (!controller.signal.aborted) setLoading(false) }
   }, [q, apply])
   useEffect(() => {
@@ -80,7 +87,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     return () => clearTimeout(timer)
   }, [active, loading, submitting, error, read])
   const generate = async () => {
-    if (submittingRef.current || (active && !uncertain) || !state?.supported || !sources.length || (!uncertain && prompts.block)) return
+    if (submittingRef.current || (active && !uncertain) || !state?.supported || state.generationEnabled === false || !sources.length || (!uncertain && prompts.block)) return
     submittingRef.current = true; setSubmitting(true); setError(''); setLoading(false)
     readRequest.current?.abort(); versionRequest.current?.abort(); setVersionLoading(false)
     const controller = new AbortController(); writeRequest.current = controller
@@ -90,9 +97,11 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     pendingSubmission.current ??= { ...q, sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
       ...(config ? { promptConfig: promptConfigOnly(config) } : {}), ...(reuse ? { reuseResultId: reuse.id } : {}) }
     try {
-      const value = await withArkmeReadDeadline(signal => callArkme<DayReviewState>('calendar.day-review.create', pendingSubmission.current!, signal), controller.signal)
+      const value = await confirmCalendarDayReview(pendingSubmission.current!, controller.signal)
       if (controller.signal.aborted) return
-      apply(value); setSelectedVersion(''); setHistorical(undefined); setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setReuse(undefined)
+      // A create receipt is not an authoritative content read. Keep the last
+      // authorized result until the next read revalidates it or clears it.
+      setState(current => ({ ...current, ...value, result: value.result ?? current?.result ?? null, versions: value.versions.length ? value.versions : current?.versions ?? [] })); setSelectedVersion(''); setHistorical(undefined); setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setReuse(undefined)
     } catch (e) {
       if (!controller.signal.aborted) {
         const notSubmitted = e && typeof e === 'object' && 'code' in e && ['calendar-review-prompt-unsupported', 'calendar-review-unavailable'].includes(String(e.code))
@@ -139,7 +148,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   return <div className="calendar-day-review" aria-label={tr(view === 'summary' ? '日总结内容' : '时间轴内容')}>
     <div className="day-review-controls">
       <fieldset disabled={submitting || active || uncertain || !!reuse}><legend>{tr('生成范围')}</legend>
-        {DAY_REVIEW_SOURCES.map(kind => <label key={kind}><input type="checkbox" checked={sources.includes(kind)} onChange={event => {
+        {(state?.sourceKinds ?? DAY_REVIEW_SOURCES).map(kind => <label key={kind}><input type="checkbox" checked={sources.includes(kind)} onChange={event => {
           selectionTouched.current = true; requestId.current = ''
           setSources(current => event.target.checked ? DAY_REVIEW_SOURCES.filter(x => x === kind || current.includes(x)) : current.filter(x => x !== kind))
         }} />{tr(DAY_REVIEW_LABELS[kind])}</label>)}
@@ -147,7 +156,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       <div className="day-review-actions">
         <button type="button" className="arkme-day-source" aria-expanded={prompts.open} onClick={prompts.toggle}>{tr('提示词')}{prompts.draft.editing ? ' · ' + tr('未保存') : prompts.draft.saved ? ' · ' + tr('自定义') : ''}</button>
         <button type="button" className="arkme-day-source" disabled={loading || submitting} onClick={() => void read()}>{tr('检查更新')}</button>
-        <button type="button" className="day-review-generate" disabled={!state?.supported || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void generate()}>
+        <button type="button" className="day-review-generate" disabled={!state?.supported || state.generationEnabled === false || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void generate()}>
           {tr(submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
       </div>
     </div>
@@ -160,6 +169,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       onChange={event => setReuse(event.target.checked ? result : undefined)} />{tr('沿用当前版本的资料重新生成（便于比较提示词效果）')}</label>}
     {loading && !state && <p role="status" className="day-review-status">{tr('正在读取当天回顾…')}</p>}
     {error && <p role="alert" className="day-review-error">{error}</p>}
+    {state?.resultUnavailableReason && <p role="alert" className="day-review-error">{tr('来源已变化或当前不可访问，结果已隐藏；请重新生成')}</p>}
     {state && !state.supported && <div className="day-review-empty"><strong>{tr('日历回顾服务尚未接通')}</strong>
       <p>{tr('接通后，可将当天的对话、位置、个人记录、通话和录音整理在一起。')}</p><p>{tr('目前仍可在“活动”中查看原始内容。')}</p></div>}
     {state?.job && <div className="day-review-progress" role="status" data-failed={state.job.status === 'failed'}>

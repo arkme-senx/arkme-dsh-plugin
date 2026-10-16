@@ -19,6 +19,7 @@ const expectedPublicMethods = [
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
   'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
+  'dayDigestAccountScope', 'dayDigestGenerationSupported', 'dayDigestRead', 'prepareDayDigest', 'prepareDayReview',
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewPrompts',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',

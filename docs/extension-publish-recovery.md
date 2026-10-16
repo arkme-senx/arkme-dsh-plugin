@@ -34,3 +34,7 @@ if (features.extensionPublishRecovery) {
 部署顺序：审核服务 → 发布服务 → 插件。部署本身和真实生产会话恢复是独立操作；代码及隔离验收不等于生产问题已恢复。
 
 发布服务在约 2 秒仍未完成时返回 HTTP 202 和 `execution_state=running`，不代表已发布。Host 仅在本次明确发布或恢复操作后，以 2 秒间隔、最多 50 次、总预算 100 秒查询持久状态；终态、读失败或取消时停止。查询不生成审核，不会重发 complete/resume；普通 status/list 始终单次读取。客户端断开不取消已经受理的服务端任务，可重新打开发布记录查询。
+
+## Confirmation and package diagnostics
+
+See [execution modes](extension-execution-modes.md) for the read-only confirmation countdown, expiry/reprepare flow and aggregated V2 capability diagnostics.

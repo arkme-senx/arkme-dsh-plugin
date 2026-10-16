@@ -1473,6 +1473,9 @@ export interface ArkmeProviderCapabilities {
     accountSettings?: true
     aiPoints?: true
     automaticCapabilitiesV1?: true
+    /** Structured calendar-day generation, with Host-owned human confirmation. */
+    dayDigestGeneration?: true
+    dayDigestRead?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -4162,6 +4165,10 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'day-digest.read'
+  | 'day-digest.prepare'
+  | 'day-digest.confirmation'
+  | 'calendar.day-review.prepare'
   | 'calendar.day-review.state'
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'

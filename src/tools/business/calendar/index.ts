@@ -1,4 +1,5 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { dayDigestReadToolModule, dayDigestGenerateToolModule } from './day-digest.js'
 import type { ArkmeCalendarDayRecordPage } from '../../../types.js'
 import { defineArkmeCoreToolModule } from '../../contract/module.js'
 import { taggedJSON, TEXT_OUTPUT } from '../../shared/output.js'
@@ -154,4 +155,4 @@ export const recordCalendarReadToolModule = defineArkmeCoreToolModule({
   },
 })
 
-export const recordCalendarToolModules = [recordCalendarDaysToolModule, recordCalendarReadToolModule] as const
+export const recordCalendarToolModules = [recordCalendarDaysToolModule, recordCalendarReadToolModule, dayDigestReadToolModule, dayDigestGenerateToolModule] as const

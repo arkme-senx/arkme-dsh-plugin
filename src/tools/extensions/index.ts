@@ -243,8 +243,8 @@ export function registerArkmeExtensionTools(
     description: 'Prepare or confirm one conversational publish batch across two Host-selected routes: dynamic-cordis-v2 creates an artifact_contract_version=2 sandbox Bundle from a live current-session Dynamic Cordis Package; profile-native-v3 publishes an installed/Profile-local DSH Bundle as artifact_contract_version=3 native Package. An optional GitHub URL is publisher-attested source metadata, not a third route or a publication requirement. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, route, Bundle policy, and source fingerprints, and does not publish or upload anything. Never choose the route manually; use the exact opaque owned_ref and Host-derived route. To update an existing extension from a new source, pass its exact owned extension_id from the current user\'s list; otherwise omit it to create a new extension or use the source\'s persisted lineage. Show the returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
     parameters: {
       action: {
-        type: 'string', enum: ['prepare', 'confirm'], required: true,
-        description: 'prepare validates and asks; confirm publishes the current Agent pending batch after the later human reply.',
+        type: 'string', enum: ['prepare', 'confirm', 'status'], required: true,
+        description: 'prepare validates and asks; status reads the remaining confirmation seconds without extending the deadline; confirm publishes after the later human reply. On expiry refresh owned refs, prepare again, and obtain a new human confirmation.',
       },
       items: {
         type: 'array',
@@ -267,6 +267,10 @@ export function registerArkmeExtensionTools(
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const agent = requireAgent(exec) as Agent
+      if (args.action === 'status') {
+        if ((args.items?.length ?? 0) > 0) throw new Error('查询确认状态时不能提交发布参数')
+        return JSON.stringify(publishConversation.status(agent), undefined, 2)
+      }
       if (args.action === 'confirm') {
         if ((args.items?.length ?? 0) > 0) throw new Error('确认发布时不能重新提交发布参数')
         const result = await publishConversation.confirm(agent, exec.signal)

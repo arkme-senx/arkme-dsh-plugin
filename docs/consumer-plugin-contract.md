@@ -77,6 +77,10 @@ if ((await arkme.capabilities()).features.extensionPreviews === true && userConf
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
+## Day digest capability
+
+`dayDigest`, `generateDayDigest` and `subscribeDayDigest` share the Provider-owned natural-day contract. Generation requires the advertised `features.dayDigestGeneration`, a stable command key and a current human confirmation. See [the contract, coverage and migration guide](day-digest.md).
+
 ## Team capability
 
 `capabilities().features.teamDirectory`, `teamMembers`, and `teamGovernance` advertise the complete Team contract. Consumers call `listTeams()` or `resolveTeams()` to obtain an opaque, account-scoped `teamRef`, then pass that reference unchanged to `listTeamMembers()`. A display name or public Jotmo ID must never be substituted for `teamRef`; member `userRef` and Team `teamRef` are distinct reference types and are not interchangeable.

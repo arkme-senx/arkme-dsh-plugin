@@ -204,6 +204,18 @@ export function hasLaterDirectUserMessage(agent: Agent, preparedAfterSeq: number
   return false
 }
 
+/** A completed or background turn cannot borrow an older human request. */
+export function hasCurrentDirectUserTurn(agent: Agent): boolean {
+  const events = readSessionEvents(agent.session)
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!
+    if (event.type === 'turn/end') return false
+    if (event.type === 'user/message') return event.data.source.kind === 'user'
+    if (event.type === 'agent/inbox/spliced' && event.data.inserted.length) return event.data.inserted.at(-1)!.source.kind === 'user'
+  }
+  return false
+}
+
 function hasLaterDirectUserInput(agent: Agent, afterSeq: number): boolean {
   return readSessionEvents(agent.session).some(event => {
     if (event.seq <= afterSeq) return false

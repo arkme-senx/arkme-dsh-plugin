@@ -82,6 +82,38 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('keeps digest reads free of writes and binds generation to a later direct human confirmation', async () => {
+    const ctx = await setup()
+    const preparedInput = { accountScope: 'test:42', bucketDate: '2026-10-14', timezone: 'Asia/Shanghai', sourceKinds: ['self'], kinds: ['summary'], requestId: 'day-digest-tool-command' }
+    const createDayReview = vi.fn(async () => ({ job: { id: 'digest-job', status: 'queued' } }))
+    const dayReviewState = vi.fn(async () => ({ job: null, result: null }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, dayDigestAccountScope: async () => 'test:42',
+      prepareDayReview: async () => preparedInput, dayReviewState, createDayReview } as unknown as ArkmeToolPorts)
+    const events = sessionEvents()
+    const agent = { id: SessionId('digest-session'), session: { get events() { return events } } } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { date: '2026-10-14', time_zone: 'Asia/Shanghai', idempotency_key: preparedInput.requestId, sources: ['self'], kinds: ['summary'] }
+    const call = (name: string, callId: string, arguments_: Record<string, unknown>) => ctx.tools.execute({ name, callId: CallId(callId), arguments: arguments_, agent, signal })
+    await call('arkme_day_digest_read', 'read', { date: args.date, time_zone: args.time_zone })
+    expect(dayReviewState).toHaveBeenCalledOnce()
+    await call('arkme_day_digest_generate', 'background', args)
+    expect(createDayReview).not.toHaveBeenCalled()
+    events.push(
+      { seq: events.length, type: 'turn/start', data: { turn: 1 } },
+      { seq: events.length + 1, type: 'user/message', data: { content: [{ type: 'text', text: '生成这一天的日总结' }], source: { kind: 'user' } } },
+    )
+    expect(JSON.stringify(await call('arkme_day_digest_generate', 'prepare', args))).toContain('confirmation_required')
+    await call('arkme_day_digest_generate', 'same-turn', args)
+    expect(createDayReview).not.toHaveBeenCalled()
+    events.push(
+      { seq: events.length, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: events.length + 1, type: 'turn/start', data: { turn: 2 } },
+      { seq: events.length + 2, type: 'user/message', data: { content: [{ type: 'text', text: '确认生成' }], source: { kind: 'user' } } },
+    )
+    expect(JSON.stringify(await call('arkme_day_digest_generate', 'confirm', args))).toContain('digest-job')
+    expect(createDayReview).toHaveBeenCalledExactlyOnceWith(preparedInput, signal)
+    await mounted.dispose()
+  })
   it('executes common-group reads with paging and cancellation, and keeps sync separate from paging', async () => {
     const ctx = await setup()
     const result = {items:[],totalCached:0,hasMore:false,syncHasMore:false,syncedAtMillis:1,revision:1}
@@ -209,6 +241,7 @@ describe('registerArkmeTools', () => {
       'arkme_records_search',
       'arkme_record_calendar_days',
       'arkme_record_calendar_read',
+      'arkme_day_digest_read', 'arkme_day_digest_generate',
       'arkme_images_list',
       'arkme_record_create',
       'arkme_record_reedit',

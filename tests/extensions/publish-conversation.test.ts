@@ -326,3 +326,17 @@ describe('extension publish conversation confirmation', () => {
     ])
   })
 })
+
+it('reads remaining confirmation time without renewing it, and expires at the exact deadline', async () => {
+  let now = 1000
+  const publish = vi.fn()
+  const conversation = new ArkmeExtensionPublishConversation({ preflight: async input => preparedV2(input), publish, now: () => now, confirmationTtlMillis: 60000 })
+  const agent = { id: 'countdown', session: { events: [] } }
+  await conversation.prepare(agent as never, [draft('owned-countdown', '倒计时')])
+  now += 31000
+  expect(conversation.status(agent as never)).toMatchObject({ status: 'confirmation_required', remainingSeconds: 29, expiresAtMillis: 61000, canConfirm: false })
+  now = 61000
+  expect(conversation.status(agent as never)).toMatchObject({ status: 'expired', remainingSeconds: 0, nextAction: 'refresh_owned_list_and_prepare' })
+  await expect(conversation.confirm(agent as never)).rejects.toThrow('确认已过期')
+  expect(publish).not.toHaveBeenCalled()
+})

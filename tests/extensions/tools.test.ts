@@ -146,7 +146,7 @@ describe('Arkme extension tools', () => {
       limit: 70,
     }, expect.any(AbortSignal))
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
-    expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
+    expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm', 'status'])
     expect(publish?.parameters).toHaveProperty('properties.items')
 		expect(publish?.parameters).toHaveProperty('properties.items.items.properties.github_repository_url')
 		expect(publish?.parameters).toHaveProperty(

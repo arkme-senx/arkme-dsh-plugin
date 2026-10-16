@@ -14,9 +14,10 @@ export type DayReviewOpenSource = ExploreSource | { kind: 'call'; detail: ArkmeC
 const base = '/api/v1/day-review'
 const unavailable = () => new ArkmePluginError('calendar-review-unavailable', '日历回顾服务尚未接通', false, 501)
 
-/** Proposed owner contract; capabilities must opt in before any job submission. */
+/** Provider owns material collection, authorization and durable generation. */
 export class CalendarDayReviewService {
   private epoch = 0
+  private capabilityCache: { scope: string; until: number; enabled: boolean } | undefined
   private readonly unsubscribe: () => void
   constructor(private readonly runtime: ServiceRuntime,
     private readonly recording: Pick<RecordingService, 'exploreRecordingEvidence'>,
@@ -26,6 +27,18 @@ export class CalendarDayReviewService {
     private readonly privacy: Pick<ArkmePrivacyVisibilityService, 'lockedRecordUids'>) {
     this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++ })
   }
+  async generationSupported(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const session = await this.runtime.requireSession(), scope = await this.accountScope(), epoch = this.epoch
+      if (this.capabilityCache?.scope === scope && this.capabilityCache.until > Date.now()) return this.capabilityCache.enabled
+      const capability = await this.capabilities(session, signal)
+      if (epoch !== this.epoch) return false
+      const enabled = capability !== null && capability.generation_enabled !== false
+      this.capabilityCache = { scope, until: Date.now() + 30000, enabled }
+      return enabled
+    } catch { return false }
+  }
+  async accountScope() { const session = await this.runtime.requireSession(); return `${this.runtime.config.environment}:${session.userId}` }
   dispose(): void { this.epoch++; this.unsubscribe() }
   private async guard(q: DayReviewQuery, session: ArkmeSessionCredentials, epoch: number, signal?: AbortSignal) {
     signal?.throwIfAborted()
@@ -55,7 +68,7 @@ export class CalendarDayReviewService {
     if (v.supported === false) return null
     if (v.supported !== true || v.schema_version !== 1 || v.scope !== 'calendar_day'
       || v.durable_jobs !== true || v.source_navigation !== true || v.idempotent_create !== true
-      || reviewKinds(v.source_kinds).length !== 5) throw new ArkmePluginError('calendar-review-contract', '日历回顾服务版本暂不兼容，请更新后重试', false, 409)
+      || reviewKinds(v.source_kinds).length < 1) throw new ArkmePluginError('calendar-review-contract', '日历回顾服务版本暂不兼容，请更新后重试', false, 409)
     return v
   }
   async state(input: unknown, signal?: AbortSignal) {
@@ -65,22 +78,32 @@ export class CalendarDayReviewService {
     if (!supported) return emptyDayReviewState()
     const value = await this.request('state', this.body(query), session, signal)
     await this.guard(query, session, epoch, signal)
-    return parseDayReviewState(value, query)
+    return { ...parseDayReviewState(value, query), sourceKinds: reviewKinds(supported.source_kinds), generationEnabled: supported.generation_enabled !== false }
   }
-  async create(input: unknown, signal?: AbortSignal) {
+  async prepare(input: unknown, signal?: AbortSignal) {
     const v = reviewObject(input), { query, epoch, session } = await this.context(input, signal)
     const sources = reviewKinds(v.sourceKinds), requestId = reviewText(v.requestId, 100)
-    if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestId)) throw new Error('生成请求标识无效')
+    if (!/^[a-zA-Z0-9_-]{16,100}$/.test(requestId)) throw new Error('生成请求标识无效')
     const promptConfig = v.promptConfig === undefined ? undefined : parseReviewPromptConfig(v.promptConfig)
     const reuseResultId = v.reuseResultId === undefined ? undefined : reviewText(v.reuseResultId)
     const capability = await this.capabilities(session, signal)
-    if (!capability) throw unavailable()
+    if (!capability || capability.generation_enabled === false) throw unavailable()
+    if (sources.some(source => !reviewKinds(capability.source_kinds).includes(source))) throw new Error('当前 Provider 不支持所选来源')
     if ((promptConfig && capability.prompt_config_v1 !== true) || (reuseResultId && capability.snapshot_reuse !== true)) {
       throw new ArkmePluginError('calendar-review-prompt-unsupported', '服务尚不支持自定义提示词或复用资料，未提交生成', false, 409)
     }
     await this.guard(query, session, epoch, signal)
-    const value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId,
-      outputs: ['summary', 'timeline'], ...(promptConfig ? { prompt_config: promptConfig } : {}),
+    const outputs = v.kinds === undefined ? ['summary', 'timeline'] : v.kinds
+    if (!Array.isArray(outputs) || outputs.length === 0 || new Set(outputs).size !== outputs.length || outputs.some(x => x !== 'summary' && x !== 'timeline')) throw new Error('生成类型无效')
+    const routeKey = v.routeKey === undefined ? undefined : reviewText(v.routeKey, 200)
+    return { ...query, sourceKinds: sources, requestId, kinds: outputs, ...(routeKey ? { routeKey } : {}), ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
+  }
+  async create(input: unknown, signal?: AbortSignal) {
+    const prepared = await this.prepare(input, signal)
+    const { query, epoch, session } = await this.context(prepared, signal)
+    const { sourceKinds: sources, requestId, promptConfig, reuseResultId, kinds, routeKey } = prepared
+    const value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: kinds,
+      ...(routeKey ? { route_key: routeKey } : {}), ...(promptConfig ? { prompt_config: promptConfig } : {}),
       ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
     await this.guard(query, session, epoch, signal)
     const state = parseDayReviewState(value, query)

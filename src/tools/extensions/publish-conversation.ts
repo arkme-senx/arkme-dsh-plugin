@@ -77,6 +77,19 @@ export class ArkmeExtensionPublishConversation {
     this.confirmationTtlMillis = options.confirmationTtlMillis ?? DEFAULT_CONFIRMATION_TTL_MILLIS
   }
 
+  /** Read-only countdown. Inspecting a confirmation never renews authority. */
+  status(agent: Agent) {
+    const pending = this.pending.get(requiredAgentId(agent))
+    if (!pending) return { status: 'not_prepared' as const, remainingSeconds: 0, canConfirm: false, nextAction: 'prepare' as const }
+    const remainingSeconds = Math.max(0, Math.ceil((pending.expiresAtMillis - this.now()) / 1000))
+    const expired = this.now() >= pending.expiresAtMillis
+    return { status: expired ? 'expired' as const : 'confirmation_required' as const,
+      count: pending.items.length, expiresAtMillis: pending.expiresAtMillis, remainingSeconds,
+      canConfirm: !expired && hasLaterDirectUserMessage(agent, pending.preparedAfterSeq),
+      nextAction: expired ? 'refresh_owned_list_and_prepare' as const : 'await_human_confirmation' as const,
+      message: expired ? '确认已过期，请刷新扩展列表、重新准备，再由用户确认；不会自动续期或发布。' : '确认仅对本次源码、版本和发布目标有效。' }
+  }
+
   async prepare(agent: Agent, drafts: ArkmeExtensionPublishDraft[], signal?: AbortSignal): Promise<ArkmeExtensionPublishBatchPreview> {
     const agentId = requiredAgentId(agent)
     const existing = this.pending.get(agentId)
@@ -137,7 +150,7 @@ export class ArkmeExtensionPublishConversation {
     const agentId = requiredAgentId(agent)
     const pending = this.pending.get(agentId)
     if (pending === undefined) throw new Error('当前没有等待确认的扩展发布批次')
-    if (this.now() > pending.expiresAtMillis) {
+    if (this.now() >= pending.expiresAtMillis) {
       this.pending.delete(agentId)
       throw new Error('扩展发布确认已过期，请重新准备发布')
     }

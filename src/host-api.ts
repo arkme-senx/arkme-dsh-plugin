@@ -1,3 +1,4 @@
+import { DayDigestConfirmation } from './day-digest-confirmation.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -900,6 +901,7 @@ export interface ArkmeHostApiOptions {
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
+  const dayDigestConfirmation = new DayDigestConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
@@ -907,6 +909,19 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
     }
     res.once('close', abortDisconnectedRequest)
     try {
+      const confirmationUrl = new URL(req.url ?? '/', `http://localhost:${options.expectedPort}`)
+      if (confirmationUrl.searchParams.has('dayDigestConfirmation')) {
+        if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) throw new ArkmePluginError('loopback-required', '确认只能从当前本机页面打开', false, 403)
+        if (req.method === 'GET' && confirmationUrl.searchParams.has('dayDigestIntent')) {
+          if (req.headers['sec-fetch-dest'] !== 'document' || req.headers['sec-fetch-mode'] !== 'navigate' || req.headers['sec-fetch-user'] !== '?1') throw new ArkmePluginError('day-digest-human-required', '请亲自打开确认页', false, 403)
+          const raw = confirmationUrl.searchParams.get('dayDigestIntent')!
+          if (raw.length > 4096) throw new Error('生成参数过大')
+          const input: unknown = JSON.parse(raw)
+          const prepared = confirmationUrl.searchParams.get('dayDigestLegacy') === '1' ? input : await service.prepareDayDigest(input, controller.signal)
+          await dayDigestConfirmation.prepare(prepared, confirmationUrl.pathname, controller.signal, confirmationUrl.searchParams.get('dayDigestConfirmation')!)
+        }
+        await dayDigestConfirmation.handle(req, res, confirmationUrl.searchParams.get('dayDigestConfirmation')!); return
+      }
       if (req.method !== 'POST') {
         throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       }
@@ -968,6 +983,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       if (['calendar.day-recap', 'calendar.day-review.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
+      }
+      if (request.operation === 'calendar.day-review.create') throw new ArkmePluginError('day-digest-human-required', '请通过 SDK 在宿主确认页发起生成', false, 403)
+      if (['day-digest.prepare', 'calendar.day-review.prepare', 'day-digest.confirmation'].includes(request.operation)) {
+        if (origin === undefined || !isLoopback(req.socket.remoteAddress) || new URL(origin).host !== req.headers.host) throw new ArkmePluginError('origin-required', '生成必须从当前本机页面发起', false, 403)
+        const value = request.operation === 'day-digest.confirmation'
+          ? await dayDigestConfirmation.status(stringParam(params, 'confirmationId'))
+          : await dayDigestConfirmation.prepare(request.operation === 'day-digest.prepare' ? await service.prepareDayDigest(params, controller.signal) : params, confirmationUrl.pathname, controller.signal)
+        writeJson(res, 200, { ok: true, value }); return
       }
       if (request.operation === 'remote.session.observe') {
         const directory = options.accountSessions?.()
@@ -1074,6 +1097,7 @@ export async function dispatchArkmeHostOperation(
   switch (operation) {
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
+      if (service.dayDigestGenerationSupported && await service.dayDigestGenerationSupported(requestSignal)) capabilities.features.dayDigestGeneration = true
       if (accountSessions) capabilities.features = { ...capabilities.features, dshAccountSessions: true }
       if (teamCodex) capabilities.features = { ...capabilities.features, teamCodexLocal: true }
       return teamService === undefined ? capabilities : {
@@ -1652,8 +1676,9 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
+    case 'day-digest.read': return await service.dayDigestRead(params, requestSignal)
     case 'calendar.day-review.state': return await service.dayReviewState(params, requestSignal)
-    case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
+    case 'calendar.day-review.create': throw new ArkmePluginError('day-digest-human-required', '生成需要宿主确认', false, 403)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
     case 'calendar.day-review.source': return await service.dayReviewSource(params, requestSignal)
     case 'calendar.day-review.prompts': return await service.dayReviewPrompts(params, requestSignal)

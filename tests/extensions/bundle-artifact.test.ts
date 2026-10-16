@@ -276,3 +276,10 @@ describe('standard DSH Bundle artifact', () => {
     }))
   })
 })
+
+it('lists all unsupported V2 manifest capabilities while preserving the existing error code', () => {
+  const files = sandboxFiles(), manifest = JSON.parse(files.get('package/package.json')!.toString())
+  manifest.scripts = { postinstall: 'echo fixture' }; manifest.dependencies = { example: '1.0.0' }; manifest.bin = './lib/index.js'
+  files.set('package/package.json', Buffer.from(JSON.stringify(manifest)))
+  expect(() => packBundleFiles(files)).toThrow('bin, dependencies, scripts')
+})
