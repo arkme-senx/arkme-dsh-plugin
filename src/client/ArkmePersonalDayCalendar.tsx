@@ -29,15 +29,16 @@ import { arkmeUi } from './ui-controller.js'
 import { ARKME_NAVIGATION_WIDTH } from './arkme-layout.js'
 import { ArkmeCalendarDayReview, CalendarDayTabs, type CalendarDayView } from './ArkmeCalendarDayReview.js'
 
-export function ArkmePersonalDayCalendar(props: { accountScope?: string | undefined; onClose(): void }) {
-  return <PersonalDayCalendar key={props.accountScope ?? 'signed-out'} {...props} />
+export function ArkmePersonalDayCalendar(props: { initialDate?: string | undefined; accountScope?: string | undefined; onClose(): void }) {
+  return <PersonalDayCalendar key={`${props.accountScope ?? 'signed-out'}:${props.initialDate ?? ''}`} {...props} />
 }
 
-function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: string | undefined; onClose(): void }) {
+function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { initialDate?: string | undefined; accountScope?: string | undefined; onClose(): void }) {
   useArkmeLocale()
   const [today] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), now.getDate()) })
-  const [visibleMonth, setVisibleMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
-  const [query, setQuery] = useState<DayActivityQuery>(() => ({ accountScope, bucketDate: personalDateKey(today),
+  const [initial] = useState(() => initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate) ? new Date(`${initialDate}T00:00:00`) : today)
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(initial.getFullYear(), initial.getMonth(), 1))
+  const [query, setQuery] = useState<DayActivityQuery>(() => ({ accountScope, bucketDate: personalDateKey(initial),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, kind: 'all', mode: 'activities', includeBackground: false }))
   const [revision, setRevision] = useState(0)
   const [hardRevision, setHardRevision] = useState(0)
@@ -114,7 +115,7 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
         onVisibleMonthChange={setVisibleMonth} onSelectDate={date => { setLocationMap(undefined); setCreateOpen(false); setRichDetail(undefined); setQuery(current => ({ ...current, bucketDate: personalDateKey(date) })) }} />
       <p className="arkme-personal-day-caption">{tr("数字为个人记录数，圆点为录音索引。录音归属与覆盖范围以当天结果为准。")}</p>
       {audioIndex?.key === monthKey && audioIndex.error && <p role="status" className="arkme-personal-day-caption">{tr("录音月历暂不可用，仍可点选日期查看。")}</p>}
-      <div className="arkme-personal-day-links"><button type="button" onClick={refreshMonth}>{tr("刷新月历")}</button>
+      <div className="arkme-personal-day-links"><button type="button" onClick={() => arkmeUi.showStatistics(personalDateKey(visibleMonth).slice(0, 7))}>{tr("本月统计")}</button><button type="button" onClick={refreshMonth}>{tr("刷新月历")}</button>
       </div>
       </div>
     </aside>

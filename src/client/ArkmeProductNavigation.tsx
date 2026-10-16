@@ -208,7 +208,7 @@ export function ArkmeProductNavigation({
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
-    : ui.mode === 'world' || ui.mode === 'explore' ? 'explore'
+    : ui.mode === 'world' || ui.mode === 'explore' || ui.mode === 'statistics' ? 'explore'
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'voiceprint' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
@@ -277,7 +277,7 @@ export function ArkmeProductNavigation({
       {navigationItems.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
-        if (item.id === 'explore') return <ExploreNavigation key={item.id} active={active} current={ui.mode === 'world' ? 'world' : ui.exploreModule} locked={locked} compact={compact} style={{...styles.button, ...(compact ? styles.compactButton : {}), ...(hosted ? styles.hostedButton : {}), ...(active ? styles.activeButton : {})}} />
+        if (item.id === 'explore') return <ExploreNavigation key={item.id} active={active} current={ui.mode === 'statistics' ? 'statistics' : ui.mode === 'world' ? 'world' : ui.exploreModule} locked={locked} compact={compact} style={{...styles.button, ...(compact ? styles.compactButton : {}), ...(hosted ? styles.hostedButton : {}), ...(active ? styles.activeButton : {})}} />
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         const showsRecording = item.id === 'recordings' && isRecording
         const hint = item.id === 'conversations' && !locked
@@ -348,6 +348,7 @@ export function ArkmeProductNavigation({
       {isRecording && recordingHintOpen && <ArkmeRecordingNavigationHint anchor={recordingButtonRef} elapsedMillis={recording.elapsedMillis} startedAt={recording.startedAt} id={recordingHintId} />}
       {ui.calendarOpen === true && typeof document !== 'undefined' && createPortal(<ArkmePersonalDayCalendar
         accountScope={authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${authState.auth.userId}` : undefined}
+        initialDate={ui.calendarInitialDate}
         onClose={() => { arkmeUi.hideCalendar() }}
       />, document.body)}
       {!compact && !locked && <div className="arkme-redesign-rail-footer">

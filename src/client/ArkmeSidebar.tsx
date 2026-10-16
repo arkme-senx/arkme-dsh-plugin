@@ -1,4 +1,5 @@
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
+import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
@@ -192,6 +193,7 @@ import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
+import { ConversationAnalysis } from './statistics/ConversationAnalysis.js'
 import { ArkmeConversationSearch } from './ArkmeConversationSearch.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ArkmeBotConversationSurface } from './ArkmeBotConversationSurface.js'
@@ -7873,6 +7875,7 @@ export function ArkmeSurface({
     : ui.mode === 'arrangements' ? tr('安排')
     : ui.mode === 'recognized-speakers' ? '已识别说话人'
     : ui.mode === 'calls' ? '通话'
+    : ui.mode === 'statistics' ? '统计与分析'
     : ui.mode === 'explore' ? '探索'
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
@@ -7884,7 +7887,7 @@ export function ArkmeSurface({
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'explore' || ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
+    && (ui.mode === 'statistics' || ui.mode === 'explore' || ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
@@ -8746,6 +8749,10 @@ export function ArkmeSurface({
             onSelect={calendarNavigation.select} onOpen={calendarNavigation.cancel} />}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeConversationSearch
             key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} />}
+          {authenticated && activeConversation && sourceIsChat && source !== undefined && <ConversationAnalysis
+            key={`chat-words:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef}
+            accountScope={authenticatedAccountKey ?? ''}
+            refreshRevision={`${source.latestSequence ?? 0}:${chatDelta.latestSequence ?? 0}:${chatDelta.revision}`} />}
           {authenticated && conversationBackdropVisible && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             key={`private-call:${conversationOverlayKey}`}
             sourceRef={source.sourceRef}
@@ -8919,6 +8926,7 @@ export function ArkmeSurface({
             accountKey={`${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onBack={() => { const dateStamp = ui.recordingReturnDateStamp; if (dateStamp === undefined) arkmeUi.showRecordings(); else arkmeUi.showRecordingTarget(dateStamp, dateStamp) }}
           />
+          : ui.mode === 'statistics' ? <StatisticsSurface key={`statistics:${auth?.environment}:${auth?.userId}:${ui.statisticsMonth ?? ''}`} accountScope={`${auth?.environment}:${auth?.userId}`} initialMonth={ui.statisticsMonth} />
           : ui.mode === 'explore' ? <ExploreSurface key={`explore:${auth?.environment}:${auth?.userId}:${ui.exploreModule}`} module={ui.exploreModule ?? 'profile'} accountScope={`${auth?.environment}:${auth?.userId}`} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
