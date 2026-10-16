@@ -66,6 +66,24 @@ describe('draft publication on conversation departure', () => {
     expect(withConversationDraftActivity(rows, drafts, 42)[0]!.source.sourceRef).toBe('newer')
   })
 
+  it.each(['persisted', 'remote'] as const)('keeps an undated %s draft out of activity ordering until departure', origin => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(6000)
+    const legacy = { text: '旧版草稿', attachments: [], mentions: [], emojis: [],
+      markdown: { source: '旧版草稿', mentions: [], document: { type: 'doc', content: [] } } }
+    const drafts = origin === 'persisted'
+      ? new ArkmeComposerDraftStore({ getItem: () => JSON.stringify([[key, legacy]]), setItem: () => {} })
+      : new ArkmeComposerDraftStore()
+    if (origin === 'remote') drafts.applyRemote(key, legacy)
+    const presence = new ConversationDraftPresence(drafts)
+    presence.update(owner, key)
+    drafts.setText(key, '编辑了没有时间的旧草稿')
+    expect(drafts.get(key)).toMatchObject({ editedAtMillis: 6000, leftAtMillis: 0 })
+    expect(withConversationDraftActivity(rows, drafts, 42)[0]!.source.sourceRef).toBe('newer')
+    now.mockReturnValue(9000); presence.update(owner, undefined)
+    expect(drafts.get(key).leftAtMillis).toBe(9000)
+    expect(withConversationDraftActivity(rows, drafts, 42)[0]).toMatchObject({ source, activeAtMillis: 9000 })
+  })
+
   it('freezes a legacy draft timestamp during editing until the user leaves', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(6000)
     const drafts = new ArkmeComposerDraftStore(), presence = new ConversationDraftPresence(drafts)

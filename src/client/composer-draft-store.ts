@@ -700,12 +700,13 @@ export class ArkmeComposerDraftStore {
 
   private store(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
     const current = this.get(key)
-    if (timing === 'edit' && !sameDraftContent(current, snapshot)) this.contentEditRevisions.set(key, ++this.contentEditRevision)
+    const contentChanged = !sameDraftContent(current, snapshot)
+    if (timing === 'edit' && contentChanged) this.contentEditRevisions.set(key, ++this.contentEditRevision)
     if (timing === 'edit' && current === EMPTY_DRAFT) this.departures.delete(key)
     const editedAtMillis = timing === 'preserve' ? arkmeDraftEditedAtMillis(snapshot)
-      : sameDraftContent(current, snapshot) ? arkmeDraftEditedAtMillis(current) : Date.now()
+      : contentChanged ? Date.now() : arkmeDraftEditedAtMillis(current)
     const leftAtMillis = timing === 'preserve' ? snapshot.leftAtMillis
-      : current === EMPTY_DRAFT ? 0 : current.leftAtMillis ?? (arkmeDraftActivityAtMillis(current) || undefined)
+      : current === EMPTY_DRAFT ? 0 : current.leftAtMillis ?? (arkmeDraftActivityAtMillis(current) || (contentChanged ? 0 : undefined))
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
