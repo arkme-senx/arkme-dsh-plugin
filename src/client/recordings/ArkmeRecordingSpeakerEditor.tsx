@@ -10,6 +10,8 @@ import { useRecordingSpeakerOptions } from './use-recording-speaker-options.js'
 import { arkmeTheme } from '../arkme-theme.js'
 import { useRecordingSpeakerCorrection } from './use-recording-speaker-correction.js'
 import { ArkmeRecordingSpeakerCorrection } from './ArkmeRecordingSpeakerCorrection.js'
+import { ArkmeRecordingSpeakerReview } from './ArkmeRecordingSpeakerReview.js'
+import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const desktop = {
   base: arkmeTheme.base, hover: arkmeTheme.hover, border: arkmeTheme.border, text: arkmeTheme.text,
@@ -110,12 +112,13 @@ export interface RecordingSpeakerUpdateFeedback {
   warning?: string
 }
 
-export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, initialBatchUpdate = false, onUpdated, onClose, onPlay }: {
+export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
   items?: readonly ArkmeRecordingWorkbenchItem[]
   onPlay?(item: ArkmeRecordingWorkbenchItem): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
   initialBatchUpdate?: boolean
+  initialReview?: boolean
   onUpdated(day: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback): void
   onClose(): void
 }) {
@@ -128,6 +131,8 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
   const correctionPersonLabel = item.assignedSpeakerOptionKey ? item.speakerLabel : correctionTarget?.label
   const [correctionIntent, setCorrectionIntent] = useState<'reject' | 'source' | 'review'>()
   const [autoReject, setAutoReject] = useState(false)
+  const [reviewOpen, setReviewOpen] = useState(initialReview)
+  const consistency = useRecordingConsistency(reviewOpen ? [] : [item.itemRef])
   const correctionChoice = useRef<{ target: typeof correctionTarget; rejectCurrent: boolean }>({ target: undefined, rejectCurrent: false })
   const openCorrection = (intent: 'reject' | 'source' | 'review') => {
     correctionChoice.current = { target: correctionTarget, rejectCurrent: !!item.assignedSpeakerOptionKey && !correctionTarget }
@@ -197,7 +202,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !pending && !correctionIntent) onClose()
+      if (event.key === 'Escape' && !pending && !correctionIntent && !reviewOpen) onClose()
       if (event.key === 'Tab' && !event.shiftKey && !event.defaultPrevented
         && event.target === triggerRef.current && inputRef.current !== null) {
         event.preventDefault()
@@ -206,7 +211,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown) }
-  }, [onClose, pending, correctionIntent])
+  }, [onClose, pending, correctionIntent, reviewOpen])
 
   const mutate = async () => {
     if (key === undefined || !canSubmit) return
@@ -259,9 +264,9 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
     typeof window === 'undefined' ? { width: 1_024, height: 768 } : { width: window.innerWidth, height: window.innerHeight },
   )
 
-  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent) onClose() }} />
-  <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}) }} role="dialog" aria-label={tr("编辑说话人")}>
-    {correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
+  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent && !reviewOpen) onClose() }} />
+  <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}), ...(reviewOpen ? { left: 'auto', right: 8, top: 8, width: 'min(820px, calc(100vw - 16px))', height: 'calc(100vh - 16px)', padding: 16 } : {}) }} role="dialog" aria-label={tr(reviewOpen ? '核对声音' : '编辑说话人')}>
+    {reviewOpen ? <ArkmeRecordingSpeakerReview key={item.itemRef} item={item} items={items} options={options} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} /> : correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
       autoReject={autoReject} rejectCurrent={correctionChoice.current.rejectCurrent}
       {...(correctionChoice.current.target?.kind === 'speaker' ? { target: correctionChoice.current.target } : {})}
       onUpdated={day => { onUpdated(day) }} onClose={onClose} {...(onPlay ? { onPlay } : {})} /> : <>
@@ -281,6 +286,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
       {correctionPersonLabel && <button type="button" style={{ ...styles.unassign, fontSize: 12 }} disabled={pending}
         onClick={() => { openCorrection('reject') }}>{tr('不是 {v0}', { v0: correctionPersonLabel })}</button>}
       <button type="button" style={{ ...styles.unassign, fontSize: 12, color: desktop.secondary }} disabled={pending} onClick={() => { openCorrection('source') }}>{tr('声音来源 / 纠错')}</button>
+      <button type="button" aria-label={tr('查看声音一致性')} style={{ ...styles.unassign, fontSize: 12, color: desktop.blue }} disabled={pending || removing} onClick={() => setReviewOpen(true)}>{tr('声音一致性')} · {tr(recordingConsistencyLabel(consistency.groups[0], consistency.error))}</button>
     </div>
     <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} disabled={pending || removing} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected('') }} placeholder={tr("输入名称")} />
     {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={{ ...styles.list, ...(item.assignedSpeakerOptionKey ? { maxHeight: 248 } : {}) }} data-speaker-options-list>

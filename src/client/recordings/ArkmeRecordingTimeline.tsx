@@ -17,6 +17,7 @@ import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { recordingSpeakerColor } from './recording-speaker-presentation.js'
 import { coverageStatusLabel } from './recording-coverage.js'
 import { useRecordingBreathStyle } from './recording-breath.js'
+import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const desktop = {
   base: arkmeTheme.base, surface: arkmeTheme.layer2, hover: arkmeTheme.hover, border: arkmeTheme.border,
@@ -38,7 +39,7 @@ export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
 const DAY_MILLIS = 86_400_000
 const DEFAULT_RECORDING_ZOOM_INDEX = 6
 const WHEEL_ZOOM_THRESHOLD = 24
-const SPEAKER_ITEM_WIDTH = 96
+const SPEAKER_ITEM_WIDTH = 180
 const SPEAKER_LEGEND_PADDING = 6
 const SPEAKER_LEGEND_CARET_WIDTH = 16
 
@@ -278,7 +279,7 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: ArkmeRecordingWorkbenchItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
@@ -293,6 +294,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   loading?: boolean
   emptyState?: boolean
   onEditSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
+  onReviewSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
   onImportAudio?(): void
   onSelectAtMillis(value: number): void
   onTogglePlayback(): void
@@ -425,6 +427,15 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
   }, [items])
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
+  const consistency = useRecordingConsistency(loading ? [] : allDaySpeakers.map(speaker => speaker.items[0]!.itemRef))
+  const consistencyByRef = new Map(consistency.groups.map(group => [group.anchorRef, group]))
+  const reviewSpeaker = (event: React.MouseEvent<HTMLButtonElement>, item: ArkmeRecordingWorkbenchItem) => {
+    event.preventDefault(); event.stopPropagation()
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (legendRef.current) legendRef.current.open = false
+    setLegendOpen(false)
+    ;(onReviewSpeaker ?? onEditSpeaker)?.(item, { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom })
+  }
   const speakerCount = allDaySpeakers.length
   // Keep the badge width stable as its count changes, including across digit boundaries.
   const moreChipWidth = Math.max(30, 14 + (String(speakerCount).length + 1) * 7)
@@ -549,13 +560,6 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     setPreview({ windowStart: clampWindowStart(target - previewVisibleMillis / 2, previewVisibleMillis, bounds.start, bounds.end), zoomIndex: previewZoomIndex })
     openDetail()
   }
-  const editSpeaker = (event: { preventDefault(): void; stopPropagation(): void; currentTarget: HTMLElement }, item: ArkmeRecordingWorkbenchItem) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const rect = event.currentTarget.getBoundingClientRect()
-    onEditSpeaker?.(item, { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })
-  }
-
   const renderCoverage = (from: number, to: number, overview: boolean) => coverage.filter(range => range.endAtMillis > from && range.startAtMillis < to).map((range, index) => {
     const layout = recordingSegmentLayout(range.startAtMillis, range.endAtMillis, from, to)
     const label = `${timeLabel(range.startAtMillis)}–${timeLabel(range.endAtMillis)} · ${range.sourceLabel} · ${coverageStatusLabel[range.status]}`
@@ -766,11 +770,12 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>
       <summary ref={legendSummaryRef} style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
         <span style={styles.legendItems}>
-          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={speaker.label} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
+          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={`${speaker.label} · ${tr('一致性')} ${tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}`} aria-label={tr("查看 {v0} 声音一致性", { v0: speaker.label })} style={styles.legendItem} onClick={event => { reviewSpeaker(event, speaker.items[0]!) }}>
             {speaker.avatarRef === undefined
               ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
               : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={tr("{v0}头像", { v0: speaker.label })} />}
             <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }) }}>{speaker.label}</span>
+            <span style={{ flex: 'none', color: desktop.tertiary, fontSize: 10 }}>{tr('一致性')} {tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}</span>
           </button>)}
         </span>
         {hiddenSpeakerCount > 0 && <span style={{ ...styles.moreChip, width: moreChipWidth }}>+{hiddenSpeakerCount}</span>}
@@ -780,6 +785,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
         <span style={styles.legendPanelList}>
           {allDaySpeakers.map(speaker => {
             const percentage = totalSpeakerDurationMillis <= 0 ? 0 : speaker.durationMillis / totalSpeakerDurationMillis * 100
+            const group = consistencyByRef.get(speaker.items[0]!.itemRef)
             return <span key={speaker.key} style={styles.legendPanelItem}>
               <span style={styles.legendPanelPrimary}>
               <span style={styles.legendPanelIdentity}>
@@ -797,6 +803,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
               <span style={styles.legendMetric}>{percentage.toFixed(1)}%</span>
               </span>
               <span style={styles.legendPanelMeta}>
+                <button type="button" aria-label={tr('查看 {v0} 声音一致性', { v0: speaker.label })} style={{ border: 0, padding: '2px 5px', marginRight: 8, borderRadius: 4, background: desktop.hover, color: desktop.text, cursor: 'pointer', font: 'inherit', fontSize: 11 }} onClick={event => reviewSpeaker(event, speaker.items[0]!)}>{tr('一致性')} {tr(recordingConsistencyLabel(group, consistency.error))}{group?.reviewCount != null && group.reviewCount > 0 ? ` · ${tr('{v0} 段待复核', { v0: group.reviewCount })}` : ''}</button>
+                {group && <span style={{ ...styles.legendMetric, marginRight: 8 }}>{tr('已分析 {v0}/{v1}', { v0: group.analyzedCount, v1: group.totalCount })}</span>}
                 <span style={styles.legendMetric}>{tr("占比")} {percentage.toFixed(1)}%</span>
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
                 <span style={styles.legendMetric}>{speaker.mergedSegments.length}{tr("个片段")}</span>

@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
+  'statisticsRead',
+  'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
+  'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
   'automaticCapabilities', 'updateAutomaticCapability',
   'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
   'messageSyncStatus', 'retryMessageSync',
@@ -21,6 +25,7 @@ const expectedPublicMethods = [
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'dayDigestAccountScope', 'dayDigestGenerationSupported', 'dayDigestRead', 'prepareDayDigest', 'prepareDayReview',
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewPrompts',
+  'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -90,7 +95,7 @@ const expectedPublicMethods = [
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages', 'searchLocations',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
-  'arrangementSourceOpen', 'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
+  'arrangementSourceRead', 'arrangementSourceOpen', 'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
@@ -108,6 +113,8 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'conversation-activity-service.ts',
+  'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
   'capability-service.ts',
   'explore-projection.ts', 'explore-service.ts',
   'chat-message-sync-service.ts',

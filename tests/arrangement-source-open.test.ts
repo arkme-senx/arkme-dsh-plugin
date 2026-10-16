@@ -52,3 +52,8 @@ describe('arrangement source access boundary', () => {
     await expect(open()).rejects.toMatchObject({code:'arrangement-source-account-changed'})
   })
 })
+
+it('opens an agent instruction from the freshly resolved evidence without reading an unvalidated document', async () => {
+  const { open } = fixture({ kind: 'agent', text: '原始用户指令' })
+  expect(await open()).toEqual({ kind: 'document', title: '来源指令', text: '原始用户指令' })
+})

@@ -981,7 +981,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (['calendar.day-recap', 'calendar.day-review.create'].includes(request.operation) && origin === undefined) {
+      if (['calendar.day-recap', 'calendar.day-review.create', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
       if (request.operation === 'calendar.day-review.create') throw new ArkmePluginError('day-digest-human-required', '请通过 SDK 在宿主确认页发起生成', false, 403)
@@ -1076,6 +1076,9 @@ export async function dispatchArkmeHostOperation(
 ): Promise<unknown> {
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
+  if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
+  if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
+  if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
   if (operation === 'explore.list') return service.explorePage(params as unknown as ExploreQuery, requestSignal)
   if (operation === 'explore.detail') return service.exploreDetail(stringParam(params, 'ref'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal)
   if (operation === 'explore.mutate') return service.exploreMutate(params as unknown as ExploreMutation, requestSignal)
@@ -1599,6 +1602,8 @@ export async function dispatchArkmeHostOperation(
     case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
     case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
     case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.similar': return await service.speakerDirectorySimilar(params, requestSignal)
+    case 'speaker-directory.voice-samples': return await service.speakerDirectoryVoiceSamples(params, requestSignal)
     case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
     case 'recordings.speaker.presence': return await service.recordingSpeakerPresence(requestSignal)
@@ -1608,6 +1613,16 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
+    case 'recordings.speaker.evidence': {
+      if ([params.itemRefs, params.referenceA, params.referenceB].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) {
+        throw new ArkmePluginError('invalid-params', '声纹对比参数无效', false)
+      }
+      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[] }, requestSignal)
+    }
+    case 'recordings.speaker.consistency': {
+      if ([params.anchorRefs, params.itemRefs].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) throw new ArkmePluginError('invalid-params', '一致性查询参数无效', false)
+      return await service.recordingSpeakerConsistency({ anchorRefs: params.anchorRefs as string[], itemRefs: params.itemRefs as string[] }, requestSignal)
+    }
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
     case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
@@ -1677,6 +1692,19 @@ export async function dispatchArkmeHostOperation(
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
     case 'day-digest.read': return await service.dayDigestRead(params, requestSignal)
+    case 'chat.activity.read': return await service.conversationActivityRead(params, requestSignal)
+    case 'chat.activity.participants': return await service.conversationActivityParticipants(params, requestSignal)
+    case 'chat.activity.messages': return await service.conversationActivityMessages(params, requestSignal)
+    case 'chat.activity.source': return await service.conversationActivitySource(params, requestSignal)
+    case 'chat.word-frequency.state': return await service.conversationWordsState(params, requestSignal)
+    case 'chat.word-frequency.create': return await service.conversationWordsCreate(params, requestSignal)
+    case 'chat.word-frequency.participants': return await service.conversationWordsParticipants(params, requestSignal)
+    case 'chat.word-frequency.messages': return await service.conversationWordsMessages(params, requestSignal)
+    case 'chat.word-frequency.source': return await service.conversationWordsSource(params, requestSignal)
+    case 'recordings.speech-statistics.state': return await service.recordingSpeechState(params, requestSignal)
+    case 'recordings.speech-statistics.create': return await service.recordingSpeechCreate(params, requestSignal)
+    case 'recordings.speech-statistics.occurrences': return await service.recordingSpeechOccurrences(params, requestSignal)
+    case 'recordings.speech-statistics.source': return await service.recordingSpeechSource(params, requestSignal)
     case 'calendar.day-review.state': return await service.dayReviewState(params, requestSignal)
     case 'calendar.day-review.create': throw new ArkmePluginError('day-digest-human-required', '生成需要宿主确认', false, 403)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
@@ -1918,6 +1946,7 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
+    case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
