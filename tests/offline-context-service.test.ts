@@ -13,7 +13,7 @@ const directories: string[] = []
 afterEach(async () => { for (const db of databases.splice(0)) db.close(); await Promise.all(directories.splice(0).map(p => rm(p, { recursive: true, force: true }))) })
 const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat' as const, ownerRef: 'private-chat-id', displayName: '项目群' })), sealSourceRef: vi.fn(async () => 'source-ref') }
 const association = { id: 'private-association', revision: 2, chat_session_uid: 'private-chat-id', state: 'linked', occurred_start: 1000, occurred_end: 2000, title: '测算讨论', summary: '尚未确认', reason: '回复测算问题', evidence: [{ id: 'private-evidence', version: 'asr-version', occurred_start: 1000, occurred_end: 2000, text: ' A🙂尚未确认 ', from: 2, to: 7, sound_source: 'unknown', contains_playback: false }], messages: [{ chat_session_uid: 'private-chat-id', relation_uid: 'private-relation', record_uid: 'private-record', record_owner: 8, occurred_at: 900, quote: '测算完成了吗？' }] }
-async function fixture() {
+async function fixture(invalidateProjection?: (userId: number) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'offline context scope ')); directories.push(directory)
   const store = new ArkmeStateStore(directory)
   const database = new ArkmeLocalDatabase(directory, store); databases.push(database)
@@ -27,7 +27,7 @@ async function fixture() {
     throw new Error('lost acknowledgement')
   })
   const runtime = { stateStore: database as unknown as StateStore, config: { environment: 'test' }, requireSession: async () => ({ userId: user, refreshToken: 'fixture-session' }), subscribeAccountScope: () => () => {}, authenticatedChatPost: post } as unknown as ServiceRuntime
-  return { directory, store, runtime, post, switchUser: (id: number) => { user = id }, service: new OfflineContextService(runtime, source) }
+  return { directory, store, runtime, post, switchUser: (id: number) => { user = id }, service: new OfflineContextService(runtime, source, undefined, invalidateProjection) }
 }
 it('projects exact Unicode evidence without exposing internal ids or inventing speaker identities', async () => {
   const f = await fixture()
@@ -139,4 +139,15 @@ it('never converts a retired receipt or a retry failure into proof that the orig
   f.switchUser(8)
   await expect(f.service.offlineContext({ operation: 'command', command: { ...command, action: 'retry' } })).rejects.toThrow()
   f.service.dispose()
+})
+
+it('invalidates Host timeline after a completed command even without a mounted card', async () => {
+ const invalidate = vi.fn(async () => {})
+ const f = await fixture(invalidate)
+ const entry = (await f.service.offlineContext({operation:'list',sourceRef:'source-ref'}) as OfflineContextList).entries[0]!
+ const original = f.post.getMockImplementation()!
+ f.post.mockImplementation(async (path,body) => path.endsWith('/apply') ? {request_id:body.request_id,outcome:'applied',revision:3} : original(path,body))
+ await f.service.offlineContext({operation:'command',command:{action:'confirm',entryRef:entry.id,revision:entry.revision,requestId:'native-confirm'}})
+ expect(invalidate).toHaveBeenCalledExactlyOnceWith(7)
+ f.service.dispose()
 })

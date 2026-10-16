@@ -54,6 +54,21 @@ describe('Host reconciliation bounds', () => {
       { mode: 'newer', cursor: 'tail', limit: undefined },
     ])
   })
+  it('publishes healthy sources from a finite partial page and retains missing source content', async () => {
+    const partial = (events: ArkmeUnifiedTimelineEvent[], cursor: string) => {
+      const value = { ...window(events), complete: false, hasMore: false, nextCursor: cursor }
+      value.sources.find(source => source.source === 'world_public')!.status = 'gap'
+      return page(value)
+    }
+    const read = vi.fn().mockResolvedValueOnce(partial([event('linked-card', 'confirmed', 'offline_context')], 'retry'))
+    const updated = await reconcileUnifiedTimeline({ windowTokens: ['w'] }, read, signal())
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(updated.unified?.complete).toBe(false)
+    expect(updated.unified?.sources.find(source => source.source === 'world_public')?.status).toBe('gap')
+    const previous = window([event('retained-world'), event('stale-card', 'old', 'offline_context')])
+    const result = await refreshUnifiedTimelineWindow(previous, async () => updated, signal(), false)
+    expect(result.unified?.events.map(item => item.eventId).sort()).toEqual(['linked-card', 'retained-world'])
+  })
   it('rejects repeated continuation, overflow and failures without returning partial data', async () => {
     const repeated = vi.fn().mockResolvedValue(page({ ...window(), hasMore: true, nextCursor: 'repeat' }))
     await expect(reconcileUnifiedTimeline({ windowTokens: ['w'] }, repeated, signal())).rejects.toThrow('未推进')
