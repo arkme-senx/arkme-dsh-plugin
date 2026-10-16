@@ -21,7 +21,7 @@ export interface DayReviewJob {
   id: string; status: 'queued' | 'collecting' | 'organizing' | 'generating' | 'failed'; message: string; failureCode: string; resumable: boolean
 }
 export interface DayReviewState {
-  supported: boolean; job: DayReviewJob | null; result: DayReviewResult | null; freshness: 'changed' | 'unchanged' | 'unknown'; pendingRequestId?: string; resultError?: 'source_revoked'
+  supported: boolean; job: DayReviewJob | null; result: DayReviewResult | null; freshness: 'changed' | 'unchanged' | 'unknown'; pendingRequestId?: string; resultError?: 'source_revoked' | 'source_changed'
   versions: Array<{ id: string; generatedAtMillis: number }>
 }
 export const emptyDayReviewState = (): DayReviewState => ({ supported: false, job: null, result: null, freshness: 'unknown', versions: [] })
@@ -94,9 +94,9 @@ export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayRevie
     return { id: reviewText(version.id), generatedAtMillis: number(version.generated_at) }
   })
   if (new Set(versions.map(x => x.id)).size !== versions.length) invalid()
-  if (v.result_error !== undefined && v.result_error !== 'source_revoked') invalid()
+  if (v.result_error !== undefined && !['source_revoked', 'source_changed'].includes(String(v.result_error))) invalid()
   if (v.result_error && v.result !== null) invalid()
-  return { ...(v.result_error ? { resultError: 'source_revoked' as const } : {}), supported: true, job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
+  return { ...(v.result_error ? { resultError: v.result_error as NonNullable<DayReviewState['resultError']> } : {}), supported: true, job, result: v.result === null ? null : parseDayReviewResult(v.result, q),
     freshness: ['changed', 'unchanged', 'unknown'].includes(String(v.freshness)) ? v.freshness as DayReviewState['freshness'] : invalid(), versions }
 }
 

@@ -50,11 +50,11 @@ const mount = async () => act(async () => { view = create(<ArkmeCalendarDayRevie
 beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockResolvedValue(current()) })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
-  it('hides revoked content but preserves new generation and active progress', async () => {
-    const revoked = { ...rawState(), result: null, result_error: 'source_revoked', freshness: 'unknown' }
+  it.each([['source_revoked', '旧结果的来源权限已变化'], ['source_changed', '原始资料已更正']])('hides %s content but preserves new generation and active progress', async (code, message) => {
+    const revoked = { ...rawState(), result: null, result_error: code, freshness: 'unknown' }
     vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState(revoked, query))
     await mount()
-    expect(content()).toContain('旧结果的来源权限已变化')
+    expect(content()).toContain(message)
     expect(content()).not.toContain('讨论了录音存储方案')
     expect(button('生成当天回顾').props.disabled).toBe(false)
     vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState({ ...revoked, job: { id: 'new-job', status: 'collecting', message: '' } }, query))
@@ -62,6 +62,20 @@ describe('calendar review interaction', () => {
     expect(content()).toContain('收集资料')
     expect(button('正在生成…').props.disabled).toBe(true)
     expect(() => parseDayReviewState({ ...revoked, result: rawResult() }, query)).toThrow()
+  })
+  it('clears an aborted source spinner when correction invalidates the displayed result', async () => {
+    let resolve!: (value: unknown) => void
+    await mount()
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(r => { resolve = r }) as never)
+    act(() => { button('12:00 · 录音原文').props.onClick() })
+    expect(button('正在打开…').props.disabled).toBe(true)
+    vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState({ ...rawState(), result: null, result_error: 'source_changed' }, query))
+    await act(async () => button('检查更新').props.onClick())
+    vi.mocked(callArkme).mockResolvedValueOnce(current())
+    await act(async () => button('检查更新').props.onClick())
+    expect(button('12:00 · 录音原文').props.disabled).toBe(false)
+    await act(async () => resolve({ kind: 'evidence', evidence: { text: '过期原文' } }))
+    expect(content()).not.toContain('过期原文')
   })
   it('keeps history and its original panel open while rechecking permissions on refresh', async () => {
     const history = { ...current().result!, id: 'old', summary: [{ text: '历史摘要', sourceRefs: ['source-1'] }] }
