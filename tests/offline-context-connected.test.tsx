@@ -19,7 +19,7 @@ it('keeps recovery reads passive and lets the user retry the original persisted 
   })
   let renderer!: ReactTestRenderer
   await act(async () => { renderer = create(<OfflineContextConnected entryRef="entry" revision="2" title="交流" />) })
-  await act(async () => { renderer.root.findByType('button').props.onClick() })
+  expect(renderer.root.findByType('article').props['data-offline-context-id']).toBe('entry')
   expect(api.offlineContext.mock.calls.every(([input]) => input.operation !== 'command')).toBe(true)
   const retry = renderer.root.findAllByType('button').find(node => node.props.children === '重试原操作')!
   expect(retry).toBeDefined()

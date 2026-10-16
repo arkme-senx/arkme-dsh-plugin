@@ -126,18 +126,46 @@ describe('offline context actions', () => {
   })
 })
 
-it('reads fresh range options and submits Unicode character boundaries', async () => {
+it('keeps the original from/to selection while submitting fresh source references', async () => {
   const transport = actions()
-  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: [{ ...entry.evidence[0]!, id: 'fresh', text: '甲🙂乙丙' }] }))
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: [
+    { ...entry.evidence[0]!, id: 'fresh-1', text: '甲🙂乙丙' },
+    { ...entry.evidence[1]!, id: 'fresh-2' },
+  ] }))
   const renderer = await mount(transport)
-  const more = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === '线下交流更多操作')
-  expect(more).toBeTruthy()
-  await act(async () => more!.props.onClick())
+  await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
   await act(async () => button(renderer, '调整录音范围').props.onClick())
   expect(transport.rangeOptions).toHaveBeenCalled()
-  const inputs = renderer.root.findAllByType('input').filter(node => node.props.type === 'number')
-  await act(async () => { inputs[0]!.props.onChange({target:{value:'2'}}); inputs[1]!.props.onChange({target:{value:'3'}}) })
+  expect(renderer.root.findAllByType('input').filter(node => node.props.type === 'number')).toHaveLength(0)
+  const [from, to] = renderer.root.findAllByType('select')
+  await act(async () => { from!.props.onChange({ target: { value: 'fresh-2' } }); to!.props.onChange({ target: { value: 'fresh-1' } }) })
+  expect(button(renderer, '保存').props.disabled).toBe(true)
+  expect(transport.change).not.toHaveBeenCalled()
+  await act(async () => { from!.props.onChange({ target: { value: 'fresh-1' } }) })
   await act(async () => button(renderer, '保存').props.onClick())
-  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({change:{kind:'range',evidenceIds:['fresh'],startOffset:1,endOffset:3}}))
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'range', evidenceIds: ['fresh-1'] } }))
+  await act(async () => renderer.unmount())
+})
+
+it('keeps withdrawal in the existing more menu and requires confirmation without removing the private association', async () => {
+  const transport = actions()
+  const renderer = await mount(transport, { hasSharedSnapshot: true })
+  expect(button(renderer, '撤回已分享消息')).toBeUndefined()
+  await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
+  await act(async () => button(renderer, '撤回已分享消息').props.onClick())
+  expect(transport.change).not.toHaveBeenCalled()
+  await act(async () => button(renderer, '确认撤回').props.onClick())
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'withdraw' } }))
+  await act(async () => renderer.unmount())
+})
+
+it('preserves the original preview list presentation with authoritative server content', async () => {
+  const transport = actions()
+  transport.preview = vi.fn(async () => ({ previewRef: 'server', title: '服务端冻结标题', summary: '服务端冻结要点', transcript: [], expiresAtMillis: Date.now() + 60000 }))
+  const renderer = await mount(transport)
+  await act(async () => button(renderer, '分享到此对话').props.onClick())
+  const dialog = renderer.root.findByProps({ role: 'dialog' })
+  expect(dialog.findByType('strong').props.children).toBe('服务端冻结标题')
+  expect(dialog.findByType('ul').findByType('li').props.children).toBe('服务端冻结要点')
   await act(async () => renderer.unmount())
 })

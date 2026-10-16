@@ -23,3 +23,15 @@
 - 五服务均为原生二进制，DB/MQ 隔离；登录、搜索、外部模型和存储配置仍为合成依赖。关联由正式链路生成，源 ASR 为合成材料；这不是模型效果或实际音频播放证据。
 - IAB 返回 ERR_BLOCKED_BY_CLIENT，Chrome 连接超时，实际浏览器的滚动/around/音频播放和完整交互仍未验收。组件测试不能替代该门禁，暂不能确认完整上线验收。
 - 证据：`/tmp/offline-context-premerge-plugin-final-loop.log`、`/tmp/offline-context-premerge-runtime/dsh-final.log`、`/tmp/offline-context-premerge-runtime/sdk-compile-final.log`、`/tmp/offline-context-premerge-runtime/sdk-final.log`、`/tmp/offline-context-premerge-native-final.log`。
+
+## 原设计一致性收敛（2026-10-16）
+
+用户明确要求以同事已确认的 UI/交互为准，功能完整性不能成为重做体验的理由。对照交接时的 `OfflineContextCard` 和演示容器，本轮撤除自行增加的卡片外层展开按钮与字符序号输入：正式时间线直接加载并展示原卡片，范围仍通过“从／到”连续原文片段选择。CSS 未改。服务端冻结分享仍使用原来的标题、要点列表、原文勾选与确认弹窗。跨对话消息沿用下拉选择；共享撤回并入原有更多菜单，保留确认步骤。
+
+必要补齐项不能伪称原设计已交付：跨对话选择、真实播放/原文读取、共享撤回、跨刷新未决请求恢复在交接文档中属于正式接入范围。本轮保留它们的最小入口与失败状态。明确“重试原操作”只出现在未知操作恢复状态；“核对状态”依旧只读，不隐藏写副作用，不改变请求 ID/原始预览。
+
+相关回归验证直接显示卡片、恢复期间不自动写、连续片段选择与倒序阻断、签封消息引用分页、撤回确认与私人关联分离、服务端预览正文和原列表结构。真实浏览器工具本轮 `getState` 仍超时，不能由组件测试推断像素一致、实际滚动或播放通过。当前收敛不等于已满足全部上线门禁。
+
+本轮复验：相关 5 文件 / 27 项通过；正式 `pnpm test --maxWorkers=4` 全量 1,030 文件 / 12,052 项通过，15 文件 / 20 项跳过；typecheck 通过。日志 `/tmp/offline-context-ui-preservation-focused.log`、`/tmp/offline-context-ui-preservation-full-pnpm.log`、`/tmp/offline-context-ui-preservation-types.log`。首次误用 npm 导致 5 项 pnpm 生命周期/打包测试失败，保留日志并用仓库正确命令完整重跑；没有修改测试断言来掩盖失败。
+
+构建、tgz 打包及未修改官方 DSH 0.1.5-rc.2 隔离 Profile 安装通过；包内公开入口存在，已撤掉的字符序号控件不在最终 client bundle。日志 `/tmp/offline-context-ui-preservation-build.log`、`/tmp/offline-context-ui-preservation-pack.log`、`/tmp/offline-context-ui-preservation-install.log`。安装成功不计作实际浏览器交互通过。
