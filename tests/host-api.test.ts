@@ -1850,3 +1850,29 @@ it('forwards cache-only image probes without changing ordinary reads or trusting
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
  expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
 })
+
+
+describe('correction selection request budget', () => {
+  it('accepts 100 signed references while keeping the ordinary request limit', async () => {
+    const apply = vi.fn(async () => ({ state: 'applied', affectedCount: 100 }))
+    const service = { ...fakeService(), applyRecordingSpeakerCorrection: apply }
+    const options = { expectedPort: 0, allowNonLoopback: false }
+    const server = createServer(createArkmeHostApi(service as never, options))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('no address')
+    options.expectedPort = address.port
+    const call = (operation: string, params: unknown) => fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${address.port}` }, body: JSON.stringify({ operation, params }),
+    })
+    const refs = Array.from({ length: 100 }, (_, i) => `signed-${i}-${'x'.repeat(2000)}`)
+    try {
+      const response = await call('recordings.speaker.correction.apply', { itemRef: refs[0], itemRefs: refs, detach: false, soundSource: 'playback', expectedVersion: 'v1', idempotencyKey: 'correction-budget-0001' })
+      expect(response.status).toBe(200)
+      expect(apply).toHaveBeenCalledOnce()
+      expect((await call('billing.quota', { padding: 'x'.repeat(130 * 1024) })).status).toBe(413)
+      expect((await call('recordings.speaker.correction.apply', { padding: 'x'.repeat(1024 * 1024) })).status).toBe(413)
+    } finally { server.close(); await once(server, 'close') }
+  })
+})
