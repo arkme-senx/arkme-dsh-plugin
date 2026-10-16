@@ -148,7 +148,7 @@ describe('extension publish conversation confirmation', () => {
     expect(prepared).toEqual({
       status: 'confirmation_required',
       count: 2,
-      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）\n- 日程助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）',
+      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）\n- 日程助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）（请在 10 分钟内确认；过期后可重新准备。）',
       items: [
         { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
         { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },

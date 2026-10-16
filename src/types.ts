@@ -1576,6 +1576,8 @@ export interface ArkmeProviderCapabilities {
     myExtensions?: true
     /** Optional additive publication of an exact owned live Cordis Package. */
     extensionPublish?: true
+    /** Query and explicitly resume current-account immutable publish sessions. */
+    extensionPublishRecovery?: true
     /** Optional additive capability for extension reviews, replies, and rating summaries. */
     extensionReviews?: true
   }
@@ -4341,6 +4343,9 @@ export type ArkmePluginOperation =
   | 'calls.history.summary.retry'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
+  | 'extensions.publish.list'
+  | 'extensions.publish.status'
+  | 'extensions.publish.resume'
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'
   | 'extensions.install.preview'
@@ -4522,6 +4527,7 @@ export interface ArkmeLongArticleImageFailure {
 }
 
 export interface ArkmePluginErrorBody {
+  publishReceipt?: import('./extensions/types.js').ArkmeExtensionPublishResult
   imageFailures?: ArkmeLongArticleImageFailure[]
   code: string
   message: string

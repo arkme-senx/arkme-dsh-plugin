@@ -1073,6 +1073,7 @@ export class ArkmeService {
         arrangements: true,
         myExtensions: true,
         extensionPublish: true,
+        extensionPublishRecovery: true,
         extensionReviews: true,
         ...(this.relatedRecording.isEnabled() ? { relatedRecordings: true as const } : {}),
       },
