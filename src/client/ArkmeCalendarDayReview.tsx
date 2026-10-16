@@ -32,7 +32,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   useArkmeLocale()
   const [state, setState] = useState<DayReviewState>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [sources, setSources] = useState<DayReviewSource[]>([...DAY_REVIEW_SOURCES]), [submitting, setSubmitting] = useState(false)
-  const [selectedVersion, setSelectedVersion] = useState(''), [historical, setHistorical] = useState<DayReviewResult>(), [versionLoading, setVersionLoading] = useState(false)
+  const [selectedVersion, updateSelectedVersion] = useState(''), [historical, setHistorical] = useState<DayReviewResult>(), [versionLoading, setVersionLoading] = useState(false)
   const [source, setSource] = useState<DayReviewOpenSource>(), [sourceLoading, setSourceLoading] = useState(''), [sourceError, setSourceError] = useState('')
   const [showOriginal, setShowOriginal] = useState(false), [uncertain, setUncertain] = useState(false)
   const readRequest = useRef<AbortController>(), writeRequest = useRef<AbortController>(), sourceRequest = useRef<AbortController>()
@@ -42,18 +42,21 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const prompts = useDayReviewPrompts(q)
   const [reuse, setReuse] = useState<DayReviewResult>()
   const pendingSubmission = useRef<Record<string, unknown>>()
+  const selectedVersionRef = useRef('')
+  const sourceTarget = useRef<{ resultId: string; sourceRef: string }>()
+  const setSelectedVersion = useCallback((id: string) => { selectedVersionRef.current = id; updateSelectedVersion(id) }, [])
+  const clearSource = useCallback(() => { sourceTarget.current = undefined; setSource(undefined) }, [])
   const apply = useCallback((value: DayReviewState) => {
     setState(value)
-    if (value.resultError) setReuse(undefined)
+    if (value.resultError) {
+      setReuse(undefined); clearSource(); setHistorical(undefined); setSelectedVersion(''); setVersionLoading(false)
+      sourceRequest.current?.abort(); versionRequest.current?.abort()
+    }
     setUncertain(!!value.pendingRequestId)
-    // A new owner check invalidates every previously open derived/source view.
-    sourceRequest.current?.abort(); versionRequest.current?.abort()
-    setSource(undefined); setSourceLoading(''); setSourceError('')
-    setHistorical(undefined); setSelectedVersion(''); setVersionLoading(false)
     if (value.pendingRequestId) requestId.current = value.pendingRequestId
     if (!selectionTouched.current && value.result) setSources(value.result.sourceKinds)
     // A refreshed job may belong to another client; only the matching create reply acknowledges this submission.
-  }, [])
+  }, [clearSource, setSelectedVersion])
   const read = useCallback(async () => {
     if (submittingRef.current) return
     if (!q.accountScope) { setLoading(false); setError(tr('账号范围尚未确认，请重新打开日历')); return }
@@ -61,11 +64,28 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     const controller = new AbortController(); readRequest.current = controller
     setLoading(true); setError('')
     try {
-      const value = await withArkmeReadDeadline(signal => callArkme<DayReviewState>('calendar.day-review.state', { ...q }, signal), controller.signal)
-      if (!controller.signal.aborted) apply(value)
-    } catch (e) { if (!controller.signal.aborted) { setError(errorText(e)); setState(undefined); setSource(undefined); setHistorical(undefined); setSelectedVersion(''); sourceRequest.current?.abort(); versionRequest.current?.abort() } }
+      const version = selectedVersionRef.current, original = sourceTarget.current
+      // Refresh open content through the same authorized read endpoints. Progress
+      // polling must neither close the reader nor keep revoked history visible.
+      const [next, history, evidence] = await Promise.allSettled([
+        withArkmeReadDeadline(signal => callArkme<DayReviewState>('calendar.day-review.state', { ...q }, signal), controller.signal),
+        version ? withArkmeReadDeadline(signal => callArkme<DayReviewResult>('calendar.day-review.result', { ...q, resultId: version }, signal), controller.signal) : Promise.resolve(undefined),
+        original ? withArkmeReadDeadline(signal => callArkme<DayReviewOpenSource>('calendar.day-review.source', { ...q, ...original }, signal), controller.signal) : Promise.resolve(undefined),
+      ])
+      if (controller.signal.aborted) return
+      if (next.status === 'rejected') throw next.reason
+      apply(next.value)
+      if (version && selectedVersionRef.current === version) {
+        if (history.status === 'rejected') { clearSource(); setHistorical(undefined); setSelectedVersion(''); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(history.reason)) }
+        else setHistorical(history.value)
+      }
+      if (original && sourceTarget.current === original) {
+        if (evidence.status === 'rejected') { clearSource(); setHistorical(undefined); setSelectedVersion(''); setState(undefined); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(evidence.reason)) }
+        else setSource(evidence.value)
+      }
+    } catch (e) { if (!controller.signal.aborted) { setError(errorText(e)); setState(undefined); clearSource(); setHistorical(undefined); setSelectedVersion(''); sourceRequest.current?.abort(); versionRequest.current?.abort() } }
     finally { if (!controller.signal.aborted) setLoading(false) }
-  }, [q, apply])
+  }, [q, apply, clearSource, setSelectedVersion])
   useEffect(() => {
     mounted.current = true; void read()
     return () => {
@@ -125,7 +145,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     finally { submittingRef.current = false; if (mounted.current && !controller.signal.aborted) setSubmitting(false) }
   }
   const selectVersion = async (id: string) => {
-    versionRequest.current?.abort(); sourceRequest.current?.abort(); setSource(undefined); setSourceError(''); setSourceLoading('')
+    versionRequest.current?.abort(); sourceRequest.current?.abort(); clearSource(); setSourceError(''); setSourceLoading('')
     setReuse(undefined); setSelectedVersion(id); setHistorical(undefined); setError('')
     if (!id) { setVersionLoading(false); return }
     const controller = new AbortController(); versionRequest.current = controller; setVersionLoading(true)
@@ -139,13 +159,13 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const openSource = async (ref: string) => {
     if (!result) return
     sourceRequest.current?.abort(); const controller = new AbortController(); sourceRequest.current = controller
-    setSource(undefined); setSourceLoading(ref); setSourceError('')
+    clearSource(); setSourceLoading(ref); setSourceError('')
     try {
       const value = await withArkmeReadDeadline(signal => callArkme<DayReviewOpenSource>('calendar.day-review.source', { ...q, resultId: result.id, sourceRef: ref }, signal), controller.signal)
       if (controller.signal.aborted) return
       if (value.kind === 'conversation') arkmeUi.showConversationTarget(value.source, value.itemUid, value.sendAtMillis, undefined, undefined, true)
-      else { setShowOriginal(false); setSource(value) }
-    } catch (e) { if (!controller.signal.aborted) { setError(errorText(e)); setState(undefined); setHistorical(undefined); setSelectedVersion(''); setSource(undefined); versionRequest.current?.abort() } }
+      else { sourceTarget.current = { resultId: result.id, sourceRef: ref }; setShowOriginal(false); setSource(value) }
+    } catch (e) { if (!controller.signal.aborted) { setError(errorText(e)); setState(undefined); setHistorical(undefined); setSelectedVersion(''); clearSource(); versionRequest.current?.abort() } }
     finally { if (!controller.signal.aborted) setSourceLoading('') }
   }
   const stamp = (at: number) => new Intl.DateTimeFormat('zh-CN', { timeZone: q.timezone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(at)
@@ -170,7 +190,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
           {tr(submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
       </div>
     </div>
-    <p className="day-review-hint">{tr('按所选来源整理当天可用内容，同时生成日总结和时间轴。')}{tr('按实际模型用量使用 AI 积分；继续任务保留已付费步骤。')}</p>
+    <p className="day-review-hint">{tr('按所选来源整理当天可用内容，同时生成日总结和时间轴。')}</p>
     <CalendarDayReviewPromptEditor controller={prompts} view={view} locked={submitting || active || uncertain} />
     {prompts.block && <p className="day-review-status">{tr(prompts.block)}</p>}
     {!prompts.block && prompts.draft.saved && <p className="day-review-status">{tr('将使用已保存的自定义提示词，重新生成后生效')}</p>}
@@ -182,15 +202,14 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     {error && <p role="alert" className="day-review-error">{error}</p>}
     {state && !state.supported && <div className="day-review-empty"><strong>{tr('日历回顾服务尚未接通')}</strong>
       <p>{tr('接通后，可将当天的对话、位置、个人记录、通话和录音整理在一起。')}</p><p>{tr('目前仍可在“活动”中查看原始内容。')}</p></div>}
-    {state?.job?.resumable && <button type="button" className="arkme-day-source" disabled={submitting || loading} onClick={() => void resume()}>{tr('继续未完成任务（保留已付费步骤）')}</button>}
     {state?.job && <div className="day-review-progress" role="status" data-failed={state.job.status === 'failed'}>
       <strong>{tr(stages[state.job.status])}</strong>
       {active && <span>{tr('收集资料 → 整理内容 → 生成回顾')}</span>}
       {state.job.message && <span>{state.job.message}</span>}
+      {state.job.resumable && <button type="button" className="arkme-day-source" disabled={submitting || loading || uncertain} onClick={() => void resume()}>{tr('继续生成')}</button>}
       {state.result && <span>{tr('下方保留上一次生成的结果')}</span>}
     </div>}
     {state?.freshness === 'changed' && !active && <p className="day-review-status">{tr('有新内容可更新')}</p>}
-    {state?.result && state.freshness === 'unknown' && <p className="day-review-status">{tr('暂时无法确认是否有新内容')}</p>}
     {state?.versions.length ? <label className="day-review-version">{tr('查看版本')} <select value={selectedVersion} disabled={submitting} onChange={e => void selectVersion(e.target.value)}>
       <option value="">{tr('最新结果')}</option>{state.versions.map(version => <option key={version.id} value={version.id}>{stamp(version.generatedAtMillis)}</option>)}
     </select></label> : null}
@@ -213,11 +232,11 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     </>}
     {state?.supported && !result && !active && !state.job && !selectedVersion && <div className="day-review-empty"><strong>{tr('把这一天串起来')}</strong>
       <p>{tr('综合不同来源，回顾发生了什么、形成了哪些结论。')}</p><p>{tr('每条内容都可以打开原始出处。')}</p></div>}
-    {source && <div onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSource(undefined) } }}>
-      {source.kind === 'record' && <ArkmeTimelineDetailDrawer item={source.item} canExtend={false} showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(v => !v)} onClose={() => setSource(undefined)} />}
-      {source.kind === 'recording' && <ExploreRecordingSource source={source} onClose={() => setSource(undefined)} />}
-      {source.kind === 'evidence' && <ArkmeDetailShell title={source.evidence.label} label={tr('原始来源')} onClose={() => setSource(undefined)}><p>{time(source.evidence.startAtMillis)}</p><p style={{ whiteSpace: 'pre-wrap' }}>{source.evidence.text}</p></ArkmeDetailShell>}
-      {source.kind === 'call' && <ArkmeDetailShell title={tr('通话来源')} label={tr('通话来源')} onClose={() => setSource(undefined)}><ArkmeCallDetailContent compact
+    {source && <div onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); clearSource() } }}>
+      {source.kind === 'record' && <ArkmeTimelineDetailDrawer item={source.item} canExtend={false} showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(v => !v)} onClose={() => clearSource()} />}
+      {source.kind === 'recording' && <ExploreRecordingSource source={source} onClose={() => clearSource()} />}
+      {source.kind === 'evidence' && <ArkmeDetailShell title={source.evidence.label} label={tr('原始来源')} onClose={() => clearSource()}><p>{time(source.evidence.startAtMillis)}</p><p style={{ whiteSpace: 'pre-wrap' }}>{source.evidence.text}</p></ArkmeDetailShell>}
+      {source.kind === 'call' && <ArkmeDetailShell title={tr('通话来源')} label={tr('通话来源')} onClose={() => clearSource()}><ArkmeCallDetailContent compact
         detail={source.detail} detailState="ready" selectedItem={{ callRef: source.detail.callRef, peerDisplayName: source.detail.title, mediaType: source.detail.mediaType,
           durationSeconds: source.detail.durationSeconds, acceptedAtMillis: source.detail.acceptedAtMillis, summaryPreview: source.detail.summaryText ?? '' }} /></ArkmeDetailShell>}
     </div>}

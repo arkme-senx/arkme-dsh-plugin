@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DAY_REVIEW_SOURCES, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState } from '../src/calendar-day-review.js'
@@ -6,6 +7,7 @@ import { callArkme } from '../src/client/api.js'
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/explore/ExploreSurface.js', () => ({ ExploreRecordingSource: () => null }))
 vi.mock('../src/client/ArkmeNoteDetails.js', () => ({ ArkmeTimelineDetailDrawer: () => null }))
+vi.mock('../src/client/ArkmeDetailShell.js', () => ({ ArkmeDetailShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }))
 vi.mock('../src/client/ArkmeCallDetailContent.js', () => ({ ArkmeCallDetailContent: () => null }))
 export const query = { accountScope: 'prod:7', bucketDate: '2026-10-15', timezone: 'Asia/Shanghai' }
 export const envelope = { schema_version: 1, scope: 'calendar_day', date: query.bucketDate, time_zone: query.timezone }
@@ -60,6 +62,50 @@ describe('calendar review interaction', () => {
     expect(content()).toContain('收集资料')
     expect(button('正在生成…').props.disabled).toBe(true)
     expect(() => parseDayReviewState({ ...revoked, result: rawResult() }, query)).toThrow()
+  })
+  it('keeps history and its original panel open while rechecking permissions on refresh', async () => {
+    const history = { ...current().result!, id: 'old', summary: [{ text: '历史摘要', sourceRefs: ['source-1'] }] }
+    const original = { kind: 'evidence', evidence: { ref: 'source-1', resultId: 'old', kind: 'call', subtype: 'imported', label: '通话原文', text: '历史通话内容', startAtMillis: at, endAtMillis: at } }
+    vi.mocked(callArkme).mockImplementation(async method => method === 'calendar.day-review.result' ? history : method === 'calendar.day-review.source' ? original : current() as never)
+    await mount()
+    await act(async () => view!.root.findByType('select').props.onChange({ target: { value: 'old' } }))
+    await act(async () => button('12:00 · 录音原文').props.onClick())
+    expect(content()).toContain('历史通话内容')
+    await act(async () => button('检查更新').props.onClick())
+    expect(view!.root.findByType('select').props.value).toBe('old')
+    expect(content()).toContain('历史摘要')
+    expect(content()).toContain('历史通话内容')
+    expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.result')).toHaveLength(2)
+    expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.source')).toHaveLength(2)
+    vi.mocked(callArkme).mockImplementation(async method => { if (method === 'calendar.day-review.result') throw new Error('历史权限已撤销'); return method === 'calendar.day-review.source' ? original : current() as never })
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).toContain('历史权限已撤销')
+    expect(content()).not.toContain('历史摘要')
+    expect(content()).not.toContain('历史通话内容')
+  })
+  it('does not restore a previous history selection after a slow refresh', async () => {
+    const history = { ...current().result!, id: 'old', summary: [{ text: '历史摘要', sourceRefs: ['source-1'] }] }
+    vi.mocked(callArkme).mockImplementation(async method => method === 'calendar.day-review.result' ? history : current() as never)
+    await mount()
+    await act(async () => view!.root.findByType('select').props.onChange({ target: { value: 'old' } }))
+    let resolve!: (value: unknown) => void
+    vi.mocked(callArkme).mockImplementation(method => method === 'calendar.day-review.result' ? new Promise(r => { resolve = r }) as never : Promise.resolve(current()) as never)
+    await act(async () => { button('检查更新').props.onClick() })
+    await act(async () => view!.root.findByType('select').props.onChange({ target: { value: '' } }))
+    await act(async () => resolve(history))
+    expect(view!.root.findByType('select').props.value).toBe('')
+    expect(content()).not.toContain('历史摘要')
+  })
+  it('confines continuation to failed progress and never creates a new chargeable job', async () => {
+    vi.mocked(callArkme).mockResolvedValue({ ...current(), job: { id: 'failed', status: 'failed', message: 'AI 积分不足，补充额度后可继续原任务', resumable: true } } as never)
+    await mount()
+    expect(content()).not.toContain('按实际模型用量使用 AI 积分')
+    expect(button('继续生成').parent!.props.className).toBe('day-review-progress')
+    vi.mocked(callArkme).mockResolvedValueOnce({ ...current(), job: { id: 'failed', status: 'collecting', message: '' } } as never)
+    await act(async () => button('继续生成').props.onClick())
+    expect(callArkme).toHaveBeenLastCalledWith('calendar.day-review.resume', { ...query, jobId: 'failed' }, expect.any(AbortSignal))
+    expect(vi.mocked(callArkme).mock.calls.some(x => x[0] === 'calendar.day-review.create')).toBe(false)
+    expect(button('继续生成')).toBeUndefined()
   })
   it('accepts the backend Unicode character limit for generated text', () => {
     const result = rawResult()
