@@ -9,12 +9,16 @@ afterEach(()=>disposers.splice(0).forEach(fn=>fn()))
 function fixture(){
   let user=11,epochCallback=()=>{}
   const writes:Array<{path:string;body:Record<string,unknown>}>=[],calls:Array<{path:string;body:Record<string,unknown>}>=[]
-  const state={version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
+  const state={analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
   const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})
-  const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false}]})
+  const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false},{source:'wechat_import',display_name:'微信导入',enabled:true}]})
   const anniversary=()=>({id:'private-anniversary',title:'生日',status:'pending',calendar_type:'solar',date_label:'10月28日',why:'明确提到日期',evidences:[{message_id:'private-message',content:'10月28日',source_type:6,owner_ref:{provider:'audio',container_id:'private-audio'},is_anchor:true}]})
   const send=async(path:string,body:Record<string,unknown>={})=>{
     calls.push({path,body});state.afterRead()
+    if(path.endsWith('/capabilities/query')) {
+      if(state.capabilityFailure)throw new Error('设置暂不可用')
+      return ['personal_profile','goal_insight'].map(key=>({key,title:key,enabled:state.analysisEnabled,version:1,enabled_at:1}))
+    }
     if(path.includes('/override')||path.endsWith('/follow')||path.endsWith('/delete')||path.endsWith('/activate')||path.endsWith('/resume')||path.endsWith('/pause')||path.endsWith('/set')||path.endsWith('/reclassify')){
       if(state.failWrite)throw new Error('服务暂不可用')
       writes.push({path,body})
@@ -34,7 +38,7 @@ function fixture(){
     if(path.endsWith('/anniversary/home'))return {result_version:state.version,saved_anniversaries:[],pending_ai_discoveries:[anniversary()],material_coverage:{audio_unavailable_count:2}}
     if(path.endsWith('/evidence/open'))return {available:state.available,owner_ref:{provider:'audio',container_id:'private-audio',transcript_source:'doubao'}}
     if(path.endsWith('/section-summary'))return {sections:[]}
-    if(path.endsWith('/model/list'))return {effective_route_key:'private-model-a',items:[{route_key:'private-model-a',display_name:'模型 A'},{route_key:'private-model-b',display_name:'模型 B'}]}
+    if(path.endsWith('/model/list')||path.endsWith('/event-model/list'))return {effective_route_key:'private-model-a',items:[{route_key:'private-model-a',display_name:'模型 A'},{route_key:'private-model-b',display_name:'模型 B'}]}
     if(path.endsWith('/records/detail'))return {record_core:{record_uid:'private-record',status:1,content_access_state:1,origin_kind:1}}
     return {}
   }
@@ -133,14 +137,51 @@ describe('Explore domain migration',()=>{
     await f.service.mutate({ref,action:'confirm',title:'生日',calendarType:'lunar',year:0,month:6,day:15,leapMonth:true})
     expect(f.writes[0]).toMatchObject({body:{candidate_id:'private-anniversary',calendar_type:'lunar',is_lunar_leap_month:true}})
   })
-  it('binds available models and sources to the authenticated module',async()=>{
+  it('keeps fixed-model settings limited to supported profile sources',async()=>{
     const f=fixture(),a=await f.service.settings('profile')
-    expect(a.models[0]?.selected).toBe(true)
-    expect(JSON.stringify(a)).not.toContain('private-model')
-    await f.service.saveSettings({ref:a.ref,modelRef:a.models[1]!.ref})
-    expect(f.writes.at(-1)).toMatchObject({path:'/api/v1/personal-profile/v3/model/activate',body:{route_key:'private-model-b'}})
+    expect(a.models).toEqual([])
+    expect(a.sources.map(x=>x.key)).toEqual(['personal_record','native_chat'])
+    expect(f.calls.some(x=>x.path.includes('/model/'))).toBe(false)
+    const eventModels=await f.service.settings('events')
+    await expect(f.service.saveSettings({ref:a.ref,modelRef:eventModels.models[0]!.ref})).rejects.toThrow()
+    await expect(f.service.saveSettings({ref:a.ref,sources:['wechat_import']})).rejects.toThrow()
     await expect(f.service.saveSettings({ref:a.ref,sources:['unknown']})).rejects.toThrow()
     await f.service.saveSettings({ref:a.ref,sources:['personal_record','native_chat']})
     expect(f.writes.at(-1)?.body).toEqual({sources:['personal_record','native_chat']})
+  })
+})
+
+describe('Explore automatic AI authorization',()=>{
+  it.each(['profile','goals'] as const)('keeps saved %s readable while disabled or settings are unavailable',async module=>{
+    const f=fixture();f.state.analysisEnabled=false
+    const page=await f.service.page({module})
+    expect(page.items).toHaveLength(1);expect(page.analysisEnabled).toBe(false)
+    expect(page.actions.some(x=>['activate','resume','refresh'].includes(x.id))).toBe(false)
+    expect(page.progress).toBeUndefined();expect(f.writes).toHaveLength(0)
+    f.state.capabilityFailure=true
+    const unavailable=await f.service.page({module})
+    expect(unavailable.items).toHaveLength(1);expect(unavailable.analysisEnabled).toBeNull()
+    await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).rejects.toThrow('设置暂不可用')
+    expect(f.writes).toHaveLength(0)
+  })
+  it.each(['activate','refresh','resume'] as const)('rechecks permission before %s and never changes consent',async action=>{
+    const f=fixture(),page=await f.service.page({module:'profile'})
+    f.state.analysisEnabled=false
+    await expect(f.service.mutate({ref:page.contextRef,action})).rejects.toThrow('自动使用额度')
+    expect(f.writes).toHaveLength(0)
+    expect(f.calls.some(x=>x.path.endsWith('/capabilities/update'))).toBe(false)
+  })
+  it('resumes the existing run after authorization, while pause remains available after closing',async()=>{
+    const f=fixture(),page=await f.service.page({module:'profile'})
+    await f.service.mutate({ref:page.contextRef,action:'resume'})
+    expect(f.writes).toEqual([{path:'/api/v1/personal-profile/v3/experience/rebuild/resume',body:{run_id:'private-run'}}])
+    f.state.analysisEnabled=false;f.state.progress='running'
+    await f.service.mutate({ref:page.contextRef,action:'pause'})
+    expect(f.writes.at(-1)?.path).toMatch(/rebuild\/pause$/)
+  })
+  it('does not create a rebuild from source settings while disabled',async()=>{
+    const f=fixture(),settings=await f.service.settings('profile');f.state.analysisEnabled=false
+    await expect(f.service.saveSettings({ref:settings.ref,sources:['native_chat']})).rejects.toThrow('自动使用额度')
+    expect(f.writes).toHaveLength(0)
   })
 })

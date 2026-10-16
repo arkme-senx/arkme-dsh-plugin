@@ -1,3 +1,4 @@
+import { ArkmeAutomaticAiSettings } from '../ArkmeAutomaticAiSettings.js'
 import { ExploreSettingsDialog } from './ExploreSettingsDialog.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
@@ -30,7 +31,8 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
   const [filter,setFilter]=useState(initial?.filter??''),[query,setQuery]=useState(initial?.query??''),[search,setSearch]=useState(initial?.query??'')
   const [page,setPage]=useState<ExplorePage|undefined>(initial?.page),[loading,setLoading]=useState(false),[error,setError]=useState(''),[moreError,setMoreError]=useState('')
   const [selected,setSelected]=useState<ExploreItem|undefined>(initial?.selected),[detail,setDetail]=useState<ExploreDetail>(),[detailLoading,setDetailLoading]=useState(false),[detailError,setDetailError]=useState('')
-  const [settings,setSettings]=useState(false)
+  const [settings,setSettings]=useState(false),[capabilities,setCapabilities]=useState(false)
+  const managedAnalysis=module==='profile'||module==='goals'
   const [actionMenu,setActionMenu]=useState(false),[mutation,setMutation]=useState<{action:ExploreAction;ref:string}>(),[notice,setNotice]=useState('')
   const [source,setSource]=useState<ExploreSource>(),[sourcePending,setSourcePending]=useState(''),[sourceError,setSourceError]=useState(''),[original,setOriginal]=useState(false)
   const pageRequest=useRef<AbortController>(),detailRequest=useRef<AbortController>(),sourceRequest=useRef<AbortController>()
@@ -81,7 +83,7 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
       try{
         const next=await callArkme<ExplorePage>('explore.list',{module,filter,query},controller.signal)
         if(controller.signal.aborted)return
-        setPage(current=>{if(!current)return current;const {progress:_,...base}=current;return {...base,actions:next.actions,contextRef:next.contextRef,...(next.progress?{progress:next.progress}:{})}})
+        setPage(current=>{if(!current)return current;const {progress:_,...base}=current;return {...base,actions:next.actions,contextRef:next.contextRef,...(next.analysisEnabled!==undefined?{analysisEnabled:next.analysisEnabled}:{}),...(next.progress?{progress:next.progress}:{})}})
         if(!next.progress?.active)setNotice(tr('分析状态已更新，可刷新查看最新内容'))
       }catch{ /* Retain the last owner state and its update time after a transient failure. */ }
       finally{pending=false}
@@ -112,8 +114,9 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
   return <section className="arkme-explore" aria-label={tr(EXPLORE_LABELS[module])}>
     <header className="explore-header"><Icon size={25}/><span className="explore-muted">{tr('探索')} /</span><h2><select aria-label={tr('切换探索板块')} value={module} onChange={e=>e.target.value==='world'?arkmeUi.showWorld():arkmeUi.showExplore(e.target.value as ExploreModule)}>{[...EXPLORE_MODULES,'world' as const].map(m=><option value={m} key={m}>{tr(EXPLORE_LABELS[m])}</option>)}</select></h2>
       <div className="explore-header-actions"><span className="explore-muted">{page?`${page.total}`:''}</span><button className="explore-icon" aria-label={tr('刷新内容')} title={tr('刷新内容')} disabled={loading} onClick={()=>void load()}><ArrowClockwise size={18}/></button>
-      {(!!page?.actions.length||module!=='relations')&&<div ref={menuRoot} style={{position:'relative'}}><button className="explore-icon" aria-label={tr('更多操作')} aria-expanded={actionMenu} onClick={()=>setActionMenu(v=>!v)}><DotsThree size={23}/></button>{actionMenu&&<div style={{position:'absolute',right:0,top:'100%',zIndex:3,padding:6,minWidth:150,borderRadius:8,background:'var(--dsw-specific-menu,#fff)',boxShadow:'0 4px 20px #0002'}}>{module!=='relations'&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setSettings(true)}}>{tr('分析设置')}</button>}{page?.actions.map(a=><button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} key={a.id} onClick={()=>startAction(a,page!.contextRef)}>{tr(a.label)}</button>)}</div>}</div>}</div>
+      {(!!page?.actions.length||module!=='relations')&&<div ref={menuRoot} style={{position:'relative'}}><button className="explore-icon" aria-label={tr('更多操作')} aria-expanded={actionMenu} onClick={()=>setActionMenu(v=>!v)}><DotsThree size={23}/></button>{actionMenu&&<div style={{position:'absolute',right:0,top:'100%',zIndex:3,padding:6,minWidth:150,borderRadius:8,background:'var(--dsw-specific-menu,#fff)',boxShadow:'0 4px 20px #0002'}}>{managedAnalysis&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setCapabilities(true)}}>{tr('自动使用额度')}</button>}{module!=='relations'&&module!=='goals'&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setSettings(true)}}>{tr(module==='profile'?'数据范围':'分析设置')}</button>}{page?.actions.map(a=><button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} key={a.id} onClick={()=>startAction(a,page!.contextRef)}>{tr(a.label)}</button>)}</div>}</div>}</div>
     </header>
+    {managedAnalysis&&page&&page.analysisEnabled!==true&&<div className="explore-notice" role="status"><span>{tr(page.analysisEnabled===false?'尚未开启分析':'暂时无法确认分析设置')}</span><button className="explore-source-link" onClick={()=>setCapabilities(true)}>{tr('自动使用额度')}</button></div>}
     {page?.progress&&<div className="explore-notice" role="status"><span>{tr(page.progress.label)}</span>{page.progress.total!==undefined&&page.progress.total>0&&<span>{page.progress.completed} / {page.progress.total}</span>}{page.progress.updatedAt>0&&<span>{tr('更新于')} {date(page.progress.updatedAt)}</span>}</div>}
     {notice&&<div className="explore-notice" role="status">{notice}</div>}
     <div className="explore-workspace" data-selected={!!selected}>
@@ -142,6 +145,7 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
         </>:<div className="explore-empty"><Icon size={46} weight="thin"/><span>{tr('选择一条内容，查看详情和来源')}</span>{page?.notice&&<span className="explore-muted" style={{maxWidth:370}}>{tr(page.notice)}</span>}</div>}
       </main>
     </div>
+    {capabilities&&<ArkmeDetailShell title={tr('自动使用额度')} label={tr('自动使用额度')} onClose={()=>{setCapabilities(false);void load()}}><ArkmeAutomaticAiSettings accountScope={accountScope}/></ArkmeDetailShell>}
     {settings&&<ExploreSettingsDialog module={module} onClose={()=>setSettings(false)} onChanged={()=>void load()}/>}
     {mutation&&<ExploreMutationDialog module={module} request={mutation} detail={detail} onClose={()=>setMutation(undefined)} onSaved={()=>{const id=mutation.action.id;setMutation(undefined);setNotice(tr('已保存'));if(['delete','dismiss'].includes(id)){setSelected(undefined);setDetail(undefined)}else if(selected)void readDetail(selected);void load()}}/>}
     {source?.kind==='record'&&<ArkmeTimelineDetailDrawer item={source.item} canExtend={false} showOriginal={original} onToggleOriginal={()=>setOriginal(v=>!v)} onClose={()=>setSource(undefined)}/>}
@@ -166,7 +170,7 @@ function ExploreMutationDialog({module,request,detail,onClose,onSaved}:{module:E
   </form></ArkmeDetailShell>
 }
 
-function ExploreRecordingSource({source,onClose}:{source:Extract<ExploreSource,{kind:'recording'}>;onClose:()=>void}) {
+export function ExploreRecordingSource({source,onClose}:{source:Extract<ExploreSource,{kind:'recording'}>;onClose:()=>void}) {
   const auth=useSyncExternalStore(arkmeAuthStore.subscribe,arkmeAuthStore.getSnapshot,arkmeAuthStore.getSnapshot)
   const playback=useRecordingPlayback(auth.config?.mediaPath??'/arkme-self/api/media'),root=useRef<HTMLDivElement>(null)
   useEffect(()=>{root.current?.querySelector('[data-selected="true"]')?.scrollIntoView({block:'center'})},[])

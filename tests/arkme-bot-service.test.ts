@@ -425,7 +425,9 @@ describe('ArkmeService Bot owner adapter', () => {
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
       const body = JSON.parse(String(init?.body)) as unknown
-      requestBodies.push(body)
+      // Listing bots may also schedule an independent notification-preference
+      // query. Assert the credential owner's calls, regardless of timer order.
+      if (new URL(String(input)).origin === config.botBaseUrl) requestBodies.push(body)
       if (String(input).endsWith('/list')) {
         return json({ code: 200, data: { bots: [{
           bot_id: 'bot-owner-id-4', name: '总结', provider: 'openclaw', description: '', status: 'offline',

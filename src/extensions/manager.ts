@@ -1,3 +1,4 @@
+import { assertHostCapability, hostAllows } from '../host-policy.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -1215,6 +1216,7 @@ export class ArkmeExtensionManager {
   }
 
   async setEnabled(input: { agent: unknown; extensionId: string; enabled: boolean }): Promise<ArkmeExtensionEnabledResult> {
+    assertHostCapability('executableExtensionInstall')
     const result = this.enabledMutationTail.then(
       async () => await this.setEnabledNow(input),
       async () => await this.setEnabledNow(input),
@@ -1385,6 +1387,7 @@ export class ArkmeExtensionManager {
   }
 
   async updates(signal?: AbortSignal): Promise<ArkmeExtensionUpdateResolution[]> {
+    if (!hostAllows('executableExtensionInstall')) return []
     const installed = this.store.list()
     if (installed.length === 0) return []
     const result = await this.client.resolveUpdates(installed, signal)
@@ -1399,6 +1402,7 @@ export class ArkmeExtensionManager {
     signal?: AbortSignal
     onProgress?: (progress: ArkmeExtensionInstallProgress) => void
   }): Promise<ArkmeExtensionApplyResult> {
+    assertHostCapability('executableExtensionInstall')
     const extensionId = requiredId(input.extensionId, 'extension_id')
     let previous = this.store.get(extensionId)
     if (previous?.profilePackageName !== undefined && !this.profileContains(previous.profilePackageName, previous.enabled)) {
@@ -1450,6 +1454,7 @@ export class ArkmeExtensionManager {
     resolution: ArkmeExtensionInstallResolution,
     previous: ArkmeInstalledExtension | undefined,
   ): Promise<ArkmeExtensionApplyResult> {
+    assertHostCapability('executableExtensionInstall')
     const extensionId = resolution.extension_id
     const declaredArtifactSize = typeof resolution.artifact_size === 'number' && resolution.artifact_size > 0
       ? resolution.artifact_size
@@ -1685,6 +1690,7 @@ export class ArkmeExtensionManager {
     resolution: NativeBundleInstallResolution,
     previous: ArkmeInstalledExtension | undefined,
   ): Promise<ArkmeExtensionApplyResult> {
+    assertHostCapability('executableExtensionInstall')
     const extensionId = resolution.extension_id
     input.onProgress?.({
       phase: 'downloading', version: resolution.version, downloadedBytes: 0, totalBytes: resolution.bundle_size,
@@ -1816,6 +1822,7 @@ export class ArkmeExtensionManager {
     resolution: BundleInstallResolution,
     previous: ArkmeInstalledExtension | undefined,
   ): Promise<ArkmeExtensionApplyResult> {
+    assertHostCapability('executableExtensionInstall')
     const extensionId = resolution.extension_id
     input.onProgress?.({
       phase: 'downloading', version: resolution.version, downloadedBytes: 0, totalBytes: resolution.bundle_size,

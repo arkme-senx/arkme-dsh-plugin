@@ -1,3 +1,4 @@
+import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
@@ -42,6 +43,7 @@ export interface ArkmeCaptchaResult {
 }
 
 export interface ArkmeClientConfig {
+  hostPolicy?: Pick<ArkmeHostPolicy, 'distribution' | 'capabilities'>
   captchaId: string
   /** Public Baidu JavaScript API browser key, never a server secret. */
   baiduMapBrowserAk?: string
@@ -1470,6 +1472,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     aiPoints?: true
+    automaticCapabilitiesV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -3170,6 +3173,10 @@ export interface ArkmeRecordingSummaryModelRouteUpdate {
 }
 
 export interface ArkmeRecordingTranscriptItem {
+  /** Confirmed acoustic source, independent of who the voice belongs to. */
+  soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   itemId: string
   sessionId: string
   childId: string
@@ -3191,6 +3198,8 @@ export interface ArkmeRecordingTranscriptItem {
 export interface ArkmeRecordingWorkbenchItem {
   /** User-confirmed source, independent of the speaker identity. */
   soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   /** Read-only precise search locator; never an authorization reference. */
   searchIdentityHash?: string
   searchVersion?: string
@@ -3303,7 +3312,15 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   version: string
   undoRef?: string
   day?: ArkmeRecordingDay
+  /** Fresh transcript from the corrected source; day remains the system day. */
+  transcript?: ArkmeRecordingDay['transcript']
   warning?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResultQuery {
+  itemRef: string
+  action: 'apply' | 'undo'
+  idempotencyKey: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -4011,6 +4028,11 @@ export type ArkmePluginOperation =
   | 'recordings.entities.occurrences'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.correction.items'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
   | 'speaker-directory.list'
   | 'speaker-directory.seen'
@@ -4082,6 +4104,8 @@ export type ArkmePluginOperation =
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
+  | 'account.capabilities.query'
+  | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
   | 'account.usage.tokens'
@@ -4136,6 +4160,11 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'calendar.day-review.state'
+  | 'calendar.day-review.create'
+  | 'calendar.day-review.result'
+  | 'calendar.day-review.source'
+  | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'
   | 'user.profile.refresh'
@@ -4410,7 +4439,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'

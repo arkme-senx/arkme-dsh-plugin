@@ -32,6 +32,8 @@ export interface ExplorePage {
   nextCursor?: string
   contextRef: string
   actions: ExploreAction[]
+  /** null means authorization could not be read; saved content remains readable. */
+  analysisEnabled?: boolean | null
   progress?: ExploreProgress
   notice?: string
   emptyMessage?: string
