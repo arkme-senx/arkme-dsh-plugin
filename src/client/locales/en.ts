@@ -1,5 +1,41 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+尚未开启分析|Analysis is off
+暂时无法确认分析设置|Analysis settings are temporarily unavailable
+「探索 → 个人档案」|Explore → Personal profile
+手机快记列表或详情|Mobile: note list or details
+手机聊天页面|Mobile: chat page
+左侧「安排」|Plans in the left navigation
+「探索 → 目标」|Explore → Goals
+开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
+额度使用说明|AI allowance usage
+AI 自动分析|Automatic AI analysis
+自动使用额度|Automatic allowance usage
+目标|Goals
+自动识别设置|Automatic recognition settings
+开启功能|Enable feature
+自动整理个人档案|Automatically organize personal profile
+阿森有想法（快记）|Asen’s thoughts (notes)
+阿森有想法（聊天）|Asen’s thoughts (chats)
+自动识别安排|Automatically identify plans
+阿森会阅读你开启后新增的快记，在有想法时给出回应。|Asen reads notes added after you enable this feature and responds when it has something to offer.
+阿森会根据你开启后的聊天内容给出想法，仅你自己可见。|Asen offers thoughts on chats after you enable this feature. Only you can see them.
+使用说明|Usage details
+个人档案已授权，重试启动分析|Profile authorized. Retry starting analysis
+操作未完成，已重新读取当前设置。请检查后重试。|The operation did not complete. Current settings have been reloaded. Review them and try again.
+无法读取当前设置，请重试|Could not load current settings. Please try again.
+正在读取设置…|Loading settings…
+正在开启…|Enabling…
+同意并开启|Agree and enable
+开启自动 AI|Enable automatic AI
+目标自动更新|Automatic goal updates
+聊天建议|Chat suggestions
+快记建议|Note suggestions
+个人档案|Personal profile
+根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
+持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
+自动 AI|Automatic AI
 当天录音实体|Entities from this recording day
 实体|Entities
 查看录音实体|View recording entities

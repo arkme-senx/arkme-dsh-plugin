@@ -1,3 +1,4 @@
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeArrangementItem } from '../src/types.js'
@@ -570,4 +571,19 @@ it('does not let a late first load overwrite a newer creation refresh or its cac
  expect(column('identified').findAllByType('article').map(n=>n.props['data-arrangement-ref'])).toEqual(['new'])
  const pages=cacheMocks.save.mock.calls.flatMap(call=>Object.values(call[1] as object))
  expect(pages.some((p:any)=>p.items.some((row:any)=>row.arrangementRef==='old'))).toBe(false)
+})
+
+it('opens automatic analysis settings without a capability write', async () => {
+  const opened = vi.fn()
+  const unbind = arkmeUi.bindSettingsOpener(opened)
+  mocks.call.mockResolvedValue({ items: [], total: 0 })
+  try {
+    await act(async () => { view = create(<ArkmeArrangementBoard accountScope="prod:guide" />) })
+    const before = mocks.call.mock.calls.length
+    const link = view!.root.findAllByType('button').find(button => button.children.includes('自动识别设置'))
+    expect(link).toBeDefined()
+    await act(async () => { link!.props.onClick() })
+    expect(opened).toHaveBeenCalledWith('arkme-usage')
+    expect(mocks.call.mock.calls.length).toBe(before)
+  } finally { unbind() }
 })
