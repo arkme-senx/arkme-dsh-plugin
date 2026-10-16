@@ -167,7 +167,10 @@ describe('durable recording presence writer', () => {
     expect(reason).toBe('😀'.repeat(32))
   })
   it('catches timer persistence failure and retries on the next tick', async () => {
-    const h = await setup(); await h.writer.report(scope, start); await h.wait(1); await new Promise(resolve => setTimeout(resolve, 5))
+    const h = await setup(); await h.writer.report(scope, start); await h.wait(1)
+    // The HTTP call precedes its durable settlement. Inject failure only after
+    // that write finishes, so a slow disk cannot consume the next-tick fault.
+    await vi.waitFor(() => expect((h.writer as any).sending).toBe(false))
     h.setNow(startedAt + 11000)
     const save = vi.spyOn(h.writer as any, 'save').mockRejectedValueOnce(new Error('disk full'))
     ;(h.writer as any).schedule(1)

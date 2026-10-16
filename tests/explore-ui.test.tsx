@@ -60,3 +60,18 @@ describe('Explore interactions',()=>{
     expect(navigate).not.toHaveBeenCalled();expect(host.querySelector('h1')?.textContent).toBe('档案 b')
   })
 })
+
+it('opens the existing consent controls without creating a task, including when results already exist',async()=>{
+  const original=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async(op,input)=>{
+    if(op==='explore.list')return {...page,analysisEnabled:false}
+    if(op==='account.capabilities.query')return {accountScope:input.expectedAccountScope,settings:[{key:'personal_profile',title:'个人档案',enabled:false,version:0,enabledAt:0}]}
+    return original(op,input)
+  })
+  await renderSurface()
+  expect(host.textContent).toContain('尚未开启分析')
+  expect(host.textContent).toContain('真实保存的内容')
+  await click('自动使用额度')
+  expect(document.querySelector('[role="switch"]')).not.toBeNull()
+  expect(mocks.call.mock.calls.some(x=>x[0]==='explore.mutate'||x[0]==='account.capabilities.update')).toBe(false)
+})

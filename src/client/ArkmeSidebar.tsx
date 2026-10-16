@@ -8967,7 +8967,8 @@ export function ArkmeSurface({
           <ArkmeInterwovenReadProvider sourceRef={source.sourceRef} scope={`${authenticatedAccountKey}:${conversationKey}`}
             enabled={activeConversation && authenticated && source.kind === 'private_chat'}>
           <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
-          {isArkmeSelfWorkspaceSource(source) && recordMutationSnapshot.receipts.slice(-1).map(receipt => <RecordMutationReceipt
+          {recordMutationSnapshot.receipts.filter(receipt => receipt.source.sourceKey && source.sourceKey
+            ? receipt.source.sourceKey === source.sourceKey : receipt.source.sourceRef === source.sourceRef).slice(-1).map(receipt => <RecordMutationReceipt
             key={receipt.id} receipt={receipt} owner={recordMutations} onView={activateSource}
             onRefresh={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => undefined) }} />)}
           <div className="arkme-conversation-body" data-arkme-width-viewport ref={bodyRef} style={{

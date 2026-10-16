@@ -1,3 +1,5 @@
+import { CapabilityService } from './services/capability-service.js'
+import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
@@ -30,6 +32,7 @@ import type { TeamAppOperation } from './team-app-contract.js'
 import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
+import { CalendarDayReviewService } from './services/calendar-day-review-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
 import { ArkmeDesktopScreenshot } from './desktop-screenshot.js'
 import { RecordEditHistoryService } from './services/record-edit-history-service.js'
@@ -463,6 +466,7 @@ export class ArkmeService {
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
+  private readonly calendarDayReview: CalendarDayReviewService
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -659,6 +663,7 @@ export class ArkmeService {
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
+    this.calendarDayReview = new CalendarDayReviewService(this.runtime, this.recording, this.record, this.source, this.callHistory, this.privacy)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
@@ -726,6 +731,8 @@ export class ArkmeService {
   async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
   async membershipCurrent(expectedUserId: number) { return await this.membershipOwner.current(expectedUserId) }
   async membershipCatalog(expectedUserId: number) { return await this.membershipOwner.catalog(expectedUserId) }
+  async automaticCapabilities(expectedScope?: string, signal?: AbortSignal) { return new CapabilityService(this.runtime).query(expectedScope, signal) }
+  async updateAutomaticCapability(input: ArkmeCapabilityUpdate, expectedScope: string, signal?: AbortSignal) { return new CapabilityService(this.runtime).update(input, expectedScope, signal) }
   async aiPointsAccount(expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).account(expectedScope, signal) }
   async aiPointsConsumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).consumption(query, expectedScope, signal) }
 
@@ -799,6 +806,11 @@ export class ArkmeService {
     }) })
     return await this.dayRecapService.generate(input, signal)
   }
+  async dayReviewState(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.state(input, signal) }
+  async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
+  async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
+  async dayReviewSource(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.source(input, signal) }
+  async dayReviewPrompts(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prompts(input, signal) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
     return this.realtime.subscribeChatRealtime(listener)
@@ -993,6 +1005,7 @@ export class ArkmeService {
         userProfile: true,
         accountSettings: true,
         aiPoints: true,
+        automaticCapabilitiesV1: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,
@@ -1153,6 +1166,7 @@ export class ArkmeService {
     this.media.dispose()
     this.recordingEntitiesOwner.dispose()
     this.explore.dispose()
+    this.calendarDayReview.dispose()
     this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()
@@ -1221,6 +1235,10 @@ export class ArkmeService {
   }
   async resumeRecordingPresence(): Promise<void> { await this.recordingPresenceWriter.resumeCurrent() }
   async reportRecordingPresence(accountKey: string, fact: CapturePresenceFact): Promise<void> { await this.recordingPresenceWriter.report(accountKey, fact) }
+  /** @internal Account-scoped, read-only local aggregation. */
+  async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal) { return await this.recording.recordingTotalsIndex(account, toMillis, offset, signal) }
+  /** @internal Account-scoped, read-only local aggregation. */
+  async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsBucket(account, dateStamp, signal) }
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
@@ -1250,6 +1268,8 @@ export class ArkmeService {
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string) { return await this.recording.recordingSpeakerMembers(speakerRef, signal, expectedVersion) }
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> { return await this.recording.recordingSpeakerRecommendation(itemRef, signal) }
   async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) { return this.recording.recordingSpeakerCorrectionItems(query, signal) }
+  async recordingSpeakerCorrectionResult(query: import('./types.js').ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionResult(query, signal) }
   async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionContext(itemRef, signal) }
   async applyRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.applyRecordingSpeakerCorrection(input, signal) }
   async undoRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal) { return await this.recording.undoRecordingSpeakerCorrection(input, signal) }

@@ -366,7 +366,7 @@ it('searches every occurrence, navigates cyclically, clears on date changes, and
   for (const label of ['总结', '时间轴']) {
     await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes(label))!.props.onClick() })
     const pane = renderer.root.findByProps({ 'aria-label': '录音内容' }).parent!
-    expect(pane.props.style.gridTemplateRows).toBe('40px minmax(0,1fr)')
+    expect(pane.props.style.gridTemplateRows).toBe('32px minmax(0,1fr)')
   }
 })
 

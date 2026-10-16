@@ -1470,6 +1470,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     aiPoints?: true
+    automaticCapabilitiesV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -3144,6 +3145,7 @@ export interface ArkmeRecordingCalendarMonth {
   fromStamp: number
   toStamp: number
   days: ArkmeRecordingCalendarDay[]
+  totals?: import('./recording-total-metrics.js').RecordingTotalMetrics
 }
 
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
@@ -3169,6 +3171,10 @@ export interface ArkmeRecordingSummaryModelRouteUpdate {
 }
 
 export interface ArkmeRecordingTranscriptItem {
+  /** Confirmed acoustic source, independent of who the voice belongs to. */
+  soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   itemId: string
   sessionId: string
   childId: string
@@ -3190,6 +3196,8 @@ export interface ArkmeRecordingTranscriptItem {
 export interface ArkmeRecordingWorkbenchItem {
   /** User-confirmed source, independent of the speaker identity. */
   soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   /** Read-only precise search locator; never an authorization reference. */
   searchIdentityHash?: string
   searchVersion?: string
@@ -3302,7 +3310,15 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   version: string
   undoRef?: string
   day?: ArkmeRecordingDay
+  /** Fresh transcript from the corrected source; day remains the system day. */
+  transcript?: ArkmeRecordingDay['transcript']
   warning?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResultQuery {
+  itemRef: string
+  action: 'apply' | 'undo'
+  idempotencyKey: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -3364,14 +3380,29 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
+export interface ArkmeRecordingStorageMetrics {
+  /** Recorded VAD archive + playback clip bytes, not live OSS retained-object inventory. */
+  bytes: number
+  archiveBytes: number
+  clipBytes: number
+  state: 'ready' | 'partial' | 'processing' | 'unavailable'
+  confirmedCount: number
+  pendingCount: number
+  unknownCount: number
+}
+
 export interface ArkmeRecordingDailyMetrics {
-  /** System ASR input in owned recordings, clipped to the day; includes recorded retries. */
+  /** New upload-scoped storage contract; old hosts cannot supply it. */
+  storage?: ArkmeRecordingStorageMetrics
+  /** System ASR input in uploaded recordings, clipped to the day; includes recorded retries. */
   asrInputDurationMillis: number
   asrInputState: 'ready' | 'partial' | 'processing' | 'unavailable'
   asrInputEstimatedCount: number
   asrInputConfirmedCount: number
   asrInputPendingCount: number
   asrInputUnknownCount: number
+  /** Completed children whose API explicitly lacks historical input telemetry. */
+  asrInputMissingHistoryCount?: number
   /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
@@ -3995,6 +4026,11 @@ export type ArkmePluginOperation =
   | 'recordings.entities.occurrences'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.correction.items'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
   | 'speaker-directory.list'
   | 'speaker-directory.seen'
@@ -4066,6 +4102,8 @@ export type ArkmePluginOperation =
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
+  | 'account.capabilities.query'
+  | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
   | 'account.usage.tokens'
@@ -4120,6 +4158,11 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'calendar.day-review.state'
+  | 'calendar.day-review.create'
+  | 'calendar.day-review.result'
+  | 'calendar.day-review.source'
+  | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'
   | 'user.profile.refresh'
@@ -4367,6 +4410,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -4392,7 +4437,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'
