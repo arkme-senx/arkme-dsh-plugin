@@ -29,6 +29,7 @@ import {
   type RecordingDirectoryCandidate,
   type RecordingDirectorySnapshot,
 } from '../recording-import-contract.js'
+import { RecordingImportQueue } from '../recording-import-queue.js'
 import { RecordingImportCoordinator, type RecordingImportGateway } from '../recording-import-coordinator.js'
 import { openRecordingImportRef, sealRecordingImportRef } from '../recording-import-ref.js'
 import { recordingImportFileNameKey } from '../recording-import-shared.js'
@@ -176,7 +177,7 @@ function recordingImportErrorCode(error: unknown): string | undefined {
 }
 
 const RECORDING_IMPORT_VISIBLE_LIMIT = 20
-const RECORDING_IMPORT_UNRESOLVED_LIMIT = 20
+const RECORDING_IMPORT_UPLOAD_CONCURRENCY = 2
 const RECORDING_IMPORT_HISTORY_MAX_PAGE_SIZE = 50
 const RECORDING_IMPORT_SESSION_REF_PREFIX = 'arkme-recording-import-session-v1'
 type ArkmeRecordingPrivateTranscriptSection = ArkmeRecordingTranscriptSection<ArkmeRecordingPrivateTranscriptItem>
@@ -224,6 +225,8 @@ export class RecordingService {
   private readonly importRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly importRetryAttempts = new Map<string, number>()
   private readonly importCommands = new Set<string>()
+  private readonly importQueue = new RecordingImportQueue(RECORDING_IMPORT_UPLOAD_CONCURRENCY)
+  private importDisposed = false
   private readonly importRuns = new Map<string, {
     controller: AbortController
     promise: Promise<void>
@@ -242,7 +245,12 @@ export class RecordingService {
     private readonly runtime: ServiceRuntime,
     dependencies: RecordingServiceDependencies,
   ) {
-    this.unsubscribeSpeakerAccount = runtime.subscribeAccountScope(() => { this.speakerCacheRevision++ })
+    this.unsubscribeSpeakerAccount = runtime.subscribeAccountScope(() => {
+      this.speakerCacheRevision++
+      for (const run of this.importRuns.values()) run.controller.abort()
+      for (const timer of this.importRetryTimers.values()) clearTimeout(timer)
+      this.importRetryTimers.clear()
+    })
     this.profile = dependencies.profile
     this.media = dependencies.media
     this.userCandidates = dependencies.userCandidates
@@ -258,6 +266,7 @@ export class RecordingService {
   }
 
   dispose(): void {
+    this.importDisposed = true
     this.speakerCacheRevision++
     this.unsubscribeSpeakerAccount()
     for (const timer of this.importRetryTimers.values()) clearTimeout(timer)
@@ -458,6 +467,12 @@ export class RecordingService {
   async directorySpeakerRef(speakerId: string, viewerUserId: number): Promise<string> {
     return this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
       version: 1, viewerUserId, target: { kind: 'speaker', speakerId },
+    }, await this.recordingRefKey('arkme-recording-speaker-v1'))
+  }
+  /** Host verified contact candidate; assignment revalidates it against the current contact owner. */
+  async directoryUserSpeakerRef(userId: number, viewerUserId: number): Promise<string> {
+    return this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
+      version: 1, viewerUserId, target: { kind: 'arkme-user', userId },
     }, await this.recordingRefKey('arkme-recording-speaker-v1'))
   }
 
@@ -1074,9 +1089,17 @@ export class RecordingService {
     return { local, existingFileNames, owner }
   }
 
+  async recordingImportReceipt(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null> {
+    this.assertWorkbenchEnabled()
+    const session = await this.requireRecordingImportSession(expectedUserId)
+    const job = (await this.runtime.stateStore.listRecordingImportJobs(session.userId)).find(row => row.clientTaskId === taskId)
+    return job ? toPublicRecordingImportJob(job, await this.recordingImportRef(job)) : null
+  }
+
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
+      clientTaskId?: string
       batch?: RecordingImportBatch
       fileName: string
       mimeType: string
@@ -1115,7 +1138,11 @@ export class RecordingService {
     const recordingKind = metadata.recordingKind ?? 0
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
-    const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity)
+    const receipt = metadata.clientTaskId ? currentJobs.find(job => job.clientTaskId === metadata.clientTaskId) : undefined
+    if (receipt && (!sameRecordingImportIdentity(receipt, identity) || receipt.recordingKind !== recordingKind || !sameRecordingImportBatch(receipt.batch, metadata.batch))) {
+      throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的文件或参数已改变，请核对后重新选择', false, 409)
+    }
+    const existing = receipt ?? unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity)
       && job.recordingKind === recordingKind && sameRecordingImportBatch(job.batch, metadata.batch))
     if (existing !== undefined) {
       const importRef = await this.recordingImportRef(existing)
@@ -1132,14 +1159,6 @@ export class RecordingService {
         409,
       )
     }
-    if (unresolvedJobs.length >= RECORDING_IMPORT_UNRESOLVED_LIMIT) {
-      throw new ArkmePluginError(
-        'recording-import-pending-limit',
-        '待处理录音过多，请先重试或取消现有任务',
-        false,
-        409,
-      )
-    }
     signal?.throwIfAborted()
     const probe = await this.recordingImportSource.inspect(sourceHandle, metadata)
     const signingKey = await this.runtime.stateStore.uniqueCode()
@@ -1151,6 +1170,7 @@ export class RecordingService {
     const now = Date.now()
     const job: RecordingImportJob = {
       jobId: randomUUID(),
+      ...(metadata.clientTaskId ? { clientTaskId: metadata.clientTaskId } : {}),
       ...(metadata.batch ? { batch: { ...metadata.batch }, createRequestUID: recordingCreateRequestUID(now) } : {}),
       userId: session.userId,
       revision: 1,
@@ -1172,7 +1192,6 @@ export class RecordingService {
     const admission = await this.runtime.stateStore.admitRecordingImportJob(
       session.userId,
       job,
-      RECORDING_IMPORT_UNRESOLVED_LIMIT,
       signal,
     )
     if (admission.kind === 'existing') {
@@ -1183,14 +1202,6 @@ export class RecordingService {
       throw new ArkmePluginError(
         'recording-import-duplicate-in-progress',
         '同名录音正在导入，请等待当前任务完成或取消后重试',
-        false,
-        409,
-      )
-    }
-    if (admission.kind === 'limit') {
-      throw new ArkmePluginError(
-        'recording-import-pending-limit',
-        '待处理录音过多，请先重试或取消现有任务',
         false,
         409,
       )
@@ -1239,7 +1250,7 @@ export class RecordingService {
     }
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
-    for (const job of jobs) {
+    for (const job of [...jobs].sort((a, b) => a.createdAtMillis - b.createdAtMillis)) {
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
     }
     const newestFirst = (left: RecordingImportJob, right: RecordingImportJob) => right.createdAtMillis - left.createdAtMillis
@@ -1411,7 +1422,10 @@ export class RecordingService {
       const priorRun = this.importRuns.get(jobId)?.promise
       const controller = new AbortController()
       const run = (priorRun ?? Promise.resolve())
-        .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
+        .then(async () => { await this.importQueue.run(async () => {
+          const result = await this.recordingImports.run(userId, jobId, controller.signal)
+          if (!controller.signal.aborted) this.scheduleRecordingImportRetry(result)
+        }, controller.signal) })
       this.trackRecordingImportRun(jobId, resumed.revision, run, controller)
       return toPublicRecordingImportJob(resumed, importRef)
     } finally {
@@ -1447,27 +1461,28 @@ export class RecordingService {
     if (this.runtime.config.recordingWorkbenchEnabled === false) return
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
-    for (const job of jobs) {
+    for (const job of [...jobs].sort((a, b) => a.createdAtMillis - b.createdAtMillis)) {
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
       else this.scheduleRecordingImportRetry(job)
     }
   }
 
   private runRecordingImport(job: RecordingImportJob): void {
-    if (this.importCommands.has(job.jobId) || this.importRuns.has(job.jobId)) return
+    if (this.importDisposed || this.importCommands.has(job.jobId) || this.importRuns.has(job.jobId)) return
     const controller = new AbortController()
     this.trackRecordingImportRun(
       job.jobId,
       job.revision,
-      this.recordingImports.run(job.userId, job.jobId, controller.signal).then(result => {
+      this.importQueue.run(async () => {
+        const result = await this.recordingImports.run(job.userId, job.jobId, controller.signal)
         if (!controller.signal.aborted) this.scheduleRecordingImportRetry(result)
-      }),
+      }, controller.signal),
       controller,
     )
   }
 
   private scheduleRecordingImportRetry(job: RecordingImportJob): void {
-    if (job.phase !== 'failed' || job.retryable !== true || job.errorCode === 'recording_storage_exhausted'
+    if (this.importDisposed || job.phase !== 'failed' || job.retryable !== true || job.errorCode === 'recording_storage_exhausted'
       || job.errorCode?.startsWith('login-') || job.errorCode?.includes('account-')) return
     if (this.importRetryTimers.has(job.jobId)) return
     const attempt = this.importRetryAttempts.get(job.jobId) ?? 0

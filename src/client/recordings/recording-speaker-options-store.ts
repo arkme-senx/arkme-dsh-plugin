@@ -3,6 +3,7 @@ import { callArkme } from '../api.js'
 import { arkmeAuthStore } from '../auth-store.js'
 import { ResourceStore, resourceCancelled } from '../resource-store.js'
 import { recognizedSpeakerDirectory } from '../recognized-speaker-directory.js'
+import { clearPeopleDirectoryCache } from '../explore/usePeopleDirectory.js'
 
 export function recordingSpeakerAccount(auth: ArkmeAuthSnapshot | undefined): string | undefined {
   return auth?.status === 'authenticated' && auth.userId !== undefined
@@ -93,6 +94,7 @@ async function mutateRecordingSpeaker(
       throw error
     } finally {
       if (context.current()) {
+        clearPeopleDirectoryCache()
         if (binding.account !== undefined) { recognizedSpeakerDirectory.invalidate(binding.account) }
         // A failed command may already have created a speaker. Reconcile reads; never retry the write.
         recordingSpeakerOptions.reset()

@@ -1,4 +1,4 @@
-import { BlobSource, Input, MP3, MP4, WAVE } from 'mediabunny'
+import { BlobSource, CustomSource, Input, MP3, MP4, WAVE } from 'mediabunny'
 import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
@@ -33,16 +33,22 @@ export function validateArkmeRecordingSelection(file: File): ArkmeRecordingSelec
   return { ok: true, format }
 }
 
+const nativeReaders = new WeakMap<File, (start: number, end: number) => Promise<Uint8Array>>()
+export function registerNativeRecordingFile(file: File, read: (start: number, end: number) => Promise<Uint8Array>): void {
+  nativeReaders.set(file, read)
+}
+
 async function probeRecordingFile(file: File): Promise<ArkmeRecordingSelectionProbe> {
   let input: Input | undefined
   try {
+    const nativeRead = nativeReaders.get(file)
     const imaAdpcm = await probeImaAdpcmWave({
       size: file.size,
-      read: async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer()),
+      read: async (offset, length) => nativeRead ? await nativeRead(offset, offset + length) : new Uint8Array(await file.slice(offset, offset + length).arrayBuffer()),
     })
     if (imaAdpcm !== undefined) return { format: 'WAV', durationMillis: imaAdpcm.durationMillis }
 
-    input = new Input({ source: new BlobSource(file), formats: [WAVE, MP3, MP4] })
+    input = new Input({ source: nativeRead ? new CustomSource({ getSize: () => file.size, read: nativeRead }) : new BlobSource(file), formats: [WAVE, MP3, MP4] })
     if (!await input.canRead()) throw new Error('unreadable')
     const actualFormat = await input.getFormat()
     const format: ArkmeRecordingSelectionFormat | undefined = actualFormat === WAVE
@@ -80,6 +86,6 @@ export async function inspectArkmeRecordingSelection(
     }
     return { ok: true, format: probed.format, durationMillis: probed.durationMillis }
   } catch {
-    return { ok: false, message: '录音文件校验失败，请确认文件未损坏' }
+    return { ok: false, message: '无法读取或校验录音，请确认文件已下载且可以打开后重试' }
   }
 }

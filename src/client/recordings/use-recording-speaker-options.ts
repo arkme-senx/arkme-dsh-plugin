@@ -33,6 +33,8 @@ export function useRecordingSpeakerOptions(item: ArkmeRecordingWorkbenchItem) {
     return await assignRecordingSpeaker(key, binding, { scope, speakerRef: candidate.speakerRef })
   }
   return {
+    accountScope: account,
+    savePerson: async (scope: 'item' | 'speaker', speakerRef: string) => key === undefined || account === undefined ? undefined : await assignRecordingSpeaker(key, binding, { scope, speakerRef }),
     contextKey: key, options, ready, error, save,
     unassign: async (scope: 'item' | 'speaker') => key === undefined || !item.assignedSpeakerOptionKey
       ? undefined : await unassignRecordingSpeaker(key, binding, scope, scope === 'item' ? 1 : item.sameSpeakerItemCount),

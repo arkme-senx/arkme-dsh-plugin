@@ -67,7 +67,7 @@ function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
 
 function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
   const expiredTerminalJobs = Object.values(jobs)
-    .filter(candidate => !isUnresolvedRecordingImportJob(candidate))
+    .filter(candidate => !isUnresolvedRecordingImportJob(candidate) && (!candidate.clientTaskId || candidate.createdAtMillis < Date.now() - 30 * 24 * 60 * 60_000))
     .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
     .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
   for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
@@ -88,6 +88,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
+    ...(typeof source.clientTaskId === 'string' ? { clientTaskId: source.clientTaskId } : {}),
     ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
     ...(validRecordingCreateRequestUID(source.createRequestUID) ? { createRequestUID: source.createRequestUID } : {}),
     userId: source.userId as number,
@@ -645,19 +646,17 @@ export class ArkmeStateStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): Promise<RecordingImportAdmission> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
-    if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
-      throw new Error('Recording import unresolved limit must be a positive integer')
-    }
     let admission: RecordingImportAdmission | undefined
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
         .filter(isUnresolvedRecordingImportJob)
-      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
+      const receipt = job.clientTaskId ? Object.values(jobs).find(candidate => candidate.clientTaskId === job.clientTaskId) : undefined
+      if (receipt && (!sameRecordingImportIdentity(receipt, job) || receipt.recordingKind !== job.recordingKind || !sameRecordingImportBatch(receipt.batch, job.batch))) throw new Error('Recording import task identity conflict')
+      const existing = receipt ?? unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return
@@ -665,10 +664,6 @@ export class ArkmeStateStore {
       const fileNameKey = recordingImportFileNameKey(job.fileName)
       if (unresolved.some(candidate => recordingImportFileNameKey(candidate.fileName) === fileNameKey)) {
         admission = { kind: 'duplicate-file-name' }
-        return
-      }
-      if (unresolved.length >= unresolvedLimit) {
-        admission = { kind: 'limit' }
         return
       }
       jobs[job.jobId] = cloneRecordingImportJob(job)
