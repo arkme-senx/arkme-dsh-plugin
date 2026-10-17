@@ -20,6 +20,7 @@ export interface RecordingImportUploadProgress {
 }
 
 export interface RecordingImportUploadOptions {
+  clientTaskId?: string
   batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
@@ -66,6 +67,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
     request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.clientTaskId) request.setRequestHeader('X-Arkme-Import-Task', options.clientTaskId)
     if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
       options.onProgress?.({
@@ -98,6 +100,16 @@ export async function uploadArkmeRecording(
     options.onProgress?.({ uploadedBytes: 0, totalBytes: file.size })
     request.send(file)
   })
+}
+
+/** Check durable Host receipt before reading or re-uploading a restored source. */
+export async function lookupArkmeRecordingImport(importPath: string, taskId: string, signal: AbortSignal): Promise<PublicRecordingImportJob | null> {
+  const response = await fetch(importPath, { method: 'POST', signal, headers: {
+    'X-Arkme-Import-Lookup': '1', 'X-Arkme-Import-Task': taskId,
+  } })
+  const result = await response.json() as { ok: boolean; value: PublicRecordingImportJob | null; error?: { message?: string } }
+  if (!response.ok || !result.ok) throw new Error(result.error?.message ?? '导入状态核对失败，请重试')
+  return result.value
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation

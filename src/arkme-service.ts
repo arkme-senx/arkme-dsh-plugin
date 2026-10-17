@@ -1,3 +1,4 @@
+import { PeopleService } from './services/people-service.js'
 import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
@@ -379,6 +380,7 @@ export class ArkmeService {
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
   private readonly statistics: StatisticsService
+  private readonly people: PeopleService
   private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
@@ -448,8 +450,11 @@ export class ArkmeService {
   async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
   async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
   async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
-  async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal) { return this.explore.detail(ref, cursor, signal) }
+  async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
+  async exploreEnrich(refs: unknown, signal?: AbortSignal) { return this.explore.enrich(refs, signal) }
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
+  async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
+  async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
   private readonly interwoven: InterwovenService
@@ -675,6 +680,7 @@ export class ArkmeService {
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
+    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
     this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
     this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
     this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
@@ -1314,7 +1320,8 @@ export class ArkmeService {
   async unassignRecordingSpeaker(input: { itemRef: string; scope: 'item' | 'speaker'; expectedCount: number }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.unassignRecordingSpeaker(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
   /** @internal Built-in loopback UI only. */ async recordingImportPreflight(fileNames: string[], signal?: AbortSignal): Promise<{ duplicateFileNames: string[] }> { return await this.recording.recordingImportPreflight(fileNames, signal) }
-  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async recordingImportReceipt(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null> { return await this.recording.recordingImportReceipt(taskId, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
   async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)

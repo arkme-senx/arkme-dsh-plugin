@@ -965,10 +965,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
-    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit, signal)
+    return await this.operationalState.admitRecordingImportJob(userId, job, signal)
   }
 
   async replaceRecordingImportJob(

@@ -8115,6 +8115,7 @@ export function ArkmeSurface({
       importPath={authStoreSnapshot.config?.recordingImportPath ?? '/arkme-self/api/recording/import'}
       defaultStartAtMillis={recordingImportDefaultStartAtMillis}
       currentUserId={authenticatedUserId}
+      accountKey={authenticatedAccountKey ?? `prod:${authenticatedUserId}`}
       foreground={recordingImportForeground}
       onStatusChange={updateRecordingImportStatus}
       onAccepted={() => { setRecordingRefreshRevision(value => value + 1) }}

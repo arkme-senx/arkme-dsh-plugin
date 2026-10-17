@@ -62,6 +62,73 @@ describe('Explore interactions',()=>{
     await act(async()=>pendingSource!({kind:'conversation',source:{},itemUid:'old',sendAtMillis:1}))
     expect(navigate).not.toHaveBeenCalled();expect(host.querySelector('h1')?.textContent).toBe('档案 b')
   })
+  it('shows relationship information while records are pending and restores a recently viewed detail',async()=>{
+    let finishRecords!:(value:unknown)=>void
+    const relationDetail={item:items[0],fields:[{label:'别名',value:'已返回的别名'}],evidence:[],actions:[]}
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.part==='overview')return relationDetail
+      if(op==='explore.detail'&&input.part==='records')return new Promise(resolve=>{finishRecords=resolve})
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('已返回的别名')
+    expect(host.textContent).toContain('正在读取相关记录')
+    expect(host.textContent).not.toContain('暂未提供可查看的来源依据')
+    const source={key:'source',label:'来源',speaker:'',text:'独立返回的原文',date:0,anchor:false}
+    await act(async()=>finishRecords({...relationDetail,evidence:[source,source]}))
+    expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
+    const count=mocks.call.mock.calls.filter(x=>x[0]==='explore.detail').length
+    await click('返回列表')
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('独立返回的原文')
+    expect(mocks.call.mock.calls.filter(x=>x[0]==='explore.detail')).toHaveLength(count)
+  })
+  it('keeps records visible when the independent overview fails and retries only that region',async()=>{
+    let attempts=0
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.part==='overview'){attempts++;throw new Error('人物信息暂不可用')}
+      if(op==='explore.detail')return {item:items[0],fields:[],evidence:[{key:'source',label:'来源',speaker:'',text:'已加载原文',date:0,anchor:false}],actions:[]}
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('已加载原文');expect(host.textContent).toContain('人物信息暂不可用')
+    await click('重试人物信息')
+    expect(attempts).toBe(2)
+    expect(mocks.call.mock.calls.filter(x=>x[1]?.part==='records')).toHaveLength(1)
+  })
+  it('does not allow a late relationship response to overwrite a different selection',async()=>{
+    let finishOld!:(value:unknown)=>void
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.ref==='a'&&input.part==='records')return new Promise(resolve=>{finishOld=resolve})
+      if(op==='explore.detail')return {item:items.find(x=>x.ref===input.ref),fields:[],evidence:[],actions:[]}
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    const oldCall=mocks.call.mock.calls.find(x=>x[1]?.ref==='a'&&x[1]?.part==='records')!
+    await act(async()=>host.querySelectorAll<HTMLButtonElement>('.explore-row')[1]!.click())
+    await act(async()=>finishOld({item:items[0],fields:[],evidence:[{key:'old',text:'过期结果'}],actions:[]}))
+    expect(oldCall[2].aborted).toBe(true)
+    expect(host.querySelector('h1')?.textContent).toBe('档案 b');expect(host.textContent).not.toContain('过期结果')
+  })
+  it('renders list rows before optional remark enrichment and patches them without reloading detail',async()=>{
+    let finishRemarks!:(value:unknown)=>void
+    const original=mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations',needsEnrichment:true}
+      if(op==='explore.enrich')return new Promise(resolve=>{finishRemarks=resolve})
+      return original(op,input)
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    expect(host.querySelectorAll('.explore-row')).toHaveLength(2)
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    const reads=mocks.call.mock.calls.filter(x=>x[0]==='explore.detail').length
+    await act(async()=>finishRemarks({items:[{key:'a',linkedContactName:'备注姓名'}]}))
+    expect(host.textContent).toContain('备注姓名')
+    expect(mocks.call.mock.calls.filter(x=>x[0]==='explore.detail')).toHaveLength(reads)
+  })
 })
 
 it('opens the existing consent controls without creating a task, including when results already exist',async()=>{
