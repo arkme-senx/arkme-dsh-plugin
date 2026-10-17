@@ -165,11 +165,12 @@ export class ExploreService {
       const rows = all.filter(x => (!filter || number(x.type) === Number(filter)) && (!query || [text(x.name),remarks.get(number(x.linked_user_id))??'',...strings(x.aliases)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase())))
       const version = await this.key(session,rows.map(x=>[x.entity_id,x.last_mention_at,x.mention_count,x.name]))
       if (cursor.version && cursor.version !== version) throw missing()
-      const selected = rows.slice(offset,offset+PAGE)
+      const limit = Math.max(PAGE, Math.min(10000, Math.trunc(number(input.limit)) || PAGE))
+      const selected = rows.slice(offset,offset+limit)
       page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session,{linkedUserId:number(x.linked_user_id)})))
       page.needsEnrichment=selected.some(x=>number(x.linked_user_id)>0&&(this.remarksCache.get(number(x.linked_user_id))?.until??0)<Date.now())
       page.total = rows.length
-      if (offset+PAGE < rows.length) next={offset:offset+PAGE,version}
+      if (offset+limit < rows.length) next={offset:offset+limit,version}
     } else if (module === 'events') {
       const raw = await this.request(module,'/api/v1/event/stream',{filter:'all',scope:'all',limit:PAGE,offset},session,signal)
       page.items = await Promise.all(list(raw.items).map(x=>this.item(module,x,session,{eventId:text(x.event_id)})))

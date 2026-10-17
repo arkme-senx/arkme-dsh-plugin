@@ -1,3 +1,7 @@
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => undefined }),
+}))
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { memberPageFixture } from './helpers/member-page-fixture.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'

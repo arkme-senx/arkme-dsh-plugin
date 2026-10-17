@@ -346,8 +346,8 @@ describe('ContactDirectoryService', () => {
 
     await expect(service.listRecordingSpeakerUsers(session, controller.signal)).resolves.toEqual([
       { userId: 7, label: '当前用户', avatarRef: 'avatar-ref-7' },
-      { userId: 101, label: '老张', avatarRef: 'avatar-ref-101' },
-      { userId: 102, label: 'contact-102' },
+      { userId: 101, label: '老张', avatarRef: 'avatar-ref-101', remark: '老张', aliases: ['张三'] },
+      { userId: 102, label: 'contact-102', aliases: [] },
     ])
     expect(profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith(
       [7, 101, 102], session, controller.signal,
