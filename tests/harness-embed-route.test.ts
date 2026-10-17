@@ -53,6 +53,7 @@ describe('core-only DeepSeek Harness iframe route', () => {
       readRootHtml: async () => htmlWithGraph(full),
     })({ method: 'GET' } as IncomingMessage, response.value)
     expect(response.status()).toBe(200)
+    expect(response.body()).toContain('<head><script data-arkme-theme-bootstrap>')
     expect(response.body()).toContain('<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=abcd1234">')
     const projected = projectHarnessBootGraph(full, [])
     expect(response.body()).toContain(bootAssignment(projected, 'dsh-v0.1.1-rc.2'))
