@@ -1,6 +1,6 @@
-import { tr } from './locale.js'
-import { Children, isValidElement, type CSSProperties, type ReactNode } from 'react'
-import Markdown from 'react-markdown'
+import { tr, useArkmeLocale } from './locale.js'
+import { Children, isValidElement, useMemo, type CSSProperties, type ReactNode } from 'react'
+import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { arkmeLiteralMarkdownNodes, arkmeMarkdownBusinessNodes } from '../markdown.js'
@@ -56,55 +56,62 @@ export function ArkmeMarkdownBody({ text, highlightMentions = true, renderLink, 
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
   readMentionMembers?: ReadonlySet<string>
 }) {
-  const rich = (children: ReactNode) => Children.map(children, child => typeof child === 'string'
-    ? <ArkmeRichText
-      text={child}
-      highlightMentions={highlightMentions}
-      highlightTags={false}
-      linkLabelMode="raw"
-      {...(renderLink === undefined ? {} : { renderLink })}
-      {...(onMentionClick === undefined ? {} : { onMentionClick })}
-      {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
-    /> : child)
+  const locale = useArkmeLocale()
+  // Keep component types and unchanged Markdown stable across unrelated parent
+  // updates. Recreating paragraph functions remounts the reader's DOM/selection.
+  const components = useMemo<Components>(() => {
+    const rich = (children: ReactNode) => Children.map(children, child => typeof child === 'string'
+      ? <ArkmeRichText
+        text={child}
+        highlightMentions={highlightMentions}
+        highlightTags={false}
+        linkLabelMode="raw"
+        {...(renderLink === undefined ? {} : { renderLink })}
+        {...(onMentionClick === undefined ? {} : { onMentionClick })}
+        {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
+      /> : child)
+    return {
+      span: ({ children, node }) => {
+        const ref = node?.properties['dataArkmeImageRef'] ?? node?.properties['data-arkme-image-ref']
+        const alt = String(node?.properties['dataArkmeImageAlt'] ?? node?.properties['data-arkme-image-alt'] ?? '图片')
+        if (typeof ref === 'string') return renderImage?.(ref, alt) ?? <span>[{alt || tr("图片")}{tr("：不可用]")}</span>
+        const mentionIndex = node?.properties['data-arkme-mention-index'] ?? node?.properties['dataArkmeMentionIndex']
+        const mention = typeof mentionIndex === 'number' ? mentionTargets?.[mentionIndex] : undefined
+        if (highlightMentions && mention !== undefined) {
+          const label = markdownLinkLabel(children)
+          return <ArkmeMentionText text={label} mentionTargets={[{ ...mention, startIndex: 0, length: label.length }]}
+            {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
+            {...(onMentionClick === undefined ? {} : { onMentionClick })}
+            {...(isMentionClickable === undefined ? {} : { isMentionClickable })} />
+        }
+        return (node?.properties['data-arkme-markdown-run'] ?? node?.properties['dataArkmeMarkdownRun']) === 'tag' && highlightMentions
+        ? <ArkmeMentionText
+          text={String(children)}
+          {...(onMentionClick === undefined ? {} : { onMentionClick })}
+          {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
+        /> : <span>{rich(children)}</span>
+      },
+      p: ({ children }) => <p>{rich(children)}</p>,
+      h1: ({ children }) => <h1>{rich(children)}</h1>, h2: ({ children }) => <h2>{rich(children)}</h2>,
+      h3: ({ children }) => <h3>{rich(children)}</h3>, h4: ({ children }) => <h4>{rich(children)}</h4>,
+      h5: ({ children }) => <h5>{rich(children)}</h5>, h6: ({ children }) => <h6>{rich(children)}</h6>,
+      strong: ({ children }) => <strong>{rich(children)}</strong>, em: ({ children }) => <em>{rich(children)}</em>,
+      del: ({ children }) => <del>{rich(children)}</del>, li: ({ children, className }) => <li className={className}>{rich(children)}</li>,
+      td: ({ children, style }) => <td style={style}>{rich(children)}</td>, th: ({ children, style }) => <th style={style}>{rich(children)}</th>,
+      table: ({ children }) => <div className="arkme-markdown-table"><table>{children}</table></div>,
+      a: ({ children, href }) => {
+        if (!href) return <span>{children}</span>
+        const label = markdownLinkLabel(children)
+        return renderLink?.({ href, text: label || href }) ?? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+      },
+      input: ({ checked }) => <input type="checkbox" checked={Boolean(checked)} disabled aria-label={checked ? tr("已完成") : '未完成'} />,
+    }
+  }, [highlightMentions, renderLink, onMentionClick, isMentionClickable, renderImage, mentionTargets, readMentionMembers, locale])
+  const body = useMemo(() => <Markdown
+    remarkPlugins={[remarkGfm, remarkBreaks, [arkmeMarkdownBusinessNodes, mentionTargets === undefined ? {} : { mentions: mentionTargets }], [arkmeLiteralMarkdownNodes, { articleImages: Boolean(renderImage), localArticleImages }]]}
+    components={components}>{text}</Markdown>, [text, components, mentionTargets, renderImage, localArticleImages])
   return <div style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }} data-arkme-text-format="markdown" onCopy={copyArkmeRichText}>
     <style>{arkmeMarkdownStyles}</style>
-    <div className="arkme-markdown" style={textStyle}>
-      <Markdown remarkPlugins={[remarkGfm, remarkBreaks, [arkmeMarkdownBusinessNodes, mentionTargets === undefined ? {} : { mentions: mentionTargets }], [arkmeLiteralMarkdownNodes, { articleImages: Boolean(renderImage), localArticleImages }]]} components={{
-        span: ({ children, node }) => {
-          const ref = node?.properties['dataArkmeImageRef'] ?? node?.properties['data-arkme-image-ref']
-          const alt = String(node?.properties['dataArkmeImageAlt'] ?? node?.properties['data-arkme-image-alt'] ?? '图片')
-          if (typeof ref === 'string') return renderImage?.(ref, alt) ?? <span>[{alt || tr("图片")}{tr("：不可用]")}</span>
-          const mentionIndex = node?.properties['data-arkme-mention-index'] ?? node?.properties['dataArkmeMentionIndex']
-          const mention = typeof mentionIndex === 'number' ? mentionTargets?.[mentionIndex] : undefined
-          if (highlightMentions && mention !== undefined) {
-            const label = markdownLinkLabel(children)
-            return <ArkmeMentionText text={label} mentionTargets={[{ ...mention, startIndex: 0, length: label.length }]}
-              {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
-              {...(onMentionClick === undefined ? {} : { onMentionClick })}
-              {...(isMentionClickable === undefined ? {} : { isMentionClickable })} />
-          }
-          return (node?.properties['data-arkme-markdown-run'] ?? node?.properties['dataArkmeMarkdownRun']) === 'tag' && highlightMentions
-          ? <ArkmeMentionText
-            text={String(children)}
-            {...(onMentionClick === undefined ? {} : { onMentionClick })}
-            {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
-          /> : <span>{rich(children)}</span>
-        },
-        p: ({ children }) => <p>{rich(children)}</p>,
-        h1: ({ children }) => <h1>{rich(children)}</h1>, h2: ({ children }) => <h2>{rich(children)}</h2>,
-        h3: ({ children }) => <h3>{rich(children)}</h3>, h4: ({ children }) => <h4>{rich(children)}</h4>,
-        h5: ({ children }) => <h5>{rich(children)}</h5>, h6: ({ children }) => <h6>{rich(children)}</h6>,
-        strong: ({ children }) => <strong>{rich(children)}</strong>, em: ({ children }) => <em>{rich(children)}</em>,
-        del: ({ children }) => <del>{rich(children)}</del>, li: ({ children, className }) => <li className={className}>{rich(children)}</li>,
-        td: ({ children, style }) => <td style={style}>{rich(children)}</td>, th: ({ children, style }) => <th style={style}>{rich(children)}</th>,
-        table: ({ children }) => <div className="arkme-markdown-table"><table>{children}</table></div>,
-        a: ({ children, href }) => {
-          if (!href) return <span>{children}</span>
-          const label = markdownLinkLabel(children)
-          return renderLink?.({ href, text: label || href }) ?? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-        },
-        input: ({ checked }) => <input type="checkbox" checked={Boolean(checked)} disabled aria-label={checked ? tr("已完成") : '未完成'} />,
-      }}>{text}</Markdown>
-    </div>
+    <div className="arkme-markdown" style={textStyle}>{body}</div>
   </div>
 }

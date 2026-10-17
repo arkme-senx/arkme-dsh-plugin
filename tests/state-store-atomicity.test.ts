@@ -41,6 +41,16 @@ async function fixture() {
 }
 
 describe('recording admission atomic persistence', () => {
+  it('keeps accepted upload receipts across restart and terminal-history pruning', async () => {
+    const { store, directory, job } = await fixture()
+    const accepted = { ...job, clientTaskId: 'durable-client-task', phase: 'accepted' as const, createdAtMillis: Date.now() }
+    await store.putRecordingImportJob(42, accepted)
+    for (let index = 0; index < 105; index++) await store.putRecordingImportJob(42, { ...job, jobId: `terminal-${index}`, phase: 'accepted', createdAtMillis: Date.now() + index + 1 })
+    const reloaded = new ArkmeStateStore(directory)
+    expect(await reloaded.admitRecordingImportJob(42, { ...accepted, jobId: 'retry', phase: 'prepared' })).toMatchObject({ kind: 'existing', job: { jobId: 'one', phase: 'accepted' } })
+    await expect(reloaded.admitRecordingImportJob(42, { ...accepted, jobId: 'conflict', sha256: 'b'.repeat(64) })).rejects.toThrow('identity conflict')
+  })
+
   it.each(['queued', 'before-commit', 'after-commit'])('honors retry cancellation at %s', async moment => {
     const { store, directory, job } = await fixture()
     const failed = { ...job, phase: 'failed' as const, retryable: true, failedFromPhase: 'uploading' as const }
@@ -74,7 +84,7 @@ describe('recording admission atomic persistence', () => {
     const blocked = new Promise<void>(resolve => { release = resolve })
     fault.beforeRename = async () => { await blocked }
     const ordinaryWrite = store.putPending(42, { recordUid: 'note', textContent: 'note', createdAtMillis: 1, sendAtMillis: 1, attempts: 0 })
-    const admission = store.admitRecordingImportJob(42, job, 20, controller.signal)
+    const admission = store.admitRecordingImportJob(42, job, controller.signal)
     const rejected = expect(admission).rejects.toThrow()
     controller.abort(); release()
     await ordinaryWrite; await rejected
@@ -86,7 +96,7 @@ describe('recording admission atomic persistence', () => {
     const { store, directory, job } = await fixture(); await store.uniqueCode()
     const controller = new AbortController()
     fault.afterPermissions = () => controller.abort()
-    await expect(store.admitRecordingImportJob(42, job, 20, controller.signal)).rejects.toThrow()
+    await expect(store.admitRecordingImportJob(42, job, controller.signal)).rejects.toThrow()
     expect(await store.listRecordingImportJobs(42)).toEqual([])
     expect(await new ArkmeStateStore(directory).listRecordingImportJobs(42)).toEqual([])
     expect((await readdir(directory)).filter(name => name.endsWith('.tmp'))).toEqual([])
@@ -96,14 +106,14 @@ describe('recording admission atomic persistence', () => {
     const { store, directory, job } = await fixture(); await store.uniqueCode()
     const controller = new AbortController()
     fault.afterRename = () => controller.abort()
-    await expect(store.admitRecordingImportJob(42, job, 20, controller.signal)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(42, job, controller.signal)).resolves.toMatchObject({ kind: 'inserted' })
     expect(await new ArkmeStateStore(directory).getRecordingImportJob(42, job.jobId)).toMatchObject({ revision: 1 })
   })
 
   it('does not publish or later persist an import rejected by a failed disk write', async () => {
     const { store, directory, job } = await fixture(); await store.uniqueCode()
     fault.failRename = true
-    await expect(store.admitRecordingImportJob(42, job, 20)).rejects.toMatchObject({ code: 'ENOSPC' })
+    await expect(store.admitRecordingImportJob(42, job)).rejects.toMatchObject({ code: 'ENOSPC' })
     expect(await store.getRecordingImportJob(42, job.jobId)).toBeUndefined()
     await store.putPending(42, { recordUid: 'ordinary-note', textContent: 'note', createdAtMillis: 1, sendAtMillis: 1, attempts: 0 })
     const reloaded = new ArkmeStateStore(directory)
@@ -124,7 +134,7 @@ describe('recording admission atomic persistence', () => {
   it('finishes private permissions before commit so a committed task is never reported as rejected', async () => {
     const { store, directory, job } = await fixture(); await store.uniqueCode()
     fault.rejectPostCommitPermissions = true
-    await expect(store.admitRecordingImportJob(42, job, 20)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(42, job)).resolves.toMatchObject({ kind: 'inserted' })
     const persisted = JSON.parse(await readFile(join(directory, 'state.json'), 'utf8'))
     expect(persisted.recordingImportJobsByUser['42'].one).toMatchObject({ phase: 'prepared' })
   })

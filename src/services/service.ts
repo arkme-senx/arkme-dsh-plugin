@@ -105,7 +105,6 @@ export interface StateStore extends RecentEmojiStore {
   admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): Promise<RecordingImportAdmission>
   replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number, signal?: AbortSignal): Promise<boolean>
