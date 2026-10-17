@@ -3,6 +3,14 @@ import { arkmeTheme } from '../arkme-theme.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import { recordingBytesLabel, recordingInputDurationLabel, recordingStorageDetails } from './RecordingDailyMetrics.js'
 import type { RecordingTotalsProgress } from './recording-total-scan.js'
+import { useRecordingTotals } from './use-recording-totals.js'
+
+/** Statistics publish progressively without rendering the reading pane again. */
+export function RecordingTotalMetricsLoader({ account, active, refreshRevision }: { account: string; active: boolean; refreshRevision: string }) {
+  const totals = useRecordingTotals(account, active, refreshRevision)
+  return <RecordingTotalMetrics metrics={totals.progress?.metrics} loading={!totals.progress || ['discovering', 'calculating'].includes(totals.progress.phase)}
+    error={totals.progress?.phase === 'error'} progress={totals.progress} onRetry={totals.retry} />
+}
 
 function metricLabel(value: number | null | undefined, state: RecordingMetricState | undefined, format: (value: number) => string, estimated = false) {
   if (value == null) return tr(state === 'processing' ? '统计中' : '暂不可用')
