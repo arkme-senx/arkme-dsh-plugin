@@ -3495,6 +3495,55 @@ export class ChatService {
     return { session, source, chat, post }
   }
 
+  private async localMarkContext(sourceRef: string) {
+    const { session, source, chat } = await this.underlineContext(sourceRef)
+    const store = this.runtime.stateStore.messageMarks
+    if (!store) throw new ArkmePluginError('local-mark-storage-unavailable', '本机标记存储暂不可用，请重试', true, 503)
+    // Stable, authenticated identities survive signed-ref rotation and client port changes.
+    const scope = JSON.stringify([this.runtime.config.environment, session.userId, chat ? 'chat' : 'self', chat ? source.ownerRef : ''])
+    const resolve = async (actionRef: string) => {
+      const target = await this.openMessageActionRef(actionRef, session.userId, source)
+      const key = JSON.stringify([target.recordOwnerUserId, target.recordUid, chat ? target.relationUid : '', chat ? target.sourceSequence : ''])
+      const content = { title: target.title, textContent: target.textContent, textFormat: target.textFormat ?? 'plain' }
+      return { key, content, digest: createHash('sha256').update(quoteSourceContent(content)).digest('hex') }
+    }
+    const assertAccount = async () => {
+      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('local-mark-account-changed', '账号已切换，请重新选择', false, 403)
+    }
+    return { store, scope, session, resolve, assertAccount }
+  }
+
+  async sourceLocalMarkCapabilities(sourceRef: string) {
+    await this.localMarkContext(sourceRef)
+    return { supported: true, maxLength: 2000, storage: 'local' as const }
+  }
+
+  async sourceLocalMarks(sourceRef: string, actionRefs: readonly string[]) {
+    if (!actionRefs.length || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length) throw new ArkmePluginError('local-mark-targets-invalid', '标记读取范围无效', false)
+    const { store, scope, session, resolve, assertAccount } = await this.localMarkContext(sourceRef)
+    const targets = await Promise.all(actionRefs.map(resolve))
+    await assertAccount()
+    return targets.map((target, index) => ({ actionRef: actionRefs[index]!, snapshot: store.read(scope, target.key, session.userId, target.digest) }))
+  }
+
+  async changeSourceLocalMark(sourceRef: string, actionRef: string, change: MessageUnderlineChange) {
+    if (!change || !underlineId(change.operationId) || (change.kind !== 'add' && change.kind !== 'remove')
+      || (change.kind === 'remove' && !underlineId(change.annotationId))) throw new ArkmePluginError('local-mark-change-invalid', '标记操作无效', false)
+    const { store, scope, session, resolve, assertAccount } = await this.localMarkContext(sourceRef)
+    const target = await resolve(actionRef)
+    const anchor = change.kind === 'add' ? readMessageQuote(change.anchor) : undefined
+    if (change.kind === 'add' && (!anchor || anchor.text.length > 2000 || anchor.sourceDigest !== target.digest
+      || !quoteMatchesCanonical(anchor, quoteCanonicalText(target.content)))) throw new ArkmePluginError('local-mark-source-changed', '选区与原文不一致，请重新选择', false, 409)
+    await assertAccount()
+    try {
+      return store.change(scope, target.key, session.userId, target.digest, change.kind === 'add'
+        ? { kind: 'add', operationId: change.operationId, anchor: anchor! }
+        : { kind: 'remove', operationId: change.operationId, annotationId: change.annotationId })
+    } catch (error) {
+      throw new ArkmePluginError('local-mark-save-failed', `本机标记未保存，已恢复。${error instanceof Error ? error.message : '请重试'}`, true, 500)
+    }
+  }
+
   async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) {
     const { post } = await this.underlineContext(sourceRef)
     try { return underlineCapabilities((await post('capabilities', {}, signal)).underline) }

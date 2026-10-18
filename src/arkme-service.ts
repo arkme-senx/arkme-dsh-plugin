@@ -2200,6 +2200,9 @@ export class ArkmeService {
   async sourceMessageExtensionParent(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) {
     return this.chat.sourceMessageExtensionParent(sourceRef, messageActionRef, options)
   }
+  async sourceLocalMarkCapabilities(sourceRef: string) { return this.chat.sourceLocalMarkCapabilities(sourceRef) }
+  async sourceLocalMarks(sourceRef: string, actionRefs: readonly string[]) { return this.chat.sourceLocalMarks(sourceRef, actionRefs) }
+  async changeSourceLocalMark(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange) { return this.chat.changeSourceLocalMark(sourceRef, actionRef, change) }
   async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceUnderlineCapabilities(sourceRef, signal) }
   async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) { return this.chat.sourceUnderlines(sourceRef, actionRefs, signal) }
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }

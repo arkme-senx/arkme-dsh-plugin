@@ -49,7 +49,7 @@ function visibleBox(element: HTMLElement) {
 
 export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined) {
   const [revision, update] = useReducer((value: number) => value + 1, 0)
-  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update) : undefined, [scope, !!sourceRef, viewerId])
+  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, 'local') : undefined, [scope, !!sourceRef, viewerId])
   if (session && sourceRef) session.sourceRef = sourceRef
   useEffect(() => { if (session) void session.prepare(); return () => session?.dispose() }, [session])
   return {

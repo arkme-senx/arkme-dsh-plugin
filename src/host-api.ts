@@ -2278,6 +2278,9 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.local-message-mark.capabilities': return await service.sourceLocalMarkCapabilities(stringParam(params, 'sourceRef'))
+    case 'source.local-message-mark.list': return await service.sourceLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'))
+    case 'source.local-message-mark.change': return await service.changeSourceLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange)
     case 'source.message-underline.capabilities': return await service.sourceUnderlineCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'source.message-underline.list': return await service.sourceUnderlines(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
     case 'source.message-underline.change': return await service.changeSourceUnderline(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)

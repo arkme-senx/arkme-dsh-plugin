@@ -86,7 +86,7 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
   const snapshot={...initial,items:initial.items.map(item=>({...item,anchor:actual}))}
   const session=new MessageUnderlineSession('self',42,vi.fn());session.capability={supported:true,maxLength:2000};session.snapshots.set(underlineTargetKey(target),snapshot)
   vi.mocked(callArkme).mockResolvedValue([{actionRef:'ref',snapshot}])
-  const renderFixture=(key:number)=><><ArkmeMessageContent key={key} item={target.item} sourceRef="self"/><UnderlineLayer session={session} revision={1}/><ArkmeMessageTextSelectionToolbar replySourceRef="self" replyLabel="延展" onReply={reply} onUnderline={add} getMarks={()=>session.snapshots.get(underlineTargetKey(target))?.items??[]} onRemoveMark={remove}/></>
+  const renderFixture=(key:number)=><><ArkmeMessageContent key={key} item={target.item} sourceRef="self"/><UnderlineLayer session={session} revision={1}/><ArkmeMessageTextSelectionToolbar markStorage="local" replySourceRef="self" replyLabel="延展" onReply={reply} onUnderline={add} getMarks={()=>session.snapshots.get(underlineTargetKey(target))?.items??[]} onRemoveMark={remove}/></>
   try {
     await act(async()=>{root.render(renderFixture(1));await new Promise(resolve=>setTimeout(resolve,30))})
     const paints=document.querySelectorAll<HTMLElement>('[data-arkme-mark-paint]')
@@ -102,6 +102,7 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
     })
     const toolbar=document.querySelector('[role="toolbar"]')!
     expect(toolbar.textContent).toContain('你、宏顺')
+    expect(toolbar.textContent).toContain('仅本机')
     expect([...toolbar.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','✓ 取消标记','延展'])
     expect(document.getSelection()?.toString()).toBe('重点')
     const cancel=toolbar.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!
@@ -164,4 +165,26 @@ it('does not hide one failed mark when another message succeeds concurrently', a
   const b=session.change({...target,item:{...target.item,itemUid:'note2',messageActionRef:'ref2'}},{kind:'add',anchor,operationId:'two'})
   first.reject(new Error('first failed'));await a;second.resolve(initial);await b
   expect(session.notice).toBe('first failed');expect(session.retry).toBeDefined()
+})
+it('local mode persists optimistically through only local host operations', async () => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'local')
+  vi.mocked(callArkme).mockResolvedValueOnce({supported:true,maxLength:2000,storage:'local'})
+  await session.prepare()
+  vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:{revision:0,accessible:true,items:[]}}])
+  await session.read([target])
+  const write=deferred<unknown>(); vi.mocked(callArkme).mockReturnValueOnce(write.promise)
+  const writing=session.change(target,{kind:'add',anchor,operationId:'local-add'})
+  expect(session.snapshots.get(underlineTargetKey(target))?.items[0]?.pending).toBe(true)
+  expect(session.notice).toContain('本机')
+  write.resolve({...initial,items:[mark]});await writing
+  expect(vi.mocked(callArkme).mock.calls.map(call=>call[0])).toEqual(['source.local-message-mark.capabilities','source.local-message-mark.list','source.local-message-mark.change'])
+  expect(session.snapshots.get(underlineTargetKey(target))?.items[0]?.pending).toBeUndefined()
+})
+it('local save failure rolls back and retries the same operation', async () => {
+  const session=new MessageUnderlineSession('self',42,vi.fn(),'local');session.capability={supported:true,maxLength:2000}
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('本机标记未保存，已恢复'))
+  await session.change(target,{kind:'add',anchor,operationId:'local-fail'})
+  expect(session.snapshots.size).toBe(0);expect(session.notice).toContain('未保存')
+  vi.mocked(callArkme).mockResolvedValueOnce({...initial,items:[mark]});await session.retry?.()
+  expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toMatchObject({change:{operationId:'local-fail'}})
 })

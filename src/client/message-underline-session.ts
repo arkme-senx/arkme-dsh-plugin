@@ -19,7 +19,7 @@ export class MessageUnderlineSession {
   capability: MessageUnderlineCapabilities | undefined
   notice = ''
   retry: (() => Promise<void>) | undefined
-  constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void) {}
+  constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud') {}
   dispose() { this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
   private publish() {
     const failure = this.failures.values().next().value
@@ -29,7 +29,7 @@ export class MessageUnderlineSession {
   report(error: unknown) { this.notice = error instanceof Error ? error.message : '标记操作失败'; this.publish() }
   async prepare() {
     try {
-      const result = await callArkme<MessageUnderlineCapabilities>('source.message-underline.capabilities', { sourceRef: this.sourceRef }, this.controller.signal)
+      const result = await callArkme<MessageUnderlineCapabilities>(this.storage === 'local' ? 'source.local-message-mark.capabilities' : 'source.message-underline.capabilities', { sourceRef: this.sourceRef }, this.controller.signal)
       if (this.controller.signal.aborted) return
       this.capability = result
       this.notice = result.supported ? '' : '标记尚待服务端接通，暂未保存'
@@ -50,7 +50,7 @@ export class MessageUnderlineSession {
     try {
       const refs = [...unique.keys()]
       for (let i = 0; i < refs.length; i += 40) {
-        const result = await callArkme<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>('source.message-underline.list', { sourceRef: this.sourceRef, actionRefs: refs.slice(i, i + 40) }, this.controller.signal)
+        const result = await callArkme<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>(this.storage === 'local' ? 'source.local-message-mark.list' : 'source.message-underline.list', { sourceRef: this.sourceRef, actionRefs: refs.slice(i, i + 40) }, this.controller.signal)
         if (this.controller.signal.aborted) return
         for (const row of result) {
           const target = unique.get(row.actionRef)
@@ -86,13 +86,13 @@ export class MessageUnderlineSession {
     this.snapshots.set(key, { revision: before?.revision ?? 0, accessible: true,
       items: change.kind === 'remove' ? (before?.items ?? []).filter(item => item.id !== change.annotationId)
         : [...(before?.items ?? []), { id: change.operationId, actorId: this.viewerId, actorName: '你', mine: true, anchor: change.anchor, state: 'available', pending: true }] })
-    this.notice = '正在同步标记…'; this.retry = undefined; this.publish()
+    this.notice = (this.storage === 'local' ? '正在保存本机标记…' : '正在同步标记…'); this.retry = undefined; this.publish()
     try {
-      const result = await callArkme<MessageUnderlineSnapshot>('source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: target.item.messageActionRef, change }, this.controller.signal)
+      const result = await callArkme<MessageUnderlineSnapshot>(this.storage === 'local' ? 'source.local-message-mark.change' : 'source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: target.item.messageActionRef, change }, this.controller.signal)
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
       if (current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
-      this.failures.delete(key); this.notice = this.pending.size > 1 ? '正在同步标记…' : ''; this.retry = undefined
+      this.failures.delete(key); this.notice = this.pending.size > 1 ? (this.storage === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted) return
       if (accessLost(error)) this.snapshots.clear()

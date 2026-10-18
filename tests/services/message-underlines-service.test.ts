@@ -39,3 +39,32 @@ it('verifies complete batch results and strips inaccessible text',async()=>{
   post.mockResolvedValueOnce({items:[{...snapshot,target_index:1}]} as never)
   await expect(service.sourceUnderlines('src',['ref'])).rejects.toMatchObject({code:'underline-response-invalid'})
 })
+
+function localFixture(kind = 'group_chat') {
+  const { service, post } = fixture(kind)
+  const store = { read: vi.fn(() => ({ revision: 0, accessible: true, items: [] })), change: vi.fn(() => ({ revision: 1, accessible: true, items: [] })) }
+  const runtime = (service as any).runtime
+  runtime.stateStore = { messageMarks: store }; runtime.config = { environment: 'prod' }
+  return { service, post, store, runtime }
+}
+it.each(['group_chat','private_chat','send_to_self','default_category','topic'])('stores %s locally without calling any cloud annotation endpoint', async kind => {
+  const { service, post, store } = localFixture(kind)
+  expect(await service.sourceLocalMarkCapabilities('src')).toEqual({ supported: true, maxLength: 2000, storage: 'local' })
+  await service.changeSourceLocalMark('src', 'signed', { kind: 'add', operationId: 'op', anchor })
+  await service.sourceLocalMarks('src', ['signed'])
+  const chat = kind.includes('chat')
+  expect(store.change).toHaveBeenCalledWith(JSON.stringify(['prod',42,chat?'chat':'self',chat?'chat':'']), JSON.stringify([7,'record',chat?'relation':'',chat?8:'']),42,anchor.sourceDigest,{ kind:'add',operationId:'op',anchor })
+  expect(post).not.toHaveBeenCalled()
+})
+it('rejects local anchor tampering and changed accounts before persistence', async () => {
+  const { service, store, runtime } = localFixture()
+  await expect(service.changeSourceLocalMark('src','signed',{kind:'add',operationId:'op',anchor:{...anchor,text:'伪造'}})).rejects.toMatchObject({code:'local-mark-source-changed'})
+  runtime.requireSession = vi.fn().mockResolvedValueOnce({userId:42}).mockResolvedValueOnce({userId:43})
+  await expect(service.changeSourceLocalMark('src','signed',{kind:'add',operationId:'op',anchor})).rejects.toMatchObject({code:'local-mark-account-changed'})
+  expect(store.change).not.toHaveBeenCalled()
+})
+it('reports unavailable storage and never falls back to cloud writes', async () => {
+  const { service, runtime, post } = localFixture(); runtime.stateStore = {}
+  await expect(service.sourceLocalMarkCapabilities('src')).rejects.toMatchObject({code:'local-mark-storage-unavailable'})
+  expect(post).not.toHaveBeenCalled()
+})

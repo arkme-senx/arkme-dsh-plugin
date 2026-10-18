@@ -10,7 +10,7 @@ export interface MessageUnderline {
   pending?: boolean
 }
 export interface MessageUnderlineSnapshot { revision: number; accessible: boolean; items: MessageUnderline[] }
-export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number }
+export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud' }
 export type MessageUnderlineChange = { operationId: string; kind: 'add'; anchor: ArkmeMessageQuote }
   | { operationId: string; kind: 'remove'; annotationId: string }
 const idPattern = /^[A-Za-z0-9._:-]{1,128}$/u

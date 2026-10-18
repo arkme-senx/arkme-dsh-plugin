@@ -108,8 +108,9 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage }: {
   replySourceRef?: string | undefined
+  markStorage?: 'local' | 'cloud' | undefined
   replyLabel?: string | undefined
   onReply?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => void) | undefined
   onUnderline?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => Promise<string | undefined>) | undefined
@@ -320,7 +321,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(ownMark ? '取消标记' : '标记')}</button>}
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
     </div>
-    {authors.length > 0 && <div data-arkme-mark-authors style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary }}>{authors.join('、')}标记了选区中的内容</div>}
+    {(authors.length > 0 || (markStorage === 'local' && onUnderline && replyTarget?.sourceRef === replySourceRef)) && <div data-arkme-mark-authors style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)
 }

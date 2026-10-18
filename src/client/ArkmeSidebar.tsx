@@ -8596,6 +8596,7 @@ export function ArkmeSurface({
     <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       replyLabel={sourceIsChat ? '回复' : '延展'}
+      markStorage="local"
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}
