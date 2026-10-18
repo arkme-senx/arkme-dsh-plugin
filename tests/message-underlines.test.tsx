@@ -73,6 +73,10 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
   const remove=vi.fn(async()=>undefined), reply=vi.fn(),add=vi.fn(async()=>undefined)
   const {ArkmeMessageContent}=await import('../src/client/ArkmeRichContent.js')
   const {quoteDigest}=await import('../src/client/message-quote-selection.js')
+  const waitForUi = async (check: () => void) => {
+    // Flush React after WebCrypto/frame work, then assert its observable result.
+    await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); check() })
+  }
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('crypto',webcrypto)
   const highlights=new Map<string,Set<Range>>()
   if(native){ vi.stubGlobal('CSS',{highlights});vi.stubGlobal('Highlight',class extends Set<Range>{constructor(...ranges:Range[]){super(ranges)}}) }
@@ -88,7 +92,11 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
   vi.mocked(callArkme).mockResolvedValue([{actionRef:'ref',snapshot}])
   const renderFixture=(key:number)=><><ArkmeMessageContent key={key} item={target.item} sourceRef="self"/><UnderlineLayer session={session} revision={1}/><ArkmeMessageTextSelectionToolbar markStorage="local" replySourceRef="self" replyLabel="延展" onReply={reply} onUnderline={add} getMarks={()=>session.snapshots.get(underlineTargetKey(target))?.items??[]} onRemoveMark={remove}/></>
   try {
-    await act(async()=>{root.render(renderFixture(1));await new Promise(resolve=>setTimeout(resolve,30))})
+    await act(async()=>{root.render(renderFixture(1))})
+    await waitForUi(() => {
+      if (native) expect([...highlights.values()][0]?.size).toBe(2)
+      else expect(document.querySelectorAll('[data-arkme-mark-paint]')).toHaveLength(1)
+    })
     const paints=document.querySelectorAll<HTMLElement>('[data-arkme-mark-paint]')
     expect(paints).toHaveLength(native ? 0 : 1)
     if(native) expect([...highlights.values()][0]?.size).toBe(2)
@@ -119,19 +127,20 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
     expect(otherToolbar.textContent).toContain('宏顺')
     expect(otherToolbar.textContent).not.toContain('取消标记')
     await act(async()=>[...otherToolbar.querySelectorAll('button')].find(b=>b.textContent==='标记')!.click())
-    expect(add).toHaveBeenCalledWith(target,actual)
+    await waitForUi(() => expect(add).toHaveBeenCalledWith(target,actual))
     expect(remove).toHaveBeenCalledTimes(1)
     // Background refresh can replace the DOM root at identical coordinates; hit testing follows the new root.
     const oldText=text
     await act(async()=>{root.render(renderFixture(2))})
-    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,40))})
     text=dom.querySelector<HTMLElement>('[data-arkme-text-selection]')!
     expect(text).not.toBe(oldText)
-    await act(async()=>{
-      text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
-      text.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:30,clientY:55}))
+    await vi.waitFor(async () => {
+      await act(async()=>{
+        text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
+        text.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:30,clientY:55}))
+      })
+      expect(document.querySelector('[role="toolbar"]')?.textContent).toContain('宏顺')
     })
-    expect(document.querySelector('[role="toolbar"]')?.textContent).toContain('宏顺')
     // Dragging a subset keeps the user's precise selection; it must not cancel the whole original mark.
     session.snapshots.set(underlineTargetKey(target),snapshot)
     const node=document.createTreeWalker(text,NodeFilter.SHOW_TEXT).nextNode()!
@@ -145,7 +154,7 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
     expect(document.getSelection()?.toString()).toBe('重')
     expect(document.querySelector('[role="toolbar"]')?.textContent).not.toContain('取消标记')
     await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button')].find(b=>b.textContent==='标记')!.click())
-    expect(add).toHaveBeenLastCalledWith(target,expect.objectContaining({start:0,end:1,text:'重'}))
+    await waitForUi(() => expect(add).toHaveBeenLastCalledWith(target,expect.objectContaining({start:0,end:1,text:'重'})))
   }finally{
     await act(async()=>root.unmount());if(native)expect(highlights.size).toBe(0);dom.remove();document.getSelection()?.removeAllRanges();session.dispose();rect.mockRestore();document.elementFromPoint=originalPoint
     if(clientRects)Object.defineProperty(Range.prototype,'getClientRects',clientRects)

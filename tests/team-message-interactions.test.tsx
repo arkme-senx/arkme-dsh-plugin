@@ -25,6 +25,11 @@ function Fixture({ msg = message, includeToolbar = true }: { msg?: TeamMessage; 
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
+async function waitForMark(check: () => void) {
+  // Event handlers await WebCrypto outside React's act queue. Observe completion,
+  // rather than assuming a click has already finished hashing the selected text.
+  await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); check() })
+}
 async function select() {
   const p = host.querySelector('[data-arkme-text-selection] p')!, node = document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!
   await mouse(p, 'mousedown')
@@ -54,7 +59,7 @@ it('selects just the message body and passes explicit Team mark authority withou
   await act(async () => (toolbar()!.querySelectorAll('button')[1] as HTMLButtonElement).click())
   expect(document.getSelection()!.toString()).toBe(message.content!.text_content)
   await act(async () => (toolbar()!.querySelectorAll('button')[2] as HTMLButtonElement).click())
-  expect(mark).toHaveBeenCalledWith(expect.objectContaining({ localMarkRef: 'team-mark-ref', sourceRef: 'team-conversation' }), expect.objectContaining({ text: message.content!.text_content, recordVersion: 1 }))
+  await waitForMark(() => expect(mark).toHaveBeenCalledWith(expect.objectContaining({ localMarkRef: 'team-mark-ref', sourceRef: 'team-conversation' }), expect.objectContaining({ text: message.content!.text_content, recordVersion: 1 })))
   expect((mark.mock.calls[0] as any)?.[0].item.messageActionRef).toBeUndefined()
   expect(toolbar()).toBeNull()
 })
@@ -69,7 +74,7 @@ it('can mark after an equivalent parent refresh replaces presentation objects', 
   await render(); await select()
   await render({ ...message, ref: 'rotated', localMarkRef: 'rotated-mark', revision: 2 })
   await act(async () => (toolbar()!.querySelectorAll('button')[2] as HTMLButtonElement).click())
-  expect(mark).toHaveBeenCalledTimes(1)
+  await waitForMark(() => expect(mark).toHaveBeenCalledTimes(1))
 })
 it('shares the fallback context menu and retains the captured selection after focus loss', async () => {
   await render(message, false); const p = await select(); await mouse(p, 'contextmenu', 2)
