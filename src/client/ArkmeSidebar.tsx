@@ -119,7 +119,6 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeTopicHierarchyMoveResult,
   ArkmeTopicDissolveTask,
-  ArkmeBotList, ArkmeGroupBotCandidateList,
   ArkmeBotSummary,
   ArkmeSharedRecordingPreview,
   ArkmeBackgroundSoundPreference, ArkmeBackgroundSoundEligibilityReason, ArkmeProviderCapabilities,
@@ -283,7 +282,6 @@ import {
   arkmeComposerMentionTrigger,
   arkmeGroupMentionCandidates,
   arkmeMemberForMention,
-  arkmeMentionCandidateKey,
   arkmePrivateMentionCandidates,
   type ArkmeComposerMentionTrigger,
   type ArkmeMentionCandidate,
@@ -302,7 +300,9 @@ export {
 export type { ArkmeComposerMentionTrigger, ArkmeMentionCandidate } from './mention-candidates.js'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeInterwovenReadProvider } from './ArkmeInterwovenReadReceipt.js'
-import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './ArkmeMentionSuggestionRow.js'
+import { ArkmeMentionSuggestions } from './ArkmeMentionSuggestions.js'
+import { useMentionSuggestions } from './use-mention-suggestions.js'
+import { useMentionBots } from './use-mention-bots.js'
 import {
   ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, projectInterwovenWindow, ArkmeInterwovenPrelude, resolveInterwovenGroupTarget,
@@ -2840,10 +2840,8 @@ export function ArkmeSurface({
   const groupSelfRole = conversationMemberSnapshot.selfRole
   // Member reads own their feedback in the member panel; they must not insert
   // an unrelated banner into the message viewport or overwrite send failures.
-  const [groupMentionBots, setGroupMentionBots] = useState<ArkmeGroupBotCandidateList>()
-  const [privateMentionBots, setPrivateMentionBots] = useState<ArkmeBotList>()
   const [mentionTrigger, setMentionTrigger] = useState<ArkmeComposerMentionTrigger>()
-  const [mentionCandidateIndex, setMentionCandidateIndex] = useState(0)
+  const mentionBots = useMentionBots(authenticatedAccountKey, source?.kind, source?.sourceRef, conversationKey, activeConversation, mentionTrigger !== undefined)
   const [hashTagTrigger, setHashTagTrigger] = useState<ArkmeHashTagTrigger>()
   const [hashTagMemory, setHashTagMemory] = useState<{ accountKey?: string; items: ArkmeRecordTagItem[] }>({ items: [] })
   const hashTagItems = hashTagMemory.accountKey === authenticatedAccountKey ? hashTagMemory.items : []
@@ -2990,30 +2988,6 @@ export function ArkmeSurface({
     setMessageReportItem(undefined)
     setMessageWithdrawalItem(undefined)
   }, [activeConversation, authenticatedUserId, conversationKey, source?.kind, source?.sourceRef])
-
-  useEffect(() => {
-    if (!activeConversation) return
-    setGroupMentionBots(undefined)
-    setPrivateMentionBots(undefined)
-    if (authenticatedUserId === undefined || source === undefined || mentionTrigger === undefined) return
-    const controller = new AbortController()
-    if (source.kind === 'group_chat') {
-      void callArkme<ArkmeGroupBotCandidateList>('group.bots', { sourceRef: source.sourceRef }, controller.signal)
-        .then(snapshot => {
-          if (!controller.signal.aborted) setGroupMentionBots(snapshot)
-        })
-        .catch(caught => {
-          if (!controller.signal.aborted) console.warn('dsh-arkme: mention bot refresh failed', errorMessage(caught))
-        })
-    } else if (source.kind === 'private_chat') {
-      void callArkme<ArkmeBotList>('bots.list', undefined, controller.signal)
-        .then(snapshot => {
-          if (!controller.signal.aborted) setPrivateMentionBots(snapshot)
-        })
-        .catch(() => undefined)
-    }
-    return () => { controller.abort() }
-  }, [activeConversation, authenticatedUserId, conversationKey, mentionTrigger?.startIndex, source?.kind, source?.sourceRef])
 
   useEffect(() => {
     if (!activeConversation || authenticatedAccountKey === undefined || authenticatedUserId === undefined || source === undefined || !hashTagActive) return
@@ -6041,16 +6015,17 @@ export function ArkmeSurface({
       if (source?.kind === 'group_chat') {
         return arkmeGroupMentionCandidates(
           mentionTrigger.query,
-          groupMentionBots?.items ?? [],
+          mentionBots.group,
           conversationMembers,
         )
       } else if (source?.kind === 'private_chat') {
-        return arkmePrivateMentionCandidates(mentionTrigger.query, privateMentionBots?.items ?? [])
+        return arkmePrivateMentionCandidates(mentionTrigger.query, mentionBots.private)
       }
       return []
     },
-    [composerMentionsEnabled, conversationMembers, groupMentionBots?.items, mentionTrigger, privateMentionBots?.items, source?.kind],
+    [composerMentionsEnabled, conversationMembers, mentionBots.group, mentionTrigger, mentionBots.private, source?.kind],
   )
+  const mentionSession = useMentionSuggestions(JSON.stringify([authenticatedAccountKey, conversationKey, activeRecordReeditComposer?.generation]), mentionTrigger, mentionCandidates, mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing)
   const hashTagCandidates = useMemo(() => {
     if (hashTagTrigger === undefined) return []
     const query = hashTagTrigger.query.toLocaleLowerCase()
@@ -6065,7 +6040,6 @@ export function ArkmeSurface({
     () => conversationMembers.find(member => member.isSelf),
     [conversationMembers],
   )
-  useEffect(() => { setMentionCandidateIndex(0) }, [mentionTrigger?.startIndex, mentionTrigger?.endIndex, mentionTrigger?.query])
   useEffect(() => { setHashTagCandidateIndex(0) }, [hashTagTrigger?.startIndex, hashTagTrigger?.endIndex, hashTagTrigger?.query])
   useLayoutEffect(() => {
     if (hashTagTrigger === undefined || hashTagCandidates.length === 0) return
@@ -6075,7 +6049,6 @@ export function ArkmeSurface({
   }, [hashTagCandidateIndex, hashTagCandidates.length, hashTagTrigger?.endIndex, hashTagTrigger?.startIndex])
   useEffect(() => {
     setMentionTrigger(undefined)
-    setMentionCandidateIndex(0)
     setHashTagTrigger(undefined)
     setHashTagCandidateIndex(0)
     activeHashTagStartRef.current = undefined
@@ -9276,27 +9249,14 @@ export function ArkmeSurface({
               {hashTagError && <div role="status" style={styles.mentionSuggestionsEmpty}>{tr("标签加载失败，")}<button type="button" onMouseDown={event => event.preventDefault()} onClick={() => hashTagRetryRef.current?.()}>{tr("重试")}</button>
               </div>}
             </div>}
-            {mentionTrigger !== undefined && <div style={styles.mentionSuggestions} role="listbox" aria-label={tr("选择要 @ 的对象")}>
-              <ArkmeMentionSuggestionThemeStyles />
-              {mentionCandidates.length === 0
-                ? <div style={styles.mentionSuggestionsEmpty}>{tr("暂无可 @ 的对象")}</div>
-                : mentionCandidates.map((member, index) => <ArkmeMentionSuggestionRow
-                  key={arkmeMentionCandidateKey(member)}
-                  candidate={member}
-                  active={index === mentionCandidateIndex}
-                  styles={{
-                    row: styles.mentionSuggestionRow!,
-                    rowActive: styles.mentionSuggestionRowActive!,
-                    avatar: styles.mentionSuggestionAvatar!,
-                    botAvatar: styles.mentionSuggestionBotAvatar!,
-                    text: styles.mentionSuggestionText!,
-                    name: styles.mentionSuggestionName!,
-                    secondary: styles.mentionSuggestionSecondary!,
-                  }}
-                  onActive={() => { setMentionCandidateIndex(index) }}
-                  onSelect={() => { insertMentionCandidate(member) }}
-                />)}
-            </div>}
+            {mentionTrigger !== undefined && <ArkmeMentionSuggestions session={mentionSession}
+              style={styles.mentionSuggestions!}
+              loading={mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing}
+              error={mentionBots.error} onRetry={mentionBots.retry} onSelect={insertMentionCandidate}
+              rowStyles={{ row: styles.mentionSuggestionRow!, rowActive: styles.mentionSuggestionRowActive!,
+                avatar: styles.mentionSuggestionAvatar!, botAvatar: styles.mentionSuggestionBotAvatar!,
+                text: styles.mentionSuggestionText!, name: styles.mentionSuggestionName!, secondary: styles.mentionSuggestionSecondary! }}
+            />}
             <ArkmeRichComposerInput textFormat={activeRecordReeditComposer?.snapshot?.textFormat ?? activeRecordReeditComposer?.item.textFormat ?? 'plain'} markdownEnabled={activeRecordReeditComposer === undefined && markdownQuickNotesEnabled} key={activeRecordReeditComposer === undefined ? composerDraftKey : `record-reedit:${activeRecordReeditComposer.generation}`} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={visibleComposerText} mentions={activeRecordReeditComposer === undefined ? composerDraft.mentions : activeRecordReeditComposer.mentions ?? []} emojis={activeRecordReeditComposer === undefined ? composerDraft.emojis : []} maxLength={activeRecordReeditComposer?.snapshot?.maxTextLength ?? 20000} placeholder={effectiveComposerPlaceholder} ariaLabel={activeRecordReeditComposer === undefined ? effectiveComposerPlaceholder : '重新编辑快记'} disabled={composerFilesDisabled}
               selectionRequest={activeConversation && !composerFilesDisabled
                 && editedComposerSelection?.scope === composerAsyncScopeRef.current
@@ -9347,7 +9307,7 @@ export function ArkmeSurface({
                     return
                   }
                 }
-                if (mentionTrigger !== undefined) {
+                if (mentionTrigger !== undefined && !event.nativeEvent.isComposing) {
                   if (event.key === 'Escape') {
                     event.preventDefault()
                     setMentionTrigger(undefined)
@@ -9355,17 +9315,17 @@ export function ArkmeSurface({
                   }
                   if (event.key === 'ArrowDown' && mentionCandidates.length > 0) {
                     event.preventDefault()
-                    setMentionCandidateIndex(index => (index + 1) % mentionCandidates.length)
+                    mentionSession.move(1)
                     return
                   }
                   if (event.key === 'ArrowUp' && mentionCandidates.length > 0) {
                     event.preventDefault()
-                    setMentionCandidateIndex(index => (index + mentionCandidates.length - 1) % mentionCandidates.length)
+                    mentionSession.move(-1)
                     return
                   }
-                  if ((event.key === 'Enter' || event.key === 'Tab') && mentionCandidates.length > 0) {
+                  if ((event.key === 'Enter' || event.key === 'Tab') && mentionSession.rows.length > 0) {
                     event.preventDefault()
-                    const selectedCandidate = mentionCandidates[Math.min(mentionCandidateIndex, mentionCandidates.length - 1)]
+                    const selectedCandidate = mentionSession.activeCandidate
                     if (selectedCandidate !== undefined) insertMentionCandidate(selectedCandidate)
                     return
                   }
@@ -9633,7 +9593,6 @@ export function ArkmeSurface({
             }
             arkmeGroupBotsChanged(authenticatedAccountKey, source.sourceRef, botRemovalTarget.bot.botRef)
             setBotRemovalTarget(undefined)
-            setGroupMentionBots(undefined)
             showMessageActionStatus(tr('Bot 已移出群聊'))
           }}
         />}
