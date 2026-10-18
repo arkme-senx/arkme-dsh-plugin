@@ -4,6 +4,7 @@ import { arkmeComposerDraftStore } from './composer-draft-store.js'
 import { withConversationDraftActivity } from './conversation-draft-preview.js'
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js'
+import { TeamConversationDirectory, TeamConversationGroupRow } from './TeamConversationDirectory.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
@@ -1170,7 +1171,7 @@ export function ArkmeNavigation({
     scope: currentAccountKey,
     enabled: active && directory === 'root',
   })
-  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items)
+  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error)
   const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications' }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
     const index = mergedConversationRows.findIndex(row => !row.pinned && row.activeAtMillis < notificationSummary.atMillis)
@@ -1224,7 +1225,7 @@ export function ArkmeNavigation({
     setQuickAddBlockingOpen(false)
     setDirectoryActionFeedback(undefined)
     stopCreatedHighlightAnimation()
-  }, [active, stopCreatedHighlightAnimation])
+  }, [active, ui.teamDirectory, stopCreatedHighlightAnimation])
 
 
   useEffect(() => {
@@ -2020,6 +2021,11 @@ export function ArkmeNavigation({
     ><ArkmeMark size={20} /></button></div>
   }
 
+  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <TeamConversationDirectory
+    accountKey={currentAccountKey} folder={ui.teamDirectory}
+    {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
+    onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />
+
   return <section
     style={styles.shell}
     aria-label={tr("Arkme 会话列表")}
@@ -2161,6 +2167,12 @@ export function ArkmeNavigation({
             selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
             onClick={showNotifications} summary={notificationSummary}
           />
+          if (row.kind === 'team-folder') {
+            const group = row.group
+            const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.side === 'team' && ui.teamIntent.conversation.channel.jotmoId === group.key
+            return <TeamConversationGroupRow key={`team-folder:${group.key}`} group={group} selected={selected}
+              onClick={() => { activateNativeEntry(); openTeamMessages({kind:'team',teamRef:group.channel.teamRef,channel:group.channel}); onActivateSurface?.() }} />
+          }
           if (row.kind === 'team') {
             const c = row.conversation
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side

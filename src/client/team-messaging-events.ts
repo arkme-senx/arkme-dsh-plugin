@@ -1,6 +1,6 @@
 import { arkmeUi } from './ui-controller.js'
-import type { TeamConversation } from '../team-app-contract.js'
-export type TeamMessageIntent = { kind: 'conversation'; conversation: TeamConversation } | { kind: 'inbox'; side?: 'team' | 'external' } | { kind: 'official' } | { kind: 'team'; teamRef: string } | { kind: 'link'; publicRef: string }
+import type { TeamChannel, TeamConversation } from '../team-app-contract.js'
+export type TeamMessageIntent = { kind: 'conversation'; conversation: TeamConversation } | { kind: 'inbox'; side?: 'team' | 'external' } | { kind: 'official' } | { kind: 'team'; teamRef: string; channel?: TeamChannel } | { kind: 'link'; publicRef: string }
 const openListeners = new Set<(intent: TeamMessageIntent) => void>()
 const changeListeners = new Set<(account: string) => void>()
 export function openTeamMessages(intent: TeamMessageIntent): void { arkmeUi.showTeamConversation(intent); for (const listener of openListeners) listener(intent) }

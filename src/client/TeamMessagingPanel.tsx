@@ -22,7 +22,7 @@ import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { Toast, IconCheckOutline16, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { arkmeUi } from './ui-controller.js'
 import { conversationDirectoryStyles as directoryStyles, conversationTimeLabel } from './conversation-directory-presentation.js'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
@@ -141,29 +141,24 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
 export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string; intent: TeamMessageIntent }) {
   useArkmeLocale()
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot)
   const [selected, setSelected] = useState<TeamConversation>()
   const [channel, setChannel] = useState<TeamChannel>()
-  const [openInbox, setOpenInbox] = useState(false)
   const [error, setError] = useState(''), [loading, setLoading] = useState(false), [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
-    setSelected(undefined); setChannel(undefined); setOpenInbox(false); setError(''); setLoading(true)
+    setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') { setSelected(intent.conversation); return }
-      if (intent.kind === 'inbox') { await refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') {
-        const value = await callArkme<TeamChannel>('team.app.channel', { teamRef: intent.teamRef }, controller.signal)
-        if (!controller.signal.aborted) setChannel(value)
-        await refreshTeamDirectory(accountKey)
-        return
-      }
+      if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
+      if (intent.kind === 'team') return
       const publicRef = intent.kind === 'official'
         ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
       const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
       if (value.conversation) setSelected(value.conversation)
-      else if (value.openInbox === true) setOpenInbox(true)
+      else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
       else throw new Error(tr('暂时无法打开对话，请重试'))
       void refreshTeamDirectory(accountKey)
     }
@@ -174,9 +169,13 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   if (selected) return <div className="team-message-panel">
     <TeamConversationPane key={`${selected.side}:${selected.key}`} accountKey={accountKey} conversation={selected}
       onChanged={() => { void refreshTeamDirectory(accountKey) }}
-      onAccessLost={() => { discardTeamDirectory(accountKey, selected) }} />
+      onAccessLost={() => { discardTeamDirectory(accountKey, selected); arkmeUi.forgetTeamConversation(selected.channel) }} />
   </div>
-  const directoryAllowed = intent.kind === 'inbox' || intent.kind === 'team' || openInbox
+  if (intent.kind === 'team' || intent.kind === 'inbox' && intent.side === 'team') return <section className="team-message-panel" aria-label={tr('团队对话')}>
+    <header style={messageLayout.header}><strong style={messageLayout.title}>{ui.teamDirectory?.channel?.name ?? tr('团队对话')}</strong></header>
+    <div className="team-empty">{tr('选择一个对话，查看消息')}</div>
+  </section>
+  const directoryAllowed = intent.kind === 'inbox'
   const initialDirectoryLoad = directory.loading && !directory.hasLoaded
   const items = (directoryAllowed ? directory.items : []).filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
@@ -528,8 +527,6 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const current = timeline?.conversation ?? conversation
   return <section className="team-conversation-pane">
     <header style={messageLayout.header}>
-      {current.side === 'team' && <ArkmeComposerToolButton aria-label={tr('返回团队对话')} title={tr('返回团队对话')}
-        onClick={() => openTeamMessages({ kind: 'team', teamRef: current.channel.teamRef })}><ArrowLeft size={20} aria-hidden /></ArkmeComposerToolButton>}
       <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
     </header>
     {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}

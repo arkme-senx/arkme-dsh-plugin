@@ -1,3 +1,4 @@
+import type { TeamChannel, TeamConversation } from '../team-app-contract.js'
 import type { ExploreModule } from '../explore-contract.js'
 import type { TeamMessageIntent } from './team-messaging-events.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
@@ -56,6 +57,7 @@ export interface ArkmeUiState {
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
   teamIntent?: TeamMessageIntent
+  teamDirectory?: { teamRef?: string; channel?: TeamChannel }
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
@@ -123,6 +125,8 @@ export class ArkmeUiController {
   /** Runtime-only conversation memory. A fresh client always starts in Harness. */
   private lastConversationDestination: ArkmeConversationDestination | undefined
   /** Personal topic selection survives other conversations, but never an account/client session. */
+  private readonly lastTeamConversations = new Map<string, TeamConversation>()
+  private readonly teamDirectoryScroll = new Map<string, number>()
   private lastSelfSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
   private settingsOpener: ((section?: ArkmeSettingsSection) => void) | undefined
@@ -177,6 +181,7 @@ export class ArkmeUiController {
       if (resetSelection) {
         this.lastConversationDestination = undefined
         this.lastSelfSource = undefined
+        this.lastTeamConversations.clear(); this.teamDirectoryScroll.clear()
       }
       const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
       const { calendarOpen: _activeCalendar, productMode: _activeProductMode, webLoginDialogOpen: _dialogFromCalendar, ...stateWithoutCalendar } = this.state
@@ -193,6 +198,7 @@ export class ArkmeUiController {
     }
     this.lastConversationDestination = undefined
     this.lastSelfSource = undefined
+    this.lastTeamConversations.clear(); this.teamDirectoryScroll.clear()
     const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({
       ...rest,
@@ -412,19 +418,49 @@ export class ArkmeUiController {
 
   showTeamConversation(intent: TeamMessageIntent): void {
     this.leaveContacts()
+    let folder: ArkmeUiState['teamDirectory']
+    if (intent.kind === 'team') {
+      folder = { teamRef: intent.teamRef, ...(intent.channel ? { channel: intent.channel } : {}) }
+      const remembered = intent.channel && this.lastTeamConversations.get(intent.channel.jotmoId)
+      if (remembered && intent.channel) intent = { kind: 'conversation', conversation: { ...remembered, channel: intent.channel } }
+    }
+    if (intent.kind === 'conversation' && intent.conversation.side === 'team') {
+      const c = intent.conversation
+      folder = { teamRef: c.channel.teamRef, channel: c.channel }
+      this.lastTeamConversations.set(c.channel.jotmoId, c)
+    } else if (intent.kind === 'inbox' && intent.side === 'team') folder = {}
     this.lastConversationDestination = { kind: 'team', intent }
-    const { selectedSource: _source, selectedBot: _bot, calendarOpen: _calendar, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'team', teamIntent: intent })
+    const { selectedSource: _source, selectedBot: _bot, calendarOpen: _calendar, productMode: _productMode, teamDirectory: _folder, ...rest } = this.state
+    this.publish({ ...rest, mode: 'team', teamIntent: intent, ...(folder ? {teamDirectory:folder} : {}) })
   }
+
+  resolveTeamDirectory(teamRef: string, channel: TeamChannel): void {
+    if (this.state.mode !== 'team' || this.state.teamDirectory?.teamRef !== teamRef) return
+    const remembered = this.lastTeamConversations.get(channel.jotmoId)
+    const intent = this.state.teamIntent
+    if (remembered && intent?.kind === 'team' && intent.teamRef === teamRef) {
+      this.showTeamConversation({kind:'conversation',conversation:{...remembered,channel}})
+    } else this.publish({...this.state,teamDirectory:{teamRef:channel.teamRef,channel}})
+  }
+
+  closeTeamDirectory(): void {
+    const {teamDirectory: _folder,...rest}=this.state
+    this.publish(rest)
+  }
+  forgetTeamConversation(channel: TeamChannel): void {
+    this.lastTeamConversations.delete(channel.jotmoId)
+  }
+  readTeamDirectoryScroll(key: string): number { return this.teamDirectoryScroll.get(key) ?? 0 }
+  rememberTeamDirectoryScroll(key: string, top: number): void { this.teamDirectoryScroll.set(key, top) }
 
   showConversations(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     const destination = this.lastConversationDestination
+    if (destination?.kind === 'team') { this.showTeamConversation(destination.intent); return }
     this.publish({
       ...rest,
       mode: destination === undefined || destination.kind === 'send_to_self' ? 'source' : destination.kind,
-      ...(destination?.kind === 'team' ? { teamIntent: destination.intent } : {}),
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
@@ -580,7 +616,7 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
-    if (next.mode !== 'team') { const { teamIntent: _intent, ...rest } = next; next = rest }
+    if (next.mode !== 'team') { const { teamIntent: _intent, teamDirectory: _directory, ...rest } = next; next = rest }
     if (next.mode !== 'world') {
       const { worldInitialScope: _scope, worldNavigationRevision: _revision, ...rest } = next
       next = rest
@@ -592,6 +628,7 @@ export class ArkmeUiController {
       && next.exploreModule === this.state.exploreModule
       && next.codexTarget === this.state.codexTarget
       && next.teamIntent === this.state.teamIntent
+      && next.teamDirectory === this.state.teamDirectory
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision

@@ -1,6 +1,6 @@
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
-import type { TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
+import type { TeamChannel, TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
 
 type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
 const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
@@ -33,7 +33,9 @@ export function startTeamDirectory(key: string): () => void {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
       try {
+        if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
         let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
+        if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
         const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items].map(c => [c.key, c]))
         const seen = new Set<string>()
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
@@ -73,13 +75,35 @@ export function startTeamDirectory(key: string): () => void {
   }
 }
 
-/** Merges independent UI rows; preserves ordinary pinned order and object identity. */
-export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[]): (T | { kind: 'team'; conversation: TeamConversation; activeAtMillis: number; pinned: false })[] {
-  const result: (T | { kind: 'team'; conversation: TeamConversation; activeAtMillis: number; pinned: false })[] = [...ordinary]
-  for (const conversation of teams) {
-    const row = { kind: 'team' as const, conversation, activeAtMillis: conversation.updatedAt, pinned: false as const }
-    const index = result.findIndex(item => !item.pinned && item.activeAtMillis < row.activeAtMillis)
-    result.splice(index < 0 ? result.length : index, 0, row)
+export interface TeamConversationGroup {
+  key: string; channel: TeamChannel; conversations: TeamConversation[]; latest: TeamConversation
+  unread: number; unreadExact: boolean
+}
+export function groupTeamConversations(conversations: readonly TeamConversation[], complete = true): TeamConversationGroup[] {
+  const groups = new Map<string, Map<string, TeamConversation>>()
+  for (const c of conversations) {
+    if (c.side !== 'team') continue
+    const group = groups.get(c.channel.jotmoId) ?? new Map<string, TeamConversation>()
+    group.set(c.key, c); groups.set(c.channel.jotmoId, group)
+  }
+  return [...groups].map(([key, group]) => {
+    const rows = [...group.values()].sort((a,b)=>b.updatedAt-a.updatedAt || a.key.localeCompare(b.key)), latest = rows[0]!
+    return {key,channel:latest.channel,conversations:rows,latest,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),unreadExact:complete}
+  }).sort((a,b)=>b.latest.updatedAt-a.latest.updatedAt || a.key.localeCompare(b.key))
+}
+
+type TeamDirectoryRow = { kind:'team'; conversation:TeamConversation; activeAtMillis:number; pinned:false }
+  | { kind:'team-folder'; group:TeamConversationGroup; activeAtMillis:number; pinned:false }
+/** Internal visitors share one team entry; external-facing conversations retain their direct entry. */
+export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true): (T | TeamDirectoryRow)[] {
+  const result: (T | TeamDirectoryRow)[] = [...ordinary]
+  const teamRows: TeamDirectoryRow[] = [
+    ...groupTeamConversations(teams,complete).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.latest.updatedAt,pinned:false as const})),
+    ...teams.filter(c=>c.side==='external').map(conversation=>({kind:'team' as const,conversation,activeAtMillis:conversation.updatedAt,pinned:false as const})),
+  ]
+  for (const row of teamRows.sort((a,b)=>b.activeAtMillis-a.activeAtMillis)) {
+    const index=result.findIndex(item=>!item.pinned && item.activeAtMillis<row.activeAtMillis)
+    result.splice(index<0?result.length:index,0,row)
   }
   return result
 }

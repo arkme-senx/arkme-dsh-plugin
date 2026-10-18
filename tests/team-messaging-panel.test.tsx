@@ -14,6 +14,7 @@ import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
@@ -173,6 +174,7 @@ describe('Team send UI recovery', () => {
   })
 
   it.each([false, undefined, true])('requires explicit inbox authority even when the directory has cached rows: %s', async openInbox => {
+    arkmeUi.authChanged(true,true)
     mocks.call.mockImplementation(async(op:string,p:{side?:string}) => {
       if(op==='team.app.official') return conversation.channel
       if(op==='team.app.open') return {channel:conversation.channel,openInbox}
@@ -184,7 +186,8 @@ describe('Team send UI recovery', () => {
       await act(async()=>{renderer=create(<TeamMessagingPanel accountKey="account" intent={{kind:'official'}} />);await tick()})
       await act(async()=>{await refreshTeamDirectory('account');await tick()})
       expect(JSON.stringify(renderer!.toJSON()).includes('暂时无法打开对话，请重试')).toBe(openInbox!==true)
-      expect(renderer!.root.findAllByType(TeamConversationRow)).toHaveLength(openInbox===true?1:0)
+      expect(renderer!.root.findAllByType(TeamConversationRow)).toHaveLength(0)
+      expect(arkmeUi.getSnapshot().teamDirectory?.channel).toEqual(openInbox===true?conversation.channel:undefined)
     } finally { await act(async()=>stop()) }
   })
 
@@ -420,7 +423,7 @@ describe('Team send UI recovery', () => {
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
     expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
     expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/屏蔽此用户|解除屏蔽|对话选项/)
-    expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(side === 'team')
+    expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(false)
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.block')).toBe(false)
   })
 
