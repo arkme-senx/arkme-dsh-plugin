@@ -36,7 +36,13 @@ export interface TeamPage<T> { items: T[]; hasMore: boolean; nextCursor?: string
 export interface TeamTimeline { conversation: TeamConversation; messages: TeamMessage[]; hasMore: boolean; beforeSeq: number }
 export interface TeamOpen { channel: TeamChannel; openInbox: boolean; conversation?: TeamConversation }
 export interface TeamSendResult { message?: TeamMessage; reason?: string }
-export interface TeamReceipts { hasMore?: boolean; nextCursor?: string; teamRead: boolean; visitorRead: boolean; members: Array<TeamIdentity & { read: boolean; readAt: number }> }
+export interface TeamReceiptMember extends TeamIdentity { key?: string; isMe?: boolean; read?: boolean; readAt?: number }
+export interface TeamReceipts {
+  hasMore?: boolean; nextCursor?: string; teamRead?: boolean; visitorRead?: boolean
+  /** Whether the sender is reliably excluded from the recipient population. */
+  senderExcluded?: boolean
+  members: TeamReceiptMember[]
+}
 export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 

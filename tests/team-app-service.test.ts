@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { TeamAppService } from '../src/services/team-app-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
 import type { ArkmeSessionStore } from '../src/keychain-store.js'
-import type { TeamChannel, TeamConversation, TeamOpen, TeamSendResult, TeamTimeline, TeamMembers } from '../src/team-app-contract.js'
+import type { TeamChannel, TeamConversation, TeamOpen, TeamSendResult, TeamTimeline, TeamMembers, TeamReceipts } from '../src/team-app-contract.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../src/record-owner-id.js'
 import { decodeArkmeTeamNotificationDataLine, decodeArkmeMemberEventDataLine } from '../src/chat-realtime.js'
 
@@ -31,6 +31,39 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
 describe('Team App owner adapter', () => {
+  it.each(['external', 'team'] as const)('projects %s-side message receipts in the internal view with stable member identities and sender exclusion', async messageSide => {
+    const f=fixture(path=>path.endsWith('/read-receipts/query')
+      ? {team_read:true,visitor_read:false,has_more:false,members:[
+          {user_id:11,identity:{nickname:'发送者'},read:true},
+          {user_id:90,identity:{nickname:'重名'},read:true,read_at:123},
+          {user_id:90,identity:{nickname:'重复页'},read:true},
+          {user_id:91,identity:{nickname:'重名'},read:false},
+          {user_id:92,identity:{nickname:'状态未知'}}]}
+      : {channel,conversation:{...conversation,side:'team'},messages:[{...message,side:messageSide,actor_user_id:messageSide==='external'?200:11}]})
+    const opened=await open(f), timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const read=()=>f.service.execute('team.app.receipts',{messageRef:timeline.messages[0]!.ref}) as Promise<TeamReceipts>
+    const first=await read(),second=await read()
+    expect(first.senderExcluded).toBe(true)
+    expect(first.members).toHaveLength(messageSide==='team'?3:4)
+    expect(first.members.map(m=>m.key)).toEqual(second.members.map(m=>m.key))
+    expect(first.members.find(m=>m.isMe)).toMatchObject({nickname:'重名',read:true})
+    expect(first.members.at(-1)?.read).toBeUndefined()
+    expect(JSON.stringify(first)).not.toMatch(/user_id|actor_user_id|sender_user_id/)
+    expect(Object.keys(f.requests.at(-1)!.body).sort()).toEqual(['conversation_uid','cursor','limit','message_uid','side'])
+  })
+  it('never exposes member identities in the external view, even if the server includes them',async()=>{
+    const f=fixture(path=>path.endsWith('/read-receipts/query') ? {team_read:true,members:[{user_id:11,identity:{nickname:'Private'}}],has_more:true,next_cursor:'secret'} : {channel,conversation,messages:[message]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipts',{messageRef:timeline.messages[0]!.ref}) as TeamReceipts
+    expect(result).toMatchObject({teamRead:true,members:[],hasMore:false})
+    expect(result.visitorRead).toBeUndefined();expect(result.nextCursor).toBeUndefined()
+  })
+  it.each([{}, {members:[],has_more:true}, {has_more:false}])('rejects incomplete internal receipt pages %s',async response=>{
+    const f=fixture(path=>path.endsWith('/read-receipts/query') ? response : {channel,conversation:{...conversation,side:'team'},messages:[message]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    await expect(f.service.execute('team.app.receipts',{messageRef:timeline.messages[0]!.ref})).rejects.toMatchObject({code:'team-receipts-incomplete'})
+  })
+
   it('projects discovered teams without signed URLs or internal identity and revalidates images through discovery', async () => {
     const f = fixture(() => ({team: {name: '公开团队', jotmo_id: 'public_team', state: 'pending', requires_approval: true,
       owner_user_id: 11, team_id: 'private-id', avatar: {mode: 'custom', key: 'avatar-key', url: 'https://signed.invalid/private'}}}))

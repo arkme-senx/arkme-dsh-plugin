@@ -9,7 +9,7 @@ import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
 import { ArkmeAttachmentDraftTile } from '../src/client/ArkmeRichContent.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
-import { ArkmeReadReceiptPanel, ArkmeReadReceiptMember } from '../src/client/ArkmeReadReceiptPanel.js'
+import { ArkmeReadReceiptPanel } from '../src/client/ArkmeReadReceiptPanel.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -352,17 +352,32 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.receipts')).toBe(false)
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
   })
-  it('lets a team member open the shared receipt panel from the unread dot', async () => {
+  it.each(['team', 'external'] as const)('keeps all-read %s messages inspectable and separates external contact from team filters',async side=>{
+    const msg:TeamMessage={key:'m',ref:'m',seq:1,revision:1,side,sender:{nickname:'发信人'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
+    mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
+      ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
+      : {visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
+    await mount()
+    await act(async()=>{renderer!.root.findByProps({className:'team-receipt-badge'}).props.onClick({currentTarget:null});await tick()})
+    expect(JSON.stringify(renderer!.toJSON())).toContain('团队已读 2/2')
+    const panel=renderer!.root.findByType(ArkmeReadReceiptPanel)
+    expect(panel.findAllByProps({className:'team-receipt-heading'})).toHaveLength(side==='team'?2:1)
+    const unread=panel.findByProps({role:'group'}).findAllByType('button')[2]!
+    await act(async()=>{unread.props.onClick();await tick()})
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无未读成员')
+    expect(renderer!.root.findAllByProps({className:'team-receipt-badge'})).toHaveLength(1)
+  })
+  it('lets a team member open the shared receipt panel from its persistent status', async () => {
     const own = {key:'m',ref:'m',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:false}
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? {conversation:{...conversation,side:'team'},messages:[own],hasMore:false,beforeSeq:0}
       : {teamRead:true,visitorRead:false,members:[]})
     await mount()
-    const button = renderer!.root.findByProps({'data-arkme-read-receipt-indicator':'unread'}).parent!
+    const button = renderer!.root.findByProps({className:'team-receipt-badge'})
     expect(button.type).toBe('button')
-    await act(async () => { button.props.onClick(); await tick() })
+    await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)
-    await act(async () => { button.props.onClick(); await tick() })
+    await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
   })
   it('shows directory failure and retries without claiming there are no conversations', async () => {
@@ -552,7 +567,7 @@ describe('Team send UI recovery', () => {
       if(op==='team.app.timeline') return {conversation:{...conversation,side:'team'},messages:[message],hasMore:false,beforeSeq:0}
       if(op==='team.app.receipts') {
         if(hold) return new Promise(resolve=>{deferred=resolve})
-        return {teamRead:read,visitorRead:read,members:[{nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
+        return {teamRead:read,visitorRead:read,senderExcluded:true,members:[{key:p.cursor?'two':'one',nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
       }
       return {}
     })
@@ -560,8 +575,8 @@ describe('Team send UI recovery', () => {
     await mount();await act(async()=>{renderer!.root.findByType(TeamConversationMessage).props.onReceipts();await tick()});await click('更多成员')
     read=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('two')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('用户已查看')
-    expect(renderer!.root.findAllByType(ArkmeReadReceiptMember)).toHaveLength(2)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('对方已读')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('已读 2/2')
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
     hold=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
     await act(async()=>{renderer!.root.findByType(ArkmeReadReceiptPanel).props.onClose();await tick()});await act(async()=>{deferred?.({members:[],hasMore:false,teamRead:true});await tick()})

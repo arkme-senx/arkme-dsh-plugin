@@ -1,3 +1,5 @@
+import { TeamReceiptDetails } from './TeamReadReceipts.js'
+import { TeamReceiptStore, emptyTeamReceipt } from './team-read-receipts.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeClipboardFiles } from './clipboard-files.js'
@@ -34,7 +36,7 @@ import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
-import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamReceipts, TeamTimeline } from '../team-app-contract.js'
+import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
@@ -48,7 +50,7 @@ import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttach
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
-import { ArkmeReadReceiptMember, ArkmeReadReceiptPanel, ArkmeReadReceiptStatus } from './ArkmeReadReceiptPanel.js'
+import { ArkmeReadReceiptPanel } from './ArkmeReadReceiptPanel.js'
 
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
@@ -231,7 +233,17 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     merge: (local, remote) => [...new Map([...local, ...remote].map(message => [message.key, message])).values()]
       .sort((a, b) => a.seq - b.seq),
   }))
-  const [receipt, setReceipt] = useState<{ message: TeamMessage; value?: TeamReceipts; error?: string }>()
+  const receiptStore = useMemo(() => new TeamReceiptStore(accountKey), [accountKey, conversation.key])
+  const [receiptMessage, setReceiptMessage] = useState<TeamMessage>()
+  const receiptState = useSyncExternalStore(receiptStore.subscribe, () => receiptMessage ? receiptStore.get(receiptMessage.key) : emptyTeamReceipt, () => emptyTeamReceipt)
+  useEffect(() => receiptStore.retain(), [receiptStore])
+  useEffect(() => receiptMessage ? receiptStore.watch(receiptMessage) : undefined, [receiptStore, receiptMessage])
+  useEffect(() => {
+    const update = () => { if (document.visibilityState === 'visible' && document.hasFocus()) receiptStore.refreshVisible() }
+    const timer = window.setInterval(update, 15_000)
+    document.addEventListener('visibilitychange', update)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update) }
+  }, [receiptStore])
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; needsReload?: boolean; latestText?: string }>(), [deleting, setDeleting] = useState<TeamMessage>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -255,7 +267,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }, [draft.localFiles, draftPreview])
   const viewport = useRef<ArkmeConversationViewportSnapshot>()
   const uploadBusy = useRef(false)
-  const sendBusy = useRef(false), receiptsBusy = useRef(false)
+  const sendBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
   const draftRef = useRef(draft); draftRef.current = draft
   const resumeSend = useRef<() => Promise<void>>(async () => {})
@@ -263,33 +275,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort() }, [])
-  const receiptRef = useRef(receipt); receiptRef.current = receipt
-  const receiptGeneration = useRef(0)
+  const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
   const receiptAnchor = useRef<HTMLElement | null>(null)
-  const readReceipts = useCallback(async (message: TeamMessage, more = false) => {
-    const previous = receiptRef.current?.message.key === message.key ? receiptRef.current : undefined
-    if (receiptsBusy.current && previous) return
-    receiptsBusy.current = true
-    const token = ++receiptGeneration.current
-    const opening = { message, ...(previous?.value ? { value: previous.value } : {}) }
-    receiptRef.current = opening; setReceipt(opening)
-    try {
-      let value = await callArkme<TeamReceipts>('team.app.receipts', { messageRef: message.ref, ...(more ? { cursor: previous?.value?.nextCursor } : {}) }, ctrl.current.signal)
-      const members = [...(more ? previous?.value?.members ?? [] : []), ...value.members], seen = new Set<string>()
-      while (!more && members.length < (previous?.value?.members.length ?? 0) && value.hasMore) {
-        if (!value.nextCursor || seen.has(value.nextCursor)) throw new Error(tr('消息分页异常，请重试'))
-        seen.add(value.nextCursor)
-        if (ctrl.current.signal.aborted || token !== receiptGeneration.current) return
-        value = await callArkme<TeamReceipts>('team.app.receipts', { messageRef: message.ref, cursor: value.nextCursor }, ctrl.current.signal)
-        members.push(...value.members)
-      }
-      if (!ctrl.current.signal.aborted && token === receiptGeneration.current) { const next = { message, value: { ...value, members } }; receiptRef.current = next; setReceipt(next) }
-    } catch (e) {
-      if (!ctrl.current.signal.aborted && token === receiptGeneration.current) {
-        const failed = { ...opening, error: errorText(e) }; receiptRef.current = failed; setReceipt(failed)
-      }
-    } finally { if (token === receiptGeneration.current) receiptsBusy.current = false }
-  }, [])
+  const readReceipts = useCallback((message: TeamMessage, more = false) => {
+    receiptRef.current = message; setReceiptMessage(message)
+    return receiptStore.load(message, more, true)
+  }, [receiptStore])
   const refresh = useCallback(async (beforeSeq = 0) => {
     const token = ++generation.current
     try {
@@ -309,11 +300,15 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       latest.current = data
       setTimeline(data)
       setLoadError('')
-      if (receiptRef.current) await readReceipts(receiptRef.current.message)
+      const openedReceipt = receiptRef.current && data.messages.find(m => m.key === receiptRef.current?.key)
+      if (openedReceipt && (openedReceipt.state !== 'published' || openedReceipt.contentStatus !== 'available')) {
+        receiptRef.current = undefined; setReceiptMessage(undefined)
+      }
+      receiptStore.refreshVisible(true)
       if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined); setEditing(undefined) } } }
-  }, [conversation.ref, readReceipts])
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
+  }, [conversation.ref, receiptStore])
   const recover = useCallback(async () => {
     if (ctrl.current.signal.aborted) return
     if (recovering.current) { recoverAgain.current = true; return }
@@ -544,10 +539,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       {visibleMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(visibleMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
         <TeamConversationMessage message={m} avatar={<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
-          showReceipts={current.side === 'team'} busy={busy}
+          showReceipts={current.side === 'team'} receiptStore={receiptStore} busy={busy}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }); setDeleting(undefined) }}
           onDelete={() => { setError(''); setDeleting(m); setEditing(undefined) }}
-          onReceipts={anchor => { if (receiptRef.current?.message.key === m.key) { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
+          onReceipts={anchor => { if (receiptRef.current?.key === m.key) { receiptRef.current = undefined; setReceiptMessage(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
           {tr(task.cancelRequested ? '正在取消…' : task.state === 'failed' ? task.error ?? '发送失败' : task.state === 'retrying' || task.state === 'queued' ? '等待发送' : task.state === 'uploading' ? '正在上传…' : '正在发送…')}
           {(task.state === 'failed' && task.cancelRequested) && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'retry')}}>{tr('重试')}</button>}
@@ -556,13 +551,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
     </div>
-    {receipt && <ArkmeReadReceiptPanel anchor={receiptAnchor.current} label={tr('查看阅读状态')}
-      onClose={() => { ++receiptGeneration.current; receiptsBusy.current = false; receiptRef.current = undefined; setReceipt(undefined) }}>
-      {!receipt.value && !receipt.error && <ArkmeReadReceiptStatus>{tr('加载中...')}</ArkmeReadReceiptStatus>}
-      {receipt.error && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message) }}>{tr('加载失败')}</ArkmeReadReceiptStatus>}
-      {receipt.value && <ArkmeReadReceiptStatus>{current.side === 'external' ? receipt.value?.teamRead ? tr('团队已查看') : tr('团队未查看') : receipt.value?.visitorRead ? tr('用户已查看') : tr('用户未查看')}</ArkmeReadReceiptStatus>}
-      {receipt.value?.members.map((v, i) => <ArkmeReadReceiptMember key={i} name={v.nickname || tr('用户')} read={v.read} readAt={v.readAt} avatar={<TeamAvatar identity={v} size={20} />} />)}
-      {receipt.value?.hasMore && <ArkmeReadReceiptStatus onClick={() => { void readReceipts(receipt.message, true) }}>{tr('更多成员')}</ArkmeReadReceiptStatus>}
+    {receiptMessage && <ArkmeReadReceiptPanel anchor={receiptAnchor.current} label={tr('查看阅读状态')}
+      onClose={() => { receiptRef.current = undefined; setReceiptMessage(undefined) }}>
+      <TeamReceiptDetails key={receiptMessage.key} message={receiptMessage} state={receiptState} visitor={current.visitor}
+        onRetry={() => { void readReceipts(receiptMessage) }} onMore={() => { void readReceipts(receiptMessage, true) }}
+        renderAvatar={identity => <TeamAvatar identity={identity} size={20} />} />
     </ArkmeReadReceiptPanel>}
     {deleting && <ArkmeConfirmDialog titleId="team-message-delete-title" title={tr('删除快记')}
       description={tr('删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。')}

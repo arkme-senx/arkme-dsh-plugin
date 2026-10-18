@@ -122,7 +122,7 @@ export class TeamAppService {
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
-    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid }
+    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor), own: v.own === true,
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
@@ -379,13 +379,31 @@ export class TeamAppService {
       }
       case 'team.app.read': return await post('conversations/read/advance', { ...await conversation(), read_seq: num(p.readSeq) })
       case 'team.app.receipts': {
-        const context = await message()
+        const context = await this.open('message', p.messageRef, actor)
         const cursor = p.cursor ? await this.open('receipt-cursor', p.cursor, actor) : {}
         if (p.cursor && cursor.message_uid !== context.message_uid) throw invalid()
-        const data = await post('conversations/read-receipts/query', { ...context, cursor: str(cursor.cursor), limit: 50 }, true)
-        return { teamRead: data.team_read === true, visitorRead: data.visitor_read === true, hasMore: data.has_more === true,
-          ...(data.next_cursor ? { nextCursor: await this.ref('receipt-cursor', { message_uid: context.message_uid, cursor: data.next_cursor }, actor) } : {}),
-          members: await Promise.all(list(data.members).map(async v => ({ ...await this.identity(v.identity, actor), read: v.read === true, readAt: num(v.read_at) }))) }
+        const data = await post('conversations/read-receipts/query', { conversation_uid: context.conversation_uid,
+          message_uid: context.message_uid, side: context.side, cursor: str(cursor.cursor), limit: 50 }, true)
+        const internal = context.side === 'team', senderId = recordOwnerId(context.sender_user_id)
+        if (internal && (!Array.isArray(data.members) || typeof data.has_more !== 'boolean'
+          || (data.has_more && (!str(data.next_cursor) || data.next_cursor === cursor.cursor)))) throw new ArkmePluginError('team-receipts-incomplete', '阅读状态返回不完整，请重试', true, 502)
+        const rows = internal ? list(data.members) : []
+        const seen = new Set<string>()
+        const members = []
+        for (const v of rows) {
+          const id = recordOwnerId(v.user_id)
+          if (id && (String(id) === String(senderId) || seen.has(String(id)))) continue
+          if (id) seen.add(String(id))
+          members.push({ ...await this.identity(v.identity, actor),
+            ...(id ? { key: await this.key(`receipt-member:${id}`, actor), isMe: String(id) === String(actor) } : {}),
+            ...(typeof v.read === 'boolean' ? { read: v.read } : {}),
+            ...(num(v.read_at) > 0 ? { readAt: num(v.read_at) } : {}) })
+        }
+        return { ...(typeof data.team_read === 'boolean' ? { teamRead: data.team_read } : {}),
+          ...(typeof data.visitor_read === 'boolean' ? { visitorRead: data.visitor_read } : {}),
+          senderExcluded: context.message_side === 'external' || !!senderId,
+          ...(internal ? { hasMore: data.has_more } : { hasMore: false }),
+          ...(internal && data.next_cursor ? { nextCursor: await this.ref('receipt-cursor', { message_uid: context.message_uid, cursor: data.next_cursor }, actor) } : {}), members }
       }
       case 'team.app.block': return await post('conversations/block', { conversation_uid: (await conversation()).conversation_uid, blocked: p.blocked === true })
       case 'team.app.applications': {

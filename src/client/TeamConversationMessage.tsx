@@ -1,3 +1,5 @@
+import { TeamReceiptBadge } from './TeamReadReceipts.js'
+import type { TeamReceiptStore } from './team-read-receipts.js'
 import { ArkmeReadReceiptControl, readReceiptLineStyle } from './ArkmeReadReceiptControl.js'
 import { useRef, useState } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
@@ -11,8 +13,8 @@ import { arkmeConversationMessageLayout as layout, timeLabel } from './conversat
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, avatar, writable, showReceipts, busy, onEdit, onDelete, onReceipts, onError }: {
-  message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; busy: boolean
+export function TeamConversationMessage({ message, avatar, writable, showReceipts, receiptStore, busy, onEdit, onDelete, onReceipts, onError }: {
+  message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   onEdit(): void; onDelete(): void; onReceipts(anchor: HTMLElement | null): void; onError(error: string): void
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number }>()
@@ -26,7 +28,7 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
-        {message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
+        {!showReceipts && message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
           state={message.recipientRead === undefined ? 'error' : 'unread'}
           label={tr(message.recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
           {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
@@ -37,6 +39,7 @@ export function TeamConversationMessage({ message, avatar, writable, showReceipt
           {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
         </div>
         </div>
+        {showReceipts && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         {/* A point menu must not create another flex gap and move the message. */}
         {menu && published && <div style={{ position: 'fixed', width: 0, height: 0 }}><ArkmeActionMenu label={tr('消息操作')} point={menu} autoFocus onClose={() => setMenu(undefined)} actions={[
           available && !!message.content?.text_content && { id: 'copy', label: tr('复制'), icon: <Copy />, onSelect: () => select(() => { void navigator.clipboard.writeText(message.content!.text_content ?? '').catch(() => onError(tr('复制失败，请重试'))) }) },
