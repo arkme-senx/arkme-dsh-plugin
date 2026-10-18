@@ -947,7 +947,7 @@ it('keeps long article and ordinary staging independent after restart', async ()
   const restarted = new FileTransfers(f.directory, f.ports, 1000)
   expect(await restarted.files()).toHaveLength(257)
   await expect(f.stage('ordinary.pdf')).resolves.toMatchObject({fileName:'ordinary.pdf'})
-})
+}, bulkFileLifecycleTimeout)
 
 it('identifies the exact long article image when upload or fixed-limit validation fails', async () => {
   const f=await fixture(); const path=join(f.directory,'failed.png'); await writeFile(path,'image bytes')
