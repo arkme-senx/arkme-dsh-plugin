@@ -26,10 +26,16 @@ it('keeps newer and pending snapshots but removes revoked content immediately', 
   expect(acceptUnderlineSnapshot(initial,{...initial,revision:3,items:[]},true)).toBe(initial)
   expect(acceptUnderlineSnapshot(initial,{...initial,accessible:false},true)?.items).toEqual([])
 })
-it('renders shared overlaps as one line per span with all relevant authors', () => {
-  const base: MarkPosition = {key:'a',target,ids:['mine'],left:10,top:10,width:30,stale:false,pending:false}
+it('renders shared overlaps as one background per span with all relevant authors', () => {
+  const base: MarkPosition = {key:'a',target,ids:['mine'],left:10,top:10,width:30,height:20,stale:false,pending:false}
   const merged = mergeUnderlinePositions([base,{...base,key:'b',ids:['other'],left:30,width:30}])
   expect(merged.map(p=>[p.left,p.width,p.ids])).toEqual([[10,20,['mine']],[30,10,['mine','other']],[40,20,['other']]])
+})
+it('keeps the same message in list and detail as independent hit-test surfaces', () => {
+  const base: MarkPosition={key:'a',target,ids:['mine'],left:10,top:10,width:30,height:20,stale:false,pending:false}
+  const merged=mergeUnderlinePositions([{...base,element:document.createElement('div')},{...base,element:document.createElement('div')}])
+  expect(merged).toHaveLength(2)
+  expect(merged[0]?.element).not.toBe(merged[1]?.element)
 })
 it('removes only mine immediately and rolls back failure with the same retry id', async () => {
   const session = new MessageUnderlineSession('self',42,vi.fn()); session.capability = {supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
@@ -60,12 +66,16 @@ it('does not write when unsupported, and ignores completion after scope disposal
   const writing=session.change(target,{kind:'add',anchor,operationId:'op'}); session.dispose(); response.resolve(initial); await writing
   expect(session.snapshots.size).toBe(0)
 })
-it('paints a single shared line and exposes both markers without changing copyable text', async () => {
+it.each([false,true])('paints background (native=%s) and opens the shared toolbar with exact own cancellation', async (native) => {
   const {act}=await import('react'),{createRoot}=await import('react-dom/client'),{webcrypto}=await import('node:crypto')
   const {UnderlineLayer}=await import('../src/client/ArkmeMessageUnderlines.js')
+  const {ArkmeMessageTextSelectionToolbar}=await import('../src/client/ArkmeMessageTextSelection.js')
+  const remove=vi.fn(async()=>undefined), reply=vi.fn(),add=vi.fn(async()=>undefined)
   const {ArkmeMessageContent}=await import('../src/client/ArkmeRichContent.js')
   const {quoteDigest}=await import('../src/client/message-quote-selection.js')
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('crypto',webcrypto)
+  const highlights=new Map<string,Set<Range>>()
+  if(native){ vi.stubGlobal('CSS',{highlights});vi.stubGlobal('Highlight',class extends Set<Range>{constructor(...ranges:Range[]){super(ranges)}}) }
   vi.stubGlobal('ResizeObserver',class {observe(){} disconnect(){}})
   const rect=vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockReturnValue(new DOMRect(20,50,200,60))
   const clientRects=Object.getOwnPropertyDescriptor(Range.prototype,'getClientRects')
@@ -76,16 +86,67 @@ it('paints a single shared line and exposes both markers without changing copyab
   const snapshot={...initial,items:initial.items.map(item=>({...item,anchor:actual}))}
   const session=new MessageUnderlineSession('self',42,vi.fn());session.capability={supported:true,maxLength:2000};session.snapshots.set(underlineTargetKey(target),snapshot)
   vi.mocked(callArkme).mockResolvedValue([{actionRef:'ref',snapshot}])
+  const renderFixture=(key:number)=><><ArkmeMessageContent key={key} item={target.item} sourceRef="self"/><UnderlineLayer session={session} revision={1}/><ArkmeMessageTextSelectionToolbar replySourceRef="self" replyLabel="延展" onReply={reply} onUnderline={add} getMarks={()=>session.snapshots.get(underlineTargetKey(target))?.items??[]} onRemoveMark={remove}/></>
   try {
-    await act(async()=>{root.render(<><ArkmeMessageContent item={target.item} sourceRef="self"/><UnderlineLayer session={session} revision={1}/></>);await new Promise(resolve=>setTimeout(resolve,30))})
-    const lines=document.querySelectorAll<HTMLButtonElement>('[aria-label="查看划线标记者"]')
-    expect(lines).toHaveLength(1)
-    expect(dom.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重点')
-    await act(async()=>lines[0]!.click())
-    expect(document.querySelector('[aria-label="划线详情"]')?.textContent).toContain('你、宏顺标记了这段')
-    expect(document.querySelector('[aria-label="划线详情"]')?.textContent).toContain('取消我的划线')
+    await act(async()=>{root.render(renderFixture(1));await new Promise(resolve=>setTimeout(resolve,30))})
+    const paints=document.querySelectorAll<HTMLElement>('[data-arkme-mark-paint]')
+    expect(paints).toHaveLength(native ? 0 : 1)
+    if(native) expect([...highlights.values()][0]?.size).toBe(2)
+    else { expect(paints[0]!.style.height).toBe('20px');expect(paints[0]!.style.pointerEvents).toBe('none') }
+    let text=dom.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+    expect(text.textContent).toBe('重点')
+    document.getSelection()?.removeAllRanges()
+    await act(async()=>{
+      text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
+      text.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:30,clientY:55}))
+    })
+    const toolbar=document.querySelector('[role="toolbar"]')!
+    expect(toolbar.textContent).toContain('你、宏顺')
+    expect([...toolbar.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','✓ 取消标记','延展'])
+    expect(document.getSelection()?.toString()).toBe('重点')
+    const cancel=toolbar.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!
+    await act(async()=>cancel.click())
+    expect(remove).toHaveBeenCalledWith(target,expect.objectContaining({id:'mine'}))
+    expect(add).not.toHaveBeenCalled()
+    // Other people's highlights remain actionable as an add, never as their deletion.
+    session.snapshots.set(underlineTargetKey(target),{...snapshot,items:[snapshot.items[1]!]})
+    await act(async()=>{
+      text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
+      text.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:30,clientY:55}))
+    })
+    const otherToolbar=document.querySelector('[role="toolbar"]')!
+    expect(otherToolbar.textContent).toContain('宏顺')
+    expect(otherToolbar.textContent).not.toContain('取消标记')
+    await act(async()=>[...otherToolbar.querySelectorAll('button')].find(b=>b.textContent==='标记')!.click())
+    expect(add).toHaveBeenCalledWith(target,actual)
+    expect(remove).toHaveBeenCalledTimes(1)
+    // Background refresh can replace the DOM root at identical coordinates; hit testing follows the new root.
+    const oldText=text
+    await act(async()=>{root.render(renderFixture(2))})
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,40))})
+    text=dom.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+    expect(text).not.toBe(oldText)
+    await act(async()=>{
+      text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
+      text.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:30,clientY:55}))
+    })
+    expect(document.querySelector('[role="toolbar"]')?.textContent).toContain('宏顺')
+    // Dragging a subset keeps the user's precise selection; it must not cancel the whole original mark.
+    session.snapshots.set(underlineTargetKey(target),snapshot)
+    const node=document.createTreeWalker(text,NodeFilter.SHOW_TEXT).nextNode()!
+    await act(async()=>{
+      text.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:30,clientY:55}))
+      const range=document.createRange();range.setStart(node,0);range.setEnd(node,1)
+      document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+      text.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:45,clientY:55}))
+      text.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:45,clientY:55}))
+    })
+    expect(document.getSelection()?.toString()).toBe('重')
+    expect(document.querySelector('[role="toolbar"]')?.textContent).not.toContain('取消标记')
+    await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button')].find(b=>b.textContent==='标记')!.click())
+    expect(add).toHaveBeenLastCalledWith(target,expect.objectContaining({start:0,end:1,text:'重'}))
   }finally{
-    await act(async()=>root.unmount());dom.remove();session.dispose();rect.mockRestore();document.elementFromPoint=originalPoint
+    await act(async()=>root.unmount());if(native)expect(highlights.size).toBe(0);dom.remove();document.getSelection()?.removeAllRanges();session.dispose();rect.mockRestore();document.elementFromPoint=originalPoint
     if(clientRects)Object.defineProperty(Range.prototype,'getClientRects',clientRects)
     vi.unstubAllGlobals()
   }

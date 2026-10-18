@@ -8597,6 +8597,8 @@ export function ArkmeSurface({
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       replyLabel={sourceIsChat ? '回复' : '延展'}
       onUnderline={messageUnderlines.mark}
+      getMarks={messageUnderlines.getMarks}
+      onRemoveMark={messageUnderlines.remove}
       onReply={(target, quote) => {
         if (!source || source.sourceRef !== target.sourceRef || (!sourceIsChat && !isArkmeSelfWorkspaceSource(source))) return
         const oldQuote = composerExtensionTarget?.quote

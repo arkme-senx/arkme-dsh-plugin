@@ -3488,7 +3488,7 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
     const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
-    if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('underline-source-invalid', '当前来源不支持划线', false, 403)
+    if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('underline-source-invalid', '当前来源不支持标记', false, 403)
     const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) => chat
       ? this.runtime.authenticatedChatPost<Record<string, unknown>>(`/api/v1/chats/annotations/${action}`, { ...body, chat_session_uid: source.ownerRef }, session, signal)
       : this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal)
@@ -3505,7 +3505,7 @@ export class ChatService {
   }
 
   async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) {
-    if (!actionRefs.length || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length) throw new ArkmePluginError('underline-targets-invalid', '划线读取范围无效', false)
+    if (!actionRefs.length || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length) throw new ArkmePluginError('underline-targets-invalid', '标记读取范围无效', false)
     const { session, source, chat, post } = await this.underlineContext(sourceRef)
     const messages = await Promise.all(actionRefs.map(async (ref, target_index) => {
       const target = await this.openMessageActionRef(ref, session.userId, source)
@@ -3513,11 +3513,11 @@ export class ChatService {
         ...(chat ? { relation_uid: target.relationUid, sequence: target.sourceSequence } : {}) }
     }))
     const data = await post('list', { messages }, signal)
-    if (!Array.isArray(data.items) || data.items.length !== messages.length) throw new ArkmePluginError('underline-response-invalid', '划线读取不完整，请重试', true, 502)
+    if (!Array.isArray(data.items) || data.items.length !== messages.length) throw new ArkmePluginError('underline-response-invalid', '标记读取不完整，请重试', true, 502)
     const seen = new Set<number>()
     return data.items.map(raw => {
       const item = objectValue(raw), index = Number(item.target_index)
-      if (!Number.isSafeInteger(item.target_index) || index < 0 || index >= messages.length || seen.has(index)) throw new ArkmePluginError('underline-response-invalid', '划线来源不匹配', true, 502)
+      if (!Number.isSafeInteger(item.target_index) || index < 0 || index >= messages.length || seen.has(index)) throw new ArkmePluginError('underline-response-invalid', '标记来源不匹配', true, 502)
       seen.add(index)
       return { actionRef: actionRefs[index]!, snapshot: readUnderlineSnapshot(item, session.userId) }
     })
@@ -3525,11 +3525,11 @@ export class ChatService {
 
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: MessageUnderlineChange, signal?: AbortSignal) {
     if (!change || !underlineId(change.operationId) || (change.kind !== 'add' && change.kind !== 'remove')
-      || (change.kind === 'remove' && !underlineId(change.annotationId))) throw new ArkmePluginError('underline-change-invalid', '划线操作无效', false)
+      || (change.kind === 'remove' && !underlineId(change.annotationId))) throw new ArkmePluginError('underline-change-invalid', '标记操作无效', false)
     const { session, source, chat, post } = await this.underlineContext(sourceRef)
     const target = await this.openMessageActionRef(actionRef, session.userId, source)
     const capability = await this.sourceUnderlineCapabilities(sourceRef, signal)
-    if (!capability.supported) throw new ArkmePluginError('underline-unavailable', '划线尚待服务端接通，暂未保存', false, 409)
+    if (!capability.supported) throw new ArkmePluginError('underline-unavailable', '标记尚待服务端接通，暂未保存', false, 409)
     const anchor = change.kind === 'add' ? readMessageQuote(change.anchor) : undefined
     if (change.kind === 'add') {
       const snapshot = { title: target.title, textContent: target.textContent, textFormat: target.textFormat ?? 'plain' }
@@ -3548,7 +3548,7 @@ export class ChatService {
         : snapshot.items.some(item => item.id === change.annotationId))) throw new Error('invalid receipt')
       return snapshot
     } catch {
-      throw new ArkmePluginError('underline-receipt-missing', '划线提交结果待核对，请刷新核对或重试', true, 502, { writeOutcomeUnknown: true })
+      throw new ArkmePluginError('underline-receipt-missing', '标记提交结果待核对，请刷新核对或重试', true, 502, { writeOutcomeUnknown: true })
     }
   }
 

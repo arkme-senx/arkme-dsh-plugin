@@ -26,17 +26,17 @@ export class MessageUnderlineSession {
     if (failure) { this.notice = failure.notice; this.retry = failure.retry }
     if (!this.controller.signal.aborted) this.emit()
   }
-  report(error: unknown) { this.notice = error instanceof Error ? error.message : '划线操作失败'; this.publish() }
+  report(error: unknown) { this.notice = error instanceof Error ? error.message : '标记操作失败'; this.publish() }
   async prepare() {
     try {
       const result = await callArkme<MessageUnderlineCapabilities>('source.message-underline.capabilities', { sourceRef: this.sourceRef }, this.controller.signal)
       if (this.controller.signal.aborted) return
       this.capability = result
-      this.notice = result.supported ? '' : '划线尚待服务端接通，暂未保存'
+      this.notice = result.supported ? '' : '标记尚待服务端接通，暂未保存'
       this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted) return
-      this.notice = error instanceof Error ? error.message : '无法确认划线支持情况'
+      this.notice = error instanceof Error ? error.message : '无法确认标记支持情况'
       this.retry = () => this.prepare()
     }
     this.publish()
@@ -66,7 +66,7 @@ export class MessageUnderlineSession {
       if (!this.controller.signal.aborted) {
         // No stale annotation content after authorization loss.
         if (accessLost(error)) this.snapshots.clear()
-        this.notice = error instanceof Error ? error.message : '划线同步失败'
+        this.notice = error instanceof Error ? error.message : '标记同步失败'
         this.retry = () => this.read(targets)
         this.publish()
       }
@@ -74,11 +74,11 @@ export class MessageUnderlineSession {
   }
   async change(target: MessageSelectionTarget, change: MessageUnderlineChange): Promise<void> {
     if (this.controller.signal.aborted || target.sourceRef !== this.sourceRef || !target.item.messageActionRef || target.item.status !== 1) throw new Error('会话已变化，请重新选择')
-    if (!this.capability?.supported) throw new Error(this.notice || '正在确认划线支持情况，请稍后重试')
+    if (!this.capability?.supported) throw new Error(this.notice || '正在确认标记支持情况，请稍后重试')
     const key = underlineTargetKey(target), before = this.snapshots.get(key)
-    if (this.pending.has(key)) throw new Error('这条消息的划线正在同步')
-    if (change.kind === 'remove' && !before?.items.some(item => item.id === change.annotationId && item.mine)) throw new Error('只能取消自己的划线')
-    if (change.kind === 'add' && change.anchor.text.length > this.capability.maxLength) throw new Error(`划线最多 ${this.capability.maxLength} 个字符`)
+    if (this.pending.has(key)) throw new Error('这条消息的标记正在同步')
+    if (change.kind === 'remove' && !before?.items.some(item => item.id === change.annotationId && item.mine)) throw new Error('只能取消自己的标记')
+    if (change.kind === 'add' && change.anchor.text.length > this.capability.maxLength) throw new Error(`标记最多 ${this.capability.maxLength} 个字符`)
     if (change.kind === 'add' && before?.items.some(item => item.mine && JSON.stringify(item.anchor) === JSON.stringify(change.anchor))) return
     this.pending.add(key)
     this.failures.delete(key)
@@ -86,20 +86,20 @@ export class MessageUnderlineSession {
     this.snapshots.set(key, { revision: before?.revision ?? 0, accessible: true,
       items: change.kind === 'remove' ? (before?.items ?? []).filter(item => item.id !== change.annotationId)
         : [...(before?.items ?? []), { id: change.operationId, actorId: this.viewerId, actorName: '你', mine: true, anchor: change.anchor, state: 'available', pending: true }] })
-    this.notice = '正在同步划线…'; this.retry = undefined; this.publish()
+    this.notice = '正在同步标记…'; this.retry = undefined; this.publish()
     try {
       const result = await callArkme<MessageUnderlineSnapshot>('source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: target.item.messageActionRef, change }, this.controller.signal)
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
       if (current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
-      this.failures.delete(key); this.notice = this.pending.size > 1 ? '正在同步划线…' : ''; this.retry = undefined
+      this.failures.delete(key); this.notice = this.pending.size > 1 ? '正在同步标记…' : ''; this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted) return
       if (accessLost(error)) this.snapshots.clear()
       else if (this.snapshots.get(key)?.accessible !== false) {
         if (before) this.snapshots.set(key, before); else this.snapshots.delete(key)
       }
-      this.notice = error instanceof Error ? error.message : '划线同步失败，已恢复'
+      this.notice = error instanceof Error ? error.message : '标记同步失败，已恢复'
       this.retry = () => this.change(target, change) // Stable idempotency key for uncertain writes.
       this.failures.set(key, { notice: this.notice, retry: this.retry })
     } finally {
