@@ -1,3 +1,5 @@
+import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
+import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
@@ -51,6 +53,33 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
+    const mine: TeamMessage = { ref:'own-ref',key:'own',seq:1,revision:1,side,sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'自己的消息',template_kind:1},media:[] }
+    const other: TeamMessage = {...mine,ref:'other-ref',key:'other',seq:2,own:false,canEdit:false,canDelete:false,content:{text_content:'对方消息',template_kind:1}}
+    let messages = [mine,other]
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline' ? {conversation:{...conversation,side},messages,hasMore:false,beforeSeq:0} : [])
+    await mount()
+    const rows = () => renderer!.root.findAllByType(TeamConversationMessage)
+    await act(async () => rows()[1]!.props.onDetail())
+    expect(renderer!.root.findAllByType(ArkmeDetailShell)).toHaveLength(1)
+    await act(async () => rows()[0]!.props.onSelect())
+    expect(renderer!.root.findAllByType(ArkmeDetailShell)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeMessageSelectionBar).props.count).toBe(1)
+    expect(renderer!.root.findByProps({'data-team-composer':'message'}).props.style.display).toBe('none')
+    await act(async () => rows()[1]!.props.onToggle())
+    const bar = () => renderer!.root.findByType(ArkmeMessageSelectionBar)
+    expect(bar().props.count).toBe(2)
+    expect(bar().props.actions.map((action:any) => action.id)).toEqual(['copy','link','forward','ask-dsh','delete','close'])
+    expect(bar().props.actions.find((action:any) => action.id==='delete').disabled).toBe(true)
+    messages = messages.map(message => ({...message,ref:`rotated-${message.key}`}))
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    expect(bar().props.count).toBe(2)
+    await act(async () => bar().props.actions.find((action:any) => action.id==='close').onSelect())
+    expect(renderer!.root.findAllByType(ArkmeMessageSelectionBar)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.filter(call=>/delete|edit|send.enqueue/.test(call[0]))).toHaveLength(0)
+  })
 
   for (const side of ['team', 'external'] as const) {
     it.each([
