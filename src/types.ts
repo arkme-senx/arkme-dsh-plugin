@@ -2093,6 +2093,9 @@ export interface ArkmeTimelineItem {
 }
 
 export interface ArkmeTimelineExtensionParent {
+  /** Immutable selected text, only from the validated quote_reply protocol. */
+  quote?: import('./message-quote.js').ArkmeMessageQuote
+  quoteState?: 'available' | 'edited' | 'unavailable'
   itemUid: string
   senderName: string
   title: string
@@ -3769,6 +3772,14 @@ export interface ArkmeArkoSession {
   name: string
 }
 
+export interface ArkmeArkoImageInput {
+  protocolVersion: 1
+  maxImages: number
+  maxImageBytes: number
+  maxTotalBytes: number
+  mimeTypes: readonly string[]
+}
+
 export interface ArkmeArkoModelOption {
   routeKey: string
   displayName: string
@@ -3777,6 +3788,7 @@ export interface ArkmeArkoModelOption {
   costDescription?: string
   recommended: boolean
   selected: boolean
+  imageInput?: ArkmeArkoImageInput
 }
 
 export interface ArkmeArkoModelCatalog {
@@ -3793,6 +3805,7 @@ export interface ArkmeArkoHistoryItem {
   sessionId: number
   role: ArkmeArkoMessageRole
   text: string
+  contentBlocks?: ArkmeContentBlock[]
   reasoning: string
   createdAtMillis: number
   status: number
@@ -4110,6 +4123,13 @@ export type ArkmePluginOperation =
   | 'topic.rename'
   | 'topic.dissolve'
   | 'provider.capabilities'
+  | 'source.message-extension.capabilities'
+  | 'source.local-message-mark.capabilities'
+  | 'source.local-message-mark.list'
+  | 'source.local-message-mark.change'
+  | 'source.message-underline.capabilities'
+  | 'source.message-underline.list'
+  | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
   | 'auth.status'

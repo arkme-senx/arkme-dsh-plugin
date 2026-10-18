@@ -1,9 +1,8 @@
 import { tr } from './locale.js'
-import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
 import { copyText } from './clipboard-text.js'
-import { captureMessageTextSelection } from './message-text-selection.js'
-import { messageTextSelectionActions } from './message-text-selection-actions.js'
+import { captureMessageContextMenu } from './message-text-selection.js'
 import { messageSelectionStyles, ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
@@ -208,14 +207,11 @@ export function useArkmeMessageActions(input: {
 
 
   const openMenu = useCallback((item: ArkmeMessageActionViewItem, event: ReactMouseEvent<HTMLElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
+    const point = captureMessageContextMenu(event, event.currentTarget)
     if (busy !== undefined) return
     setMenu({
       itemId: item.id,
-      left: event.clientX,
-      top: event.clientY,
-      selectedText: captureMessageTextSelection(event.currentTarget),
+      ...point,
     })
   }, [busy])
 
@@ -407,11 +403,9 @@ export function useArkmeMessageActions(input: {
   })
 
   const overlay = <>
-    {menu !== undefined && menuItem !== undefined && <ArkmeActionMenu label={tr(menu.selectedText === undefined ? '消息操作' : '选中文字操作')}
-      point={{ x: menu.left, y: menu.top }} onClose={() => setMenu(undefined)} actions={menu.selectedText !== undefined
-        ? messageTextSelectionActions(menu.selectedText, <MessageActionIcon kind="copy" size={16} />,
-          text => { void copyValue(text) }, () => { void copyOne(menuItem) })
-        : [
+    {menu !== undefined && menuItem !== undefined && <ArkmeMessageContextMenu selectedText={menu.selectedText}
+      copyIcon={<MessageActionIcon kind="copy" size={16} />} onCopySelection={text => { void copyValue(text) }} onCopyMessage={() => { void copyOne(menuItem) }}
+      point={{ x: menu.left, y: menu.top }} onClose={() => setMenu(undefined)} actions={[
         { id: 'copy', label: '复制', icon: <MessageActionIcon kind="copy" size={16} />, onSelect: () => { void copyOne(menuItem) } },
         { id: 'link', label: '复制链接', icon: <MessageActionIcon kind="link" size={16} />, disabled: !menuItem.copyLinkAvailable, onSelect: () => { void copyLink([menuItem]) } },
         { id: 'select', label: '多选', icon: <MessageActionIcon kind="select" size={16} />, onSelect: () => enter(menuItem) },

@@ -6,7 +6,7 @@ import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
 import type { TeamMembers } from '../../../team-app-contract.js'
-import { TeamChannelSettings } from '../../TeamMessagingPanel.js'
+import { TeamMessageChannelDialog } from './TeamMessageChannelDialog.js'
 import { openTeamMessages, invalidateTeamMessages, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
 import { useArkmeLocale } from '../../locale.js'
 import { teamText as tr } from '../../team-messaging-i18n.js'
@@ -55,6 +55,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const [editing,setEditing]=useState<ArkmeTeamProfile>()
   const [profileBusy,setProfileBusy]=useState(false)
   const [syncTeam, setSyncTeam] = useState<ArkmeTeam>()
+  const [messageChannelOpen, setMessageChannelOpen] = useState(false)
   const [codexBusy, setCodexBusy] = useState(false)
   const navigationRef = useRef<AbortController>()
   useEffect(() => () => navigationRef.current?.abort(), [])
@@ -199,7 +200,6 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
           <span>{tr("位成员")}</span>
         </span>
       </div>
-      <div className="arkme-team-detail-actions"><button type="button" className="arkme-team-action arkme-team-primary-action" onClick={() => { openTeamMessages({ kind: 'team', teamRef: page.team.teamRef }) }}><ChatCircle size={18} />{tr("查看团队对话")}</button></div>
     </header>
     <section className="arkme-team-features" aria-label={tr('团队功能')}>
       <div className="arkme-team-features-container">
@@ -213,6 +213,11 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
               </svg>
             </span>
             <span>{tr('Codex 同步')}</span>
+            <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={messageChannelOpen} onClick={() => setMessageChannelOpen(true)}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><ChatCircle size={22} /></span>
+            <span>{tr('团队消息通道')}</span>
             <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
         </div>
@@ -265,7 +270,10 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       setSyncTeam(undefined)
       arkmeUi.showCodex({ accountKey, team: syncTeam, member: '', fromTeam: true, returnView: 'activity' })
     }} />}
-    <TeamChannelSettings key={`${accountKey}:${teamRef}`} teamRef={page.team.teamRef} accountKey={accountKey} onChanged={() => { void load(undefined, true) }} />
+    {messageChannelOpen && <TeamMessageChannelDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name}
+      onClose={() => setMessageChannelOpen(false)} onChanged={() => { void load(undefined, true) }}
+      onViewConversations={() => { setMessageChannelOpen(false); openTeamMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
+
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

@@ -12,6 +12,7 @@ import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, arkmeSourceComposer
 import { readArkoPendingTurn } from '../src/client/arko-pending-turn-store.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
 import type { Editor } from '@tiptap/core'
+import { ArkmeSdk } from '../src/sdk/index.js'
 
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: vi.fn(),
@@ -97,6 +98,158 @@ afterEach(() => {
 })
 
 describe('Arko emoji input and send boundary', () => {
+  const imageFile = { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'test.png', mimeType: 'image/png', size: 128, fileKind: 1 as const }
+  async function imageDraft(supported = true) {
+    await mount()
+    await act(async () => {
+      if (supported) {
+        const catalog = arkoModelCache.get('test:10001')!
+        arkoModelCache.set('test:10001', { ...catalog, options: catalog.options.map(option => ({ ...option,
+          imageInput: { protocolVersion: 1, maxImages: 9, maxImageBytes: 1024, maxTotalBytes: 4096, mimeTypes: ['image/png'] } })) })
+      }
+      arkmeComposerDraftStore.appendAttachments(draftKey, [{ localFile: imageFile }])
+    })
+  }
+
+  it('preserves unsupported image-only drafts without sending a text-only request', async () => {
+    await imageDraft(false)
+    expect(button('发送').disabled).toBe(false)
+    await send()
+    expect(ask).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('图片能力尚未接通')
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+    expect(readArkoPendingTurn(10001)).toBeUndefined()
+  })
+
+  it('renders image-only bubbles and clears their draft only after server acceptance', async () => {
+    await imageDraft()
+    let accept!: (value: unknown) => void
+    ask.mockImplementation(() => new Promise(resolve => { accept = resolve }))
+    await send()
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: '', imageFileRefs: [imageFile.fileRef], expectedUserId: 10001 }))
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+    expect(host.querySelector('[aria-label="消息图片"] img')?.getAttribute('alt')).toBe('test.png')
+    await act(async () => { accept(result) })
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
+    expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
+  })
+
+  it('retains images on a definitive rejection and removes the unsent optimistic bubble', async () => {
+    await imageDraft()
+    ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'arko-images-unavailable', message: '图片暂不可用', retryable: false }))
+    await send()
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+    expect(host.querySelector('[aria-label="消息图片"]')).toBeNull()
+    expect(readArkoPendingTurn(10001)).toBeUndefined()
+  })
+
+  it('recovers image retry identity across a remount without losing the draft', async () => {
+    await imageDraft()
+    ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'network', message: '超时', retryable: true }))
+    await send()
+    const first = ask.mock.calls[0]![0]
+    expect(readArkoPendingTurn(10001)?.images).toEqual([imageFile])
+    await act(async () => { root.render(null) })
+    await mount()
+    expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
+    await click([...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === '重试确认')!)
+    expect(ask.mock.calls[1]![0]).toMatchObject({ clientTurnUid: first.clientTurnUid, imageFileRefs: first.imageFileRefs })
+    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
+  })
+
+  it('stages dropped images in order and reports unsupported files without submitting anything', async () => {
+    vi.spyOn(ArkmeSdk.prototype, 'fileCapabilities').mockResolvedValue({ version: 1, maxAttachments: 9, maxImageBytes: 1024, maxFileBytes: 1024 })
+    const second = { ...imageFile, fileRef: imageFile.fileRef.replace('11111111', '22222222'), fileName: 'second.png' }
+    const stage = vi.spyOn(ArkmeSdk.prototype, 'stageFile').mockResolvedValueOnce(imageFile).mockResolvedValueOnce(second)
+    await mount()
+    await act(async () => {
+      const event = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [
+        new File(['a'], 'test.png', { type: 'image/png' }),
+        new File(['txt'], 'text.txt', { type: 'text/plain' }),
+        new File(['b'], 'second.png', { type: 'image/png' }),
+      ] } })
+      host.querySelector('footer')!.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    })
+    expect(stage).toHaveBeenCalledTimes(2)
+    expect(arkmeComposerDraftStore.get(draftKey).attachments.map(item => item.localFile?.fileName)).toEqual(['test.png', 'second.png'])
+    expect(host.textContent).toContain('text.txt')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('stages pasted screenshots locally without submitting the message', async () => {
+    vi.spyOn(ArkmeSdk.prototype, 'fileCapabilities').mockResolvedValue({ version: 1, maxAttachments: 9, maxImageBytes: 1024, maxFileBytes: 1024 })
+    const stage = vi.spyOn(ArkmeSdk.prototype, 'stageFile').mockResolvedValue(imageFile)
+    await mount()
+    const file = new File(['synthetic'], 'test.png', { type: 'image/png' })
+    await act(async () => {
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: { files: [file] } })
+      editor().dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    })
+    expect(stage).toHaveBeenCalledWith(file, expect.objectContaining({ expectedUserId: 10001 }))
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('does not attach a late staging response after the account changes', async () => {
+    vi.spyOn(ArkmeSdk.prototype, 'fileCapabilities').mockResolvedValue({ version: 1, maxAttachments: 9, maxImageBytes: 1024, maxFileBytes: 1024 })
+    let finish!: (value: typeof imageFile) => void
+    vi.spyOn(ArkmeSdk.prototype, 'stageFile').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    await mount()
+    await act(async () => {
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: { files: [new File(['x'], 'test.png', { type: 'image/png' })] } })
+      editor().dispatchEvent(event)
+    })
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 20002 }) })
+    await act(async () => { finish(imageFile) })
+    expect(arkmeComposerDraftStore.get(arkmeArkoComposerDraftKey(20002)).attachments).toHaveLength(0)
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
+  })
+  it('keeps the recipient row and card geometry stable while focus reveals the shared border', async () => {
+    await mount()
+    const card = host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!
+    const row = host.querySelector<HTMLElement>('[data-arkme-composer-info-row]')!
+    const hint = host.querySelector<HTMLElement>('[data-arkme-composer-destination-hint]')!
+    expect(row.nextElementSibling).toBe(card)
+    expect(card.classList.contains('arkme-conversation-composer-inner')).toBe(true)
+    expect(card.getAttribute('data-arkme-primary-composer')).toBe('true')
+    expect(row.style.minHeight).toBe('30px')
+    expect(hint.textContent).toBe('💡正在给 Arko 发消息')
+    expect(hint.getAttribute('aria-hidden')).toBe('true')
+    expect(card.style.borderColor).toBe('transparent')
+
+    await act(async () => { editor().focus() })
+    expect(card.getAttribute('data-arkme-composer-focused')).toBe('true')
+    expect(card.style.borderTopWidth).toBe('1px')
+    expect(card.style.borderStyle).toBe('solid')
+    expect(card.style.borderColor).not.toBe('transparent')
+    expect(hint.getAttribute('aria-hidden')).toBe('false')
+    expect(hint.style.opacity).toBe('1')
+    expect(row.style.minHeight).toBe('30px')
+
+    await act(async () => { editor().blur() })
+    expect(card.getAttribute('data-arkme-composer-focused')).toBe('false')
+    expect(card.style.borderTopWidth).toBe('1px')
+    expect(card.style.borderColor).toBe('transparent')
+    expect(hint.style.opacity).toBe('0')
+    expect(row.style.minHeight).toBe('30px')
+  })
+
+  it('uses the current Arko name in the recipient hint and focuses from card padding', async () => {
+    await mount()
+    await act(async () => { arkmeArkoProfileStore.setProfile(10001, { displayName: '我的助手', version: 2 }) })
+    await click(host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!)
+    expect(document.activeElement).toBe(editor())
+    expect(host.querySelector('[data-arkme-composer-destination-hint]')?.textContent).toBe('💡正在给 我的助手 发消息')
+    expect(editor().getAttribute('aria-label')).toBe('发送给 我的助手')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
   it('shows cached models immediately after reopening without another catalog request', async () => {
     await mount()
     expect(host.querySelector('footer [aria-label="选择模型"]')?.textContent).toBe('Model A')

@@ -1,3 +1,4 @@
+import { projectedMessageQuote, readMessageQuote, type ArkmeMessageQuote } from '../message-quote.js'
 import type { SelfRoleService } from './self-role-service.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import type { ResolvedMentions } from './mention-metadata-codec.js'
@@ -1646,6 +1647,7 @@ export class RecordService {
     textContent: string,
     assets: readonly ArkmeUploadedAsset[] = [],
     textFormat?: 'plain' | 'markdown',
+    quote?: ArkmeMessageQuote,
   ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
     const session = await this.runtime.requireSession()
     const normalizedParentUid = parentRecordUid.trim()
@@ -1672,6 +1674,7 @@ export class RecordService {
       '/api/v1/records/extensions/create',
       {
         parent_record_uid: normalizedParentUid,
+        ...(quote === undefined ? {} : { quote_reply: quote }),
         record_uid: normalizedUid,
         template_kind: assets.length === 0 ? 1 : 2,
         title: '',
@@ -1700,6 +1703,9 @@ export class RecordService {
       },
       session,
     )
+    if (quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(quote))) {
+      throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
+    }
     const createdRecordUid = stringValue(data.record_uid).trim() || normalizedUid
     const createdParentUid = stringValue(data.parent_record_uid).trim()
     const edgeUid = stringValue(data.edge_uid).trim()
@@ -1812,6 +1818,7 @@ export class RecordService {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     const edge = objectValue(item.extension_edge ?? core.extension_edge)
+    const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply ?? core.quote_reply, edge.quote_reply_state ?? item.quote_reply_state ?? core.quote_reply_state)
     const preview = objectValue(
       item.extension_parent_preview ?? item.extensionParentPreview
         ?? core.extension_parent_preview ?? core.extensionParentPreview,
@@ -1830,22 +1837,23 @@ export class RecordService {
       previewRecord.record_uid ?? previewRecord.recordUid ?? previewPayload.record_uid ?? previewPayload.recordUid,
     ).trim()
     if (previewRecordUid === '' || previewRecordUid !== parentRecordUid) {
-      return { extensionParentRecordUid: parentRecordUid }
+      return { extensionParentRecordUid: parentRecordUid, ...(quoteProjection.quoteState === undefined ? {} : { extensionParent: { itemUid: parentRecordUid, senderName: '我', title: '', textContent: '', ...quoteProjection } }) }
     }
     return {
       extensionParentRecordUid: parentRecordUid,
       extensionParent: {
+        ...quoteProjection,
         itemUid: parentRecordUid,
         senderName: selfRoleSnapshotFromCloud(previewRecord.self_role_snapshot)?.name || stringValue(
           previewRecord.nickname ?? previewRecord.nick_name
             ?? preview.nickname ?? preview.nick_name,
         ).trim() || '我',
-        title: stringValue(previewRecord.title ?? previewPayload.title),
-        textContent: stringValue(
+        title: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewRecord.title ?? previewPayload.title),
+        textContent: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(
           previewRecord.text_content ?? previewRecord.textContent
             ?? previewPayload.text_content ?? previewPayload.textContent,
         ),
-        contentBlocks: this.media.richContentBlocks({ ...preview, record_core: previewRecord }, viewerUserId),
+        contentBlocks: quoteProjection.quoteState === 'unavailable' ? [] : this.media.richContentBlocks({ ...preview, record_core: previewRecord }, viewerUserId),
       },
     }
   }

@@ -61,7 +61,7 @@ export function arkoHistoryDays(items: readonly ArkmeArkoHistoryItem[]): ArkmeCa
 
 export function searchArkoHistory(items: readonly ArkmeArkoHistoryItem[], query: string) {
   const needle = query.trim().toLocaleLowerCase()
-  return needle ? items.filter(item => arkmeEmojiPlainText(item.text).toLocaleLowerCase().includes(needle)).reverse() : []
+  return needle ? items.filter(item => [arkmeEmojiPlainText(item.text), ...(item.contentBlocks ?? []).map(block => block.fileName)].join('\n').toLocaleLowerCase().includes(needle)).reverse() : []
 }
 
 export function exportArkoHistory(items: readonly ArkmeArkoHistoryItem[], name: string, now = new Date()): string {
@@ -72,6 +72,7 @@ export function exportArkoHistory(items: readonly ArkmeArkoHistoryItem[], name: 
       `## ${item.role === 'user' ? '我' : heading} · ${arkoHistoryDate(item.createdAtMillis) ? new Date(item.createdAtMillis).toLocaleString() : '时间未提供'}`,
       `会话 ${item.sessionId} · 消息 ${item.messageId}`,
       arkmeEmojiPlainText(item.text),
+      ...(item.contentBlocks ?? []).map(block => `[图片附件：${block.fileName.replace(/[\r\n]/g, ' ')}；导出不包含图片文件]`),
     ].join('\n\n')),
   ].join('\n\n') + '\n'
 }

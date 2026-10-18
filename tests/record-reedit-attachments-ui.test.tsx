@@ -8,6 +8,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
   ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
   ArkmeMessageTextSelectionToolbar: () => null,

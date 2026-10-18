@@ -23,6 +23,17 @@ function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
 }
 
 describe('Arkme composer draft store', () => {
+  it('restores an Arko image draft at the actual Arko text limit', () => {
+    let saved: string | null = null
+    const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value } }
+    const store = new ArkmeComposerDraftStore(storage)
+    const key = arkmeArkoComposerDraftKey(10001)!
+    store.setText(key, '字'.repeat(60 * 1024))
+    store.appendAttachments(key, [{ localFile: { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'test.png', mimeType: 'image/png', size: 128, fileKind: 1 } }])
+    const restored = new ArkmeComposerDraftStore(storage).get(key)
+    expect(restored.text).toHaveLength(60 * 1024)
+    expect(restored.attachments).toHaveLength(1)
+  })
   beforeEach(() => { vi.restoreAllMocks() })
 
   it('preserves source-range identities when re-editing escaped Markdown mentions', () => {
