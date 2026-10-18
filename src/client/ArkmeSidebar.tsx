@@ -1,3 +1,5 @@
+import { arkmeMessageCopyText } from './message-copy-text.js'
+import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
@@ -1071,17 +1073,7 @@ function qrDataUrl(content: string): string {
   const qr = qrcode(0, 'M'); qr.addData(content); qr.make(); return qr.createDataURL(6, 12)
 }
 
-export function arkmeMessageCopyText(item: ArkmeTimelineItem): string {
-  const title = item.title.trim()
-  const text = item.textFormat === 'markdown' ? item.textContent : item.textContent.trim()
-  if (title !== '' && text !== '') return `${title}\n${text}`
-  if (text !== '') return text
-  if (title !== '') return title
-  if (item.forwardRecords !== undefined) return item.forwardRecords.title
-  if (item.sharedRecording !== undefined) return `${item.sharedRecording.title}\n${item.sharedRecording.summary}`.trim()
-  if ((item.contentBlocks?.length ?? 0) > 0) return '非文本内容'
-  return ''
-}
+export { arkmeMessageCopyText } from './message-copy-text.js'
 
 export function arkmeTimelineMessageActionRef(item: ArkmeTimelineItem): string {
   return item.messageActionRef?.trim() ?? ''
@@ -8631,6 +8623,7 @@ export function ArkmeSurface({
   return (
     <>
     <ArkmeBotIdentityStyles />
+    <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`} />
     {selfTour.panel}
     {activeConversation && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}
@@ -9025,7 +9018,7 @@ export function ArkmeSurface({
               <span style={styles.timelineSkeletonAvatar} />
               <span style={{ ...styles.timelineSkeletonBubble, width: `${width}%` }} />
             </div>)}</div>}
-            {displayRows.length > 0 && <ul ref={recordsRef} className={`arkme-conversation-records${timelineRevealKey === conversationKey
+            {displayRows.length > 0 && <ul ref={recordsRef} data-arkme-message-selection-scope className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
 

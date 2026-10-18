@@ -28,7 +28,7 @@ export function captureMessageTextSelection(bubble: HTMLElement | undefined): st
     || !bubble.contains(selection.anchorNode) || !bubble.contains(selection.focusNode)) return undefined
   const fragment = selection.getRangeAt(0).cloneContents()
   let converted = false
-  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read]')) {
+  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read],style,script')) {
     indicator.remove()
     converted = true
   }

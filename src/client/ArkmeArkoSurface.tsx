@@ -1,3 +1,4 @@
+import { ArkmeSelectableMessageText } from './ArkmeMessageTextSelection.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
@@ -1039,7 +1040,7 @@ export function ArkmeArkoSurface() {
       {historyWindow === undefined && <div ref={historySentinelRef} style={styles.historySentinel} />}
       {historyWindow === undefined && historyLoading && <div style={styles.historyLoading} role="status">{tr("正在加载更早内容…")}</div>}
       {!loading && historyError === '' && visibleMessages.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
-      {visibleMessages.length > 0 && <ul style={styles.records}>
+      {visibleMessages.length > 0 && <ul style={styles.records} data-arkme-message-selection-scope>
         {visibleMessages.map((item, index) => {
           const previous = visibleMessages[index - 1]
           const startsDay = item.role !== 'divider' && item.createdAtMillis !== undefined && arkoHistoryDate(item.createdAtMillis) !== '' && (previous?.createdAtMillis === undefined || dayKey(previous.createdAtMillis) !== dayKey(item.createdAtMillis))
@@ -1115,10 +1116,10 @@ export function ArkmeArkoSurface() {
                   ...(item.role === 'user' ? styles.bubbleMe : styles.bubbleArko),
                   ...(item.status === 'error' ? styles.bubbleError : {}),
                 }}>
-                  <div data-arkme-message-content="message" style={{ minWidth: 0, maxWidth: '100%' }}>
+                  <ArkmeSelectableMessageText text={item.text} style={{ minWidth: 0, maxWidth: '100%' }}>
                     {item.role === 'assistant' ? <div data-arkme-message-text-flow="true"><ArkmeMarkdownBody text={item.text} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.62 }} /></div>
                       : <p data-arkme-plain-text style={styles.text}><ArkmeRichText text={item.text} linkLabelMode="raw" highlightMentions={false} /></p>}
-                  </div>
+                  </ArkmeSelectableMessageText>
                   {item.createdAtMillis !== undefined && <ArkmeMessageTimestamp at={item.createdAtMillis} />}
                 </div>}
               </div>
@@ -1157,8 +1158,10 @@ export function ArkmeArkoSurface() {
         </div>
       </div>}
     >
+      <ArkmeSelectableMessageText text={detailMessage.text}>
       {detailMessage.role === 'assistant' ? <ArkmeMarkdownBody text={detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }} />
         : <p style={styles.detailText}><ArkmeRichText text={detailMessage.text} linkLabelMode="raw" highlightMentions={false} /></p>}
+      </ArkmeSelectableMessageText>
       {detailMessage.role === 'assistant' && detailMessage.reasoning?.trim() && <section aria-label={tr("思考内容")}>
         <h4 style={styles.sender}>{tr("思考内容")}</h4>
         <p style={styles.text}>{detailMessage.reasoning}</p>
