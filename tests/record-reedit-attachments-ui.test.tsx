@@ -6,6 +6,12 @@ import { arkmeConversationMembers } from '../src/client/conversation-members-sto
 import { memberPageFixture } from './helpers/member-page-fixture.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), renderedItems: [] as ArkmeTimelineItem[] }))
