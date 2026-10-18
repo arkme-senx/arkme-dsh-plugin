@@ -46,9 +46,10 @@ import { arkmeTheme } from './arkme-theme.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
-  arkmeConversationComposerLayout,
+  arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
 } from './conversation-composer-presentation.js'
-import { restoreArkmeComposerFocus } from './composer-focus.js'
+import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
+import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from './ArkmeDocumentComposerInput.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -390,6 +391,7 @@ export function ArkmeArkoSurface() {
   const composerInputBoundaryRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<ArkmeDocumentComposerHandle>(null)
+  const [composerInputFocused, setComposerInputFocused] = useState(false)
   const pendingComposerFocusRef = useRef(false)
   const shortcutFocusOriginRef = useRef<HTMLElement | null>(null)
   const sendInFlightRef = useRef(false)
@@ -985,9 +987,6 @@ export function ArkmeArkoSurface() {
       [data-arkme-arko-composer] [data-arkme-composer-editor-box] > span[aria-hidden] {
         top: 0; left: 0; right: 0;
       }
-      [data-arkme-arko-input-card]:focus-within {
-        background: var(--arkme-primary-composer-focused, #fff) !important;
-      }
       [data-arko-located=true] .arkme-timed-bubble { outline: 2px solid ${arkmeTheme.accent}; outline-offset: 2px; }
     `}</style>
     <header data-arkme-window-drag-region="conversation" style={styles.header}>
@@ -1197,8 +1196,15 @@ export function ArkmeArkoSurface() {
 
     <div data-arkme-arko-composer-seat style={{ position: 'relative', flex: 'none', boxSizing: 'border-box', paddingRight: 'calc(var(--dsh-scrollbar-width, 8px) + 2px)' }}>
     {messageActions.selecting && <div style={{ position: 'absolute', inset: 0, zIndex: 35, display: 'grid', background: arkmeTheme.layer2 }}>{messageActions.selectionBar}</div>}
-    <footer data-arkme-arko-composer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
-      <div ref={composerInputBoundaryRef} data-arkme-arko-input-card style={styles.composerInner}>
+    <footer data-arkme-arko-composer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}
+      onClick={event => { focusArkmeComposerFromClick(textareaRef.current, event) }}>
+      <div style={arkmeConversationComposerLayout.composerStack}>
+      <ArkmeComposerInfoRow destination={displayName} focused={composerInputFocused} />
+      <div ref={composerInputBoundaryRef} data-arkme-arko-input-card
+        className="arkme-conversation-composer-inner" data-arkme-primary-composer="true"
+        data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
+        style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
+          ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
       <ArkmeDocumentComposerInput
         format="text"
         key={accountKey}
@@ -1210,6 +1216,8 @@ export function ArkmeArkoSurface() {
         placeholder={tr("问问 {v0}...", { v0: displayName })}
         ariaLabel={tr("发送给 {v0}", { v0: displayName })}
         disabled={inputDisabled || messageActions.selecting}
+        onFocus={() => { setComposerInputFocused(true) }}
+        onBlur={() => { setComposerInputFocused(false) }}
         onRichTextChange={(text, emojis) => { arkmeComposerDraftStore.setRichText(composerDraftKey, text, emojis) }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -1257,7 +1265,7 @@ export function ArkmeArkoSurface() {
           onClick={() => { void cancelActiveRun() }}
         ><span aria-hidden>■</span></button>}
       </div>
-    </div></footer>
+    </div></div></footer>
     </div>
     {messageActions.overlay}
     </ArkmeWideConversation>

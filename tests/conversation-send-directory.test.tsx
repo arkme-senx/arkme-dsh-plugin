@@ -7029,9 +7029,10 @@ describe('conversation send directory projection', () => {
     const composerInfo = renderer!.root.findByProps({ 'data-arkme-composer-info-row': 'true' })
     const previewComponent = targetPreview.parent! // shared component adds no DOM wrapper
     expect(destinationHint.parent).toBe(composerInfo)
-    expect(composerInfo.parent).toBe(previewComponent.parent)
-    expect(composerInfo.parent!.children.indexOf(composerInfo))
-      .toBeLessThan(composerInfo.parent!.children.indexOf(previewComponent))
+    const infoComponent = composerInfo.parent! // shared info row adds no DOM wrapper
+    expect(infoComponent.parent).toBe(previewComponent.parent)
+    expect(infoComponent.parent!.children.indexOf(infoComponent))
+      .toBeLessThan(infoComponent.parent!.children.indexOf(previewComponent))
     expect(destinationHint.findAll(node => node.children.includes('正在给'))).toHaveLength(1)
     expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
     expect(destinationHint.findAll(node => node.children.includes('发消息'))).toHaveLength(1)
@@ -9217,8 +9218,9 @@ describe('conversation send directory projection', () => {
     const composer = renderer!.root.findByType(ArkmeRichComposerInput)
     const info = () => renderer!.root.findByProps({ 'data-arkme-composer-info-row': 'true' })
     const card = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
-    expect(info().parent).toBe(card.parent)
-    expect(info().parent!.children.indexOf(info())).toBeLessThan(info().parent!.children.indexOf(card))
+    const infoComponent = info().parent! // shared info row adds no DOM wrapper
+    expect(infoComponent.parent).toBe(card.parent)
+    expect(infoComponent.parent!.children.indexOf(infoComponent)).toBeLessThan(infoComponent.parent!.children.indexOf(card))
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
     const reservedHeight = selected.kind === 'private_chat' ? 30 : 20
     expect(info().props.style.minHeight).toBe(reservedHeight)
@@ -9303,7 +9305,7 @@ describe('conversation send directory projection', () => {
       transition: 'opacity 150ms linear, height 150ms linear' })
     expect(destinationHint().props['aria-hidden']).toBe(true)
     expect(composerShell.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
-    expect(destinationHint().parent!.parent).toBe(composerShell.parent)
+    expect(destinationHint().parent!.parent!.parent).toBe(composerShell.parent)
     expect(composerShell.props.style.borderColor).toBe('transparent')
     expect(sendButton.props.disabled).toBe(true)
     expect(sendButton.props.style).toMatchObject({

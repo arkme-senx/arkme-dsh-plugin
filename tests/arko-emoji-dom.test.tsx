@@ -97,6 +97,46 @@ afterEach(() => {
 })
 
 describe('Arko emoji input and send boundary', () => {
+  it('keeps the recipient row and card geometry stable while focus reveals the shared border', async () => {
+    await mount()
+    const card = host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!
+    const row = host.querySelector<HTMLElement>('[data-arkme-composer-info-row]')!
+    const hint = host.querySelector<HTMLElement>('[data-arkme-composer-destination-hint]')!
+    expect(row.nextElementSibling).toBe(card)
+    expect(card.classList.contains('arkme-conversation-composer-inner')).toBe(true)
+    expect(card.getAttribute('data-arkme-primary-composer')).toBe('true')
+    expect(row.style.minHeight).toBe('30px')
+    expect(hint.textContent).toBe('💡正在给 Arko 发消息')
+    expect(hint.getAttribute('aria-hidden')).toBe('true')
+    expect(card.style.borderColor).toBe('transparent')
+
+    await act(async () => { editor().focus() })
+    expect(card.getAttribute('data-arkme-composer-focused')).toBe('true')
+    expect(card.style.borderTopWidth).toBe('1px')
+    expect(card.style.borderStyle).toBe('solid')
+    expect(card.style.borderColor).not.toBe('transparent')
+    expect(hint.getAttribute('aria-hidden')).toBe('false')
+    expect(hint.style.opacity).toBe('1')
+    expect(row.style.minHeight).toBe('30px')
+
+    await act(async () => { editor().blur() })
+    expect(card.getAttribute('data-arkme-composer-focused')).toBe('false')
+    expect(card.style.borderTopWidth).toBe('1px')
+    expect(card.style.borderColor).toBe('transparent')
+    expect(hint.style.opacity).toBe('0')
+    expect(row.style.minHeight).toBe('30px')
+  })
+
+  it('uses the current Arko name in the recipient hint and focuses from card padding', async () => {
+    await mount()
+    await act(async () => { arkmeArkoProfileStore.setProfile(10001, { displayName: '我的助手', version: 2 }) })
+    await click(host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!)
+    expect(document.activeElement).toBe(editor())
+    expect(host.querySelector('[data-arkme-composer-destination-hint]')?.textContent).toBe('💡正在给 我的助手 发消息')
+    expect(editor().getAttribute('aria-label')).toBe('发送给 我的助手')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
   it('shows cached models immediately after reopening without another catalog request', async () => {
     await mount()
     expect(host.querySelector('footer [aria-label="选择模型"]')?.textContent).toBe('Model A')

@@ -265,7 +265,8 @@ import {
   type ArkmeComposerEmoji,
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
-import { arkmeConversationComposerBorder, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import {
@@ -703,15 +704,6 @@ const styles: Record<string, CSSProperties> = {
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { ...arkmeConversationComposerLayout.composer, background: '#fff' },
-  composerInfoRow: { display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 'none' },
-  composerDestinationHint: {
-    flex: '1 1 auto', minWidth: 0, overflow: 'hidden', paddingLeft: 4, display: 'flex', alignItems: 'center', gap: 0,
-    color: arkmeTheme.tertiary, fontSize: 11, lineHeight: 'normal', whiteSpace: 'pre',
-    transition: 'opacity 150ms linear, height 150ms linear', pointerEvents: 'none',
-  },
-  composerDestinationHintIcon: { flexShrink: 0, marginRight: 6, lineHeight: 'normal' },
-  composerDestinationHintText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  composerDestinationHintName: { color: arkmeTheme.secondary, fontWeight: 500 },
   composerExtensionTargetFiles: { marginTop: 5, display: 'flex', gap: 5, overflow: 'hidden', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
   composerExtensionTargetFile: { width: 42, height: 34, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: 5, background: arkmeTheme.elevated, textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   composerExtensionTargetImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
@@ -873,11 +865,7 @@ const styles: Record<string, CSSProperties> = {
     background: 'var(--arkme-primary-composer-idle, #f6f6f6)', boxShadow: 'none',
     transition: 'background-color 140ms ease',
   },
-  composerInnerFocused: {
-    background: 'var(--arkme-primary-composer-focused, #ffffff)',
-    boxShadow: 'none',
-  },
-  composerStack: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', containerType: 'inline-size', containerName: 'arkme-composer' },
+  composerStack: arkmeConversationComposerLayout.composerStack,
   textarea: {
     ...arkmeConversationComposerLayout.textarea,
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
@@ -7884,23 +7872,12 @@ export function ArkmeSurface({
     ? arkmeComposerGroupMemberCount(conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined
       ? conversationMembers.length : 0, source.groupAvatar?.memberCount)
     : undefined
-  const composerDestinationHint = sourceIsChat && <div
-    style={{ ...styles.composerDestinationHint, height: source?.kind === 'private_chat' ? 30 : 20,
-      opacity: composerInputFocused ? 1 : 0 }}
-    data-arkme-composer-destination-hint="true"
-    aria-hidden={!composerInputFocused}
-  >
-    <span style={{ ...styles.composerDestinationHintIcon, fontSize: source?.kind === 'private_chat' ? 16 : 14 }} aria-hidden>💡</span>
-    <span style={styles.composerDestinationHintText} title={tr("正在给 {v0} 发消息", { v0: destinationName })}><span>{tr("正在给")} </span>
-    <span style={styles.composerDestinationHintName}>{source?.kind === 'group_chat' && destinationName.length > 10
-      ? `${destinationName.slice(0, 10)}...` : destinationName}</span>
-    {destinationMemberCount !== undefined && destinationMemberCount > 1 && <span>{tr(" ({v0}人)", { v0: destinationMemberCount })}</span>}<span> {tr("发消息")}</span></span>
-  </div>
   // Reserve the stats line even for an empty, unfocused self/topic draft so
   // focus changes cannot resize the message viewport and shift its scroll anchor.
-  const composerInfoRow = <div data-arkme-composer-info-row="true"
-    style={{ ...styles.composerInfoRow, minHeight: source?.kind === 'private_chat' ? 30 : 20 }}>
-    {composerDestinationHint}
+  const composerInfoRow = <ArkmeComposerInfoRow focused={composerInputFocused}
+    variant={source?.kind === 'private_chat' ? 'direct' : source?.kind === 'group_chat' ? 'group' : 'self'}
+    {...(sourceIsChat ? { destination: destinationName } : {})}
+    {...(destinationMemberCount === undefined ? {} : { memberCount: destinationMemberCount })}>
     <ArkmeComposerInputStats
       active={activeConversation}
       visible={composerStatsVisible}
@@ -7914,7 +7891,7 @@ export function ArkmeSurface({
         textareaRef.current?.focus()
       }}
     />
-  </div>
+  </ArkmeComposerInfoRow>
   const localNotificationBlockingOverlayOpen = addMenuOpen
     || longArticleCreating
     || articlePickerOpen
@@ -9146,7 +9123,7 @@ export function ArkmeSurface({
               data-arkme-composer-resize-highlighted={composerResize.highlighted ? 'true' : undefined}
               style={{
               ...styles.composerInner,
-              ...(composerInputFocused ? styles.composerInnerFocused : {}),
+              ...arkmeConversationComposerFocusStyle(composerInputFocused),
               ...arkmeConversationComposerBorder(composerInputFocused || composerHasTarget ? colors.border : 'transparent', composerHasTarget, composerResize.highlighted),
               }}
             >
