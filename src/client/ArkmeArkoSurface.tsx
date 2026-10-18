@@ -1144,6 +1144,12 @@ export function ArkmeArkoSurface() {
       label={tr("消息详情")}
       resizeLabel="调整消息详情宽度"
       onClose={() => { setDetailSelection(undefined) }}
+      onPointerDownOutside={event => {
+        const target = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement
+        // Portalled selection tools and foreground overlays own their interaction.
+        if (target?.closest('[data-arkme-text-selection-toolbar], [role="menu"], [aria-modal="true"], [data-arkme-image-preview-viewport]')) return
+        setDetailSelection(undefined)
+      }}
       style={{ top: 0 }}
       headerContent={<div style={styles.detailAuthor} data-arkme-detail-author>
         {detailMessage.role === 'user'

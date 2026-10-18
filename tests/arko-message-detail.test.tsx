@@ -8,11 +8,17 @@ import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeComposerDraftStore, arkmeArkoComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
+import { ArkmeMessageTextSelectionToolbar } from '../src/client/ArkmeMessageTextSelection.js'
+import { copyText } from '../src/client/clipboard-text.js'
 
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
+vi.mock('../src/client/clipboard-text.js', () => ({ copyText: vi.fn().mockResolvedValue(undefined) }))
 let root: Root
 let host: HTMLDivElement
 const click = async (element: Element) => { await act(async () => { element.dispatchEvent(new MouseEvent('click', { bubbles: true })) }) }
+const pointerDown = async (element: Element, button = 0) => {
+  await act(async () => { element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button })) })
+}
 const bubble = (text: string) => [...host.querySelectorAll('[aria-description]')].find(p => p.textContent?.includes(text))!
 async function menuAction(label: string) {
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
@@ -80,6 +86,87 @@ it('closes with Escape and restores keyboard focus to the message', async () => 
   await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
   expect(detail()).toBeNull()
   expect(document.activeElement).toBe(trigger)
+})
+it('dismisses on outside pointer without clearing the draft, changing scroll, or blocking the target', async () => {
+  const key = arkmeArkoComposerDraftKey(10001)
+  await act(async () => { arkmeComposerDraftStore.setText(key, '未发送的草稿') })
+  await click(bubble('完整回答'))
+  const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
+  viewport.scrollTop = 145
+  const editor = host.querySelector<HTMLElement>('[role="textbox"]')!
+  const calls = vi.mocked(callArkme).mock.calls.length
+  const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
+  await act(async () => { editor.dispatchEvent(event) })
+  expect(detail()).toBeNull()
+  expect(event.defaultPrevented).toBe(false)
+  editor.focus()
+  expect(document.activeElement).toBe(editor)
+  expect(viewport.scrollTop).toBe(145)
+  expect(arkmeComposerDraftStore.get(key).text).toBe('未发送的草稿')
+  expect(vi.mocked(callArkme).mock.calls).toHaveLength(calls)
+})
+it('keeps inside and secondary-pointer interactions open, then dismisses on outside blank space', async () => {
+  await click(bubble('完整回答'))
+  const panel = detail()
+  await pointerDown(panel!.querySelector('[data-arkme-text-selection]')!)
+  await pointerDown(host, 2)
+  expect(detail()).toBe(panel)
+  await pointerDown(host)
+  expect(detail()).toBeNull()
+})
+it.each(['[role="menu"]', '[aria-modal="true"]', '[data-arkme-image-preview-viewport]'])(
+  'keeps the foreground overlay interaction independent: %s', async selector => {
+    await click(bubble('完整回答'))
+    const overlay = document.createElement('div'), button = document.createElement('button')
+    if (selector === '[role="menu"]') overlay.setAttribute('role', 'menu')
+    else if (selector === '[aria-modal="true"]') overlay.setAttribute('aria-modal', 'true')
+    else overlay.setAttribute('data-arkme-image-preview-viewport', '')
+    overlay.append(button); document.body.append(overlay)
+    try {
+      await pointerDown(button)
+      expect(detail()).not.toBeNull()
+    } finally { overlay.remove() }
+    await pointerDown(host)
+    expect(detail()).toBeNull()
+  },
+)
+it('copies a selected substring through the real portal toolbar without dismissing details', async () => {
+  await act(async () => { root.render(<><ArkmeArkoSurface /><ArkmeMessageTextSelectionToolbar /></>) })
+  await click(bubble('完整回答'))
+  const text = detail()!.querySelector('p')!
+  const range = document.createRange()
+  const node = document.createTreeWalker(text, NodeFilter.SHOW_TEXT).nextNode()!
+  range.setStart(node, 0); range.setEnd(node, 2)
+  const rect = new DOMRect(50, 100, 180, 20)
+  const bounds = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+  const rects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => rect })
+  Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [rect] })
+  try {
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    await act(async () => { text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
+    const copy = document.querySelector('[data-arkme-text-selection-toolbar] button')!
+    expect(copy).not.toBeNull()
+    await pointerDown(copy)
+    await click(copy)
+    expect(copyText).toHaveBeenCalledWith('完整')
+    expect(detail()).not.toBeNull()
+    expect(document.querySelector('[data-arkme-text-selection-toolbar]')).toBeNull()
+  } finally {
+    if (bounds) Object.defineProperty(Range.prototype, 'getBoundingClientRect', bounds)
+    else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect')
+    if (rects) Object.defineProperty(Range.prototype, 'getClientRects', rects)
+    else Reflect.deleteProperty(Range.prototype, 'getClientRects')
+  }
+})
+it('opens the newly clicked message after dismissing the previous detail on pointerdown', async () => {
+  await click(bubble('我的问题'))
+  const next = bubble('完整回答')
+  await pointerDown(next)
+  await click(next)
+  expect(detail()!.textContent).toContain('完整回答')
+  expect(host.querySelectorAll('[aria-label="消息详情"]')).toHaveLength(1)
 })
 it('discards selection on account change and does not resurrect it on return', async () => {
   await click(bubble('完整回答'))
