@@ -50,7 +50,8 @@ async function chooseEmoji() {
   if (button('选择表情').getAttribute('aria-expanded') !== 'true') await click(button('选择表情'))
   await click(document.querySelector(`[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="${emoji.id}"]`)!)
 }
-async function send() { await click(host.querySelector('button[title="发送"]')!) }
+async function capabilities() { await click(button('更多 Arko 操作')); await click([...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!) }
+async function send() { await click(host.querySelector('button[aria-label="发送"]')!) }
 
 beforeEach(() => {
   arkoModelCache.clear()
@@ -119,7 +120,7 @@ describe('Arko emoji input and send boundary', () => {
     const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')
     expect(trigger).not.toBeNull()
     expect(trigger!.disabled).toBe(false)
-    expect(host.querySelector<HTMLButtonElement>('button[title="发送"]')!.disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.disabled).toBe(true)
     expect(trigger!.textContent).toBe('Model A')
     await click(trigger!)
     expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('模型选择')
@@ -405,7 +406,7 @@ describe('Arko emoji input and send boundary', () => {
   it('sends an emoji-only question and retains the existing shortcut draft behavior', async () => {
     await mount()
     await chooseEmoji()
-    await click(button('Arko 能干什么'))
+    await capabilities()
     expect(ask).toHaveBeenLastCalledWith(expect.objectContaining({ text: '你能帮我干什么' }))
     expect(serialized()).toBe(emoji.token)
     await send()
@@ -447,13 +448,13 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: emoji.token + '继续输入' }))
   })
 
-  it('renders history tokens without inventing links, mentions, or changing unknown text', async () => {
+  it('renders emoji and literal tokens while enabling normal URL links', async () => {
     history = [{ messageId: 3, sessionId: 88, role: 'user', text: `${emoji.token} [jm_emoji:unknown] https://example.com @某人 #主题`,
       reasoning: '', status: 1, createdAtMillis: 1, createdRecordUids: [] }]
     await mount()
     expect(host.querySelector('[data-arkme-rich-emoji]')).not.toBeNull()
     expect(host.textContent).toContain('[jm_emoji:unknown] https://example.com @某人 #主题')
-    expect(host.querySelector('a')).toBeNull()
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
     const image = host.querySelector('[data-arkme-rich-emoji]')!
     act(() => image.dispatchEvent(new Event('error')))
     expect(host.textContent).toContain(emoji.unicode)
@@ -540,12 +541,12 @@ describe('Arko emoji input and send boundary', () => {
 
   it('restores focus after the shortcut but respects focus moved outside during submission', async () => {
     await mount()
-    button('Arko 能干什么').focus()
-    await click(button('Arko 能干什么'))
+    button('更多 Arko 操作').focus()
+    await capabilities()
     expect(document.activeElement).toBe(editor())
     let complete!: (value: unknown) => void
     ask.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
-    await click(button('Arko 能干什么'))
+    await capabilities()
     const external = document.createElement('button')
     document.body.append(external)
     external.focus()
