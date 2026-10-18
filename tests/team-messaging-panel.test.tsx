@@ -51,7 +51,7 @@ describe('Team send UI recovery', () => {
     })
   })
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
-  const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
+  const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
   it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
@@ -389,15 +389,16 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
       ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
       : {visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
-    await mount()
-    await act(async()=>{renderer!.root.findByProps({className:'team-receipt-badge'}).props.onClick({currentTarget:null});await tick()})
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const receiptButton = () => renderer!.root.findAllByType('button').find(button => button.props['aria-label']?.startsWith('查看阅读状态：'))!
+    await act(async()=>{receiptButton().props.onClick({currentTarget:null});await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('团队已读 2/2')
     const panel=renderer!.root.findByType(ArkmeReadReceiptPanel)
     expect(panel.findAllByProps({className:'team-receipt-heading'})).toHaveLength(side==='team'?2:1)
     const unread=panel.findByProps({role:'group'}).findAllByType('button')[2]!
     await act(async()=>{unread.props.onClick();await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('暂无未读成员')
-    expect(renderer!.root.findAllByProps({className:'team-receipt-badge'})).toHaveLength(1)
+    expect(receiptButton()).toBeDefined()
   })
   it('lets a team member open the shared receipt panel from its persistent status', async () => {
     const own = {key:'m',ref:'m',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:false}

@@ -59,8 +59,9 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           } }}>
           {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
         </div>
+        {showReceipts && message.side === 'external' && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         </div>
-        {showReceipts && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
+        {showReceipts && message.side === 'team' && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         {/* A point menu must not create another flex gap and move the message. */}
         {menu && published && available && <div style={{ position: 'fixed', width: 0, height: 0 }}><ArkmeMessageContextMenu
           selectedText={menu.selectedText} copyIcon={<Copy />} onCopySelection={copy} onCopyMessage={copyMessage}
