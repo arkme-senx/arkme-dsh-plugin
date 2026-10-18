@@ -1,4 +1,9 @@
 import {readFile} from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
+import { LocalMessageMarkStore } from '../src/local-message-marks.js'
+import { quoteSourceContent } from '../src/message-quote.js'
+import type { MessageUnderlineSnapshot } from '../src/message-annotations.js'
 import { describe, it, expect, vi } from 'vitest'
 import { TeamAppService } from '../src/services/team-app-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
@@ -29,6 +34,46 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   return { service, runtime, requests, fetchImpl, avatars, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
+
+it('persists private Team marks across refreshed references without cloud writes or Chat authority', async () => {
+  let rawConversation = conversation, rawMessage = message
+  const f = fixture(() => ({ channel, conversation: rawConversation, messages: [rawMessage] }))
+  const db = new DatabaseSync(':memory:')
+  const store = new LocalMessageMarkStore(db, work => { db.exec('BEGIN IMMEDIATE'); try { work(); db.exec('COMMIT') } catch (error) { db.exec('ROLLBACK'); throw error } })
+  Object.assign(f.runtime.stateStore, { messageMarks: store })
+  try {
+    const opened = await open(f), conversationRef = opened.conversation!.ref
+    const page = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+    const markRef = page.messages[0]!.localMarkRef!
+    const anchor = { version: 1, projection: 'arkme-text-v1', recordVersion: 3,
+      sourceDigest: createHash('sha256').update(quoteSourceContent({ textContent: '已收到' })).digest('hex'),
+      start: 0, end: 2, text: '已收', prefix: '', suffix: '到' }
+    const calls = f.requests.length
+    expect(await f.service.execute('team.app.local-mark.capabilities', { conversationRef })).toEqual({ supported: true, maxLength: 2000, storage: 'local' })
+    const first = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'add', anchor } }) as MessageUnderlineSnapshot
+    expect(first.items[0]).toMatchObject({ mine: true, actorId: 90, anchor })
+    expect(f.requests).toHaveLength(calls)
+    const fresh = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+    const read = async (ref: string) => await f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [ref] }) as { snapshot: MessageUnderlineSnapshot }[]
+    expect((await read(fresh.messages[0]!.localMarkRef!))[0]!.snapshot).toEqual(first)
+    await expect(f.service.execute('team.app.local-mark.change', { conversationRef, markRef,
+      change: { kind: 'add', operationId: 'invalid', anchor: { ...anchor, text: '错字' } } })).rejects.toMatchObject({ code: 'team-local-mark-source-changed' })
+    await expect(f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [page.messages[0]!.ref] })).rejects.toThrow()
+    rawMessage = { ...message, record: { ...message.record, version: 4, text_content: '已经修改' } }
+    const edited = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+    expect((await read(edited.messages[0]!.localMarkRef!))[0]!.snapshot.items[0]?.state).toBe('stale')
+    await f.service.execute('team.app.local-mark.change', { conversationRef, markRef: edited.messages[0]!.localMarkRef,
+      change: { kind: 'remove', operationId: 'remove', annotationId: first.items[0]!.id } })
+    expect((await read(edited.messages[0]!.localMarkRef!))[0]!.snapshot.items).toEqual([])
+    rawConversation = { ...conversation, conversation_uid: 'another-conversation' }
+    const other = await open(f)
+    await expect(f.service.execute('team.app.local-mark.list', { conversationRef: other.conversation!.ref, markRefs: [markRef] })).rejects.toThrow()
+    rawMessage = { ...message, record: { ...message.record, status: 'deleted' } }
+    expect((await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline).messages[0]!.localMarkRef).toBeUndefined()
+    f.changeAccount()
+    await expect(read(markRef)).rejects.toThrow()
+  } finally { db.close() }
+})
 
 describe('Team App owner adapter', () => {
   it.each(['external', 'team'] as const)('projects %s-side message receipts in the internal view with stable member identities and sender exclusion', async messageSide => {

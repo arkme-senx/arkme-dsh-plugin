@@ -1,4 +1,4 @@
-import { useMessageTextSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
@@ -954,9 +954,10 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
+export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, selectionTarget }: {
   sessionAttachmentPreview?: boolean
   item: ArkmeTimelineItem
+  selectionTarget?: MessageSelectionTarget | undefined
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
   sourceIdentityKey?: string
@@ -973,10 +974,10 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
-  const selectionRef = useMessageTextSelectionTarget(arkmeMessageCopyText(item),
+  const selectionRef = useMessageTextSelectionTarget(arkmeMessageCopyText(item), selectionTarget ?? (
     sourceRef && item.status === 1 && item.messageActionRef && !item.callRecord && !item.forwardRecords && !item.sharedRecording
       && item.templateKind !== 8 && item.displayKind !== 1
-      ? { item, sourceRef } : undefined)
+      ? { item, sourceRef } : undefined))
   const mediaUrl = useArkmeMediaUrl()
   const mediaAccess = useContext(ArkmeMediaAccessContext)
   const [articleWindowError, setArticleWindowError] = useState('')

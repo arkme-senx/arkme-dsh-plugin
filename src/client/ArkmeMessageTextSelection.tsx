@@ -9,7 +9,14 @@ import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import type { MessageUnderline } from '../message-annotations.js'
 import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 
-export interface MessageSelectionTarget { item: ArkmeTimelineItem; sourceRef: string }
+export interface MessageSelectionTarget {
+  item: ArkmeTimelineItem; sourceRef: string
+  /** Team-local authority is never passed to ordinary Chat actions. */
+  localMarkRef?: string
+}
+export function messageSelectionReference(target: MessageSelectionTarget): string | undefined {
+  return target.localMarkRef ?? target.item.messageActionRef
+}
 const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
 export function registeredMessageTargets(sourceRef: string) {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-arkme-text-selection]')).flatMap(element => {
@@ -36,7 +43,7 @@ export function useMessageTextSelectionTarget(text: string, reply?: MessageSelec
       targets.set(element, { copyText: text, get reply() { return replyRef.current } })
       element.setAttribute('data-arkme-text-selection', '')
     }
-  }, [text, reply?.sourceRef, reply?.item.itemUid, reply?.item.recordVersion, reply?.item.status, reply?.item.messageActionRef])
+  }, [text, reply?.sourceRef, reply?.item.itemUid, reply?.item.recordVersion, reply?.item.status, reply?.item.messageActionRef, reply?.localMarkRef])
 }
 
 export function ArkmeSelectableMessageText({ text, children, style }: { text: string; children: ReactNode; style?: CSSProperties }) {
@@ -268,13 +275,19 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         ...captureQuoteAnchor(snapshot.start, snapshot.range, snapshot.text, sourceItem),
         sourceDigest: await quoteDigest(sourceItem),
       }
-      if (!stillValid(snapshot) || current.current !== snapshot || snapshot.startEntry?.reply?.item !== sourceItem) return
+      const freshTarget = snapshot.startEntry?.reply
+      // Presentation objects can be replaced by receipt/annotation refreshes.
+      // Validate identity, authority and content instead of object allocation.
+      if (!stillValid(snapshot) || current.current !== snapshot || !freshTarget
+        || freshTarget.sourceRef !== replyTarget.sourceRef || messageSelectionReference(freshTarget) !== messageSelectionReference(replyTarget)
+        || freshTarget.item.itemUid !== sourceItem.itemUid || freshTarget.item.status !== 1
+        || JSON.stringify([quoteSourceContent(freshTarget.item), freshTarget.item.recordVersion]) !== source) return
       anchors.current.set(snapshot, { source, quote })
       if (underline) {
-        const message = await onUnderline?.(replyTarget, quote)
+        const message = await onUnderline?.(freshTarget, quote)
         if (current.current !== snapshot) return
         if (message) { setNotice(message); return }
-      } else onReply!(replyTarget, quote)
+      } else onReply!(freshTarget, quote)
       document.getSelection()?.removeAllRanges()
       setSnapshot(undefined)
     } catch (error) { setNotice(error instanceof Error ? error.message : '引用失败，请重新选择') }

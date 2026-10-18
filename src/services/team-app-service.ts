@@ -8,6 +8,8 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
+import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
+import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 
 const obj = objectValue
 const str = stringValue
@@ -123,7 +125,11 @@ export class TeamAppService {
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
+    const markContent = { title: str(content.title), textContent: str(content.text_content), textFormat: obj(content.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const }
+    const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
+      ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
+        digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonical: quoteCanonicalText(markContent) }, actor) } : {}),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor), own: v.own === true,
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
@@ -149,6 +155,49 @@ export class TeamAppService {
       throw new ArkmePluginError('team-account-changed', '登录账号已在其他页面切换，请重新打开团队消息', false, 409)
     }
     return session
+  }
+
+  /** Private annotations reuse the local SQLite store. No cloud write or Chat reference. */
+  private async localMarks(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const actor = session.userId, context = await this.open('conversation', p.conversationRef, actor)
+    const store = this.runtime.stateStore.messageMarks
+    if (!store) throw new ArkmePluginError('team-local-mark-storage-unavailable', '本机标记存储暂不可用，请重试', true, 503)
+    const scope = JSON.stringify([this.runtime.config.environment, actor, 'team', context.conversation_uid, context.side])
+    const resolve = async (ref: string) => {
+      const target = await this.open('local-mark', ref, actor)
+      if (target.conversation_uid !== context.conversation_uid || target.side !== context.side
+        || !str(target.message_uid) || !/^[a-f0-9]{64}$/u.test(str(target.digest)) || typeof target.canonical !== 'string') throw invalid()
+      return { key: str(target.message_uid), digest: str(target.digest), canonical: target.canonical, version: num(target.record_version) }
+    }
+    const assertAccount = async () => {
+      signal?.throwIfAborted()
+      const current = await this.runtime.accountScopedSession()
+      if (current?.userId !== actor || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
+    }
+    if (operation === 'team.app.local-mark.capabilities') {
+      await assertAccount()
+      return { supported: true, maxLength: 2000, storage: 'local' }
+    }
+    if (operation === 'team.app.local-mark.list') {
+      const refs = p.markRefs
+      if (!Array.isArray(refs) || !refs.length || refs.length > 40 || refs.some(ref => typeof ref !== 'string') || new Set(refs).size !== refs.length) throw invalid()
+      const targets = await Promise.all(refs.map(resolve))
+      await assertAccount()
+      return targets.map((target, index) => ({ actionRef: refs[index], snapshot: store.read(scope, target.key, actor, target.digest) }))
+    }
+    const target = await resolve(str(p.markRef)), change = obj(p.change)
+    if (!underlineId(change.operationId) || !['add', 'remove'].includes(str(change.kind))
+      || change.kind === 'remove' && !underlineId(change.annotationId)) throw invalid()
+    const anchor = change.kind === 'add' ? readMessageQuote(change.anchor) : undefined
+    if (change.kind === 'add' && (!anchor || anchor.sourceDigest !== target.digest
+      || anchor.recordVersion !== target.version || !quoteMatchesCanonical(anchor, target.canonical))) {
+      throw new ArkmePluginError('team-local-mark-source-changed', '选区与原文不一致，请重新选择', false, 409)
+    }
+    await assertAccount()
+    const mutation: MessageUnderlineChange = change.kind === 'add'
+      ? { kind: 'add', operationId: change.operationId, anchor: anchor! }
+      : { kind: 'remove', operationId: change.operationId, annotationId: str(change.annotationId) }
+    return store.change(scope, target.key, actor, target.digest, mutation)
   }
 
   async execute(operation: TeamAppOperation, p: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -187,6 +236,9 @@ export class TeamAppService {
   private async dispatch(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials,
     post: (path: string, body?: Record<string, unknown>, read?: boolean) => Promise<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown> {
     const actor = session.userId
+    if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
+      return await this.localMarks(operation, p, session, signal)
+    }
     const teamID = async () => (await this.open('team', p.teamRef, actor)).team_id
     const conversation = async () => {
       const v = await this.open('conversation', p.conversationRef, actor)

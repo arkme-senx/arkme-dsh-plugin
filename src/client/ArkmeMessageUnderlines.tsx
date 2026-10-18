@@ -1,10 +1,10 @@
 import { useEffect, useId, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { openMarkedMessageSelection, registeredMessageTargets, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { openMarkedMessageSelection, registeredMessageTargets, messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import type { MessageUnderline } from '../message-annotations.js'
-import { MessageUnderlineSession, underlineTargetKey } from './message-underline-session.js'
+import { MessageUnderlineSession, underlineTargetKey, type MessageMarkTransport } from './message-underline-session.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export type MarkPosition = { key: string; target: MessageSelectionTarget; ids: string[]; left: number; top: number; width: number; height: number; element?: HTMLElement; stale: boolean; changed?: boolean; pending: boolean }
@@ -47,9 +47,9 @@ function visibleBox(element: HTMLElement) {
   return box.bottom > top && box.top < bottom && box.right > left && box.left < right ? { left, top, right, bottom } : undefined
 }
 
-export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined) {
+export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined, transport?: MessageMarkTransport) {
   const [revision, update] = useReducer((value: number) => value + 1, 0)
-  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, 'local') : undefined, [scope, !!sourceRef, viewerId])
+  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, 'local', transport) : undefined, [scope, !!sourceRef, viewerId, transport])
   if (session && sourceRef) session.sourceRef = sourceRef
   useEffect(() => { if (session) void session.prepare(); return () => session?.dispose() }, [session])
   return {
@@ -100,7 +100,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
       const currentGeneration = ++generation
       if (document.hidden) return
       const targets = registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element))
-      const nextSignature = targets.map(({ target }) => target.item.messageActionRef).join('|')
+      const nextSignature = targets.map(({ target }) => messageSelectionReference(target)).join('|')
       if (force || nextSignature !== signature.current) {
         signature.current = nextSignature
         void session.read(targets.map(({ target }) => target))
@@ -148,7 +148,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         highlightApi.set(highlightName, new Highlight(...ranges))
       }
       const merged = mergeUnderlinePositions(painted)
-      const geometry = (values: MarkPosition[]) => JSON.stringify(values.map(({ target, element: _element, ...position }) => ({ ...position, target: target.item.messageActionRef, content: quoteSourceContent(target.item), version: target.item.recordVersion })))
+      const geometry = (values: MarkPosition[]) => JSON.stringify(values.map(({ target, element: _element, ...position }) => ({ ...position, target: messageSelectionReference(target), content: quoteSourceContent(target.item), version: target.item.recordVersion })))
       setPositions(previous => previous.length === merged.length && previous.every((position, index) => position.element === merged[index]?.element)
         && geometry(previous) === geometry(merged) ? previous : merged)
     }

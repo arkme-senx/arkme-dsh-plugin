@@ -2,6 +2,12 @@ import { arkmeEmojiById } from './arkme-emoji.js'
 
 const blockTags = new Set(['P', 'DIV', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR', 'TABLE'])
 
+export function captureMessageContextMenu(event: Pick<MouseEvent, 'preventDefault' | 'stopPropagation' | 'clientX' | 'clientY'>, anchor?: HTMLElement) {
+  event.preventDefault()
+  event.stopPropagation()
+  return { left: event.clientX, top: event.clientY, selectedText: captureMessageTextSelection(anchor) }
+}
+
 /** Only used when inline emoji/read decorations need conversion. Keep block
  * boundaries as well as explicit newlines instead of flattening textContent. */
 function fragmentText(node: Node): string {

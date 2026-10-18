@@ -8,6 +8,7 @@ export type TeamAppOperation = `team.app.${
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
+  | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
 export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
@@ -31,6 +32,8 @@ export interface TeamMessage {
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
   recipientRead?: boolean
+  /** Sealed, viewer-scoped snapshot for private local annotations, not Chat actions. */
+  localMarkRef?: string
 }
 export interface TeamPage<T> { items: T[]; hasMore: boolean; nextCursor?: string }
 export interface TeamTimeline { conversation: TeamConversation; messages: TeamMessage[]; hasMore: boolean; beforeSeq: number }
