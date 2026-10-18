@@ -1,4 +1,5 @@
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
+import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
@@ -3478,6 +3479,38 @@ export class ChatService {
     return names
   }
 
+  async sourceMessageExtensionCapabilities(sourceRef: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return quoteCapabilitiesFromWire(undefined)
+    try {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/extensions/capabilities', { chat_session_uid: source.ownerRef }, session, signal)
+      return quoteCapabilitiesFromWire(objectValue(data).quote_reply)
+    } catch (error) {
+      if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) return quoteCapabilitiesFromWire(undefined)
+      throw error
+    }
+  }
+
+  async validateQuoteReply(sourceRef: string, messageActionRef: string, value: unknown, signal?: AbortSignal) {
+    const quote = readMessageQuote(value)
+    if (!quote) throw new ArkmePluginError('message-quote-invalid', '引用信息无效，请重新选择原文', false)
+    const capability = await this.sourceMessageExtensionCapabilities(sourceRef, signal)
+    if (!capability.supported) throw new ArkmePluginError('message-quote-unavailable', '局部回复尚待服务端接通，引用和正文已保留', false, 409)
+    if (quote.text.length > capability.maxQuoteLength) throw new ArkmePluginError('message-quote-too-long', `引用最多 ${capability.maxQuoteLength} 个字符，请缩小选区`, false)
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
+    // The signed snapshot prevents a caller attaching arbitrary text to somebody else's message.
+    const snapshot = { title: reference.title, textContent: reference.textContent, textFormat: reference.textFormat ?? 'plain' }
+    if (createHash('sha256').update(quoteSourceContent(snapshot)).digest('hex') !== quote.sourceDigest
+      || !quoteMatchesCanonical(quote, quoteCanonicalText(snapshot))) {
+      throw new ArkmePluginError('message-quote-source-changed', '引用与原文不一致，请打开原消息重新选择；回复正文已保留', false, 409)
+    }
+    return quote
+  }
+
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
@@ -3504,7 +3537,7 @@ export class ChatService {
     textContent: string,
     recordUid: string,
     assets: readonly ArkmeUploadedAsset[] = [],
-    options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {},
+    options: { relationUid?: string; parentRecordUid?: string; quote?: ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     if (options.textFormat === 'markdown' && this.runtime.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
     const normalizedUid = recordUid.trim()
@@ -3521,6 +3554,10 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
     const rootReference = await this.openMessageActionRef(messageActionRef, session.userId, source)
+    if (options.quote !== undefined) {
+      if (options.parentRecordUid && options.parentRecordUid !== rootReference.recordUid) throw new ArkmePluginError('message-quote-target-invalid', '请直接选择要回复的原消息', false)
+      await this.validateQuoteReply(sourceRef, messageActionRef, options.quote, options.signal)
+    }
     const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''
     let reference = rootReference
     let extensionLevel = 2
@@ -3589,6 +3626,7 @@ export class ChatService {
           chat_session_uid: reference.chatSessionUid,
           parent_record_owner_user_id: reference.recordOwnerUserId,
           parent_record_uid: reference.recordUid,
+          ...(options.quote === undefined ? {} : { quote_reply: options.quote, quote_reply_source: { relation_uid: reference.relationUid, sequence: reference.sourceSequence } }),
           child_record_uid: normalizedUid,
           child_rel_uid: relationUid,
           template_kind: assets.length === 0 ? 1 : 2,
@@ -3603,6 +3641,9 @@ export class ChatService {
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
       this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
+      if (options.quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(options.quote))) {
+        throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
+      }
       const extension = await this.hydrateUploadedExtension({
         recordUid: createdRecordUid,
         parentRecordUid: reference.recordUid,
@@ -6518,6 +6559,7 @@ export class ChatService {
     botProfiles: BotDisplayProfiles,
   ): Pick<ArkmeTimelineItem, 'extensionParentRecordUid' | 'extensionParent'> | undefined {
     const edge = objectValue(item.extension_edge ?? item.extensionEdge)
+    const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply, edge.quote_reply_state ?? item.quote_reply_state)
     const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
     const previewRelation = timelineSenderRelation(preview)
     const previewRecord = objectValue(preview.record)
@@ -6533,7 +6575,11 @@ export class ChatService {
       ?? previewPayload.record_uid ?? previewPayload.recordUid,
     ).trim()
     if (previewRecordUid === '' || previewRecordUid !== parentRecordUid) {
-      return { extensionParentRecordUid: parentRecordUid }
+      return { extensionParentRecordUid: parentRecordUid, ...(quoteProjection.quoteState === undefined ? {} : { extensionParent: {
+        itemUid: parentRecordUid, senderName: this.timelineSenderName(previewRelation, botProfiles), title: '', textContent: '',
+        ...quoteProjection,
+        ...(recordOwnerId(edge.parent_record_owner_user_id) ? { recordOwnerUserId: recordOwnerId(edge.parent_record_owner_user_id) } : {}),
+      } }) }
     }
     const contentBlocks = this.media.richContentBlocks(preview, viewerUserId)
     const recordOwnerUserId = recordOwnerId(
@@ -6545,14 +6591,15 @@ export class ChatService {
     return {
       extensionParentRecordUid: parentRecordUid,
       extensionParent: {
+        ...quoteProjection,
         itemUid: parentRecordUid,
         senderName: this.timelineSenderName(previewRelation, botProfiles),
-        title: stringValue(previewPayload.title),
-        textContent: stringValue(previewPayload.text_content ?? previewPayload.textContent),
+        title: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.title),
+        textContent: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.text_content ?? previewPayload.textContent),
         ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
         ...(sequence > 0 ? { sequence } : {}),
         ...(sendAtMillis > 0 ? { sendAtMillis } : {}),
-        contentBlocks,
+        contentBlocks: quoteProjection.quoteState === 'unavailable' ? [] : contentBlocks,
       },
     }
   }

@@ -4,14 +4,20 @@ import { captureMessageTextSelection } from './message-text-selection.js'
 import { copyText } from './clipboard-text.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
+import type { ArkmeTimelineItem } from '../types.js'
+import type { ArkmeMessageQuote } from '../message-quote.js'
+import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 
-const targets = new WeakMap<HTMLElement, { copyText: string }>()
+export interface MessageSelectionTarget { item: ArkmeTimelineItem; sourceRef: string }
+const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
 const targetSelector = '[data-arkme-text-selection]'
 const scopeSelector = '[data-arkme-note-detail], [data-arkme-message-selection-scope]'
 const excludedSelector = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],button,[data-arkme-mention-read]'
 
 /** Ref registration adds no layout wrapper and no per-message document listener. */
-export function useMessageTextSelectionTarget(text: string) {
+export function useMessageTextSelectionTarget(text: string, reply?: MessageSelectionTarget) {
+  const replyRef = useRef(reply)
+  replyRef.current = reply
   const previous = useRef<HTMLElement | null>(null)
   return useCallback((element: HTMLElement | null) => {
     if (previous.current) {
@@ -20,10 +26,10 @@ export function useMessageTextSelectionTarget(text: string) {
     }
     previous.current = element
     if (element) {
-      targets.set(element, { copyText: text })
+      targets.set(element, { copyText: text, get reply() { return replyRef.current } })
       element.setAttribute('data-arkme-text-selection', '')
     }
-  }, [text])
+  }, [text, reply?.sourceRef, reply?.item.itemUid, reply?.item.recordVersion, reply?.item.status, reply?.item.messageActionRef])
 }
 
 export function ArkmeSelectableMessageText({ text, children, style }: { text: string; children: ReactNode; style?: CSSProperties }) {
@@ -87,7 +93,10 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar() {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply }: {
+  replySourceRef?: string | undefined
+  onReply?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => void) | undefined
+} = {}) {
   const [snapshot, setSnapshot] = useState<Snapshot>()
   const [notice, setNotice] = useState('')
   const [position, setPosition] = useState({ left: 8, top: 8 })
@@ -172,6 +181,21 @@ export function ArkmeMessageTextSelectionToolbar() {
     setPosition({ left, top: Math.max(8, Math.min(window.innerHeight - box.height - 8, top)) })
   }, [snapshot, notice])
   if (!snapshot || typeof document === 'undefined') return null
+  const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
+  const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
+    && replyTarget.item.status === 1 && !!replyTarget.item.messageActionRef
+  const reply = async () => {
+    if (!canReply || !replyTarget || !stillValid(snapshot)) return
+    try {
+      const sourceItem = replyTarget.item
+      const anchor = captureQuoteAnchor(snapshot.start, snapshot.range, snapshot.text, sourceItem)
+      const sourceDigest = await quoteDigest(sourceItem)
+      if (!stillValid(snapshot) || current.current !== snapshot || snapshot.startEntry?.reply?.item !== sourceItem) return
+      onReply!(replyTarget, { ...anchor, sourceDigest })
+      document.getSelection()?.removeAllRanges()
+      setSnapshot(undefined)
+    } catch (error) { setNotice(error instanceof Error ? error.message : '引用失败，请重新选择') }
+  }
   const copy = async (value: string) => {
     if (!stillValid(snapshot)) { setSnapshot(undefined); return }
     try {
@@ -207,6 +231,7 @@ export function ArkmeMessageTextSelectionToolbar() {
       <span aria-hidden style={{ width: 1, height: 14, background: arkmeTheme.border }} />
       <button type="button" style={buttonStyle} onClick={selectAll}>{tr('全选')}</button>
     </>}
+    {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr('回复')}</button>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)
 }

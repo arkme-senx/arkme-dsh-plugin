@@ -340,8 +340,8 @@ function LongText({
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
   />
-  if (!markdown && !collapsible) return <p data-arkme-plain-text style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
-  return <div style={styles.textFrame} data-arkme-message-text-flow={markdown ? 'true' : undefined} {...(collapsible ? { 'data-arkme-text-collapsible': 'true' } : {})}>
+  if (!markdown && !collapsible) return <p data-arkme-quote-prose data-arkme-plain-text style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
+  return <div data-arkme-quote-prose style={styles.textFrame} data-arkme-message-text-flow={markdown ? 'true' : undefined} {...(collapsible ? { 'data-arkme-text-collapsible': 'true' } : {})}>
     {markdown
       ? <div style={{ maxHeight: collapsible && collapsed ? markdownHeight : undefined, overflow: 'hidden' }}>
         <div ref={markdownBody}>{content}</div>
@@ -973,7 +973,10 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
-  const selectionRef = useMessageTextSelectionTarget(arkmeMessageCopyText(item))
+  const selectionRef = useMessageTextSelectionTarget(arkmeMessageCopyText(item),
+    sourceRef && item.status === 1 && item.messageActionRef && !item.callRecord && !item.forwardRecords && !item.sharedRecording
+      && item.templateKind !== 8 && item.displayKind !== 1
+      ? { item, sourceRef } : undefined)
   const mediaUrl = useArkmeMediaUrl()
   const mediaAccess = useContext(ArkmeMediaAccessContext)
   const [articleWindowError, setArticleWindowError] = useState('')
@@ -1080,7 +1083,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     durationSeconds={block.durationSec ?? (isVoiceNote && item.recordDurationMillis !== undefined ? item.recordDurationMillis / 1000 : undefined)}
     downloadName={block.fileName}
     collapsible={withTranscript && presentation !== 'detail' && collapseText && shouldCollapseText(text)}
-  >{withTranscript && text !== '' ? <ArkmeMessageRichText
+  >{withTranscript && text !== '' ? <div data-arkme-quote-prose style={{ display: 'contents' }}><ArkmeMessageRichText
       text={text}
       textFormat={bodyTextFormat}
       highlightMentions={highlightMentions}
@@ -1091,7 +1094,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       {...(onMentionClick === undefined ? {} : { onMentionClick })}
       {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
-    /> : undefined}</ArkmeVoiceContent>
+    /></div> : undefined}</ArkmeVoiceContent>
   const renderRows = splitVisualRuns(blocks.filter(block => block !== inlineVoice)).map((row, rowIndex) => {
     if (Array.isArray(row)) {
       return <div key={`visual-row:${String(rowIndex)}`} style={styles.stack}>

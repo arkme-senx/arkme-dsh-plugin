@@ -239,6 +239,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
+  | 'source.message-extension.capabilities'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
   | 'source.record-delete'

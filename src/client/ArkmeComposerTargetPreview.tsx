@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useState, type CSSProperties, type ReactNode } from 'react'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -16,15 +16,17 @@ const styles = {
 } satisfies Record<string, CSSProperties>
 
 /** Shared composer target presentation; draft ownership remains with the caller. */
-export function ArkmeComposerTargetPreview({ label, text, children, closeLabel, disabled, onClose, mode }: {
+export function ArkmeComposerTargetPreview({ label, text, children, closeLabel, disabled, onClose, mode, quote = false }: {
   label?: string; text: string; children?: ReactNode; closeLabel: string; disabled?: boolean
-  onClose(): void; mode: 'extension' | 'reedit'
+  onClose(): void; mode: 'extension' | 'reedit'; quote?: boolean
 }) {
+  const [expanded, setExpanded] = useState(false)
   return <div style={styles.composerExtensionTarget}
     {...(mode === 'reedit' ? { 'data-arkme-composer-reedit-target': 'true' } : { 'data-arkme-composer-extension-target': 'true' })}>
     <div style={styles.composerExtensionTargetBody}>
-      {label && <div style={styles.composerReeditLabel}>{label}</div>}
-      {text && <div style={styles.composerExtensionTargetText}><ArkmeRichText text={text} presentation="preview" /></div>}
+      {label && <div style={{ ...styles.composerReeditLabel, ...(quote ? { color: arkmeTheme.text } : {}) }}>{label}</div>}
+      {text && <div style={{ ...styles.composerExtensionTargetText, ...(quote ? { whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: expanded ? undefined : 2 } : {}) }}>{quote ? text : <ArkmeRichText text={text} presentation="preview" />}</div>}
+      {quote && (text.length > 90 || text.includes('\n')) && <button type="button" onClick={() => setExpanded(value => !value)} style={{ border: 0, padding: 0, background: 'transparent', color: arkmeTheme.tertiary, fontSize: 12, cursor: 'pointer' }}>{expanded ? '收起引用' : '展开引用'}</button>}
       {children}
     </div>
     <button data-arkme-feedback="neutral" type="button" style={styles.composerExtensionTargetCancel}

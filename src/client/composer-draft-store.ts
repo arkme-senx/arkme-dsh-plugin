@@ -430,10 +430,10 @@ export class ArkmeComposerDraftStore {
     return key === undefined ? EMPTY_DRAFT : this.drafts.get(key) ?? EMPTY_DRAFT
   }
 
-  setExtensionTarget(key: string | undefined, item: ArkmeTimelineItem | undefined): void {
+  setExtensionTarget(key: string | undefined, item: ArkmeTimelineItem | undefined, quote?: import('../message-quote.js').ArkmeMessageQuote): void {
     if (key === undefined) return
     const { extensionTarget: _previous, fileSendIdentity: _identity, ...draft } = this.get(key)
-    this.storeOrDelete(key, { ...draft, ...(item === undefined ? {} : { extensionTarget: composerExtensionTarget(item) }) })
+    this.storeOrDelete(key, { ...draft, ...(item === undefined ? {} : { extensionTarget: composerExtensionTarget(item, quote) }) })
   }
 
   setMarkdown(key: string | undefined, markdown: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void {
