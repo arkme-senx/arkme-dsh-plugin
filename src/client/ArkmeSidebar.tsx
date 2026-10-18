@@ -41,6 +41,8 @@ import { attachmentPreviewBridge } from './attachment-preview-window.js'
 import { openSessionAttachmentPreview } from './ArkmeRichContent.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { captureMessageTextSelection } from './message-text-selection.js'
+import { messageTextSelectionActions } from './message-text-selection-actions.js'
 import { useComposerPasteFocus } from './composer-paste-focus.js'
 import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
@@ -2894,6 +2896,7 @@ export function ArkmeSurface({
     left: number
     top: number
     anchor: HTMLElement
+    selectedText: string | undefined
   }>()
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
@@ -7299,10 +7302,10 @@ export function ArkmeSurface({
       anchor: anchor ?? host,
       left: event.clientX,
       top: event.clientY,
+      selectedText: captureMessageTextSelection(anchor),
     })
   }, [groupSelfRole, source])
-  const copyMessageText = useCallback(async (item: ArkmeTimelineItem) => {
-    const text = arkmeMessageCopyText(item)
+  const copyMessageTextValue = useCallback(async (text: string) => {
     closeMessageMenu()
     if (text === '') {
       showMessageActionStatus('暂无可复制文本')
@@ -7315,6 +7318,7 @@ export function ArkmeSurface({
       showMessageActionStatus(errorMessage(caught) || '复制失败，请稍后重试')
     }
   }, [closeMessageMenu, showMessageActionStatus])
+  const copyMessageText = useCallback((item: ArkmeTimelineItem) => copyMessageTextValue(arkmeMessageCopyText(item)), [copyMessageTextValue])
   const copySelectedMessageText = useCallback(async () => {
     if (messageActionBusy !== undefined) return
     const item = selectedMessageItems[0]
@@ -9531,8 +9535,11 @@ export function ArkmeSurface({
         </ArkmeWideConversation>}
         {forwardDialog}
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeActionMenu
-          label={tr("消息操作")} point={{ x: messageMenu.left, y: messageMenu.top }} onClose={closeMessageMenu}
-          actions={[
+          label={tr(messageMenu.selectedText === undefined ? '消息操作' : '选中文字操作')} point={{ x: messageMenu.left, y: messageMenu.top }} onClose={closeMessageMenu}
+          actions={messageMenu.selectedText !== undefined
+            ? messageTextSelectionActions(messageMenu.selectedText, <ArkmeMessageActionIcon kind="copy" />,
+              text => { void copyMessageTextValue(text) }, () => { void copyMessageText(messageMenuItem) })
+            : [
             !!messageMenuItem.messageActionRef && authenticatedAccountKey !== undefined && activeSelectMode === undefined && { id: 'reaction', label: '表态', icon: <ReactionAddIcon />, onSelect: () => {
               setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(messageMenuItem) })
               closeMessageMenu()
