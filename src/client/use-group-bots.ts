@@ -12,6 +12,14 @@ export function arkmeGroupBotsChanged(account: string | undefined, sourceRef: st
   for (const listener of listeners) listener({ scope: scopeKey(account, sourceRef), removedBotRef })
 }
 
+export function subscribeGroupBotChanges(account: string | undefined, sourceRef: string | undefined, onChange: (removedBotRef?: string) => void): () => void {
+  const listener = (change: MembershipChange) => {
+    if (account && sourceRef && change.scope === scopeKey(account, sourceRef)) onChange(change.removedBotRef)
+  }
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
 export function arkmeInstalledGroupBots(items: readonly ArkmeGroupBotItem[]): ArkmeGroupBotItem[] {
   const seen = new Set<string>()
   return items.filter(bot => {

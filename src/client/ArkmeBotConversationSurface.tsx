@@ -241,7 +241,7 @@ export function ArkmeBotConversationSurface({
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
       {loading ? <div role="status" style={styles.loading}>{tr("正在加载 Bot 对话…")}</div>
         : messages.length === 0 ? (error === '' && <div style={styles.empty}>{emptyMessage}</div>)
-          : <div style={styles.messages}>{messages.map((message, index) => {
+          : <div style={styles.messages} data-arkme-message-selecting={messageActions.selecting}>{messages.map((message, index) => {
             const actionItem = messageActionItems.find(candidate => candidate.id === message.messageId)
             const selectedForAction = messageActions.selectedIds.has(message.messageId)
             return <div
@@ -256,6 +256,7 @@ export function ArkmeBotConversationSurface({
             checked={selectedForAction}
             disabled={false} onToggle={() => { messageActions.toggle(actionItem) }}
           />}<div
+            data-arkme-message-content="message"
             onContextMenu={event => { if (actionItem !== undefined) messageActions.openMenu(actionItem, event) }}
             style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}
           >

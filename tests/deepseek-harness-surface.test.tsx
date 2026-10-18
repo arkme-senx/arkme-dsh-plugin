@@ -16,6 +16,9 @@ describe('DeepSeekHarnessSurface', () => {
     expect(markup).toContain('loading="eager"')
     expect(markup).toContain('data-arkme-preload="true"')
     expect(markup).toContain('width:100%;height:100%')
+    expect(markup).toContain('color-scheme:inherit')
+    expect(markup).not.toContain('background:#fff;')
+    expect(markup).toMatch(/<iframe[^>]+visibility:hidden/)
   })
 
   it('keeps the native client mounted but non-interactive while another conversation is visible', () => {

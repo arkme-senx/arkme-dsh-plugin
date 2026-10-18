@@ -16,13 +16,17 @@ export async function copyText(value: string, doc: Document = document): Promise
   textarea.style.top = '0'
   doc.body.appendChild(textarea)
   const selection = doc.getSelection()
+  const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange()) : []
   const activeElement = doc.activeElement instanceof doc.defaultView!.HTMLElement ? doc.activeElement : undefined
   try {
     textarea.select()
     if (!doc.execCommand('copy')) throw new Error('复制失败，请稍后重试')
   } finally {
     textarea.remove()
-    selection?.removeAllRanges()
-    if (activeElement?.isConnected) activeElement.focus()
+    if (activeElement?.isConnected) activeElement.focus({ preventScroll: true })
+    if (selection) {
+      selection.removeAllRanges()
+      for (const range of ranges) if (range.commonAncestorContainer.isConnected) selection.addRange(range)
+    }
   }
 }

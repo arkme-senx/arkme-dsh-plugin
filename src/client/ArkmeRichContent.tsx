@@ -1,3 +1,5 @@
+import { useMessageTextSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
 import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview } from './attachment-preview-window.js'
@@ -971,6 +973,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
+  const selectionRef = useMessageTextSelectionTarget(arkmeMessageCopyText(item))
   const mediaUrl = useArkmeMediaUrl()
   const mediaAccess = useContext(ArkmeMediaAccessContext)
   const [articleWindowError, setArticleWindowError] = useState('')
@@ -1011,7 +1014,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
       return [`${value.senderName}：${summary}`]
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
-    return <div style={styles.forwardCard} data-arkme-forward-records-card="true">
+    return <div ref={selectionRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
       <p style={styles.forwardTitle} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></p>
       <div style={styles.forwardLines}>
         {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
@@ -1024,7 +1027,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   if (item.sharedRecording !== undefined) {
     const timeText = arkmeSharedRecordingTimeText(item.sharedRecording)
     const participantsText = arkmeSharedRecordingParticipantsText(item.sharedRecording)
-    return <div style={styles.sharedRecordingCard} data-arkme-shared-recording-card="true">
+    return <div ref={selectionRef} style={styles.sharedRecordingCard} data-arkme-shared-recording-card="true">
       <div style={styles.sharedRecordingTop}>
         <p style={styles.sharedRecordingTitle} title={arkmeEmojiPlainText(item.sharedRecording.title)}><ArkmeRichText text={item.sharedRecording.title} presentation="preview" /></p>
         {timeText !== '' && <span style={styles.sharedRecordingTime}>{timeText}</span>}
@@ -1113,7 +1116,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   })
 
   return <>
-    <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}
+    <div ref={selectionRef} style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}
       data-arkme-message-media-only={!isArticle && text === '' && blocks.length > 0 && blocks.every(block => block.kind === 'image' || block.kind === 'video') && failures.size === 0 && !display.mediaUnavailable && !previewError && !articleWindowError ? 'true' : undefined}>
       {inlineVoice !== undefined ? <>{renderVoice(inlineVoice, true)}{renderRows}</> : <>
         {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => {

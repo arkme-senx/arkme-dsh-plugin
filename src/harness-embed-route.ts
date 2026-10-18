@@ -1,6 +1,7 @@
 import { harnessNativeTransportScript } from './harness-native-transport-script.js'
 import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
 import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
+import { HARNESS_THEME_BOOTSTRAP } from './harness-theme-bootstrap.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -305,6 +306,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
       }
       if (options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
+      html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script>`)
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
@@ -315,7 +317,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
       response.end(method === 'HEAD' ? undefined : body)
     } catch (error) {
       options.onError?.(error)
-      const body = Buffer.from('<!doctype html><html><body>DeepSeek Harness unavailable</body></html>')
+      const body = Buffer.from(`<!doctype html><html><head><script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script></head><body><p role="alert">DeepSeek Harness unavailable</p></body></html>`)
       response.writeHead(503, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': body.byteLength,

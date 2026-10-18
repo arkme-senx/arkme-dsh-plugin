@@ -16,6 +16,7 @@ import { ArkmeTimelineDetailDrawer } from '../ArkmeNoteDetails.js'
 import { useRecordingPlayback } from '../recordings/useRecordingPlayback.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { useExploreDetail } from './useExploreDetail.js'
+import { isRelationView, relationViewCache } from './relation-view-cache.js'
 import { exploreIcons } from './ExploreNavigation.js'
 
 const message=(e:unknown)=>e instanceof Error?e.message:tr('加载失败，请重试')
@@ -34,13 +35,16 @@ function ExploreLoading({label,rows}:{label:string;rows:number}) {
 export function ExploreSurface({module,accountScope}:{module:ExploreModule;accountScope:string}) {
   useArkmeLocale()
   if(memoryScope!==accountScope){remembered.clear();memoryScope=accountScope}
-  const cached=remembered.get(module)
-  const initial=cached&&Date.now()-cached.savedAt<120000?cached:undefined
+  const [initial]=useState(()=>{
+    const cached=remembered.get(module)
+    if(module!=='relations'&&cached&&Date.now()-cached.savedAt<120000)return cached
+    return module==='relations'?relationViewCache.read(accountScope,'view',isRelationView)?.value:undefined
+  })
   const restore=useRef(!!initial?.page)
   const [filter,setFilter]=useState(initial?.filter??''),[query,setQuery]=useState(initial?.query??''),[search,setSearch]=useState(initial?.query??'')
-  const [page,setPage]=useState<ExplorePage|undefined>(initial?.page),[loading,setLoading]=useState(false),[error,setError]=useState(''),[moreError,setMoreError]=useState('')
+  const [page,setPage]=useState<ExplorePage|undefined>(initial?.page),[loading,setLoading]=useState(false),[refreshing,setRefreshing]=useState(false),[error,setError]=useState(''),[moreError,setMoreError]=useState('')
   const [selected,setSelected]=useState<ExploreItem|undefined>(initial?.selected)
-  const {detail,loading:detailLoading,error:detailError,overviewLoading,overviewError,readDetail,readOverview,invalidate:invalidateDetail}=useExploreDetail(selected,module,accountScope)
+  const {detail,loading:detailLoading,refreshing:detailRefreshing,error:detailError,overviewLoading,overviewError,readDetail,readOverview,retryDetail,invalidate:invalidateDetail}=useExploreDetail(selected,module,accountScope)
   const [enriching,setEnriching]=useState(0),[enrichmentError,setEnrichmentError]=useState('')
   const [peopleOpen,setPeopleOpen]=useState(false)
   const [settings,setSettings]=useState(false),[capabilities,setCapabilities]=useState(false)
@@ -55,8 +59,18 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
   const pageRef=useRef(page);pageRef.current=page
   useEffect(()=>{const timer=setTimeout(()=>setQuery(search.trim()),250);return()=>clearTimeout(timer)},[search])
   const position=useRef({listTop:initial?.listTop??0,detailTop:initial?.detailTop??0})
+  const fetchedAt=useRef(initial?.savedAt??0)
   const memory=useRef({filter,query,page,selected});memory.current={filter,query,page,selected}
-  useEffect(()=>()=>{if(memoryScope===accountScope)remembered.set(module,{...memory.current,...position.current,savedAt:Date.now()})},[module,accountScope])
+  const saveView=useCallback(()=>{
+    const value={...memory.current,...position.current,savedAt:fetchedAt.current}
+    if(module==='relations'&&value.page&&value.savedAt)relationViewCache.write(accountScope,'view',value,value.savedAt)
+    if(memoryScope===accountScope)remembered.set(module,value)
+  },[module,accountScope])
+  useEffect(()=>{
+    window.addEventListener('pagehide',saveView)
+    return()=>{window.removeEventListener('pagehide',saveView);saveView()}
+  },[saveView])
+  useEffect(()=>{saveView()},[page,selected,saveView])
   useEffect(()=>{if(scrollRoot.current)scrollRoot.current.scrollTop=position.current.listTop},[])
   useEffect(()=>{if(detail&&detailRoot.current)detailRoot.current.scrollTop=position.current.detailTop},[!!detail])
   const enrich=useCallback(async(items:ExploreItem[])=>{
@@ -74,19 +88,25 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
   const load=useCallback(async(more=false)=>{
     pageRequest.current?.abort();const c=new AbortController();pageRequest.current=c
     if(!more){for(const request of enrichmentRequests.current)request.abort();enrichmentRequests.current.clear();setEnriching(0);setEnrichmentError('')}
-    setLoading(true);if(more)setMoreError('');else setError('')
+    setLoading(true);setRefreshing(module==='relations'&&!more&&!!pageRef.current?.items.length);if(more)setMoreError('');else setError('')
     const previous=pageRef.current
     try {
-      const next=await callArkme<ExplorePage>('explore.list',{module,filter,query,...(more&&previous?.nextCursor?{cursor:previous.nextCursor}:{})},c.signal)
+      const next=await callArkme<ExplorePage>('explore.list',{module,filter,query,...(!more&&module==='relations'&&previous?{limit:previous.items.length}:{}),...(more&&previous?.nextCursor?{cursor:previous.nextCursor}:{})},c.signal)
       if(c.signal.aborted)return
       const value=more&&previous?{...next,items:[...previous.items,...next.items.filter(x=>!previous.items.some(y=>y.key===x.key))]}:next
+      if(!more)fetchedAt.current=Date.now()
       setPage(value)
-      if(module==='relations'&&next.needsEnrichment)void enrich(next.items)
-      if(!more&&selectedRef.current){const fresh=value.items.find(x=>x.key===selectedRef.current?.key);if(fresh){setSelected(fresh);if(module==='relations')void readDetail(fresh)}}
+      if(module==='relations'&&next.needsEnrichment)for(let i=0;i<next.items.length;i+=50)void enrich(next.items.slice(i,i+50))
+      if(!more&&selectedRef.current){const fresh=value.items.find(x=>x.key===selectedRef.current?.key);if(fresh)setSelected(fresh)}
     }catch(e){if(!c.signal.aborted)(more?setMoreError:setError)(message(e))}
-    finally{if(!c.signal.aborted)setLoading(false)}
-  },[module,filter,query,enrich,readDetail])
-  useEffect(()=>{if(restore.current){restore.current=false;const cached=pageRef.current;if(module==='relations'&&cached?.needsEnrichment)for(let i=0;i<cached.items.length;i+=50)void enrich(cached.items.slice(i,i+50));return()=>pageRequest.current?.abort()}setPage(undefined);setSelected(undefined);position.current={listTop:0,detailTop:0};setNotice('');setMoreError('');void load();return()=>pageRequest.current?.abort()},[load])
+    finally{if(!c.signal.aborted){setLoading(false);setRefreshing(false)}}
+  },[module,filter,query,enrich])
+  useEffect(()=>{
+    if(restore.current){restore.current=false;if(module==='relations')void load();return()=>pageRequest.current?.abort()}
+    pageRef.current=undefined;setPage(undefined);setSelected(undefined);fetchedAt.current=0
+    position.current={listTop:0,detailTop:0};setNotice('');setMoreError('');void load()
+    return()=>pageRequest.current?.abort()
+  },[load,module])
   useEffect(()=>()=>{sourceRequest.current?.abort();for(const request of enrichmentRequests.current)request.abort()},[])
   useEffect(()=>{
     if(!actionMenu)return
@@ -135,7 +155,7 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
   if(module==='relations'&&peopleOpen)return <PeopleSurface accountScope={accountScope} onBack={()=>setPeopleOpen(false)}/>
   return <section className="arkme-explore" aria-label={tr(EXPLORE_LABELS[module])}>
     <header className="explore-header"><Icon size={25}/><span className="explore-muted">{tr('探索')} /</span><h2><select aria-label={tr('切换探索板块')} value={module} onChange={e=>e.target.value==='world'?arkmeUi.showWorld():arkmeUi.showExplore(e.target.value as ExploreModule)}>{[...EXPLORE_MODULES,'world' as const].map(m=><option value={m} key={m}>{tr(EXPLORE_LABELS[m])}</option>)}</select></h2>
-      <div className="explore-header-actions"><span className="explore-muted">{page?`${page.total}`:''}</span><button className="explore-icon" aria-label={tr('刷新内容')} title={tr('刷新内容')} disabled={loading} onClick={()=>void load()}><ArrowClockwise size={18}/></button>
+      <div className="explore-header-actions"><span className="explore-muted">{page?`${page.total}`:''}</span><button className="explore-icon" aria-label={tr('刷新内容')} title={tr('刷新内容')} disabled={loading} onClick={()=>{void load();if(selected)void readDetail(selected)}}><ArrowClockwise size={18}/></button>
       {(!!page?.actions.length||module!=='relations')&&<div ref={menuRoot} style={{position:'relative'}}><button className="explore-icon" aria-label={tr('更多操作')} aria-expanded={actionMenu} onClick={()=>setActionMenu(v=>!v)}><DotsThree size={23}/></button>{actionMenu&&<div style={{position:'absolute',right:0,top:'100%',zIndex:3,padding:6,minWidth:150,borderRadius:8,background:'var(--dsw-specific-menu,#fff)',boxShadow:'0 4px 20px #0002'}}>{managedAnalysis&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setCapabilities(true)}}>{tr('自动使用额度')}</button>}{module!=='relations'&&module!=='goals'&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setSettings(true)}}>{tr(module==='profile'?'数据范围':'分析设置')}</button>}{page?.actions.map(a=><button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} key={a.id} onClick={()=>startAction(a,page!.contextRef)}>{tr(a.label)}</button>)}</div>}</div>}</div>
     </header>
     {managedAnalysis&&page&&page.analysisEnabled!==true&&<div className="explore-notice" role="status"><span>{tr(page.analysisEnabled===false?'尚未开启分析':'暂时无法确认分析设置')}</span><button className="explore-source-link" onClick={()=>setCapabilities(true)}>{tr('自动使用额度')}</button></div>}
@@ -149,7 +169,8 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
           {error&&<div role="alert" className="explore-error">{error}<button className="explore-source-link" onClick={()=>void load()}>{tr('重试')}</button></div>}
           {page?.items.map(item=><button type="button" className="explore-row" aria-current={selected?.key===item.key} key={item.key} onClick={()=>{position.current.detailTop=0;setSelected(item);setActionMenu(false)}}><div className="explore-row-title"><span>{item.title}</span>{item.count!==undefined&&<span className="explore-muted">{item.count}</span>}</div>{item.summary&&<div className="explore-row-summary">{item.summary}</div>}<div className="explore-row-meta">{item.category&&<span>{item.category}</span>}{item.linkedContactName&&item.linkedContactName!==item.title&&<span>{tr('关联联系人')}：{item.linkedContactName}</span>}{item.status&&<span>{tr(item.status)}</span>}{item.dateLabel?<span>{item.dateLabel}</span>:item.date>0&&<span>{date(item.date).split(' ')[0]}</span>}</div></button>)}
           {!loading&&!error&&page&&!page.items.length&&<div className="explore-empty"><Icon size={36} weight="thin"/><span>{tr(page.emptyMessage??(query?'没有找到匹配的内容':'还没有相关内容'))}</span></div>}
-          {loading&&<ExploreLoading label={page?.items.length?tr('正在加载更多…'):tr('正在读取关系与内容…')} rows={page?.items.length?1:5}/>}
+          {refreshing&&<div className="explore-inline-loading" role="status">{tr('正在后台更新关系，已有内容可继续查看…')}</div>}
+          {loading&&!refreshing&&<ExploreLoading label={page?.items.length?tr('正在加载更多…'):tr('正在读取关系与内容…')} rows={page?.items.length?1:5}/>}
           {!loading&&enriching>0&&<div className="explore-more" role="status">{tr('正在补全联系人备注…')}</div>}
           {enrichmentError&&<div className="explore-more">{enrichmentError}<button className="explore-source-link" onClick={()=>{setEnrichmentError('');if(page)for(let i=0;i<page.items.length;i+=50)void enrich(page.items.slice(i,i+50))}}>{tr('重试')}</button></div>}
           {moreError?<div role="alert" className="explore-error">{moreError}<button className="explore-source-link" onClick={()=>void load(true)}>{tr('重试加载')}</button></div>:<div ref={sentinel} className="explore-more" aria-hidden="true"/>}
@@ -167,15 +188,16 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
           {detail.notice&&<p className="explore-muted">{tr(detail.notice)}</p>}
           {sourceError&&<div role="alert" className="explore-error">{sourceError}</div>}
           </>}
-          {detailLoading&&<ExploreLoading label={module==='relations'?(detail?.evidence.length?tr('正在加载更多相关记录…'):tr('正在读取相关记录，人物信息已可查看…')):tr('正在加载详情…')} rows={detail?.evidence.length?1:3}/>}
+          {detailRefreshing&&<div className="explore-inline-loading" role="status">{tr('正在后台更新相关记录…')}</div>}
+          {detailLoading&&!detailRefreshing&&<ExploreLoading label={module==='relations'?(detail?.evidence.length?tr('正在加载更多相关记录…'):tr('正在读取相关记录，人物信息已可查看…')):tr('正在加载详情…')} rows={detail?.evidence.length?1:3}/>}
           {module==='relations'&&!!detail?.evidence.length&&<div className="explore-more">{tr('已显示')} {detail.evidence.length} {tr('条原始记录')}{detail.nextCursor?` · ${tr('向下滚动自动加载')}`:''}</div>}
-          {detailError?<div role="alert" className="explore-error">{detailError}<button className="explore-source-link" onClick={()=>void readDetail(selected,detail?.nextCursor,true)}>{tr('重试')}</button></div>:<div ref={detailSentinel} className="explore-more"/>}
+          {detailError?<div role="alert" className="explore-error">{detailError}<button className="explore-source-link" onClick={()=>void retryDetail(selected)}>{tr('重试')}</button></div>:<div ref={detailSentinel} className="explore-more"/>}
         </>:<div className="explore-empty"><Icon size={46} weight="thin"/><span>{tr('选择一条内容，查看详情和来源')}</span>{page?.notice&&<span className="explore-muted" style={{maxWidth:370}}>{tr(page.notice)}</span>}</div>}
       </main>
     </div>
     {capabilities&&<ArkmeDetailShell title={tr('自动使用额度')} label={tr('自动使用额度')} onClose={()=>{setCapabilities(false);void load()}}><ArkmeAutomaticAiSettings accountScope={accountScope}/></ArkmeDetailShell>}
     {settings&&<ExploreSettingsDialog module={module} onClose={()=>setSettings(false)} onChanged={()=>void load()}/>}
-    {mutation&&<ExploreMutationDialog module={module} request={mutation} detail={detail} onClose={()=>setMutation(undefined)} onSaved={()=>{const id=mutation.action.id;setMutation(undefined);setNotice(tr('已保存'));invalidateDetail();if(['delete','dismiss'].includes(id)){setSelected(undefined)}else if(selected)void readDetail(selected);void load()}}/>}
+    {mutation&&<ExploreMutationDialog module={module} request={mutation} detail={detail} onClose={()=>setMutation(undefined)} onSaved={()=>{const id=mutation.action.id;setMutation(undefined);setNotice(tr('已保存'));invalidateDetail();if(['delete','dismiss'].includes(id)){setPage(p=>p?{...p,items:p.items.filter(x=>x.key!==selected?.key),total:Math.max(0,p.total-1)}:p);setSelected(undefined)}else if(selected)void readDetail(selected);void load()}}/>}
     {source?.kind==='record'&&<ArkmeTimelineDetailDrawer item={source.item} canExtend={false} showOriginal={original} onToggleOriginal={()=>setOriginal(v=>!v)} onClose={()=>setSource(undefined)}/>}
     {source?.kind==='recording'&&<ExploreRecordingSource source={source} onClose={()=>setSource(undefined)}/>}
   </section>

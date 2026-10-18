@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import { act, create } from 'react-test-renderer'
 import { expect, it, vi } from 'vitest'
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
 const lifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
 vi.mock('../src/client/ArkmeCallSurface.js', () => ({ ArkmeCallSurface: ({ active }: { active: boolean }) => {
   const [value, setValue] = useState('')

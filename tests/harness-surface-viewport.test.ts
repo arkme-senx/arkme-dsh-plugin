@@ -212,3 +212,17 @@ it('keeps native boot and error content visible before the session layout exists
   expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
   expect(native.querySelector('main')?.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
 })
+
+it('keeps an empty document or root clipped until native loading or error UI has painted', async () => {
+  const { native, surface } = fixture()
+  native.body.innerHTML = '<script>boot()</script><div id="root"></div>'
+  await flush()
+  expect(surface.style.visibility).toBe('hidden')
+  expect(surface.style.clipPath).toBe('inset(100%)')
+  native.querySelector('#root')!.innerHTML = '<main data-dsh-boot>Loading plugins…</main>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  native.querySelector('#root')!.innerHTML = '<p role="alert">Connection failed</p>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+})
