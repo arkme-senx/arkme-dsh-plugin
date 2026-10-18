@@ -16,6 +16,7 @@ import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmeDirectMessageAdmissionError } from './services/direct-message-admission-service.js'
 import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
+import { readMessageQuote } from './message-quote.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
@@ -1774,6 +1775,12 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'offset', 0),
     )
     case 'arko.ask': {
+      if (params.imageFileRefs !== undefined && (!Array.isArray(params.imageFileRefs)
+        || params.imageFileRefs.some(ref => typeof ref !== 'string'))) {
+        throw new ArkmePluginError('arko-image-invalid', '图片附件参数无效', false)
+      }
+      const imageFileRefs = stringListParam(params, 'imageFileRefs')
+      const expectedUserId = optionalPositiveIntegerParam(params, 'expectedUserId')
       const sessionId = optionalPositiveIntegerParam(params, 'sessionId')
       const clientTurnUid = stringParam(params, 'clientTurnUid')
       const replyToAssistantMsgId = optionalPositiveIntegerParam(params, 'replyToAssistantMsgId')
@@ -1781,6 +1788,8 @@ export async function dispatchArkmeHostOperation(
       const modelRouteKey = stringParam(params, 'modelRouteKey')
       return await service.arkoAsk(stringParam(params, 'text'), {
         waitMillis: arkoWaitMillisParam(params),
+        ...(imageFileRefs.length === 0 ? {} : { imageFileRefs }),
+        ...(expectedUserId === undefined ? {} : { expectedUserId }),
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(clientTurnUid === '' ? {} : { clientTurnUid }),
         ...(modelRouteKey === '' ? {} : { modelRouteKey }),
@@ -2269,12 +2278,22 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.local-message-mark.capabilities': return await service.sourceLocalMarkCapabilities(stringParam(params, 'sourceRef'))
+    case 'source.local-message-mark.list': return await service.sourceLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'))
+    case 'source.local-message-mark.change': return await service.changeSourceLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange)
+    case 'source.message-underline.capabilities': return await service.sourceUnderlineCapabilities(stringParam(params, 'sourceRef'), requestSignal)
+    case 'source.message-underline.list': return await service.sourceUnderlines(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
+    case 'source.message-underline.change': return await service.changeSourceUnderline(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
+    case 'source.message-extension.capabilities': return await service.sourceMessageExtensionCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
-    case 'source.message-extension.extend': return await service.extendSourceMessage(
+    case 'source.message-extension.extend': {
+      const quote = readMessageQuote(params.quote)
+      if (params.quote !== undefined && quote === undefined) throw new ArkmePluginError('message-quote-invalid', '引用信息无效，请重新选择原文', false)
+      return await service.extendSourceMessage(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
       stringParam(params, 'textContent'),
@@ -2282,11 +2301,13 @@ export async function dispatchArkmeHostOperation(
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
         ...richSendParam(params),
+        ...(quote === undefined ? {} : { quote }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    }
     case 'source.shared-recording-detail': return await service.sharedRecordingDetail(
       stringParam(params, 'detailRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },

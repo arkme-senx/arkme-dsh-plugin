@@ -1,3 +1,4 @@
+import { LocalMessageMarkStore } from './local-message-marks.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
 import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
@@ -127,6 +128,7 @@ function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly messageMarks: LocalMessageMarkStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
@@ -266,6 +268,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         this.database.exec('UPDATE conversation_member_cache SET payload_bytes = LENGTH(CAST(snapshot_json AS BLOB))')
       }
     })
+    this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
     this.selfRoleSync = new SelfRoleSyncStore(this.database, action => this.transaction(action))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>

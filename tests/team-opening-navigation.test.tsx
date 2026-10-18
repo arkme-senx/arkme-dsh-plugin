@@ -3,7 +3,9 @@ import { act, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage, TeamOpen } from '../src/team-app-contract.js'
+import { TeamConversationDirectory } from '../src/client/TeamConversationDirectory.js'
 import { TeamMessagingMount, TeamMessagingPanel } from '../src/client/TeamMessagingPanel.js'
+import { refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 import { openTeamMessages } from '../src/client/team-messaging-events.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
@@ -14,6 +16,8 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 function Workspace() {
   const state = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   return <><TeamMessagingMount accountKey="navigation-test" active />
+    {state.mode === 'team' && state.teamDirectory && <TeamConversationDirectory accountKey="navigation-test" folder={state.teamDirectory}
+      {...(state.teamIntent?.kind==='conversation'?{selectedKey:state.teamIntent.conversation.key}:{})} onBack={()=>arkmeUi.closeTeamDirectory()} />}
     {state.mode === 'team' && state.teamIntent && <TeamMessagingPanel accountKey="navigation-test" intent={state.teamIntent} />}</>
 }
 beforeEach(() => {
@@ -131,20 +135,65 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   await act(async () => { root.render(<Workspace />); openTeamMessages({kind:'team', teamRef:channel.teamRef}); await tick() })
   expect(host.querySelectorAll('.team-conversation-row')).toHaveLength(2)
   expect(host.textContent).not.toContain('其他团队来访者')
+  expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.read')).toBe(false)
   await click('来访者甲')
   await type('回复甲')
   await click('发送')
   expect(messages[0]?.content?.text_content).toBe('回复甲')
   await type('甲的未发草稿')
-  await click('返回团队对话')
-  expect(arkmeUi.getSnapshot().teamIntent).toEqual({kind:'team', teamRef:'studio'})
+  await click('返回 Arkme 会话列表')
+  expect(arkmeUi.getSnapshot().teamDirectory).toBeUndefined()
+  expect(arkmeUi.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:first.key}})
+  expect(host.querySelector('[contenteditable="true"]')?.textContent).toBe('甲的未发草稿')
+  await act(async () => { openTeamMessages({kind:'team',teamRef:channel.teamRef,channel}); await tick() })
   expect(host.querySelectorAll('.team-conversation-row')).toHaveLength(2)
   expect(host.textContent).toContain('回复甲')
   await click('来访者乙')
   expect(host.querySelector('[contenteditable="true"]')?.textContent).toBe('')
   await type('乙的未发草稿')
-  await click('返回团队对话')
   await click('来访者甲')
   expect(host.querySelector('[contenteditable="true"]')?.textContent).toBe('甲的未发草稿')
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.block')).toBe(false)
+})
+
+it('finds a selected team on later pages without marking it read or opening a visitor', async () => {
+  const channel={teamRef:'late',name:'分页团队',jotmoId:'late',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
+  const target: TeamConversation={key:'late-visitor',ref:'late-visitor',side:'team',channel,visitor:{nickname:'后页访客'},lastSeq:3,latestTeamReplySeq:0,myReadSeq:0,unread:3,needsReply:true,blocked:false,revision:1,updatedAt:10}
+  mocks.call.mockImplementation(async (op:string,params:{side?:string;cursor?:string})=>{
+    if(op==='team.app.attention') return {team:false,external:false,applications:false}
+    if(op==='team.app.conversations') return params.side==='external'?{items:[],hasMore:false}:params.cursor?{items:[target],hasMore:false}:{items:[],hasMore:true,nextCursor:'page2'}
+    throw new Error(op)
+  })
+  await act(async()=>{root.render(<Workspace/>);openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
+  expect(host.textContent).toContain('后页访客')
+  expect(host.textContent).toContain('选择一个对话')
+  expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.conversations'&&p.cursor==='page2')).toBe(true)
+  expect(mocks.call.mock.calls.some(([op])=>op==='team.app.read'||op==='team.app.timeline')).toBe(false)
+})
+it('background list reorder and failure retain selection, scroll and readable cached rows', async () => {
+  const channel={teamRef:'stable',name:'稳定团队',jotmoId:'stable',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
+  const first: TeamConversation={key:'a',ref:'a',side:'team',channel,visitor:{nickname:'甲'},lastSeq:0,latestTeamReplySeq:0,myReadSeq:0,unread:0,needsReply:false,blocked:false,revision:1,updatedAt:10}
+  let rows=[first,{...first,key:'b',ref:'b',visitor:{nickname:'乙'},updatedAt:5}], failed=false
+  mocks.call.mockImplementation(async(op:string,params:{side?:string})=>{
+    if(op==='team.app.attention')return {team:false,external:false,applications:false}
+    if(op==='team.app.conversations') {if(failed)throw new Error('暂时离线');return {items:params.side==='team'?rows:[],hasMore:false}}
+    if(op==='team.app.timeline')return {conversation:first,messages:[],hasMore:false,beforeSeq:0}
+    return []
+  })
+  await act(async()=>{root.render(<Workspace/>);openTeamMessages({kind:'conversation',conversation:first});await tick()})
+  const viewport=host.querySelector<HTMLDivElement>('[data-arkme-overlay-scroll-viewport]')!
+  await act(async()=>{viewport.scrollTop=120;viewport.dispatchEvent(new Event('scroll'));await tick()})
+  rows=[first,{...rows[1]!,updatedAt:30}]
+  await act(async()=>{await refreshTeamDirectory('navigation-test');await tick()})
+  expect([...host.querySelectorAll('[role="treeitem"]')].map(node=>node.textContent?.startsWith('乙'))).toEqual([true,false])
+  expect(host.querySelector('[role="treeitem"][aria-selected="true"]')?.textContent).toContain('甲')
+  expect(viewport.scrollTop).toBe(120)
+  failed=true
+  await act(async()=>{await refreshTeamDirectory('navigation-test');await tick()})
+  expect(host.textContent).toContain('暂时离线')
+  expect(host.querySelectorAll('[role="treeitem"]')).toHaveLength(2)
+  await act(async()=>{arkmeUi.closeTeamDirectory();await tick()})
+  await act(async()=>{openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
+  expect(host.querySelector<HTMLDivElement>('[data-arkme-overlay-scroll-viewport]')?.scrollTop).toBe(120)
+  expect(arkmeUi.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:'a'}})
 })

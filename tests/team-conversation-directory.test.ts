@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
-import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows } from '../src/client/team-conversation-directory.js'
+import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
 let stops: Array<() => void> = []
 afterEach(() => { stops.forEach(stop => stop()); stops = []; mock.mockReset() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
@@ -79,4 +79,24 @@ it('revocation wins over in-flight old previews, while a fresh list can restore 
   mock.mockResolvedValue({ items: [], hasMore: false })
   resolve({ items: [item('team')], hasMore: false }); await pending
   expect(readTeamDirectory('a').items).toEqual([])
+})
+
+it('groups all internal visitors by stable team identity, retaining direct external entries', () => {
+  const a={...item('team',10),key:'a',unread:2,visitor:{nickname:'甲'}}, b={...item('team',20),key:'b',unread:3,channel:{...channel,teamRef:'rotated'}}
+  const other={...item('team',30),key:'other',channel:{...channel,jotmoId:'other'}}
+  const groups=groupTeamConversations([a,b,a,other,item('external',40)],false)
+  expect(groups.map(g=>g.key)).toEqual(['other','team_id'])
+  expect(groups[1]).toMatchObject({unread:5,unreadExact:false,latest:b,conversations:[b,a]})
+  const rows=mergeTeamDirectoryRows([], [a,b,other,item('external',40)])
+  expect(rows.map(r=>r.kind)).toEqual(['team','team-folder','team-folder'])
+})
+it('stops invalid pagination instead of repeatedly fetching the same page', async () => {
+  mock.mockImplementation(async (_, {side})=>({items:side==='team'?[item('team')]:[],hasMore:side==='team'}))
+  stops.push(startTeamDirectory('a'))
+  await vi.waitFor(()=>expect(readTeamDirectory('a').hasLoaded).toBe(true))
+  const count=mock.mock.calls.length
+  await refreshTeamDirectory('a',true)
+  expect(readTeamDirectory('a').error).toContain('分页异常')
+  expect(mock.mock.calls).toHaveLength(count)
+  expect(readTeamDirectory('a').items).toHaveLength(1)
 })

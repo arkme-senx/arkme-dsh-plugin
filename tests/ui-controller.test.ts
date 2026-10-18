@@ -686,3 +686,30 @@ it('clears the previous account Bot selection before publishing an authenticated
   expect(controller.getSnapshot().mode).toBe('source')
   expect(controller.getSnapshot().selectedBot).toBeUndefined()
 })
+
+it('team folder navigation preserves the right pane and restores a separate visitor per team', () => {
+  const controller=new ArkmeUiController()
+  const channel={teamRef:'a',name:'团队甲',jotmoId:'a',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
+  const first={key:'visitor-a',ref:'a',side:'team' as const,channel,lastSeq:0,latestTeamReplySeq:0,myReadSeq:0,unread:2,needsReply:true,blocked:false,revision:1,updatedAt:1}
+  controller.showTeamConversation({kind:'team',teamRef:'a',channel})
+  expect(controller.getSnapshot().teamIntent?.kind).toBe('team')
+  controller.showTeamConversation({kind:'conversation',conversation:first})
+  controller.rememberTeamDirectoryScroll('account:a',240)
+  controller.closeTeamDirectory()
+  expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+  expect(controller.getSnapshot().teamIntent).toEqual({kind:'conversation',conversation:first})
+  const second={...first,key:'visitor-b',channel:{...channel,teamRef:'b',jotmoId:'b'}}
+  controller.showTeamConversation({kind:'conversation',conversation:second})
+  controller.showTeamConversation({kind:'team',teamRef:'fresh-a'})
+  controller.resolveTeamDirectory('fresh-a',{...channel,teamRef:'rotated-a'})
+  expect(controller.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:'visitor-a',channel:{teamRef:'rotated-a'}}})
+  expect(controller.readTeamDirectoryScroll('account:a')).toBe(240)
+  controller.showTeamConversation({kind:'team',teamRef:'b',channel:second.channel})
+  expect(controller.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:'visitor-b'}})
+  controller.authChanged(true,true)
+  controller.resolveTeamDirectory('b',second.channel)
+  expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+  expect(controller.readTeamDirectoryScroll('account:a')).toBe(0)
+  controller.showTeamConversation({kind:'team',teamRef:'a',channel})
+  expect(controller.getSnapshot().teamIntent?.kind).toBe('team')
+})

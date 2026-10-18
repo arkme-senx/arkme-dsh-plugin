@@ -1,3 +1,4 @@
+import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
@@ -751,6 +752,7 @@ function DetailExtensionParent({ parent, onOpen }: {
   parent: NonNullable<ArkmeTimelineItem['extensionParent']>
   onOpen?: ((parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => void) | undefined
 }) {
+  if (parent.quote || parent.quoteState === 'unavailable') return <ArkmeQuotePreview parent={parent} onOpen={onOpen ? () => onOpen(parent) : undefined} />
   const text = parent.textContent.trim() || parent.title.trim()
   const attachmentText = (parent.contentBlocks ?? []).map(block => block.fileName.trim()).filter(Boolean).join('、')
   const preview = text || attachmentText || tr('查看原始快记')
