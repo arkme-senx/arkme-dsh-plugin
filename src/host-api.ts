@@ -1774,6 +1774,12 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'offset', 0),
     )
     case 'arko.ask': {
+      if (params.imageFileRefs !== undefined && (!Array.isArray(params.imageFileRefs)
+        || params.imageFileRefs.some(ref => typeof ref !== 'string'))) {
+        throw new ArkmePluginError('arko-image-invalid', '图片附件参数无效', false)
+      }
+      const imageFileRefs = stringListParam(params, 'imageFileRefs')
+      const expectedUserId = optionalPositiveIntegerParam(params, 'expectedUserId')
       const sessionId = optionalPositiveIntegerParam(params, 'sessionId')
       const clientTurnUid = stringParam(params, 'clientTurnUid')
       const replyToAssistantMsgId = optionalPositiveIntegerParam(params, 'replyToAssistantMsgId')
@@ -1781,6 +1787,8 @@ export async function dispatchArkmeHostOperation(
       const modelRouteKey = stringParam(params, 'modelRouteKey')
       return await service.arkoAsk(stringParam(params, 'text'), {
         waitMillis: arkoWaitMillisParam(params),
+        ...(imageFileRefs.length === 0 ? {} : { imageFileRefs }),
+        ...(expectedUserId === undefined ? {} : { expectedUserId }),
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(clientTurnUid === '' ? {} : { clientTurnUid }),
         ...(modelRouteKey === '' ? {} : { modelRouteKey }),

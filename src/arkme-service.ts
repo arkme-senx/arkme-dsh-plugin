@@ -583,7 +583,11 @@ export class ArkmeService {
       this.record,
       this.source,
     )
-    this.arko = new ArkoService(this.runtime, this.profile, this.messageActions)
+    this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
+      read: ref => this.filesOwner().readLocal(ref),
+      upload: (refs, signal) => this.filesOwner().uploadRefs(refs, signal),
+      project: (raw, userId) => this.media.richContentBlocks(raw, userId),
+    })
     this.commonGroups = new CommonGroupService(this.runtime, this.source)
     this.group = new GroupService(this.runtime, this.source, this.profile, {
       sendPrivateText: async (sourceRef, chatSessionUid, text, recordUid, relationUid, session, signal) => {
@@ -1391,8 +1395,8 @@ export class ArkmeService {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoHistoryPage(limit, offset, signal)
     if (offset === 0) {
-      const latest = [...page.items].filter(item => item.text.trim() !== '').sort((a, b) => b.createdAtMillis - a.createdAtMillis || b.messageId - a.messageId)[0]
-      if (latest !== undefined) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text, createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
+      const latest = [...page.items].filter(item => item.text.trim() !== '' || item.contentBlocks?.length).sort((a, b) => b.createdAtMillis - a.createdAtMillis || b.messageId - a.messageId)[0]
+      if (latest !== undefined) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text.trim() || '[图片]', createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
     }
     return page
   }
@@ -1406,6 +1410,8 @@ export class ArkmeService {
       modelRouteKey?: string
       replyToRunUid?: string
       replyToAssistantMsgId?: number
+      imageFileRefs?: readonly string[]
+      expectedUserId?: number
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {

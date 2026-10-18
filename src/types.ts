@@ -3769,6 +3769,14 @@ export interface ArkmeArkoSession {
   name: string
 }
 
+export interface ArkmeArkoImageInput {
+  protocolVersion: 1
+  maxImages: number
+  maxImageBytes: number
+  maxTotalBytes: number
+  mimeTypes: readonly string[]
+}
+
 export interface ArkmeArkoModelOption {
   routeKey: string
   displayName: string
@@ -3777,6 +3785,7 @@ export interface ArkmeArkoModelOption {
   costDescription?: string
   recommended: boolean
   selected: boolean
+  imageInput?: ArkmeArkoImageInput
 }
 
 export interface ArkmeArkoModelCatalog {
@@ -3793,6 +3802,7 @@ export interface ArkmeArkoHistoryItem {
   sessionId: number
   role: ArkmeArkoMessageRole
   text: string
+  contentBlocks?: ArkmeContentBlock[]
   reasoning: string
   createdAtMillis: number
   status: number

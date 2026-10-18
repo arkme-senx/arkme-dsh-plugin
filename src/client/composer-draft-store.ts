@@ -374,7 +374,8 @@ export class ArkmeComposerDraftStore {
       for (const entry of saved.slice(0, 100)) {
         if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[0].startsWith('arkme-composer:')) continue
         const draft = entry[1] as ArkmeComposerDraftSnapshot
-        if (typeof draft?.text !== 'string' || draft.text.length > 20_000 || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
+        const maxTextLength = /^arkme-composer:\d+:arko$/.test(entry[0]) ? 60 * 1024 : 20_000
+        if (typeof draft?.text !== 'string' || draft.text.length > maxTextLength || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
         const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
           && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
