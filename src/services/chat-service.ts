@@ -1,5 +1,6 @@
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
 import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
+import { underlineCapabilities, underlineId, readUnderlineSnapshot, type MessageUnderlineChange } from '../message-annotations.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
@@ -3323,18 +3324,22 @@ export class ChatService {
   ): Promise<ArkmeTimelineExtensionParent | undefined> {
     const parent = projectOwnedRecordParent(data, recordUid)
     if (parent === undefined) return undefined
+    const tree = objectValue(data)
+    const edge = listValue(tree.edges).map(objectValue).find(edge => stringValue(edge.child_record_uid) === recordUid && stringValue(edge.parent_record_uid) === parent.recordUid && (edge.status === undefined || numberValue(edge.status) === 1))
+    const quoteProjection = projectedMessageQuote(edge?.quote_reply ?? tree.quote_reply, edge?.quote_reply_state ?? tree.quote_reply_state)
     const owner = recordOwnerId(parent.record.owner_user_id)
     if (parent.protectedContent || (owner !== 0 && owner !== session.userId)
       || arkmePrivacyLockedRecord(parent.record)
       || (this.privacy !== undefined && (await this.privacy.lockedRecordUids(session, signal)).has(parent.recordUid))) {
-      return { itemUid: parent.recordUid, senderName: '', title: '', textContent: '该延展源暂不可用' }
+      return { itemUid: parent.recordUid, senderName: '', title: '', textContent: '该延展源暂不可用', ...(quoteProjection.quoteState === undefined ? {} : { quoteState: 'unavailable' as const }) }
     }
+    if (quoteProjection.quoteState === 'unavailable') return { itemUid: parent.recordUid, senderName: '', title: '', textContent: '', ...quoteProjection }
     const hydration = await this.media.hydrateRecordMediaPage([parent.record], session, signal)
     const item = this.record.recordTimelineItemFromRaw(parent.record, session.userId, {
       displayItems: hydration.displayItemsByRecordUid.get(parent.recordUid) ?? [],
       mediaUnavailable: hydration.unavailableRecordUids.has(parent.recordUid),
     })
-    return { itemUid: parent.recordUid, senderName: item.selfRole?.name ?? item.senderName, title: item.title,
+    return { ...quoteProjection, itemUid: parent.recordUid, senderName: item.selfRole?.name ?? item.senderName, title: item.title,
       textContent: item.textContent, textFormat: item.textFormat ?? 'plain', sendAtMillis: item.sendAtMillis,
       ...(owner === 0 ? {} : { recordOwnerUserId: owner }),
       ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }) }
@@ -3479,13 +3484,83 @@ export class ChatService {
     return names
   }
 
+  private async underlineContext(sourceRef: string) {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
+    if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('underline-source-invalid', '当前来源不支持划线', false, 403)
+    const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) => chat
+      ? this.runtime.authenticatedChatPost<Record<string, unknown>>(`/api/v1/chats/annotations/${action}`, { ...body, chat_session_uid: source.ownerRef }, session, signal)
+      : this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal)
+    return { session, source, chat, post }
+  }
+
+  async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) {
+    const { post } = await this.underlineContext(sourceRef)
+    try { return underlineCapabilities((await post('capabilities', {}, signal)).underline) }
+    catch (error) {
+      if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) return underlineCapabilities(undefined)
+      throw error
+    }
+  }
+
+  async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) {
+    if (!actionRefs.length || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length) throw new ArkmePluginError('underline-targets-invalid', '划线读取范围无效', false)
+    const { session, source, chat, post } = await this.underlineContext(sourceRef)
+    const messages = await Promise.all(actionRefs.map(async (ref, target_index) => {
+      const target = await this.openMessageActionRef(ref, session.userId, source)
+      return { target_index, record_uid: target.recordUid, record_owner_user_id: target.recordOwnerUserId,
+        ...(chat ? { relation_uid: target.relationUid, sequence: target.sourceSequence } : {}) }
+    }))
+    const data = await post('list', { messages }, signal)
+    if (!Array.isArray(data.items) || data.items.length !== messages.length) throw new ArkmePluginError('underline-response-invalid', '划线读取不完整，请重试', true, 502)
+    const seen = new Set<number>()
+    return data.items.map(raw => {
+      const item = objectValue(raw), index = Number(item.target_index)
+      if (!Number.isSafeInteger(item.target_index) || index < 0 || index >= messages.length || seen.has(index)) throw new ArkmePluginError('underline-response-invalid', '划线来源不匹配', true, 502)
+      seen.add(index)
+      return { actionRef: actionRefs[index]!, snapshot: readUnderlineSnapshot(item, session.userId) }
+    })
+  }
+
+  async changeSourceUnderline(sourceRef: string, actionRef: string, change: MessageUnderlineChange, signal?: AbortSignal) {
+    if (!change || !underlineId(change.operationId) || (change.kind !== 'add' && change.kind !== 'remove')
+      || (change.kind === 'remove' && !underlineId(change.annotationId))) throw new ArkmePluginError('underline-change-invalid', '划线操作无效', false)
+    const { session, source, chat, post } = await this.underlineContext(sourceRef)
+    const target = await this.openMessageActionRef(actionRef, session.userId, source)
+    const capability = await this.sourceUnderlineCapabilities(sourceRef, signal)
+    if (!capability.supported) throw new ArkmePluginError('underline-unavailable', '划线尚待服务端接通，暂未保存', false, 409)
+    const anchor = change.kind === 'add' ? readMessageQuote(change.anchor) : undefined
+    if (change.kind === 'add') {
+      const snapshot = { title: target.title, textContent: target.textContent, textFormat: target.textFormat ?? 'plain' }
+      if (!anchor || anchor.text.length > capability.maxLength || createHash('sha256').update(quoteSourceContent(snapshot)).digest('hex') !== anchor.sourceDigest
+        || !quoteMatchesCanonical(anchor, quoteCanonicalText(snapshot))) throw new ArkmePluginError('underline-source-changed', '选区与原文不一致，请重新选择', false, 409)
+    }
+    const data = await post(change.kind === 'add' ? 'create' : 'remove', {
+      operation_uid: change.operationId, record_uid: target.recordUid, record_owner_user_id: target.recordOwnerUserId,
+      ...(chat ? { relation_uid: target.relationUid, sequence: target.sourceSequence } : {}),
+      ...(change.kind === 'add' ? { anchor } : { annotation_uid: change.annotationId }),
+    }, signal)
+    try {
+      const snapshot = readUnderlineSnapshot(data, session.userId)
+      if (data.operation_uid !== change.operationId || !snapshot.accessible || (change.kind === 'add'
+        ? !snapshot.items.some(item => item.mine && JSON.stringify(item.anchor) === JSON.stringify(anchor))
+        : snapshot.items.some(item => item.id === change.annotationId))) throw new Error('invalid receipt')
+      return snapshot
+    } catch {
+      throw new ArkmePluginError('underline-receipt-missing', '划线提交结果待核对，请刷新核对或重试', true, 502, { writeOutcomeUnknown: true })
+    }
+  }
+
   async sourceMessageExtensionCapabilities(sourceRef: string, signal?: AbortSignal) {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
-    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return quoteCapabilitiesFromWire(undefined)
+    const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
+    if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) return quoteCapabilitiesFromWire(undefined)
     try {
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/extensions/capabilities', { chat_session_uid: source.ownerRef }, session, signal)
+      const data = chat
+        ? await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/extensions/capabilities', { chat_session_uid: source.ownerRef }, session, signal)
+        : await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/extensions/capabilities', source.kind === 'topic' ? { topic_uid: source.ownerRef } : {}, session, signal)
       return quoteCapabilitiesFromWire(objectValue(data).quote_reply)
     } catch (error) {
       if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) return quoteCapabilitiesFromWire(undefined)
@@ -3701,6 +3776,7 @@ export class ChatService {
         '/api/v1/topics/records/extensions/create',
         {
           topic_uid: source.ownerRef,
+          ...(options.quote === undefined ? {} : { quote_reply: options.quote }),
           parent_record_uid: reference.recordUid,
           record_uid: normalizedUid,
           template_kind: assets.length === 0 ? 1 : 2,
@@ -3713,6 +3789,9 @@ export class ChatService {
         session,
         options.signal,
       )
+      if (options.quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(options.quote))) {
+        throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
+      }
       const createdRecordUid = stringValue(data.record_uid).trim()
       const createdParentUid = stringValue(data.parent_record_uid).trim()
       const createdTopicUid = stringValue(data.topic_uid).trim()
@@ -3766,6 +3845,7 @@ export class ChatService {
         normalizedText,
         assets,
         options.textFormat,
+        options.quote,
       )
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({

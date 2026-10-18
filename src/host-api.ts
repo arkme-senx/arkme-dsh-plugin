@@ -2278,6 +2278,9 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.message-underline.capabilities': return await service.sourceUnderlineCapabilities(stringParam(params, 'sourceRef'), requestSignal)
+    case 'source.message-underline.list': return await service.sourceUnderlines(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
+    case 'source.message-underline.change': return await service.changeSourceUnderline(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'source.message-extension.capabilities': return await service.sourceMessageExtensionCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),

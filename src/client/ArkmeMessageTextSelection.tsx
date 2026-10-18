@@ -5,11 +5,17 @@ import { copyText } from './clipboard-text.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import type { ArkmeTimelineItem } from '../types.js'
-import type { ArkmeMessageQuote } from '../message-quote.js'
+import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 
 export interface MessageSelectionTarget { item: ArkmeTimelineItem; sourceRef: string }
 const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
+export function registeredMessageTargets(sourceRef: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-arkme-text-selection]')).flatMap(element => {
+    const target = targets.get(element)?.reply
+    return target?.sourceRef === sourceRef && target.item.status === 1 ? [{ element, target }] : []
+  })
+}
 const targetSelector = '[data-arkme-text-selection]'
 const scopeSelector = '[data-arkme-note-detail], [data-arkme-message-selection-scope]'
 const excludedSelector = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],button,[data-arkme-mention-read]'
@@ -93,14 +99,17 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline }: {
   replySourceRef?: string | undefined
+  replyLabel?: string | undefined
   onReply?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => void) | undefined
+  onUnderline?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => Promise<string | undefined>) | undefined
 } = {}) {
   const [snapshot, setSnapshot] = useState<Snapshot>()
   const [notice, setNotice] = useState('')
   const [position, setPosition] = useState({ left: 8, top: 8 })
   const toolbar = useRef<HTMLDivElement>(null)
+  const anchors = useRef(new WeakMap<Snapshot, { source: string; quote: ArkmeMessageQuote }>())
   const current = useRef(snapshot)
   current.current = snapshot
   useEffect(() => {
@@ -184,14 +193,25 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply }: {
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
     && replyTarget.item.status === 1 && !!replyTarget.item.messageActionRef
-  const reply = async () => {
-    if (!canReply || !replyTarget || !stillValid(snapshot)) return
+  const reply = async (underline = false) => {
+    if ((!canReply && !underline) || !replyTarget || replyTarget.sourceRef !== replySourceRef || !stillValid(snapshot)) return
     try {
       const sourceItem = replyTarget.item
-      const anchor = captureQuoteAnchor(snapshot.start, snapshot.range, snapshot.text, sourceItem)
-      const sourceDigest = await quoteDigest(sourceItem)
+      const source = JSON.stringify([quoteSourceContent(sourceItem), sourceItem.recordVersion])
+      const cached = anchors.current.get(snapshot)
+      // A background presentation refresh can replace text nodes while the same menu is open.
+      // Reuse only an already verified anchor for the exact same source content/version.
+      const quote = cached?.source === source ? cached.quote : {
+        ...captureQuoteAnchor(snapshot.start, snapshot.range, snapshot.text, sourceItem),
+        sourceDigest: await quoteDigest(sourceItem),
+      }
       if (!stillValid(snapshot) || current.current !== snapshot || snapshot.startEntry?.reply?.item !== sourceItem) return
-      onReply!(replyTarget, { ...anchor, sourceDigest })
+      anchors.current.set(snapshot, { source, quote })
+      if (underline) {
+        const message = await onUnderline?.(replyTarget, quote)
+        if (current.current !== snapshot) return
+        if (message) { setNotice(message); return }
+      } else onReply!(replyTarget, quote)
       document.getSelection()?.removeAllRanges()
       setSnapshot(undefined)
     } catch (error) { setNotice(error instanceof Error ? error.message : '引用失败，请重新选择') }
@@ -231,7 +251,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply }: {
       <span aria-hidden style={{ width: 1, height: 14, background: arkmeTheme.border }} />
       <button type="button" style={buttonStyle} onClick={selectAll}>{tr('全选')}</button>
     </>}
-    {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr('回复')}</button>}
+    {onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1 && <button type="button" style={buttonStyle} onClick={() => { void reply(true) }}>{tr('划线')}</button>}
+    {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)
 }

@@ -85,3 +85,31 @@ it('rejects corrupt quote offsets and requires the exact capability version', ()
   expect(quoteCapabilitiesFromWire({ enabled: true })).toMatchObject({ supported: false })
   expect(quoteCapabilitiesFromWire({ enabled: true, protocol_version: 1, projection: 'arkme-text-v1', max_quote_length: 1000 })).toEqual({ supported: true, maxQuoteLength: 1000 })
 })
+it('uses 延展 for self and offers underline without silently claiming unsupported persistence', async () => {
+  const reply = vi.fn(), underline = vi.fn(async () => '划线尚待服务端接通，暂未保存')
+  await act(async () => root.render(<><ArkmeMessageTextSelectionToolbar replySourceRef="self" replyLabel="延展" onReply={reply} onUnderline={underline} /><ArkmeMessageContent item={{ ...base, isMe: true }} sourceRef="self" /></>))
+  const p = host.querySelector('p')!; select(document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!, 7, 9)
+  await act(async () => p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+  let buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))
+  expect(buttons.map(el => el.textContent)).toEqual(['复制', '全选', '划线', '延展'])
+  await act(async () => { buttons[2]!.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
+  expect(underline).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'self' }), expect.objectContaining({ text: '可以', start: 7 }))
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('暂未保存')
+  expect(document.getSelection()?.toString()).toBe('可以')
+  // Same source/version, but a presentation refresh replaced its text nodes.
+  p.textContent = base.textContent
+  buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))
+  await act(async () => { buttons[3]!.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
+  expect(reply).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'self' }), expect.objectContaining({ text: '可以', start: 7 }))
+})
+it('keeps self topic quote drafts separate and preserves body when cancelling', () => {
+  const quote: ArkmeMessageQuote = { version: 1, projection: 'arkme-text-v1', sourceDigest: digest(base), start: 7, end: 9, text: '可以', prefix: '可以，先检查。', suffix: '，再处理。' }
+  const topic = arkmeSourceComposerDraftKey(42, { kind: 'topic', sourceRef: 'topic-ref', sourceKey: 'topic:a' })!
+  const other = arkmeSourceComposerDraftKey(42, { kind: 'topic', sourceRef: 'other-ref', sourceKey: 'topic:b' })!
+  let saved = ''; const storage = { getItem: () => saved || null, setItem: (_: string, value: string) => { saved = value } }
+  const store = new ArkmeComposerDraftStore(storage); store.setText(topic, '延展正文'); store.setExtensionTarget(topic, { ...base, isMe: true }, quote)
+  const restored = new ArkmeComposerDraftStore(storage)
+  expect(restored.get(topic).extensionTarget?.quote).toEqual(quote)
+  expect(restored.get(other).extensionTarget).toBeUndefined()
+  restored.setExtensionTarget(topic, undefined); expect(restored.get(topic).text).toBe('延展正文')
+})

@@ -1,3 +1,4 @@
+import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { useQuoteReplySupport } from './use-quote-reply-support.js'
@@ -2394,7 +2395,8 @@ export function ArkmeSurface({
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
   const composerExtensionTarget = composerDraft.extensionTarget
-  const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote)
+  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId)
+  const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote, sourceIsChat ? '回复' : '延展')
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
     findCandidate: findRecordReeditCandidate } = useRecordReeditEditors()
@@ -8590,10 +8592,13 @@ export function ArkmeSurface({
   return (
     <>
     <ArkmeBotIdentityStyles />
+    {messageUnderlines.layer}
     <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
-      replySourceRef={activeConversation && sourceIsChat ? source?.sourceRef : undefined}
+      replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
+      replyLabel={sourceIsChat ? '回复' : '延展'}
+      onUnderline={messageUnderlines.mark}
       onReply={(target, quote) => {
-        if (source?.sourceRef !== target.sourceRef || !sourceIsChat) return
+        if (!source || source.sourceRef !== target.sourceRef || (!sourceIsChat && !isArkmeSelfWorkspaceSource(source))) return
         const oldQuote = composerExtensionTarget?.quote
         startMessageExtension(target.item, quote)
         if (oldQuote) showMessageActionStatus('已更换引用')
@@ -9127,7 +9132,7 @@ export function ArkmeSurface({
             </div>}
             {activeComposerTargetItem !== undefined && <ArkmeComposerTargetPreview
               mode={activeRecordReeditComposer === undefined ? 'extension' : 'reedit'}
-              {...(activeRecordReeditComposer === undefined ? composerExtensionTarget?.quote ? { label: `回复 ${arkmeTimelineDetailSenderText(activeComposerTargetItem, conversationMembers)}` } : {} : { label: tr('重新编辑:') })}
+              {...(activeRecordReeditComposer === undefined ? composerExtensionTarget?.quote ? { label: sourceIsChat ? `回复 ${arkmeTimelineDetailSenderText(activeComposerTargetItem, conversationMembers)}` : '延展片段' } : {} : { label: tr('重新编辑:') })}
               text={activeRecordReeditComposer === undefined && composerExtensionTarget?.quote ? composerExtensionTarget.quote.text : activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()}
               quote={activeRecordReeditComposer === undefined && !!composerExtensionTarget?.quote}
               closeLabel={activeRecordReeditComposer === undefined ? composerExtensionTarget?.quote ? '取消引用' : '取消延展' : '关闭重新编辑'}
