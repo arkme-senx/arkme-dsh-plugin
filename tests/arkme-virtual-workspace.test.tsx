@@ -163,7 +163,7 @@ describe('Arkme conversation directory load state', () => {
   it('commits owner visibility immediately but retains shared inline removal feedback', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
-    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items)')
+    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error)')
     expect(workspaceSource).toContain('= [...mergedConversationRows]')
     expect(workspaceSource).toContain("rootDirectoryRows.map(row =>")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)

@@ -54,6 +54,12 @@ vi.mock('../src/client/message-copy-text.js', async original => {
   return { arkmeMessageCopyText: (item: ArkmeTimelineItem) => actual.arkmeMessageCopyText({ title: '', textContent: '', ...item }) }
 })
 
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
   ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
   ArkmeMessageTextSelectionToolbar: () => null,
