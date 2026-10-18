@@ -65,6 +65,27 @@ function stillValid(snapshot: Snapshot) {
     && targets.get(snapshot.start) === snapshot.startEntry && targets.get(snapshot.end) === snapshot.endEntry
 }
 
+/** Keep selection within this message's prose, excluding trailing attachment controls. */
+function wholeMessageRange(element: HTMLElement): Range | undefined {
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (node instanceof Element) {
+        if (node.matches(`${excludedSelector},style,script,[aria-hidden="true"]`)) return NodeFilter.FILTER_REJECT
+        return node.matches('br,img[data-arkme-rich-emoji]') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      }
+      return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+    },
+  })
+  const first = walker.nextNode()
+  if (!first) return undefined
+  let last = first, next: Node | null
+  while ((next = walker.nextNode())) last = next
+  const range = element.ownerDocument.createRange()
+  range.setStartBefore(first)
+  range.setEndAfter(last)
+  return range
+}
+
 /** One host per product surface; only explicitly registered message bodies participate. */
 export function ArkmeMessageTextSelectionToolbar() {
   const [snapshot, setSnapshot] = useState<Snapshot>()
@@ -160,6 +181,19 @@ export function ArkmeMessageTextSelectionToolbar() {
       if (current.current === snapshot) setNotice(tr('复制失败，请重试'))
     }
   }
+  const selectAll = () => {
+    if (!stillValid(snapshot)) { setSnapshot(undefined); return }
+    const range = wholeMessageRange(snapshot.start)
+    const selection = snapshot.start.ownerDocument.getSelection()
+    if (!range || !selection) return
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const next = captureSelection(snapshot.start.ownerDocument)
+    // Keep the menu beside the user's initial selection, even for a long message.
+    current.current = next ? { ...next, rect: snapshot.rect } : undefined
+    setNotice('')
+    setSnapshot(current.current)
+  }
   return createPortal(<div ref={toolbar} role="toolbar" aria-label={tr('选中文字操作')}
     data-arkme-text-selection-toolbar
     onPointerDown={event => { event.preventDefault(); event.stopPropagation() }}
@@ -168,10 +202,10 @@ export function ArkmeMessageTextSelectionToolbar() {
     style={{ position: 'fixed', ...position, zIndex: 12000, display: 'flex', alignItems: 'center', gap: 2,
       maxWidth: 'calc(100vw - 16px)', padding: 4, borderRadius: 9, border: `1px solid ${arkmeTheme.border}`,
       background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow, userSelect: 'none' }}>
-    <button type="button" style={buttonStyle} onClick={() => { void copy(snapshot.text) }}>{tr('复制选中文字')}</button>
+    <button type="button" style={buttonStyle} onClick={() => { void copy(snapshot.text) }}>{tr('复制')}</button>
     {snapshot.whole !== undefined && snapshot.whole !== '' && <>
       <span aria-hidden style={{ width: 1, height: 14, background: arkmeTheme.border }} />
-      <button type="button" style={buttonStyle} onClick={() => { void copy(snapshot.whole!) }}>{tr('复制整条消息')}</button>
+      <button type="button" style={buttonStyle} onClick={selectAll}>{tr('全选')}</button>
     </>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)

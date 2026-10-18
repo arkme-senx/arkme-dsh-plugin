@@ -42,12 +42,52 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); do
 it('waits until mouse release, then copies the captured substring without whole-message actions', async () => {
   await render(); const p = host.querySelector('#one')!; await mouse(p, 'mousedown'); select(p.firstChild!, 2, 7)
   await act(async () => { document.dispatchEvent(new Event('selectionchange')) }); expect(menu()).toBeNull()
-  await mouse(p, 'mouseup'); expect(buttons().map(button => button.textContent)).toEqual(['复制选中文字', '复制整条消息'])
+  await mouse(p, 'mouseup'); expect(buttons().map(button => button.textContent)).toEqual(['复制', '全选'])
   await mouse(buttons()[0]!, 'mousedown'); expect(document.getSelection()!.toString()).toBe(partial)
   await act(async () => buttons()[0]!.click()); expect(copyText).toHaveBeenCalledWith(partial); expect(menu()).toBeNull()
 })
-it('explicit whole-message copy keeps the original raw text', async () => {
-  await render(); await open(); await act(async () => buttons()[1]!.click()); expect(copyText).toHaveBeenCalledWith(`前缀${partial}后缀`)
+it('selects only the current message, keeps the toolbar, and waits for Copy', async () => {
+  await render(); await open()
+  const position = menu()!.getAttribute('style')
+  await act(async () => buttons()[1]!.click())
+  expect(document.getSelection()!.toString()).toBe(`前缀${partial}后缀`)
+  expect(copyText).not.toHaveBeenCalled()
+  await act(async () => document.dispatchEvent(new Event('selectionchange')))
+  expect(buttons().map(button => button.textContent)).toEqual(['复制', '全选'])
+  expect(menu()!.getAttribute('style')).toBe(position)
+  await act(async () => buttons()[1]!.click())
+  await act(async () => buttons()[0]!.click())
+  expect(copyText).toHaveBeenCalledWith(`前缀${partial}后缀`)
+  expect(menu()).toBeNull()
+})
+it('selects rendered Markdown prose without copying source syntax, stylesheet or attachment controls', async () => {
+  await render(<><ArkmeMessageTextSelectionToolbar /><aside data-arkme-note-detail>
+    <ArkmeSelectableMessageText text="**详情**正文">
+      <ArkmeMarkdownBody text="**详情**正文" />
+      <button>展开</button><button>附件.pdf</button>
+    </ArkmeSelectableMessageText>
+  </aside></>)
+  const bold = host.querySelector('strong')!
+  select(document.createTreeWalker(bold, NodeFilter.SHOW_TEXT).nextNode()!, 0, 1)
+  await mouse(bold, 'mouseup')
+  await act(async () => buttons()[1]!.click())
+  expect(document.getSelection()!.toString()).toBe('详情正文')
+  expect(copyText).not.toHaveBeenCalled()
+  await act(async () => buttons()[0]!.click())
+  expect(copyText).toHaveBeenCalledWith('详情正文')
+})
+it('selects the full text of a collapsed message without including its expand button', async () => {
+  const text = '这是完整正文。'.repeat(80)
+  const item = { itemUid: 'long', title: '', textContent: text, textFormat: 'plain', status: 1 } as ArkmeTimelineItem
+  await render(<><ArkmeMessageTextSelectionToolbar /><ArkmeMessageContent item={item} /></>)
+  const p = host.querySelector('[data-arkme-text-selection] p')!
+  select(document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!, 0, 2)
+  await mouse(p, 'mouseup')
+  await act(async () => buttons()[1]!.click())
+  expect(document.getSelection()!.toString()).toBe(text)
+  expect(host.querySelector('[data-arkme-text-toggle]')!.getAttribute('aria-expanded')).toBe('false')
+  await act(async () => buttons()[0]!.click())
+  expect(copyText).toHaveBeenCalledWith(text)
 })
 it('opens automatically for rendered Markdown inside details', async () => {
   await render(); const bold = host.querySelector('aside strong')!; select(document.createTreeWalker(bold, NodeFilter.SHOW_TEXT).nextNode()!, 0, 2); await mouse(bold, 'mouseup')
