@@ -2,6 +2,8 @@ import { tr } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
 import { copyText } from './clipboard-text.js'
+import { captureMessageTextSelection } from './message-text-selection.js'
+import { messageTextSelectionActions } from './message-text-selection-actions.js'
 import { messageSelectionStyles, ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
@@ -147,7 +149,7 @@ const MESSAGE_ACTION_REQUEST_TIMEOUT_MS = 30_000
 
 
 
-interface MenuState { itemId: string; left: number; top: number }
+interface MenuState { itemId: string; left: number; top: number; selectedText: string | undefined }
 interface PickerState {
   itemIds: string[]
   loading: boolean
@@ -213,6 +215,7 @@ export function useArkmeMessageActions(input: {
       itemId: item.id,
       left: event.clientX,
       top: event.clientY,
+      selectedText: captureMessageTextSelection(event.currentTarget),
     })
   }, [busy])
 
@@ -247,14 +250,14 @@ export function useArkmeMessageActions(input: {
     setSelectedIds(current => new Set([...(current ?? []), ...valid]))
   }, [busy, picker, input.selectionItems, selectable])
 
-  const copyOne = useCallback(async (item: ArkmeMessageSelectionItem) => {
+  const copyValue = useCallback(async (value: string) => {
     const revision = revisionRef.current
     setMenu(undefined)
-    const value = arkmeMessageActionCopyText(item)
     if (value === '') { showStatus('当前消息没有可复制文本', revision); return }
     try { await copyText(value); showStatus('已复制', revision) }
     catch (error) { showStatus(errorMessage(error) || '复制失败，请稍后重试', revision) }
   }, [showStatus])
+  const copyOne = useCallback((item: ArkmeMessageSelectionItem) => copyValue(arkmeMessageActionCopyText(item)), [copyValue])
 
   const copyLink = useCallback(async (items: readonly ArkmeMessageActionViewItem[]) => {
     if (busy !== undefined || items.length === 0 || items.length > 100 || items.some(item => !item.copyLinkAvailable)) return
@@ -404,8 +407,11 @@ export function useArkmeMessageActions(input: {
   })
 
   const overlay = <>
-    {menu !== undefined && menuItem !== undefined && <ArkmeActionMenu label={tr("消息操作")}
-      point={{ x: menu.left, y: menu.top }} onClose={() => setMenu(undefined)} actions={[
+    {menu !== undefined && menuItem !== undefined && <ArkmeActionMenu label={tr(menu.selectedText === undefined ? '消息操作' : '选中文字操作')}
+      point={{ x: menu.left, y: menu.top }} onClose={() => setMenu(undefined)} actions={menu.selectedText !== undefined
+        ? messageTextSelectionActions(menu.selectedText, <MessageActionIcon kind="copy" size={16} />,
+          text => { void copyValue(text) }, () => { void copyOne(menuItem) })
+        : [
         { id: 'copy', label: '复制', icon: <MessageActionIcon kind="copy" size={16} />, onSelect: () => { void copyOne(menuItem) } },
         { id: 'link', label: '复制链接', icon: <MessageActionIcon kind="link" size={16} />, disabled: !menuItem.copyLinkAvailable, onSelect: () => { void copyLink([menuItem]) } },
         { id: 'select', label: '多选', icon: <MessageActionIcon kind="select" size={16} />, onSelect: () => enter(menuItem) },

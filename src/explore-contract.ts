@@ -63,7 +63,7 @@ export interface ExploreDetail {
   reclassifyTargets?: Array<{ref:string;label:string}>
   notice?: string
 }
-export interface ExploreQuery { module: ExploreModule; filter?: string; query?: string; cursor?: string }
+export interface ExploreQuery { /** Local relation projection size when restoring already loaded rows. */ limit?: number; module: ExploreModule; filter?: string; query?: string; cursor?: string }
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
   | { kind: 'record'; item: ArkmeTimelineItem }

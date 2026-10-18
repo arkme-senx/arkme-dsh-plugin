@@ -70,6 +70,13 @@ describe('Explore domain migration',()=>{
     expect(new Set([...a.items,...b.items].map(x=>x.key)).size).toBe(60)
     await expect(f.service.page({module:'relations',filter:'2',cursor:a.nextCursor!})).rejects.toThrow()
   })
+  it('revalidates the already displayed relation window with a matching continuation cursor',async()=>{
+    const f=fixture(),page=await f.service.page({module:'relations',limit:60})
+    expect(page.items).toHaveLength(60)
+    const rest=await f.service.page({module:'relations',cursor:page.nextCursor!})
+    expect(rest.items).toHaveLength(5)
+    expect(new Set([...page.items,...rest.items].map(x=>x.key)).size).toBe(65)
+  })
   it('rejects a changed relation snapshot between pages instead of mixing counts',async()=>{
     const f=fixture(),a=await f.service.page({module:'relations'})
     f.state.entities.unshift({...f.state.entities[0]!,entity_id:'private-new-person'})

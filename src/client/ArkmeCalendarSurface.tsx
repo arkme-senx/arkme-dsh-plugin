@@ -283,7 +283,7 @@ interface ScopedResource<T> {
   value?: T
 }
 
-type CalendarIndex = CalendarMonthSnapshot & { retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
 
 /** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
 function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
@@ -486,7 +486,7 @@ function ConversationCalendarMonths({ getReadingDate, ...props }: Omit<Parameter
 }
 
 export function ArkmeSelfCalendarPopover({
-  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, index, getReadingDate,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, onSelectIndexedDay, index, getReadingDate,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
@@ -496,6 +496,8 @@ export function ArkmeSelfCalendarPopover({
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
   onSelectDate?(selection: SelfCalendarDateSelection): void
+  /** Locally indexed non-record conversations retain their own message identity. */
+  onSelectIndexedDay?(bucketDate: string): void
   index?: CalendarIndex
   getReadingDate?: (() => string | undefined) | undefined
 }) {
@@ -527,9 +529,10 @@ export function ArkmeSelfCalendarPopover({
     const key = dateKey(normalized)
     selectionControllerRef.current?.abort()
     if ((day?.count ?? 0) <= 0) {
-      setSelectionStatus('这一天没有发给自己的记录')
+      setSelectionStatus(index ? '这一天没有已加载的对话记录' : '这一天没有发给自己的记录')
       return
     }
+    if (onSelectIndexedDay !== undefined) { onSelectIndexedDay(key); onClose(); return }
     if (index && !day?.anchor && !day?.momentAnchor) { setSelectionStatus('当天定位信息暂不可用，请刷新日历后重试'); return }
     if (onSelectDate !== undefined) {
       onSelectDate({ bucketDate: key, timezone, ...(day?.anchor ? { anchor: day.anchor } : {}),

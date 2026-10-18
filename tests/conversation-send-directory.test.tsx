@@ -1,3 +1,8 @@
+import { mentionBotCache } from '../src/client/mention-bot-cache.js'
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => undefined }),
+}))
 import { ArkmeReadTimeoutError } from '../src/client/read-deadline.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture.js'
@@ -41,6 +46,19 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), localTimeline: vi.fn(), mu
 
 // Preserve real mutation state within each case, including source/account switches,
 // but do not leak pending intents into the next synthetic account fixture.
+// This suite uses the node test renderer; browser selection is covered in its jsdom suite.
+// Historical timeline fixtures omit required title/text fields. Supply the DTO defaults
+// at the copy boundary; formatting/selection has independent real-DOM coverage.
+vi.mock('../src/client/message-copy-text.js', async original => {
+  const actual = await original<typeof import('../src/client/message-copy-text.js')>()
+  return { arkmeMessageCopyText: (item: ArkmeTimelineItem) => actual.arkmeMessageCopyText({ title: '', textContent: '', ...item }) }
+})
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
 vi.mock('../src/client/record-mutation-feedback.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/client/record-mutation-feedback.js')>()
   return { ...actual, recordMutationFeedback: (key: string) => {
@@ -1813,6 +1831,7 @@ describe('conversation send directory projection', () => {
   })
 
   beforeEach(() => {
+    mentionBotCache.clear()
     mocks.mutationOwners.clear()
     resetSelfTopicDirectories()
     timeline = []
@@ -5363,6 +5382,7 @@ describe('conversation send directory projection', () => {
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
       option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(tisonOption).toBeDefined()
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Bot 加载失败，仍可选择已有对象')
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
       await Promise.resolve()
@@ -5392,10 +5412,7 @@ describe('conversation send directory projection', () => {
         length: 6,
       }],
     }))
-    expect(warning).toHaveBeenCalledWith(
-      'dsh-arkme: mention bot refresh failed',
-      'Bot candidates unavailable',
-    )
+    expect(mentionBotCache.get(JSON.stringify(['test:42', 'group_chat', groupTarget.sourceKey])).error).toBe(true)
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
     expect(arkmeChatDirectory.getSnapshot()).toEqual(directoryBeforeSend)
     const sentMention = renderer!.root.findByProps({ 'aria-label': '查看 @Tison' })
@@ -6544,6 +6561,38 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(groupA.sourceKey)
+  })
+
+  it.each(['pointer', 'keyboard'] as const)('keeps the intended mention after delayed bots (%s)', async method => {
+    activeSource = { ...group, sourceRef: `source-late-bots-${method}`, sourceKey: `chat:late-bots-${method}` }
+    const member = { ...activeMembers(1)[0]!, memberRef: 'member-intended', mentionRef: 'mention-intended',
+      displayName: '目标成员', mentionDisplayName: '目标成员' }
+    const pending = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.members') return { source: activeSource, items: [member], total: 1, activeCount: 1 }
+      if (operation === 'group.bots') return pending.promise
+      return base(operation, params, signal)
+    })
+    arkmeChatDirectory.publish([activeSource]); arkmeUi.selectSource(activeSource)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const composer = () => renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => { composer().props.onTextChange('@'); composer().props.onSelectionChange('@', 1, 1) })
+    const options = () => renderer!.root.findAllByProps({ role: 'option' })
+    const intended = options()[2]!
+    const initialOrder = options().map(row => row.props.children)
+    await act(async () => { intended.props.onMouseEnter() })
+    await act(async () => { pending.resolve({ items: [{ botRef: 'late-bot', name: '晚到助手', installed: true, description: '' }] }) })
+    expect(options().slice(0, 3).map(row => row.props.children)).toEqual(initialOrder)
+    expect(intended.props['aria-selected']).toBe(true)
+    await act(async () => {
+      if (method === 'pointer') intended.props.onMouseDown({ preventDefault: vi.fn() })
+      else composer().props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: false }, preventDefault: vi.fn() })
+    })
+    expect(composer().props.value).toBe('@目标成员 ')
+    expect(composer().props.mentions[0].mentionRef).toBe('mention-intended')
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'group.bots')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'source.send')).toBe(false)
   })
 
   it('does not expose Bot candidates returned by a previously selected group', async () => {

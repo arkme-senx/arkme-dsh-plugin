@@ -585,7 +585,7 @@ describe('normal timeline related quick note drawer', () => {
           if (element.props.contentEditable !== undefined) return null
           return element.props.style?.padding === '24px 22px'
             ? scrollBody
-            : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true }
+            : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true, setAttribute: vi.fn(), removeAttribute: vi.fn() }
         },
       })
       await Promise.resolve()
