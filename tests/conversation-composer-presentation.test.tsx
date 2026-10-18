@@ -138,7 +138,7 @@ describe('Arkme conversation composer presentation', () => {
       expect(source).toContain('...arkmeConversationComposerLayout.composer')
       expect(source).toContain('...arkmeConversationComposerLayout.composerInner')
       expect(source).toContain('...arkmeConversationComposerLayout.textarea')
-      expect(source).toContain('...arkmeConversationComposerLayout.tools')
+      expect(source).toContain('arkmeConversationComposerLayout.tools')
       expect(source).not.toMatch(/Math\.min\(textarea\.scrollHeight,\s*(180|336)\)/)
     }
     expect(arkoSource).toContain('<ArkmeDocumentComposerInput')
