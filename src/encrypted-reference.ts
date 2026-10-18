@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 
 /** Local transport reference. Authority is always checked again by the business owner. */
 export class EncryptedReferenceCodec {
-  constructor(private readonly uniqueCode: () => Promise<string>, private readonly invalid: (cause?: unknown) => Error) {}
+  constructor(private readonly uniqueCode: () => Promise<string>, private readonly invalid: (cause?: unknown) => Error, private readonly maxLength = 16_384) {}
 
   async seal(prefix: string, payload: unknown): Promise<string> {
     const iv = randomBytes(12)
@@ -14,7 +14,7 @@ export class EncryptedReferenceCodec {
   async open(prefix: string, value: string): Promise<Record<string, unknown>> {
     try {
       const parts = value.trim().split('.')
-      if (parts.length !== 4 || parts[0] !== prefix || value.length > 16_384) throw this.invalid()
+      if (parts.length !== 4 || parts[0] !== prefix || value.length > this.maxLength) throw this.invalid()
       const decipher = createDecipheriv('aes-256-gcm', await this.key(prefix), Buffer.from(parts[1] ?? '', 'base64url'))
       decipher.setAuthTag(Buffer.from(parts[3] ?? '', 'base64url'))
       const decoded: unknown = JSON.parse(Buffer.concat([decipher.update(Buffer.from(parts[2] ?? '', 'base64url')), decipher.final()]).toString('utf8'))

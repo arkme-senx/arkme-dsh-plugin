@@ -8590,7 +8590,7 @@ export function ArkmeSurface({
     <>
     <ArkmeBotIdentityStyles />
     {messageUnderlines.layer}
-    <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
+    {ui.mode !== 'arko' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       replyLabel={sourceIsChat ? '回复' : '延展'}
       markStorage="local"
@@ -8602,7 +8602,7 @@ export function ArkmeSurface({
         const oldQuote = composerExtensionTarget?.quote
         startMessageExtension(target.item, quote)
         if (oldQuote) showMessageActionStatus('已更换引用')
-      }} />
+      }} />}
     {selfTour.panel}
     {activeConversation && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}
