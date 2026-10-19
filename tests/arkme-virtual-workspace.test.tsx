@@ -165,7 +165,7 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
     expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)')
     expect(workspaceSource).toContain('= [...mergedConversationRows]')
-    expect(workspaceSource).toContain("rootDirectoryRows.map(row =>")
+    expect(workspaceSource).toContain("rootDirectoryRows.filter(row => !row.pinned).map(renderConversationDirectoryRow)")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
     expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")
