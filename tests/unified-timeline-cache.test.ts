@@ -11,7 +11,7 @@ import type { ArkmeTimelinePage } from '../src/types.js'
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
 const page = (text = 'body'): ArkmeTimelinePage => ({ source: { sourceRef: 'opaque', kind: 'private_chat', displayName: 'Peer' } as never, items: [], hasMore: false,
-  unified: { protocolVersion: 1, events: [{ eventId: 'event', source: 'interwoven', occurredAtMillis: 10, orderTie: 'tie', contentStatus: 'available', kind: 'notice', text }],
+  unified: { protocolVersion: 2, events: [{ eventId: 'event', source: 'interwoven', occurredAtMillis: 10, orderTie: 'tie', contentStatus: 'available', kind: 'notice', text }],
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })), complete: true, windowTokens: ['opaque'], olderHasMore: false, newerHasMore: false, hasMore: false } })
 
 describe('timeline cache and tokens', () => {

@@ -2,7 +2,7 @@ import { createArkmeSdk, type ArkmeUnifiedTimelineQuery, type ArkmeUnifiedTimeli
 const lifecycle = new AbortController()
 let supported = true
 const calls: string[] = []
-const window: ArkmeUnifiedTimelineWindow = { protocolVersion: 1, events: [], sources: [], complete: false,
+const window: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: [], sources: [], complete: false,
   windowTokens: ['opaque'], hasMore: false, olderHasMore: false, newerHasMore: false }
 const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
   init?.signal?.throwIfAborted()
@@ -15,7 +15,7 @@ const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
 } })
 const query: ArkmeUnifiedTimelineQuery = { mode: 'refresh', windowTokens: ['opaque'], reconcile: true }
 const result = await sdk.readChatTimeline('source', query, lifecycle.signal)
-if (result.unified?.protocolVersion !== 1 || result.unified.complete) throw new Error('partial window lost')
+if (result.unified?.protocolVersion !== 2 || result.unified.complete) throw new Error('partial window lost')
 const detail = await sdk.readWorldRecord('opaque-world-ref')
 if (detail.textContent !== 'public note') throw new Error('world detail lost')
 supported = false

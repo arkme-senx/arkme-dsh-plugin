@@ -46,8 +46,8 @@ function exampleEntries(): OfflineContextEntry[] {
   ]
 }
 
-export function offlineContextPreviewRequested(location: Pick<Location, 'hostname' | 'search'> = window.location): boolean {
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
+export function offlineContextPreviewRequested(location: Pick<Location, 'hostname' | 'search'> | undefined = window.location): boolean {
+  return location !== undefined && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
     && new URLSearchParams(location.search).get('arkme-offline-context-preview') === '1'
 }
 
@@ -76,6 +76,7 @@ export function OfflineContextPreview() {
         if (change.kind === 'dismiss') return { ...next, state: 'dismissed' }
         if (change.kind === 'restore') return { ...next, state: item.id === 'demo-candidate' ? 'suggested' : 'linked' }
         if (change.kind === 'confirm') return { ...next, state: 'linked' }
+        if (change.kind === 'withdraw') return { ...next, visibility: 'private', hasSharedSnapshot: false }
         if (change.kind === 'share') return { ...next, visibility: 'shared' }
         if (change.kind === 'relink') {
           const target = messages.find(message => message.messageRef === change.messageRef)
