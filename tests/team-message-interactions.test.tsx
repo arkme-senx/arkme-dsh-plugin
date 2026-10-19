@@ -15,13 +15,13 @@ const message: TeamMessage = { ref: 'team-message-ref', key: 'm1', seq: 1, revis
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   localMarkRef: 'team-mark-ref', content: { text_content: '前缀选中的文字后缀', template_kind: 1 } }
 let root: Root, host: HTMLDivElement
-const edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
+const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
-function Fixture({ msg = message, includeToolbar = true }: { msg?: TeamMessage; includeToolbar?: boolean }) {
+function Fixture({ msg = message, includeToolbar = true, selecting = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage="local" />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onDelete={remove} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -88,12 +88,12 @@ it('shares the fallback context menu and retains the captured selection after fo
 it('keeps whole-message commands permission gated and clears the menu after deletion', async () => {
   await render(); const p = host.querySelector('p')!
   await mouse(p, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['复制', '查看阅读状态'])
-  await act(async () => document.querySelector<HTMLButtonElement>('[role="menu"] button')!.click())
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '消息详情', '查看阅读状态'])
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '复制')!.click())
   expect(copyText).toHaveBeenCalledWith(message.content!.text_content)
   await render({ ...message, own: true, canEdit: true, canDelete: true })
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['复制', '编辑', '删除', '查看阅读状态'])
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '重新编辑', '多选', '转发', '问 DSH', '消息详情', '查看阅读状态', '撤回'])
   await render({ ...message, contentStatus: 'deleted' })
   expect(document.querySelector('[role="menu"]')).toBeNull()
 })
@@ -105,4 +105,30 @@ it('dismisses on Escape and does not register deleted or pending messages for ma
   expect(labels(toolbar())).toEqual(['复制', '全选'])
   await render({ ...message, contentStatus: 'deleted' })
   expect(host.querySelector('[data-arkme-text-selection]')).toBeNull()
+})
+
+it('enters multiselect from the shared menu and keeps unsupported Team operations disabled', async () => {
+  await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
+  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '消息详情', '查看阅读状态'])
+  expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队通道暂未支持此操作')
+  await act(async () => buttons.find(button => button.textContent === '多选')!.click())
+  expect(selectMessage).toHaveBeenCalledOnce()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
+})
+it('toggles only once when clicking a selection checkbox or message and does not open details', async () => {
+  await act(async () => root.render(<Fixture selecting includeToolbar={false} />))
+  const checkbox = host.querySelector<HTMLButtonElement>('[role="checkbox"]')!
+  expect(checkbox.getAttribute('aria-checked')).toBe('true')
+  await mouse(checkbox, 'click')
+  expect(toggleMessage).toHaveBeenCalledTimes(1)
+  await mouse(host.querySelector('p')!, 'click')
+  expect(toggleMessage).toHaveBeenCalledTimes(2)
+  expect(detail).not.toHaveBeenCalled()
+})
+it('clicks into details but never opens details when selecting prose', async () => {
+  await render(); await mouse(host.querySelector('p')!, 'click')
+  expect(detail).toHaveBeenCalledOnce(); detail.mockClear()
+  const p = await select(); await mouse(p, 'click')
+  expect(detail).not.toHaveBeenCalled()
 })
