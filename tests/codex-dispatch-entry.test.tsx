@@ -22,7 +22,7 @@ it.each(['remote', 'readonly'] as const)('does not present a send action for %s 
   mount(mode)
   expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
   expect(renderer!.root.findAllByType('button')).toHaveLength(0)
-  expect(text(renderer!.root)).toContain(mode === 'remote' ? '云端派发尚未接通' : '不开放操作对方电脑')
+  expect(text(renderer!.root)).toContain(mode === 'remote' ? '当前查看云端副本，本地派发连接尚未接通' : '不开放操作对方电脑')
 })
 it('closes setup immediately when task scope changes', () => {
   mount(); open()
