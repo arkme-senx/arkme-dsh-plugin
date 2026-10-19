@@ -1,3 +1,4 @@
+import { assertHostCapability } from '../host-policy.js'
 import { randomUUID } from 'node:crypto'
 import { ArkmePluginError } from '../arkme-service.js'
 import type { ArkmeExtensionManager } from './manager.js'
@@ -29,6 +30,7 @@ export class ArkmeExtensionInstallTasks {
   ) {}
 
   start(input: { extensionId: string; version?: string; sessionId: string }): ArkmeExtensionInstallTaskSnapshot {
+    assertHostCapability('executableExtensionInstall')
     const extensionId = requiredToken(input.extensionId, 'extension_id')
     const sessionId = requiredToken(input.sessionId, 'session_id')
     const agent = this.agents.get(sessionId)
@@ -80,6 +82,7 @@ export class ArkmeExtensionInstallTasks {
   }
 
   resume(taskIdValue: string, sessionIdValue: string): ArkmeExtensionInstallTaskSnapshot {
+    assertHostCapability('executableExtensionInstall')
     const entry = this.ownedTask(taskIdValue, sessionIdValue)
     if (entry.snapshot.done) return cloneSnapshot(entry.snapshot)
     if (entry.snapshot.phase !== 'paused') {

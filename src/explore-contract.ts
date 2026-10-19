@@ -37,6 +37,8 @@ export interface ExplorePage {
   progress?: ExploreProgress
   notice?: string
   emptyMessage?: string
+  /** Optional contact remarks are loaded after the first useful page. */
+  needsEnrichment?: boolean
 }
 export interface ExploreEvidence {
   key: string
@@ -47,7 +49,10 @@ export interface ExploreEvidence {
   anchor: boolean
   ref?: string
   unavailableReason?: string
+  mentions?: Array<{ start: number; end: number; text: string }>
 }
+export interface ExploreEnrichment { items: Array<{ key: string; linkedContactName: string }> }
+export type ExploreDetailPart = 'overview' | 'records'
 export interface ExploreDetail {
   item: ExploreItem
   fields: Array<{ label: string; value: string }>
@@ -58,7 +63,7 @@ export interface ExploreDetail {
   reclassifyTargets?: Array<{ref:string;label:string}>
   notice?: string
 }
-export interface ExploreQuery { module: ExploreModule; filter?: string; query?: string; cursor?: string }
+export interface ExploreQuery { /** Local relation projection size when restoring already loaded rows. */ limit?: number; module: ExploreModule; filter?: string; query?: string; cursor?: string }
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
   | { kind: 'record'; item: ArkmeTimelineItem }

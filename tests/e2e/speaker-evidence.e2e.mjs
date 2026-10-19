@@ -23,17 +23,17 @@ describe('speaker evidence immutable package on official Harness',()=>{
    const service=scaffold.ctx.get('arkmeData')
    expect(await service.testLogin(3016)).toMatchObject({status:'authenticated',userId:3016})
    const sdk=createArkmeSdk({fetchImpl:(_url,init)=>scaffold.hostFetch('/arkme-self/api',init)})
-   expect(await sdk.recordingSpeakerEvidence({action:'capabilities'})).toMatchObject({supported:true,schema_version:1})
+   expect(await sdk.recordingSpeakerEvidenceQuery({action:'capabilities'})).toMatchObject({supported:true,schema_version:1})
    const fixtureDay=Number(process.env.ARKME_EVIDENCE_TEST_DAY)
    if(Number.isSafeInteger(fixtureDay)&&fixtureDay>0){
     const page=await sdk.recordingSpeakerCorrectionItems({dateStamp:fixtureDay,atMillis:fixtureDay+36000000,transcriptSource:'system'})
     expect(page.items).toHaveLength(3)
     const refs=page.items.map(item=>item.itemRef)
-    const evidence=await sdk.recordingSpeakerEvidence({action:'consistency',groupRefs:[refs[0]],itemRefs:refs})
+    const evidence=await sdk.recordingSpeakerEvidenceQuery({action:'consistency',groupRefs:[refs[0]],itemRefs:refs})
     expect(evidence.groups[0]).toMatchObject({total_count:3,analyzed_count:3,state:'ready'})
-    const members=await sdk.recordingSpeakerEvidence({action:'members',groupRefs:[refs[0]],limit:2,sort:'time'})
+    const members=await sdk.recordingSpeakerEvidenceQuery({action:'members',groupRefs:[refs[0]],limit:2,sort:'time'})
     expect(members.items).toHaveLength(2);expect(members.hasMore).toBe(true)
-    const next=await sdk.recordingSpeakerEvidence({action:'members',groupRefs:[refs[0]],limit:2,sort:'time',cursor:members.nextCursor,version:members.version})
+    const next=await sdk.recordingSpeakerEvidenceQuery({action:'members',groupRefs:[refs[0]],limit:2,sort:'time',cursor:members.nextCursor,version:members.version})
     expect(next.items).toHaveLength(1);expect(next.hasMore).toBe(false)
     expect(JSON.stringify(members)).not.toMatch(/session_id|child_id|embedding|formal_speaker_id/)
    }
@@ -49,7 +49,7 @@ describe('speaker evidence immutable package on official Harness',()=>{
    expect(pending.isError).toBe(false);expect(JSON.stringify(pending)).toContain('confirmation_required')
    // No fabricated approval or owner write: the real runtime must stop here.
    const controller=new AbortController();controller.abort()
-   await expect(sdk.recordingSpeakerEvidence({action:'capabilities'},controller.signal)).rejects.toThrow()
+   await expect(sdk.recordingSpeakerEvidenceQuery({action:'capabilities'},controller.signal)).rejects.toThrow()
   }finally{await scaffold?.ctx.get('arkmeData')?.logout().catch(()=>{});await scaffold?.close();await rm(root,{recursive:true,force:true})}
  },120000)
 })

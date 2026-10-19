@@ -117,6 +117,7 @@ describe('TeamDetailPane', () => {
       ? refresh ? await later.promise : page(teamRefA, '团队 A') : { canManage: false })
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     const detail = renderer!.root.findByProps({ 'data-team-ref': teamRefA })
+    await act(async () => { button(renderer!, '团队消息通道›').props.onClick(); await tick() })
     refresh = true
     await act(async () => { renderer!.root.findByType(TeamChannelSettings).props.onChanged(); await tick() })
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBe(detail)
@@ -233,7 +234,7 @@ describe('TeamDetailPane', () => {
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(text(renderer!.root)).toContain('团队功能')
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
-    expect(mocks.callArkme.mock.calls.map(call => call[0])).toEqual(['team.app.members','team.app.channel'])
+    expect(mocks.callArkme.mock.calls.map(call => call[0])).toEqual(['team.app.members'])
     const members = renderer!.root.findByProps({ className:'arkme-team-member-list' })
     await act(async () => { button(renderer!, 'Codex 同步›').props.onClick(); await tick() })
     expect(renderer!.root.findByProps({ role:'dialog' })).toBeDefined()
@@ -258,6 +259,41 @@ describe('TeamDetailPane', () => {
     pendingSync.resolve({ self:null, localOnly:true, installations:[], tasks:[] })
     await act(async () => { await tick() })
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
+  })
+
+  it('collects the channel actions under the feature to the right of Codex, loading only on demand', async () => {
+    mockCodex()
+    await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
+    const members=renderer!.root.findByProps({className:'arkme-team-member-list'})
+    const features=renderer!.root.findByProps({className:'arkme-team-feature-list'})
+    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›'])
+    expect(text(renderer!.root)).not.toContain('查看团队对话')
+    expect(text(renderer!.root)).not.toContain('接收外部消息')
+    expect(mocks.callArkme.mock.calls.map(call=>call[0])).toEqual(['team.app.members'])
+    await act(async()=>{button(renderer!,'团队消息通道›').props.onClick();await tick()})
+    const dialog=renderer!.root.findByProps({role:'dialog'})
+    expect(text(dialog)).toContain('团队消息通道 · 团队 A')
+    expect(text(dialog)).toContain('查看团队对话')
+    expect(text(dialog)).toContain('接收外部消息')
+    expect(renderer!.root.findAllByType(TeamChannelSettings)).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.map(call=>call[0])).toEqual(['team.app.members','team.app.channel'])
+    await act(async()=>{renderer!.root.findByProps({'aria-label':'关闭'}).props.onClick();await tick()})
+    expect(renderer!.root.findByProps({className:'arkme-team-member-list'})).toBe(members)
+    await act(async()=>{button(renderer!,'团队消息通道›').props.onClick();await tick()})
+    await act(async()=>{button(renderer!,'查看团队对话›').props.onClick();await tick()})
+    expect(arkmeUi.getSnapshot().teamIntent).toEqual({kind:'team',teamRef:teamRefA})
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
+  })
+
+  it.each(['account','team'])('closes the channel and cancels old settings on a %s change', async scope=>{
+    mockCodex()
+    await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
+    await act(async()=>{button(renderer!,'团队消息通道›').props.onClick();await tick()})
+    const signal=mocks.callArkme.mock.calls.find(call=>call[0]==='team.app.channel')?.[2] as AbortSignal
+    await act(async()=>{renderer!.update(<TeamDetailPane accountKey={scope==='account'?'account-b':'account-a'} teamRef={scope==='team'?teamRefB:teamRefA}/>);await tick()})
+    expect(signal.aborted).toBe(true)
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
+    expect(renderer!.root.findAllByType(TeamChannelSettings)).toHaveLength(0)
   })
 
   it('uses the opaque next cursor and merges a later member page without duplicating rows', async () => {

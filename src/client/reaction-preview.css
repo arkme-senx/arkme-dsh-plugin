@@ -1,3 +1,13 @@
+[data-arkme-reaction-notice]:focus-visible,
+.arkme-conversation-reaction-item:focus-visible {
+  outline: 1px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: -1px;
+}
+.arkme-conversation-reaction-item:hover,
+.arkme-conversation-reaction-item:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06)) !important;
+}
+
 [data-arkme-reaction-preview] .arkme-reaction-hover-trigger {
   opacity: 0;
   pointer-events: none;

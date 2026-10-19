@@ -113,14 +113,14 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
-  it('resolves entity evidence from Audio without speaker or profile requests, preserving raw text and day boundaries', async () => {
+  it('resolves entity evidence from full owned sessions without speaker/profile requests or dropping midnight continuation', async () => {
     const profiles = vi.fn(async () => new Map())
     const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'unused' } })
     const date = new Date(2026, 7, 12).getTime()
     fixture.state.presenceMissing = true
     fixture.state.recentDayStart = date
     fixture.state.recentTranscript = {
-      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_400_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_401_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
       child_ls: [{ id: 'c', session_id: 's', start_at: 0,
         asr: [{ s: 1000, e: 2000, n: 1, b: 1, t: '  (背景音) 🙂武汉  ' }, { s: 86_400_000, e: 86_401_000, t: '次日' }],
         doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '豆包原文' }] }],
@@ -129,6 +129,7 @@ describe('RecordingService', () => {
       const session = await fixture.runtime.requireSession()
       expect(await fixture.service.entityTranscriptRows(date, 'system', session)).toMatchObject([
         { sessionId: 's', childId: 'c', asrItemIndex: 0, transcriptSource: 'system', text: '🙂武汉', rawTranscriptText: '  (背景音) 🙂武汉  ' },
+        { sessionId: 's', childId: 'c', asrItemIndex: 1, transcriptSource: 'system', text: '次日' },
       ])
       expect(await fixture.service.entityTranscriptRows(date, 'doubao', session)).toMatchObject([
         { transcriptSource: 'doubao', text: '豆包原文', asrItemIndex: 0 },
@@ -1675,7 +1676,7 @@ describe('RecordingService', () => {
     })])
   })
 
-  it('bounds unresolved imports before accepting another retained local source', async () => {
+  it('accepts new files even when twenty failed imports need attention', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-actionable-limit-'))
     const path = join(root, 'voice.upload')
     const bytes = oneSecondMonoWav()
@@ -1694,11 +1695,12 @@ describe('RecordingService', () => {
     await expect(service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
       sha256: '9'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
-    }, 42)).rejects.toMatchObject({ code: 'recording-import-pending-limit', retryable: false })
-    await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(20)
+    }, 42)).resolves.toMatchObject({ phase: 'prepared', status: 'waiting' })
+    await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(21)
+    service.dispose()
   })
 
-  it('admits only one distinct import when concurrent requests race for the final unresolved slot', async () => {
+  it('admits both new files when their queued total passes twenty', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-concurrent-limit-'))
     const firstPath = join(root, 'first.upload')
     const secondPath = join(root, 'second.upload')
@@ -1729,12 +1731,69 @@ describe('RecordingService', () => {
       }, 42),
     ])
 
-    expect(results.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected'])
-    expect(results.find(result => result.status === 'rejected')).toMatchObject({
-      reason: { code: 'recording-import-pending-limit', retryable: false },
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'fulfilled'])
+    await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(21)
+    await vi.waitFor(() => { expect(gateway.ensureSession).toHaveBeenCalledTimes(2) })
+    service.dispose()
+  })
+
+  it('persists the backlog, limits uploads to two, cancels queued work and resumes the rest after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-queued-resume-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const gateway = gatewayNoop()
+    const started: string[] = []
+    let running = 0
+    let peak = 0
+    gateway.ensureSession = vi.fn(async job => `session-${job.fileName}`)
+    gateway.upload = vi.fn(async (job, _progress, signal) => {
+      started.push(job.fileName)
+      running++
+      peak = Math.max(peak, running)
+      try {
+        await new Promise<void>((_, reject) => {
+          signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+          if (signal!.aborted) reject(signal!.reason)
+        })
+      } finally { running-- }
     })
-    await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(20)
-    await vi.waitFor(() => { expect(gateway.ensureSession).toHaveBeenCalledTimes(1) })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const refs: string[] = []
+    const bytes = oneSecondMonoWav()
+    for (let i = 0; i < 6; i++) {
+      const path = join(root, `${i}.upload`)
+      await writeFile(path, bytes)
+      const job = await service.acceptRecordingImport(path, {
+        fileName: `${i}.wav`, mimeType: 'audio/wav', fileSize: bytes.length,
+        sha256: String(i).repeat(64), startAtMillis: 1_725_000_000_000 + i, belongUserId: 42,
+      }, 42)
+      refs.push(job.importRef)
+    }
+    await vi.waitFor(() => expect(started).toEqual(['0.wav', '1.wav']))
+    const queued = await service.recordingImportStatus(refs[2]!)
+    expect(queued).toMatchObject({ phase: 'prepared', status: 'waiting', statusDetail: '排队中' })
+    await expect(service.cancelRecordingImport(refs[2]!, queued.revision)).resolves.toMatchObject({ phase: 'cancelled' })
+    expect(started).toHaveLength(2)
+    const waiting = refs.map(ref => service.waitRecordingImport(ref))
+    service.dispose()
+    await Promise.all(waiting)
+    expect(peak).toBe(2)
+    expect(started).toEqual(['0.wav', '1.wav'])
+    const restoredStore = new ArkmeStateStore(root)
+    expect((await restoredStore.listRecordingImportJobs(42)).filter(j => j.phase === 'prepared')).toHaveLength(3)
+    const resumedGateway = gatewayNoop()
+    const resumedNames: string[] = []
+    resumedGateway.upload = vi.fn(async job => { resumedNames.push(job.fileName) })
+    const restored = new RecordingService(new ServiceRuntime(config, sessions, restoredStore), dependencies(resumedGateway))
+    await restored.resumeRecordingImports()
+    const finished = await Promise.all(refs.map(ref => restored.waitRecordingImport(ref)))
+    expect(finished.filter(job => job.phase === 'accepted')).toHaveLength(5)
+    expect(resumedNames.sort()).toEqual(['0.wav', '1.wav', '3.wav', '4.wav', '5.wav'])
+    restored.dispose()
+    await rm(root, { recursive: true, force: true })
   })
 
   it('aborts an active import and compensates its incomplete Audio session', async () => {

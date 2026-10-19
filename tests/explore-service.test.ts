@@ -28,7 +28,7 @@ function fixture(){
     if(path.endsWith('/experience/home'))return home()
     if(path.endsWith('/section/get'))return {snapshot_id:state.version,items:state.factDeleted?[]:[fact()],has_more:false}
     if(path.startsWith('/api/v1/relation/list'))return {entities:state.entities,private_chats:[]}
-    if(path.endsWith('/detail-full'))return state.entities.find(x=>x.entity_id===body.entity_id)!
+    if(path.endsWith('/detail-full')||path==='/api/v1/entity/detail')return state.entities.find(x=>x.entity_id===body.entity_id)!
     if(path.endsWith('/entity/records/list'))return {records:[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
     if(path.endsWith('/event/stream'))return {items:[{event_record_id:'private-event-record',event_id:'study',event_name:'学习',summary:'学习了新内容',occurred_at:1000}],total:1,user_progress:{active:false,can_trigger:true}}
     if(path.endsWith('/event/plaza'))return {all:[{event_id:'study',event_name:'学习'},{event_id:'exercise',event_name:'运动'}]}
@@ -49,7 +49,7 @@ function fixture(){
   const privacy={lockedRecordUids:vi.fn(async()=>new Set<string>())}
   const service=new ExploreService(runtime,recording,records as never,sources,privacy)
   disposers.push(()=>service.dispose())
-  return {service,state,writes,calls,recording,records,privacy,switchAccount:()=>{user=22;epochCallback()}}
+  return {service,state,writes,calls,recording,records,privacy,sources,switchAccount:()=>{user=22;epochCallback()}}
 }
 describe('Explore domain migration',()=>{
   it.each<ExploreModule>(['profile','relations','events','goals','anniversaries'])('loads actual-shaped %s contracts and opens its detail without leaking owner refs',async module=>{
@@ -63,11 +63,19 @@ describe('Explore domain migration',()=>{
   })
   it('paginates the legacy full relation response before rendering and uses remarks',async()=>{
     const f=fixture(),a=await f.service.page({module:'relations',filter:'1'})
-    expect(a.total).toBe(60);expect(a.items).toHaveLength(50);expect(a.items[0]?.title).toBe('人物 0');expect(a.items[0]?.linkedContactName).toBe('同事备注')
+    expect(a.total).toBe(60);expect(a.items).toHaveLength(50);expect(a.items[0]?.title).toBe('人物 0');expect(a.items[0]?.linkedContactName).toBeUndefined();expect(a.needsEnrichment).toBe(true)
+    expect((await f.service.enrich(a.items.map(x=>x.ref))).items[0]?.linkedContactName).toBe('同事备注')
     const b=await f.service.page({module:'relations',filter:'1',cursor:a.nextCursor!})
     expect(b.items).toHaveLength(10);expect(b.nextCursor).toBeUndefined()
     expect(new Set([...a.items,...b.items].map(x=>x.key)).size).toBe(60)
     await expect(f.service.page({module:'relations',filter:'2',cursor:a.nextCursor!})).rejects.toThrow()
+  })
+  it('revalidates the already displayed relation window with a matching continuation cursor',async()=>{
+    const f=fixture(),page=await f.service.page({module:'relations',limit:60})
+    expect(page.items).toHaveLength(60)
+    const rest=await f.service.page({module:'relations',cursor:page.nextCursor!})
+    expect(rest.items).toHaveLength(5)
+    expect(new Set([...page.items,...rest.items].map(x=>x.key)).size).toBe(65)
   })
   it('rejects a changed relation snapshot between pages instead of mixing counts',async()=>{
     const f=fixture(),a=await f.service.page({module:'relations'})
@@ -78,6 +86,34 @@ describe('Explore domain migration',()=>{
     const f=fixture(),page=await f.service.page({module:'relations',query:'同事备注'})
     expect(page.total).toBe(1)
     expect(page.items[0]).toMatchObject({title:'人物 0',linkedContactName:'同事备注'})
+  })
+  it('returns the first relation page before optional slow or failed contact enrichment',async()=>{
+    const f=fixture()
+    f.sources.privateRemarksByUserIds.mockRejectedValue(new Error('联系人暂不可用'))
+    const page=await f.service.page({module:'relations'})
+    expect(page.items).toHaveLength(50)
+    expect(f.sources.privateRemarksByUserIds).not.toHaveBeenCalled()
+    await expect(f.service.enrich(page.items.map(x=>x.ref))).rejects.toThrow('联系人暂不可用')
+    expect((await f.service.page({module:'relations'})).items).toHaveLength(50)
+  })
+  it('reads overview and records independently without a complete-detail or directory request',async()=>{
+    const f=fixture(),page=await f.service.page({module:'relations'}),ref=page.items[0]!.ref
+    f.calls.length=0
+    const overview=await f.service.detail(ref,undefined,undefined,'overview')
+    expect(overview.item.title).toBe('人物 0');expect(overview.evidence).toEqual([])
+    expect(f.calls.map(x=>x.path)).toEqual(['/api/v1/entity/detail'])
+    f.calls.length=0
+    expect((await f.service.detail(ref,undefined,undefined,'records')).evidence).toHaveLength(1)
+    expect(f.calls.map(x=>x.path)).toEqual(['/api/v1/entity/records/list'])
+    expect(f.sources.privateRemarksByUserIds).not.toHaveBeenCalled()
+  })
+  it('rejects enrichment references after account changes and rejects other module refs',async()=>{
+    const f=fixture(),page=await f.service.page({module:'relations'})
+    const goals=await f.service.page({module:'goals'})
+    await expect(f.service.enrich([goals.items[0]!.ref])).rejects.toThrow()
+    f.switchAccount()
+    await expect(f.service.enrich([page.items[0]!.ref])).rejects.toThrow()
+    expect(f.sources.privateRemarksByUserIds).not.toHaveBeenCalled()
   })
   it('reclassifies using the owner catalog, including categories without loaded occurrences',async()=>{
     const f=fixture(),page=await f.service.page({module:'events'}),detail=await f.service.detail(page.items[0]!.ref)

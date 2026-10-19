@@ -1,5 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '有更新版本': 'Newer version available',
+  '更新暂未完成，当前内容已保留': 'Update incomplete; current content retained',
   '正在查找录音日期…': 'Finding recording dates…',
   '已找到 {total} 天，继续查找…': 'Found {total} days; looking for more…',
   '统计中 · {done}/{total} 天': 'Counting · {done}/{total} days',

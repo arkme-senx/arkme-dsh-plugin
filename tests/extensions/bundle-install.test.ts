@@ -258,7 +258,7 @@ describe('Bundle v2 profile installation', () => {
     await expect(manager.publishNativeBundleSource({
       source, name: 'V3 resume', description: '', visibility: 'private',
       idempotencyKey: 'native-v3-resume-session',
-    })).resolves.toEqual({ extension_id: 'ext-v3-resume', version: '1.0.0', status: 'published' })
+    })).resolves.toEqual({ publish_session_id: 'pub-v3-resume', extension_id: 'ext-v3-resume', version: '1.0.0', status: 'published' })
     expect(paths).toEqual([
       '/api/v1/extensions/publish-session/create',
       '/api/v1/extensions/publish-session/complete',

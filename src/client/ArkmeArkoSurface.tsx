@@ -1,3 +1,4 @@
+import { ArkmeSelectableMessageText } from './ArkmeMessageTextSelection.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
@@ -7,10 +8,14 @@ import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties,
 } from 'react'
-import { ArrowsClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowsClockwise'
-import { ArrowUpIcon } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown'
-import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
+import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
+import { ArkmeConversationDate } from './ArkmeConversationDate.js'
+import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
+import { ArkmeComposerSendButton, arkmeComposerSendButtonStyle } from './ArkmeComposerSendButton.js'
+import { arkmeConversationMessageLayout, dayKey } from './conversation-message-presentation.js'
+import { ArkmeArkoHistoryTools } from './ArkmeArkoHistoryTools.js'
+import { arkoHistoryDate } from './arko-history-browser.js'
 import type {
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
@@ -20,6 +25,7 @@ import type {
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
+  ArkmeContentBlock,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
@@ -39,12 +45,21 @@ import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-s
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
-  arkmeConversationComposerLayout,
+  arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
 } from './conversation-composer-presentation.js'
-import { restoreArkmeComposerFocus } from './composer-focus.js'
+import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
+import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from './ArkmeDocumentComposerInput.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
+import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
+import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
+import { ArkoImageDraftStrip, ArkoMessageImages, useArkoImageDraft } from './ArkoImageAttachments.js'
+import { arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
+import { localFileBlock } from './file-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeEmojiPlainText, type ArkmeEmoji } from './arkme-emoji.js'
 import {
@@ -62,6 +77,7 @@ interface ArkoMessage {
   sessionId?: number
   role: ArkoMessageRole
   text: string
+  contentBlocks?: ArkmeContentBlock[]
   reasoning?: string
   status: ArkoMessageStatus
   createdAtMillis?: number
@@ -97,11 +113,7 @@ const colors = {
 const styles: Record<string, CSSProperties> = {
   shell: { position: 'relative', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 22px 12px' },
-  header: {
-    flex: 'none', height: 68, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
-    padding: '12px 16px 12px 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
-    background: arkmeTheme.base,
-  },
+  header: { ...arkmeConversationMessageLayout.header, minWidth: 0, background: arkmeTheme.base },
   headerAvatar: { width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center' },
   headerCopy: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   headerTitle: {
@@ -118,20 +130,17 @@ const styles: Record<string, CSSProperties> = {
   row: { width: '100%', display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
   rowArko: { justifyContent: 'flex-start' },
-  line: { maxWidth: '100%', display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 23 },
+  line: arkmeConversationMessageLayout.messageLine,
   lineMe: { flexDirection: 'row-reverse' },
-  avatar: {
-    width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
-    background: arkmeTheme.subtle, color: colors.secondary, fontSize: 12,
-  },
+  avatar: arkmeConversationMessageLayout.messageAvatar,
   messageBody: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7 },
   messageBodyMe: { alignItems: 'flex-end' },
   sender: { color: colors.text, fontSize: 12, fontWeight: 600 },
-  bubble: { maxWidth: 600, minWidth: 0, padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box' },
-  bubbleMe: { background: 'var(--dsw-specific-bubble, #eef1f8)', borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px' },
-  bubbleArko: { background: arkmeTheme.subtle },
+  bubble: arkmeConversationMessageLayout.bubble,
+  bubbleMe: arkmeConversationMessageLayout.bubbleMe,
+  bubbleArko: arkmeConversationMessageLayout.bubbleOther,
   bubbleError: { background: arkmeTheme.dangerSoft, color: colors.danger },
-  detailAuthor: { display: 'flex', alignItems: 'center', gap: 9, marginBottom: 20 },
+  detailAuthor: { display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 },
   detailAuthorContent: { flex: 1, minWidth: 0 },
   detailName: { overflowWrap: 'anywhere', color: arkmeTheme.secondary, fontSize: 12, fontWeight: 600 },
   detailMeta: { color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
@@ -184,40 +193,23 @@ const styles: Record<string, CSSProperties> = {
     background: arkmeTheme.elevated, color: colors.text, font: 'inherit', cursor: 'pointer',
   },
   dialogPrimary: { border: 0, background: arkmeTheme.info, color: arkmeTheme.foreground },
-  composer: { ...arkmeConversationComposerLayout.composer, padding: '0 16px calc(30px + var(--dsh-content-font-delta-secondary, 0px))', boxSizing: 'border-box', flexDirection: 'column', gap: 8 },
-  capabilityShortcut: {
-    alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 4,
-    padding: '6px 8px', borderRadius: 8, border: `1px solid ${colors.border}`,
-    background: arkmeTheme.layer1, color: colors.text, fontFamily: 'inherit', fontSize: 14, lineHeight: '20px',
-  },
+  composer: { ...arkmeConversationComposerLayout.composer, boxSizing: 'border-box' },
   composerInner: {
     ...arkmeConversationComposerLayout.composerInner,
-    padding: '8px 0 0', gap: 12, border: 0, borderRadius: 22,
-    background: arkmeTheme.input, boxShadow: 'var(--dsw-elevation-soft, 0 2px 12px rgba(0,0,0,.08))',
+    cursor: 'text', background: 'var(--arkme-primary-composer-idle, #f6f6f6)', boxShadow: 'none', transition: 'background-color 140ms ease',
   },
   textarea: {
     ...arkmeConversationComposerLayout.textarea,
-    width: 'calc(100% - 4px)', marginRight: 4, minHeight: 36, padding: '4px 8px 0 14px',
-    fontSize: 'var(--dsh-content-font-size, 14px)', lineHeight: 'calc(24px + var(--dsh-content-font-delta, 0px))',
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
   },
-  tools: { ...arkmeConversationComposerLayout.tools, gap: 12, padding: '2px 8px 6px' },
+  tools: arkmeConversationComposerLayout.tools,
   hint: { color: colors.secondary, fontSize: 12, lineHeight: '18px', flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  clearContextButton: {
-    width: 28, height: 28, flex: 'none', display: 'grid', placeItems: 'center',
-    marginLeft: 'auto', padding: 0, border: 0, borderRadius: 6,
-    background: 'transparent', color: colors.secondary, cursor: 'pointer',
-  },
   modelTrigger: {
     display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '60%',
     padding: '4px 0', border: 0, borderRadius: 6,
     background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 13, cursor: 'pointer',
   },
   modelLabel: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  send: {
-    width: 34, height: 34, minWidth: 34, minHeight: 34, padding: 0, boxSizing: 'border-box', flex: 'none', display: 'grid', placeItems: 'center',
-    transform: 'translateY(-2px)', border: 0, borderRadius: '50%', background: colors.accent, color: arkmeTheme.foreground, cursor: 'pointer',
-  },
   stop: { background: colors.danger },
 }
 
@@ -327,6 +319,7 @@ function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
     sessionId: item.sessionId,
     role: item.role,
     text: active && placeholder ? '' : item.text,
+    ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
     status: active ? 'sending' : item.runStatus === 'failed' ? 'error' : 'done',
     createdAtMillis: item.createdAtMillis,
     ...(item.reasoning.trim() === '' || (!active && reasoningPlaceholder) ? {} : { reasoning: item.reasoning }),
@@ -399,13 +392,18 @@ function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
 
 export function ArkmeArkoSurface() {
   useArkmeLocale()
+  const shellRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const followTailRef = useRef(true)
+  const historyViewRef = useRef(false)
   const historySentinelRef = useRef<HTMLDivElement>(null)
   const historyLoadInFlightRef = useRef(false)
   const composerInputBoundaryRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<ArkmeDocumentComposerHandle>(null)
+  const [composerInputFocused, setComposerInputFocused] = useState(false)
   const pendingComposerFocusRef = useRef(false)
+  const shortcutFocusOriginRef = useRef<HTMLElement | null>(null)
   const sendInFlightRef = useRef(false)
   const authSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -419,6 +417,7 @@ export function ArkmeArkoSurface() {
   )
   const profileUserId = authSnapshot.auth?.status === 'authenticated' ? authSnapshot.auth.userId : undefined
   const composerDraftKey = arkmeArkoComposerDraftKey(profileUserId)
+  useConversationDraftPresence(composerDraftKey)
   useSyncExternalStore(
     arkmeComposerDraftStore.subscribe,
     arkmeComposerDraftStore.getRevision,
@@ -443,6 +442,16 @@ export function ArkmeArkoSurface() {
     return () => { active = false }
   }, [accountKey])
   const [messages, setMessages] = useState<ArkoMessage[]>([])
+  const [historyWindow, setHistoryWindow] = useState<{ items: ArkmeArkoHistoryItem[]; start: number }>()
+  historyViewRef.current = historyWindow !== undefined
+  const visibleMessages = useMemo(() => historyWindow === undefined ? messages : mergeHistory([], historyWindow.items.slice(historyWindow.start, historyWindow.start + 50)), [messages, historyWindow])
+  const [locationTarget, setLocationTarget] = useState<number>()
+  useLayoutEffect(() => {
+    if (locationTarget === undefined) return
+    const element = bodyRef.current?.querySelector<HTMLElement>(`[data-arko-selection-key="history:${locationTarget}"]`)
+    element?.scrollIntoView?.({ block: 'center' })
+  }, [locationTarget, historyWindow])
+  useEffect(() => { setHistoryWindow(undefined); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
   const [historyOffset, setHistoryOffset] = useState<number>()
   const [historyError, setHistoryError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -461,6 +470,12 @@ export function ArkmeArkoSurface() {
   }
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [error, setError] = useState('')
+  const imageDraft = useArkoImageDraft(profileUserId, composerDraftKey, setError)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const addButtonRef = useRef<HTMLButtonElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const hasDraftContent = draft.trim() !== '' || draftSnapshot.attachments.length > 0
+  useEffect(() => { setAddMenuOpen(false) }, [accountKey])
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
@@ -469,7 +484,7 @@ export function ArkmeArkoSurface() {
   const detailScope = `${authSnapshot.auth?.environment ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
   const [detailSelection, setDetailSelection] = useState<{ scope: string; id: string }>()
   const detailMessage = detailSelection?.scope === detailScope
-    ? messages.find(message => message.id === detailSelection.id && message.role !== 'divider')
+    ? visibleMessages.find(message => message.id === detailSelection.id && message.role !== 'divider')
     : undefined
   const detailActivity = detailMessage?.status === 'sending'
     ? arkoRunActivityLabel(detailMessage.runStatus) ?? '等待回复'
@@ -478,12 +493,13 @@ export function ArkmeArkoSurface() {
       : undefined
   useEffect(() => { setDetailSelection(undefined) }, [detailScope])
   const openMessageDetail = (id: string, trigger: HTMLElement) => {
+    followTailRef.current = false
     detailTriggerRef.current = trigger
     if (detailBodyRef.current !== null) detailBodyRef.current.scrollTop = 0
     trigger.focus({ preventScroll: true })
     setDetailSelection({ scope: detailScope, id })
   }
-  const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => messages.flatMap(message => (
+  const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => visibleMessages.flatMap(message => (
     message.role === 'divider' || message.messageActionRef === undefined || message.messageActionConversationRef === undefined
       ? []
       : [{
@@ -494,8 +510,8 @@ export function ArkmeArkoSurface() {
         copyLinkAvailable: message.copyLinkAvailable === true,
         forwardAvailable: message.forwardAvailable === true,
       }]
-  )), [messages])
-  const messageSelectionItems = useMemo(() => messages.filter(message => message.role !== 'divider').map(message => ({ id: message.id, copyText: arkmeEmojiPlainText(message.text) })), [messages])
+  )), [visibleMessages])
+  const messageSelectionItems = useMemo(() => visibleMessages.filter(message => message.role !== 'divider').map(message => ({ id: message.id, copyText: arkmeEmojiPlainText(message.text) })), [visibleMessages])
   const messageSelectionScope = profileUserId === undefined ? 'anonymous' : `user:${String(profileUserId)}:session:${String(session?.sessionId ?? 0)}`
   const messageActions = useArkmeMessageActions({
     scopeKey: messageSelectionScope,
@@ -509,7 +525,7 @@ export function ArkmeArkoSurface() {
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
-      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+      if (!historyViewRef.current && followTailRef.current && bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     })
   }, [])
 
@@ -524,7 +540,7 @@ export function ArkmeArkoSurface() {
       .filter(message => message.role !== 'divider')
       .map(message => ({
         key: message.id,
-        text: message.text,
+        text: message.text.trim() || (message.contentBlocks?.length ? '[图片]' : ''),
         ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
         ...(message.createdAtMillis === undefined ? {} : { createdAtMillis: message.createdAtMillis }),
       })))
@@ -545,6 +561,7 @@ export function ArkmeArkoSurface() {
         sessionId: restored.sessionId,
         role: 'user',
         text: restored.text,
+        ...(restored.images === undefined ? {} : { contentBlocks: restored.images.map(localFileBlock) }),
         status: 'done',
         createdAtMillis: restored.createdAtMillis,
       }, {
@@ -697,7 +714,7 @@ export function ArkmeArkoSurface() {
       setHistoryError('')
       requestAnimationFrame(() => {
         const target = bodyRef.current
-        if (target === null) return
+        if (target === null || historyViewRef.current) return
         target.scrollTop = arkoPreservedScrollTop(
           previousScrollTop,
           previousScrollHeight,
@@ -715,14 +732,14 @@ export function ArkmeArkoSurface() {
   useEffect(() => {
     const root = bodyRef.current
     const sentinel = historySentinelRef.current
-    if (loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyOffset === undefined) return
+    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyOffset === undefined) return
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
       void loadEarlier()
     }, { root, rootMargin: '120px 0px 0px' })
     observer.observe(sentinel)
     return () => { observer.disconnect() }
-  }, [historyError, historyLoading, historyOffset, loadEarlier, loading])
+  }, [historyError, historyLoading, historyOffset, loadEarlier, loading, historyWindow])
 
   const retryHistory = useCallback(async () => {
     if (historyLoading) return
@@ -753,6 +770,10 @@ export function ArkmeArkoSurface() {
     setSending(true)
     setError('')
     setNotice('')
+    const stillCurrent = () => {
+      const auth = arkmeAuthStore.getSnapshot().auth
+      return auth?.status === 'authenticated' && auth.userId === turn.userId
+    }
     setMessages(current => current.map(item => item.id === turn.localAssistantMessageId
       ? { ...item, text: '', status: 'sending', runStatus: 'accepted' }
       : item))
@@ -762,10 +783,21 @@ export function ArkmeArkoSurface() {
         sessionId: turn.sessionId,
         clientTurnUid: turn.clientTurnUid,
         waitSeconds: 1,
+        expectedUserId: turn.userId,
+        ...(turn.images === undefined ? {} : { imageFileRefs: turn.images.map(file => file.fileRef) }),
         ...(turn.modelRouteKey === undefined ? {} : { modelRouteKey: turn.modelRouteKey }),
         ...(turn.replyToRunUid === undefined ? {} : { replyToRunUid: turn.replyToRunUid }),
         ...(turn.replyToAssistantMsgId === undefined ? {} : { replyToAssistantMsgId: turn.replyToAssistantMsgId }),
       })
+      if (!stillCurrent()) return
+      if (turn.images?.length) {
+        const key = arkmeArkoComposerDraftKey(turn.userId)
+        const current = arkmeComposerDraftStore.get(key)
+        if (serializeArkmeComposerDraft(current).text.trim() === turn.text
+          && JSON.stringify(current.attachments.map(attachment => attachment.localFile?.fileRef)) === JSON.stringify(turn.images.map(file => file.fileRef))) {
+          arkmeComposerDraftStore.clear(key)
+        }
+      }
       removeArkoPendingTurn(turn.userId)
       setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
       setSession(current => current === undefined ? current : { ...current, sessionId: result.sessionId })
@@ -809,6 +841,7 @@ export function ArkmeArkoSurface() {
         })
       }
     } catch (caught) {
+      if (!stillCurrent()) return
       const message = errorMessage(caught)
       const retryable = !(caught instanceof ArkmeClientError) || caught.body.retryable
       if (retryable) {
@@ -822,17 +855,20 @@ export function ArkmeArkoSurface() {
         removeArkoPendingTurn(turn.userId)
         setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
         setError(message)
-        setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
+        setMessages(current => turn.images?.length
+          ? current.filter(item => item.id !== turn.localUserMessageId && item.id !== turn.localAssistantMessageId)
+          : current.map(item => item.id === turn.localAssistantMessageId ? {
           ...item, role: 'assistant', text: message, status: 'error',
         } : item))
       }
     } finally {
-      if (!handedOffToPolling) setSending(false)
+      if (stillCurrent() && !handedOffToPolling) setSending(false)
     }
   }, [activeRun, detailScope, profileUserId, sending])
 
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
   const sendDisabled = loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
+    || imageDraft.preparing !== ''
     || session === undefined || profileUserId === undefined
   const inputDisabled = loading || interactionLocked || session === undefined || profileUserId === undefined
 
@@ -843,15 +879,25 @@ export function ArkmeArkoSurface() {
     return result === 'inserted'
   }, [composerDraftKey, inputDisabled])
 
-  const send = useCallback(async (presetText?: string) => {
-    const text = (presetText ?? serializeArkmeComposerDraft(arkmeComposerDraftStore.get(composerDraftKey)).text).trim()
-    if (text === '' || sendInFlightRef.current || sendDisabled
+  const send = useCallback(async (presetText?: string, focusOrigin: HTMLElement | null = null) => {
+    const currentDraft = arkmeComposerDraftStore.get(composerDraftKey)
+    const text = (presetText ?? serializeArkmeComposerDraft(currentDraft).text).trim()
+    const attachments = presetText === undefined ? currentDraft.attachments : []
+    const images = attachments.flatMap(attachment => attachment.localFile ? [attachment.localFile] : [])
+    if ((text === '' && attachments.length === 0) || sendInFlightRef.current || sendDisabled
       || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
     if (text.length > arkoQuestionMaxLength) {
       setError('内容长度超过上限，请删减后再发送')
       return
     }
+    if (attachments.length !== images.length) { setError('图片草稿无效，请重新添加图片'); return }
+    const imageError = arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images)
+    if (imageError !== undefined) { setError(imageError); return }
+    if (images.length && latestContinuation(messages, session.sessionId) !== undefined) {
+      setError('当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留'); return
+    }
     sendInFlightRef.current = true
+    setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
     try {
       const continuation = latestContinuation(messages, session.sessionId)
       const createdAtMillis = Date.now()
@@ -860,6 +906,7 @@ export function ArkmeArkoSurface() {
         sessionId: session.sessionId,
         clientTurnUid: crypto.randomUUID(),
         text,
+        ...(images.length ? { images } : {}),
         createdAtMillis,
         localUserMessageId: crypto.randomUUID(),
         localAssistantMessageId: crypto.randomUUID(),
@@ -872,13 +919,15 @@ export function ArkmeArkoSurface() {
       }
       writeArkoPendingTurn(turn)
       pendingComposerFocusRef.current = true
+      shortcutFocusOriginRef.current = focusOrigin
       setPendingTurn(turn)
-      if (presetText === undefined) arkmeComposerDraftStore.clear(composerDraftKey)
+      if (presetText === undefined && images.length === 0) arkmeComposerDraftStore.clear(composerDraftKey)
       setMessages(current => [...current, {
         id: turn.localUserMessageId,
         sessionId: turn.sessionId,
         role: 'user',
         text,
+        ...(images.length ? { contentBlocks: images.map(localFileBlock) } : {}),
         status: 'done',
         createdAtMillis,
       }, {
@@ -963,8 +1012,9 @@ export function ArkmeArkoSurface() {
         textareaRef.current,
         activeElement,
         document.body,
-        activeElement !== null && composerRef.current?.contains(activeElement) === true,
+        activeElement !== null && (composerRef.current?.contains(activeElement) === true || activeElement === shortcutFocusOriginRef.current),
       )
+      shortcutFocusOriginRef.current = null
     })
     return () => { cancelAnimationFrame(frame) }
   }, [interactionLocked, loading, profileUserId, session])
@@ -974,24 +1024,17 @@ export function ArkmeArkoSurface() {
       : selectingModel ? '正在切换模型'
     : pendingTurn !== undefined && !sending
       ? '请先确认上一次发送结果'
-      : sending
-        ? '等待回复'
+      : imageDraft.preparing ? imageDraft.preparing : sending
+        ? pendingTurn?.images?.length ? '正在发送图片并等待回复' : '等待回复'
         : continuation === undefined ? '' : '继续当前任务'
 
-  return <div style={styles.shell}>
+  return <div ref={shellRef} style={styles.shell}>
     <style>{`
-      [data-arkme-arko-send] { corner-shape: round; }
-      [data-arkme-arko-composer] .ProseMirror { min-height: 32px; }
+      [data-arkme-arko-composer] .ProseMirror { min-height: 38px; }
       [data-arkme-arko-composer] [data-arkme-composer-editor-box] > span[aria-hidden] {
-        top: 4px; left: 14px; right: 8px;
+        top: 0; left: 0; right: 0;
       }
-      /* Match active Harness InputBar + StatsPills geometry: 16px side clearance,
-         4px stats padding + 20px line + 2px pill padding + 4px bottom = 30px.
-         Reserve that space without inventing Arko session statistics. */
-      [data-arkme-wide-conversation] footer[data-arkme-arko-composer] {
-        width: min(100%, calc(var(--dsh-composer-card-max-width, calc(clamp(680px, calc(var(--dsh-conversation-column-width, 0px) * .64), 920px) + 32px)) + 32px));
-        margin-inline: auto;
-      }
+      [data-arko-located=true] .arkme-timed-bubble { outline: 2px solid ${arkmeTheme.accent}; outline-offset: 2px; }
     `}</style>
     <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <span style={styles.headerAvatar}><ArkmeArkoAvatar size={34} /></span>
@@ -999,10 +1042,32 @@ export function ArkmeArkoSurface() {
         <h2 style={styles.headerTitle}>{displayName}</h2>
         <span style={styles.aiDisclaimer}>{tr("Agent · 内容由 AI 生成，仅供参考")}</span>
       </span>
+      <ArkmeArkoHistoryTools key={accountKey} accountScope={accountKey ?? ''} name={displayName} host={shellRef}
+        detailOpen={detailMessage !== undefined}
+        disabled={sendDisabled || messageActions.selecting} clearDisabled={messageActions.selecting || loading || interactionLocked || clearing || session === undefined}
+        onClear={() => setClearConfirmOpen(true)} onCapabilities={trigger => { void send('你能帮我干什么', trigger) }}
+        onOpenPanel={() => { setDetailSelection(undefined); followTailRef.current = false }}
+        getReadingDate={() => {
+          const viewport = bodyRef.current, bounds = viewport?.getBoundingClientRect()
+          const visible = bounds && Array.from(viewport!.querySelectorAll<HTMLElement>('[data-arko-at]')).find(node => node.getBoundingClientRect().bottom > bounds.top)
+          return visible ? arkoHistoryDate(Number(visible.dataset.arkoAt)) || undefined : undefined
+        }}
+        onLocate={(items, item) => {
+          setDetailSelection(undefined); followTailRef.current = false
+          const index = items.findIndex(candidate => candidate.sessionId === item.sessionId && candidate.messageId === item.messageId)
+          setHistoryWindow({ items, start: Math.max(0, index - 10) }); setLocationTarget(item.messageId)
+        }} />
     </header>
     <ArkmeWideConversation enabled scopeKey={messageSelectionScope} viewportRef={bodyRef} turns controlsHidden={messageActions.selecting}>
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-    <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}>
+    {historyWindow !== undefined && <div role="navigation" aria-label={tr('Arko 历史定位')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 22px', fontSize: 12, color: colors.secondary }}>
+      <span>{tr('历史消息')} · {historyWindow.start + 1}–{Math.min(historyWindow.start + 50, historyWindow.items.length)}</span>
+      <button type="button" style={styles.retryButton} disabled={historyWindow.start === 0} onClick={() => { setHistoryWindow({ ...historyWindow, start: Math.max(0, historyWindow.start - 50) }); setLocationTarget(undefined); if (bodyRef.current) bodyRef.current.scrollTop = 0 }}>{tr('更早')}</button>
+      <button type="button" style={styles.retryButton} disabled={historyWindow.start + 50 >= historyWindow.items.length} onClick={() => { setHistoryWindow({ ...historyWindow, start: historyWindow.start + 50 }); setLocationTarget(undefined); if (bodyRef.current) bodyRef.current.scrollTop = 0 }}>{tr('更晚')}</button>
+      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
+    </div>}
+    <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}
+      onScroll={event => { const node = event.currentTarget; followTailRef.current = !historyViewRef.current && node.scrollHeight - node.clientHeight - node.scrollTop < 80 }}>
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
       {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
@@ -1018,17 +1083,20 @@ export function ArkmeArkoSurface() {
         <span>{tr("上一次发送结果尚未确认，请先用原请求标识完成对账。")}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} onClick={() => { void submitTurn(pendingTurn) }}>{tr("重试确认")}</button>
       </div>}
-      <div ref={historySentinelRef} style={styles.historySentinel} />
-      {historyLoading && <div style={styles.historyLoading} role="status">{tr("正在加载更早内容…")}</div>}
-      {!loading && historyError === '' && messages.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
-      {messages.length > 0 && <ul style={styles.records}>
-        {messages.map(item => {
+      {historyWindow === undefined && <div ref={historySentinelRef} style={styles.historySentinel} />}
+      {historyWindow === undefined && historyLoading && <div style={styles.historyLoading} role="status">{tr("正在加载更早内容…")}</div>}
+      {!loading && historyError === '' && visibleMessages.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
+      {visibleMessages.length > 0 && <ul style={styles.records} data-arkme-message-selection-scope data-arkme-message-selecting={messageActions.selecting}>
+        {visibleMessages.map((item, index) => {
+          const previous = visibleMessages[index - 1]
+          const startsDay = item.role !== 'divider' && item.createdAtMillis !== undefined && arkoHistoryDate(item.createdAtMillis) !== '' && (previous?.createdAtMillis === undefined || dayKey(previous.createdAtMillis) !== dayKey(item.createdAtMillis))
           const activity = arkoRunActivityLabel(item.runStatus)
           const showThinking = item.role === 'assistant'
             && shouldShowArkoThinking(item.status, item.reasoning)
           const actionItem = messageActionItems.find(candidate => candidate.id === item.id)
           const selectedForAction = messageActions.selectedIds.has(item.id)
           return <Fragment key={item.id}>
+          {startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={item.createdAtMillis!} /></li>}
           {item.role === 'divider' ? <li data-arkme-width-anchor={item.id} data-arkme-width-role="divider" style={{ ...styles.row, justifyContent: 'center' }}>
             <span style={styles.divider}>{item.text}</span>
           </li> : <li
@@ -1039,6 +1107,8 @@ export function ArkmeArkoSurface() {
             data-arkme-width-sender={item.role === 'user' ? userProfile?.displayName || userProfile?.nickname || '我' : displayName}
             data-arkme-width-sender-kind={item.role === 'user' ? 'human' : 'arko'}
             data-arko-selection-key={item.id}
+            data-arko-at={item.createdAtMillis}
+            data-arko-located={locationTarget !== undefined && locationTarget === item.messageId ? 'true' : undefined}
             style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko), ...(messageActions.selecting ? { ...messageSelectionStyles.rowSelectAvatarMode, marginBottom: 23 } : {}), ...(selectedForAction ? messageSelectionStyles.rowSelectedForAction : {}) }}
             onClick={event => {
               if (!messageActions.selecting) return
@@ -1055,16 +1125,17 @@ export function ArkmeArkoSurface() {
               <span style={styles.avatar} aria-hidden>{item.role === 'user'
                 ? <ArkmeUserAvatar
                   {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })}
-                  size={38}
+                  size={34}
                 />
-                : <ArkmeArkoAvatar size={38} />}</span>
+                : <ArkmeArkoAvatar size={34} />}</span>
               <div style={{ ...styles.messageBody, ...(item.role === 'user' ? styles.messageBodyMe : {}) }}>
                 {item.role === 'assistant' && <span style={styles.sender}>{displayName}</span>}
                 {showThinking && <ArkoThinkingPanel
                   {...(item.reasoning === undefined ? {} : { reasoning: item.reasoning })}
                   {...(activity === undefined ? {} : { activity })}
                 />}
-                {(item.text.trim() !== '' || item.status === 'error') && <div
+                {(item.text.trim() !== '' || (item.contentBlocks?.length ?? 0) > 0 || item.status === 'error') && <div
+                  className="arkme-timed-bubble"
                   role="button"
                   tabIndex={messageActions.selecting ? -1 : 0}
                   aria-description={item.role === 'user' ? '查看提问详情' : '查看回复详情'}
@@ -1074,7 +1145,8 @@ export function ArkmeArkoSurface() {
                   aria-haspopup="dialog"
                   onClick={event => {
                     if (messageActions.selecting || event.defaultPrevented) return
-                    if (event.target instanceof Element && event.target.closest('a,button,input,textarea,[role=link]')) return
+                    if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
+                    if (event.target.closest('a,button,input,textarea,select,audio,video,[contenteditable],[role=link],[role=slider]')) return
                     if (window.getSelection()?.toString()) return
                     openMessageDetail(item.id, event.currentTarget)
                   }}
@@ -1090,7 +1162,12 @@ export function ArkmeArkoSurface() {
                   ...(item.role === 'user' ? styles.bubbleMe : styles.bubbleArko),
                   ...(item.status === 'error' ? styles.bubbleError : {}),
                 }}>
-                  <p style={styles.text}><ArkmeRichText text={item.text} renderLink={link => link.text} /></p>
+                  <ArkoMessageImages {...(item.contentBlocks === undefined ? {} : { blocks: item.contentBlocks })} />
+                  {item.text !== '' && <ArkmeSelectableMessageText text={item.text} style={{ minWidth: 0, maxWidth: '100%' }}>
+                    {item.role === 'assistant' ? <div data-arkme-message-text-flow="true"><ArkmeMarkdownBody text={item.text} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.62 }} /></div>
+                      : <p data-arkme-plain-text style={styles.text}><ArkmeRichText text={item.text} linkLabelMode="raw" highlightMentions={false} /></p>}
+                  </ArkmeSelectableMessageText>}
+                  {item.createdAtMillis !== undefined && <ArkmeMessageTimestamp at={item.createdAtMillis} />}
                 </div>}
               </div>
             </div>
@@ -1114,8 +1191,14 @@ export function ArkmeArkoSurface() {
       label={tr("消息详情")}
       resizeLabel="调整消息详情宽度"
       onClose={() => { setDetailSelection(undefined) }}
-    >
-      <div style={styles.detailAuthor} data-arkme-detail-author>
+      onPointerDownOutside={event => {
+        const target = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement
+        // Portalled selection tools and foreground overlays own their interaction.
+        if (target?.closest('[data-arkme-text-selection-toolbar], [role="menu"], [aria-modal="true"], [data-arkme-image-preview-viewport]')) return
+        setDetailSelection(undefined)
+      }}
+      style={{ top: 0 }}
+      headerContent={<div style={styles.detailAuthor} data-arkme-detail-author>
         {detailMessage.role === 'user'
           ? <ArkmeUserAvatar {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} size={40} label={tr("作者头像")} />
           : <ArkmeArkoAvatar size={40} />}
@@ -1126,8 +1209,13 @@ export function ArkmeArkoSurface() {
               {new Date(detailMessage.createdAtMillis).toLocaleString(arkmeIntlLocale())}
             </div>}
         </div>
-      </div>
-      <p style={styles.detailText}>{detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')}</p>
+      </div>}
+    >
+      <ArkoMessageImages {...(detailMessage.contentBlocks === undefined ? {} : { blocks: detailMessage.contentBlocks })} />
+      <ArkmeSelectableMessageText text={detailMessage.text}>
+      {detailMessage.role === 'assistant' ? <ArkmeMarkdownBody text={detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }} />
+        : <p style={styles.detailText}><ArkmeRichText text={detailMessage.text} linkLabelMode="raw" highlightMentions={false} /></p>}
+      </ArkmeSelectableMessageText>
       {detailMessage.role === 'assistant' && detailMessage.reasoning?.trim() && <section aria-label={tr("思考内容")}>
         <h4 style={styles.sender}>{tr("思考内容")}</h4>
         <p style={styles.text}>{detailMessage.reasoning}</p>
@@ -1157,15 +1245,23 @@ export function ArkmeArkoSurface() {
 
     <div data-arkme-arko-composer-seat style={{ position: 'relative', flex: 'none', boxSizing: 'border-box', paddingRight: 'calc(var(--dsh-scrollbar-width, 8px) + 2px)' }}>
     {messageActions.selecting && <div style={{ position: 'absolute', inset: 0, zIndex: 35, display: 'grid', background: arkmeTheme.layer2 }}>{messageActions.selectionBar}</div>}
-    <footer data-arkme-arko-composer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
-      <button data-arkme-feedback="neutral"
-        type="button"
-        aria-label={tr("{v0} 能干什么", { v0: displayName })}
-        style={{ ...styles.capabilityShortcut, opacity: sendDisabled ? .45 : 1, cursor: sendDisabled ? 'default' : 'pointer' }}
-        disabled={sendDisabled}
-        onClick={() => { void send('你能帮我干什么') }}
-      ><RobotIcon size={17} aria-hidden /><span>{tr("{v0} 能干什么", { v0: displayName })}</span></button>
-      <div ref={composerInputBoundaryRef} style={styles.composerInner}>
+    <footer data-arkme-arko-composer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}
+      onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = inputDisabled ? 'none' : 'copy' } }}
+      onDrop={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); if (!inputDisabled && !messageActions.selecting) imageDraft.add(Array.from(event.dataTransfer.files)) } }}
+      onClick={event => { focusArkmeComposerFromClick(textareaRef.current, event) }}>
+      {addMenuOpen && <ArkmeActionMenu label={tr('添加内容')} side="top" getAnchorRect={() => addButtonRef.current?.getBoundingClientRect() ?? null}
+        onClose={() => setAddMenuOpen(false)} actions={[{ id: 'images', label: tr('添加图片'), onSelect: () => { setAddMenuOpen(false); imageInputRef.current?.click() } }]} />}
+      <input ref={imageInputRef} aria-label={tr('添加 Arko 图片')} type="file" multiple hidden accept={ARKO_IMAGE_MIME_TYPES.join(',')}
+        onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ''; if (!inputDisabled) imageDraft.add(files) }} />
+      <div style={arkmeConversationComposerLayout.composerStack}>
+      <ArkmeComposerInfoRow destination={displayName} focused={composerInputFocused} />
+      <div ref={composerInputBoundaryRef} data-arkme-arko-input-card
+        className="arkme-conversation-composer-inner" data-arkme-primary-composer="true"
+        data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
+        style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
+          ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
+      {draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
+        attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled || imageDraft.preparing !== ''} /></div>}
       <ArkmeDocumentComposerInput
         format="text"
         key={accountKey}
@@ -1177,16 +1273,26 @@ export function ArkmeArkoSurface() {
         placeholder={tr("问问 {v0}...", { v0: displayName })}
         ariaLabel={tr("发送给 {v0}", { v0: displayName })}
         disabled={inputDisabled || messageActions.selecting}
+        onFocus={() => { setComposerInputFocused(true) }}
+        onBlur={() => { setComposerInputFocused(false) }}
         onRichTextChange={(text, emojis) => { arkmeComposerDraftStore.setRichText(composerDraftKey, text, emojis) }}
+        onPaste={event => {
+          const files = Array.from(event.clipboardData.files ?? [])
+          if (files.length) { event.preventDefault(); if (!inputDisabled) imageDraft.add(files) }
+        }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
-            if (!sendDisabled && draft.trim() !== ''
+            if (!sendDisabled && hasDraftContent
               && session !== undefined && profileUserId !== undefined) void send()
           }
         }}
       />
       <div style={styles.tools}>
+        <ArkmeComposerToolButton ref={addButtonRef} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addMenuOpen}
+          disabled={inputDisabled || messageActions.selecting} onPointerDown={event => event.stopPropagation()} onClick={() => setAddMenuOpen(value => !value)}>
+          {imageDraft.preparing ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}
+        </ArkmeComposerToolButton>
         <ArkmeEmojiPicker
           key={accountKey}
           mode="text"
@@ -1201,16 +1307,6 @@ export function ArkmeArkoSurface() {
         <span style={styles.hint} title={hint}>{hint}</span>
         <button data-arkme-feedback="neutral"
           type="button"
-          title={clearing ? tr("清除中...") : tr("清除上下文")}
-          aria-label={tr("清除上下文")}
-          aria-haspopup="dialog"
-          aria-busy={clearing}
-          style={{ ...styles.clearContextButton, opacity: loading || interactionLocked || clearing || session === undefined ? .55 : 1 }}
-          disabled={loading || interactionLocked || clearing || session === undefined}
-          onClick={() => { setClearConfirmOpen(true) }}
-        ><ArrowsClockwiseIcon size={18} aria-hidden /></button>
-        <button data-arkme-feedback="neutral"
-          type="button"
           aria-label={tr("选择模型")}
           aria-haspopup="menu"
           aria-expanded={modelDialogOpen}
@@ -1219,24 +1315,22 @@ export function ArkmeArkoSurface() {
           disabled={!canChooseModel || interactionLocked || clearing || selectingModel}
           onClick={event => { toggleModelMenu(event.currentTarget) }}
         ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
-        {activeRun === undefined ? <button data-arkme-feedback="neutral"
-          type="button"
-          data-arkme-arko-send
-          title={tr("发送")}
-          style={{ ...styles.send, opacity: sendDisabled || draft.trim() === '' ? .45 : 1 }}
-          disabled={sendDisabled || draft.trim() === ''}
+        {activeRun === undefined ? <ArkmeComposerSendButton
+          ariaLabel={tr("发送")}
+          shortcutHint="Enter"
+          disabled={sendDisabled || !hasDraftContent}
           onClick={() => { void send() }}
-        ><ArrowUpIcon size={22} weight="bold" aria-hidden /></button> : <button data-arkme-feedback="neutral"
+        /> : <button data-arkme-feedback="neutral"
           type="button"
           data-arkme-arko-send
           title={tr("停止当前任务")}
           aria-label={tr("停止当前 Arko 任务")}
-          style={{ ...styles.send, ...styles.stop, opacity: cancelling ? .45 : 1 }}
+          style={{ ...arkmeComposerSendButtonStyle, ...styles.stop, opacity: cancelling ? .45 : 1 }}
           disabled={cancelling}
           onClick={() => { void cancelActiveRun() }}
         ><span aria-hidden>■</span></button>}
       </div>
-    </div></footer>
+    </div></div></footer>
     </div>
     {messageActions.overlay}
     </ArkmeWideConversation>

@@ -31,6 +31,17 @@ function pendingTurn(): ArkmeArkoPendingTurn {
 }
 
 describe('Arko pending turn store', () => {
+  it('recovers image-only retries with unchanged ordered file references and rejects corrupt image metadata', () => {
+    const images = [{ fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'test.png', mimeType: 'image/png', size: 123, fileKind: 1 as const }]
+    const turn = { ...pendingTurn(), text: '', images }
+    const storage = memoryStorage()
+    expect(writeArkoPendingTurn(turn, storage)).toBe(true)
+    expect(readArkoPendingTurn(10001, storage)).toEqual(turn)
+    expect(readArkoPendingTurn(20002, storage)).toBeUndefined()
+    expect(isValidArkoPendingTurn({ ...turn, images: [images[0], images[0]] })).toBe(false)
+    expect(isValidArkoPendingTurn({ ...turn, images: [{ ...images[0], fileRef: '/tmp/private.png' }] })).toBe(false)
+    expect(isValidArkoPendingTurn({ ...turn, images: [{ ...images[0], mimeType: 'text/html' }] })).toBe(false)
+  })
   it('restores the same client turn uid for the same account', () => {
     const storage = memoryStorage()
     const turn = pendingTurn()

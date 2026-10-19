@@ -26,6 +26,12 @@ export type {
   RecordingImportPhase,
 }
 
+export function validRecordingImportTaskId(value: unknown, now = Date.now()): value is string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) return false
+  const created = Number.parseInt(value.slice(0, 8) + value.slice(9, 13), 16)
+  return created <= now + 5 * 60_000 && created >= now - RECORDING_IMPORT_RECOVERY_MILLIS
+}
+
 export interface RecordingFileImportInput {
   fileRef: string
   startAtMillis: number
@@ -149,6 +155,7 @@ export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
+  clientTaskId?: string
   createRequestUID?: string
   batch?: RecordingImportBatch
   jobId: string
@@ -181,7 +188,6 @@ export type RecordingImportAdmission =
   | { kind: 'inserted'; job: RecordingImportJob }
   | { kind: 'existing'; job: RecordingImportJob }
   | { kind: 'duplicate-file-name' }
-  | { kind: 'limit' }
 
 export function isRecordingImportDuplicateRejection(job: RecordingImportJob): boolean {
   return job.phase === 'failed' && job.failedFromPhase === 'prepared'
@@ -312,13 +318,13 @@ export function toPublicRecordingImportJob(
   importRef: string,
 ): PublicRecordingImportJob {
   const progress = job.fileSize <= 0 ? 0 : Math.min(1, Math.max(0, job.uploadedBytes / job.fileSize))
-  const status = job.phase === 'prepared' ? 'preparing'
+  const status = job.phase === 'prepared' ? 'waiting'
     : job.phase === 'uploading' ? 'uploading'
       : job.phase === 'finalizing' ? 'processing'
         : job.phase === 'accepted' ? 'accepted'
         : job.phase === 'failed' ? (job.errorCode === 'recording_storage_exhausted' ? 'paused' : 'failed')
           : 'cancelled'
-  const statusDetail = job.phase === 'prepared' ? '准备中'
+  const statusDetail = job.phase === 'prepared' ? '排队中'
     : job.phase === 'uploading' ? '上传中'
       : job.phase === 'finalizing' ? '处理中'
         : job.phase === 'accepted' ? 'Audio 已接收'

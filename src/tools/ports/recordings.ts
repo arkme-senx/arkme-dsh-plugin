@@ -6,7 +6,7 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 
 /** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort extends RecordingEntityPort {
-  recordingSpeakerEvidence(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
+  recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
   recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../../types.js').ArkmeRecordingWorkbenchItem[] }>
   recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null>
   recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext>

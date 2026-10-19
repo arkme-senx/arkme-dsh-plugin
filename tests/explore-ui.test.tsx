@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExploreNavigation } from '../src/client/explore/ExploreNavigation.js'
+import { relationViewCache } from '../src/client/explore/relation-view-cache.js'
 import { ExploreSurface } from '../src/client/explore/ExploreSurface.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 const mocks=vi.hoisted(()=>({call:vi.fn()}))
@@ -15,6 +16,8 @@ const page={module:'profile',items,filters:[],total:2,contextRef:'context',actio
 let pendingSource:((value:unknown)=>void)|undefined
 beforeEach(()=>{
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
+  relationViewCache.clear()
   mocks.call.mockReset();pendingSource=undefined
   mocks.call.mockImplementation(async(op,input)=>{
     if(op==='explore.list')return page
@@ -28,12 +31,15 @@ afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreA
 async function click(text:string){const button=[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===text);expect(button).toBeTruthy();await act(async()=>button!.click())}
 async function renderSurface(){await act(async()=>root.render(<ExploreSurface module="profile" accountScope={'test:'+ ++scope}/>))}
 describe('Explore interactions',()=>{
-  it('groups all six destinations and publishes module changes before closing the menu',async()=>{
+  it('groups all seven destinations and publishes module changes before closing the menu',async()=>{
     await act(async()=>root.render(<ExploreNavigation style={{}} active current="profile" locked={false}/>))
     const trigger=host.querySelector('button')!
     await act(async()=>trigger.click())
     const panel=document.querySelector('#arkme-explore-menu')!
-    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['个人档案','关系','事件','目标','纪念日','世界'])
+    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','世界'])
+    await click('统计与分析');expect(arkmeUi.getViewSnapshot().mode).toBe('statistics')
+    expect(document.querySelector('#arkme-explore-menu')).toBeNull()
+    await act(async()=>trigger.click())
     await click('目标');expect(arkmeUi.getViewSnapshot()).toMatchObject({mode:'explore',exploreModule:'goals'})
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click());await click('纪念日')
@@ -59,6 +65,73 @@ describe('Explore interactions',()=>{
     await act(async()=>pendingSource!({kind:'conversation',source:{},itemUid:'old',sendAtMillis:1}))
     expect(navigate).not.toHaveBeenCalled();expect(host.querySelector('h1')?.textContent).toBe('档案 b')
   })
+  it('shows relationship information while records are pending and restores a recently viewed detail',async()=>{
+    let finishRecords!:(value:unknown)=>void
+    const relationDetail={item:items[0],fields:[{label:'别名',value:'已返回的别名'}],evidence:[],actions:[]}
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.part==='overview')return relationDetail
+      if(op==='explore.detail'&&input.part==='records')return new Promise(resolve=>{finishRecords=resolve})
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('已返回的别名')
+    expect(host.textContent).toContain('正在读取相关记录')
+    expect(host.textContent).not.toContain('暂未提供可查看的来源依据')
+    const source={key:'source',label:'来源',speaker:'',text:'独立返回的原文',date:0,anchor:false}
+    await act(async()=>finishRecords({...relationDetail,evidence:[source,source]}))
+    expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
+    const count=mocks.call.mock.calls.filter(x=>x[0]==='explore.detail').length
+    await click('返回列表')
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('独立返回的原文')
+    expect(mocks.call.mock.calls.filter(x=>x[0]==='explore.detail')).toHaveLength(count)
+  })
+  it('keeps records visible when the independent overview fails and retries only that region',async()=>{
+    let attempts=0
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.part==='overview'){attempts++;throw new Error('人物信息暂不可用')}
+      if(op==='explore.detail')return {item:items[0],fields:[],evidence:[{key:'source',label:'来源',speaker:'',text:'已加载原文',date:0,anchor:false}],actions:[]}
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    expect(host.textContent).toContain('已加载原文');expect(host.textContent).toContain('人物信息暂不可用')
+    await click('重试人物信息')
+    expect(attempts).toBe(2)
+    expect(mocks.call.mock.calls.filter(x=>x[1]?.part==='records')).toHaveLength(1)
+  })
+  it('does not allow a late relationship response to overwrite a different selection',async()=>{
+    let finishOld!:(value:unknown)=>void
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations'}
+      if(op==='explore.detail'&&input.ref==='a'&&input.part==='records')return new Promise(resolve=>{finishOld=resolve})
+      if(op==='explore.detail')return {item:items.find(x=>x.ref===input.ref),fields:[],evidence:[],actions:[]}
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    const oldCall=mocks.call.mock.calls.find(x=>x[1]?.ref==='a'&&x[1]?.part==='records')!
+    await act(async()=>host.querySelectorAll<HTMLButtonElement>('.explore-row')[1]!.click())
+    await act(async()=>finishOld({item:items[0],fields:[],evidence:[{key:'old',text:'过期结果'}],actions:[]}))
+    expect(oldCall[2].aborted).toBe(true)
+    expect(host.querySelector('h1')?.textContent).toBe('档案 b');expect(host.textContent).not.toContain('过期结果')
+  })
+  it('renders list rows before optional remark enrichment and patches them without reloading detail',async()=>{
+    let finishRemarks!:(value:unknown)=>void
+    const original=mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'relations',needsEnrichment:true}
+      if(op==='explore.enrich')return new Promise(resolve=>{finishRemarks=resolve})
+      return original(op,input)
+    })
+    await act(async()=>root.render(<ExploreSurface module="relations" accountScope={'test:'+ ++scope}/>))
+    expect(host.querySelectorAll('.explore-row')).toHaveLength(2)
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    const reads=mocks.call.mock.calls.filter(x=>x[0]==='explore.detail').length
+    await act(async()=>finishRemarks({items:[{key:'a',linkedContactName:'备注姓名'}]}))
+    expect(host.textContent).toContain('备注姓名')
+    expect(mocks.call.mock.calls.filter(x=>x[0]==='explore.detail')).toHaveLength(reads)
+  })
 })
 
 it('opens the existing consent controls without creating a task, including when results already exist',async()=>{
@@ -74,4 +147,47 @@ it('opens the existing consent controls without creating a task, including when 
   await click('自动使用额度')
   expect(document.querySelector('[role="switch"]')).not.toBeNull()
   expect(mocks.call.mock.calls.some(x=>x[0]==='explore.mutate'||x[0]==='account.capabilities.update')).toBe(false)
+})
+
+
+it('restores saved relationship content immediately, keeps it on refresh failure and retries the first page', async () => {
+  const account = 'test:' + ++scope, at = Date.now() - 60_000
+  const evidence = { key: 'saved-source', label: '来源', speaker: '', text: '已经看过的原文', date: 0, anchor: false }
+  relationViewCache.write(account, 'view', { filter: '', query: '', page: { ...page, module: 'relations' }, selected: items[0], listTop: 120, detailTop: 200, savedAt: at }, at)
+  relationViewCache.write(account, 'relations:a', { detail: { item: items[0], fields: [], evidence: [evidence], actions: [], nextCursor: 'second-page' }, recordsAt: at, overviewAt: at, firstKeys: ['saved-source'] }, at)
+  const requests: Array<{input: any; resolve: (v: any) => void; reject: (e: Error) => void}> = []
+  mocks.call.mockImplementation(async (_op, input) => new Promise((resolve, reject) => requests.push({ input, resolve, reject })))
+  await act(async () => root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(2)
+  expect(host.textContent).toContain('已经看过的原文')
+  expect(host.textContent).toContain('正在后台更新相关记录')
+  expect(host.querySelector('.explore-detail')?.scrollTop).toBe(200)
+  await act(async () => { for (const r of requests) r.reject(new Error('暂时离线')) })
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(2)
+  expect(host.textContent).toContain('已经看过的原文')
+  const detailRetry = host.querySelector('.explore-detail .explore-error:last-of-type button') as HTMLButtonElement
+  await act(async () => detailRetry.click())
+  expect(requests.at(-1)?.input).toEqual({ ref: 'a', part: 'records' })
+  await act(async () => requests.at(-1)!.resolve({ item: items[0], evidence: [evidence, evidence], fields: [], actions: [] }))
+  expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
+})
+
+it('keeps later detail pages visible when refreshing the first page and persists independently loaded regions', async () => {
+  const account = 'test:' + ++scope, at = Date.now() - 60_000
+  const evidence = (key: string) => ({ key, label: '来源', speaker: '', text: key, date: 0, anchor: false })
+  relationViewCache.write(account, 'relations:a', { detail: { item: items[0], fields: [], evidence: [evidence('old-first'), evidence('later-page')], actions: [], nextCursor: 'third-page' }, recordsAt: at, overviewAt: at, firstKeys: ['old-first'] }, at)
+  mocks.call.mockImplementation(async (op, input) => {
+    if (op === 'explore.list') return { ...page, module: 'relations' }
+    if (input.part === 'overview') throw new Error('人物信息失败')
+    return { item: items[0], fields: [], evidence: [evidence('new-first')], actions: [], nextCursor: 'second-page' }
+  })
+  await act(async () => root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  await act(async () => host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+  expect([...host.querySelectorAll('.explore-evidence p')].map(e => e.textContent)).toEqual(['new-first', 'later-page'])
+  expect(host.textContent).toContain('人物信息失败')
+  const calls = mocks.call.mock.calls.filter(c => c[1]?.part === 'records').length
+  await click('返回列表')
+  await act(async () => host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+  expect(mocks.call.mock.calls.filter(c => c[1]?.part === 'records')).toHaveLength(calls)
+  expect(host.textContent).toContain('later-page')
 })

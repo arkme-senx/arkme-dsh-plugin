@@ -1,4 +1,7 @@
 export type { RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
+import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 import type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
@@ -446,6 +449,8 @@ export class ArkmeClientError extends Error {
   }
 }
 
+export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
+
 export interface ArkmeSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
@@ -545,8 +550,8 @@ export class ArkmeSdk {
     return await this.call('recordings.speaker.options', {}, signal)
   }
 
-  async recordingSpeakerEvidence(query: import('../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../recording-evidence-contract.js').RecordingEvidenceResult> {
-    return this.call('recordings.speaker.evidence', { ...query }, signal)
+  async recordingSpeakerEvidenceQuery(query: import('../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../recording-evidence-contract.js').RecordingEvidenceResult> {
+    return this.call('recordings.speaker.evidence.query', { ...query }, signal)
   }
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
     return this.call('recordings.speaker.correction.items', { ...query }, signal)
@@ -1167,6 +1172,30 @@ export class ArkmeSdk {
         ? {}
         : { currentSessionId: options.currentSessionId.trim() }),
     }, options.signal)
+  }
+
+  /** List this account's publication receipts without starting validation or audit. */
+  async extensionPublishSessions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<import('../extensions/types.js').ArkmeExtensionPublishPage> {
+    await this.requireExtensionPublishRecovery(options.signal)
+    return await this.call('extensions.publish.list', { limit: options.limit ?? 20, offset: options.offset ?? 0 }, options.signal)
+  }
+
+  /** Read-only: this never starts an audit or retries publication. */
+  async extensionPublishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.status', { publishSessionId }, signal)
+  }
+
+  /** Write: call only for an explicit current human action. Never automatically retry. */
+  async resumeExtensionPublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.resume', { publishSessionId }, signal)
+  }
+
+  private async requireExtensionPublishRecovery(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.extensionPublishRecovery !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持发布状态查询与恢复', retryable: false })
   }
 
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
@@ -2145,7 +2174,7 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
@@ -2157,6 +2186,7 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+      ...(options.quote === undefined ? {} : { quote: options.quote }),
       fileRefs,
     }, options.signal)
   }
@@ -2439,6 +2469,18 @@ export class ArkmeSdk {
   }
 
   /** Read a device-location fact using a short-lived capability from the personal calendar. */
+  private async requireDayReview(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.calendarDayReview !== true) throw new Error('当前 Provider 不支持完整日回顾')
+  }
+  async dayReviewState(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.state', { ...query }, signal) }
+  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.create', { ...input }, signal) }
+  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
+  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
+  async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
+  async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
+  /** Permission-checked original evidence. Raw navigation locators remain Host-only. */
+  async dayReviewEvidence(query: DayReviewEvidenceQuery, signal?: AbortSignal): Promise<DayReviewOriginalEvidence> { await this.requireDayReview(signal); return this.call('calendar.day-review.evidence', { ...query }, signal) }
+
   async calendarRecordLocation(locationRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeCalendarRecordLocation> {
     return await this.call('calendar.record-location', { locationRef }, signal)
   }

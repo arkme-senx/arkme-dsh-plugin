@@ -2,6 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeCalendarDayReview } from '../src/client/ArkmeCalendarDayReview.js'
 import { callArkme } from '../src/client/api.js'
+import { ArkmeClientError } from '../src/sdk/index.js'
 import { parseReviewPromptConfig, parseReviewPromptSnapshot, reviewPromptStorageKey } from '../src/calendar-day-review-prompts.js'
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/explore/ExploreSurface.js', () => ({ ExploreRecordingSource: () => null }))
@@ -13,7 +14,7 @@ const defaults = { baseVersion: 'calendar-v1', constraints: '保持来源与人�
 const support = { supported: true, snapshotReuse: true, defaults }
 const result = { id: 'r1', snapshotId: 's1', generatedAtMillis: Date.now(), modelName: '模型', sourceKinds: ['audio'],
   coverage: [], sources: [], summary: [{ text: '旧结果仍然保留', sourceRefs: [] }], timeline: [], promptSnapshot: defaults }
-const state = { supported: true, job: null, result, hasNewContent: false, versions: [] }
+const state = { supported: true, job: null, result, freshness: 'unknown', versions: [] }
 let view: ReactTestRenderer | undefined, storage: Map<string, string>
 const text = (node: any): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node?.children ? text(node.children) : ''
 const content = () => text(view!.toJSON())
@@ -28,6 +29,23 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.unstubAllGlobals() })
 describe('calendar prompt editing and actual generation binding', () => {
+  it.each(['calendar-review-not-accepted', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-storage'])('unlocks a definitive %s using the actual SDK error envelope', async code => {
+    await mount(); await act(async () => button('提示词').props.onClick())
+    await edit('日总结主要提示词', '长'.repeat(20000))
+    await act(async () => button('保存配置').props.onClick())
+    vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code, message: '本次生成未受理', retryable: false }))
+    await act(async () => button('更新回顾').props.onClick())
+    expect(content()).toContain('本次生成未受理')
+    expect(content()).not.toContain('核对提交')
+    expect(button('恢复默认').props.disabled).toBe(false)
+    await act(async () => button('恢复默认').props.onClick())
+    await act(async () => button('更新回顾').props.onClick())
+    const submissions = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')
+    expect(submissions).toHaveLength(2)
+    expect(submissions[1]![1]!.requestId).not.toBe(submissions[0]![1]!.requestId)
+    expect(submissions[1]![1]!.promptConfig).toMatchObject({ summary: defaults.summary })
+  })
+
   it('loads real defaults lazily, edits both outputs and submits exact saved stages', async () => {
     await mount(); expect(callArkme).toHaveBeenCalledTimes(1)
     await act(async () => button('提示词').props.onClick())
@@ -91,7 +109,8 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(first).toMatchObject({ reuseResultId: 'r1', sourceKinds: ['audio'] })
     expect(view!.root.findAllByType('fieldset').every(f => f.props.disabled)).toBe(true)
     await act(async () => button('核对提交').props.onClick())
-    expect(vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')[1]![1]).toEqual(first)
+    expect(vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')).toHaveLength(1)
+    expect(callArkme).toHaveBeenLastCalledWith('calendar.day-review.reconcile', q, expect.any(AbortSignal))
   })
   it('fills offline untouched fields from real defaults without replacing authored instructions', async () => {
     storage.set(reviewPromptStorageKey(q.accountScope), JSON.stringify({ schemaVersion: 1, saved: {

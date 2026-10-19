@@ -18,7 +18,7 @@ export const recordingEvidenceReadToolModule = defineArkmeCoreToolModule({
     execute: async (args, exec) => {
       const query = request(args.request_json)
       if (!['capabilities', 'consistency', 'compare', 'members', 'candidates'].includes(query.action)) throw new TypeError('只读证据入口不允许启动计算')
-      return taggedJSON('说话人声学证据', await ports.recordingSpeakerEvidence(query, exec.signal))
+      return taggedJSON('说话人声学证据', await ports.recordingSpeakerEvidenceQuery(query, exec.signal))
     },
   }),
 })
@@ -31,7 +31,7 @@ export const recordingEvidenceBuildToolModule = defineArkmeCoreToolModule({
     execute: async (args, exec) => {
       const query = request(args.request_json)
       if (query.action !== 'build') throw new TypeError('计算入口只接受 build')
-      return taggedJSON('声学证据任务', await ports.recordingSpeakerEvidence(query, exec.signal))
+      return taggedJSON('声学证据任务', await ports.recordingSpeakerEvidenceQuery(query, exec.signal))
     },
   }),
 })

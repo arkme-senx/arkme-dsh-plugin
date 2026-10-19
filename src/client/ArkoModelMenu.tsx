@@ -77,7 +77,7 @@ export function ArkoModelMenu({ anchor, catalog, busy, error, onSelect, onClose 
             if (selected) { close(true); return }
             void onSelect(option.routeKey).then(success => { if (success && mounted.current) close(true) })
           }}>
-          <span>{option.displayName}{option.description && <small>{option.description}</small>}</span>
+          <span>{option.displayName}{option.imageInput && <small>{tr('支持图片')}</small>}{option.description && <small>{option.description}</small>}</span>
           {selected && <CheckIcon size={18} style={{ flex: 'none' }} aria-hidden />}
         </button>
         </div>

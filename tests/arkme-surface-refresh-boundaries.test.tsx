@@ -1,6 +1,18 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
 const state = vi.hoisted(() => ({ callArkme: vi.fn(), worldRenders: 0 }))
 vi.mock('react-dom', () => ({ createPortal: (node: unknown) => node }))
 vi.mock('../src/client/api.js', async () => { const { emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
@@ -21,6 +33,7 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 describe('Arkme surface refresh boundaries', () => {
   let renderer: ReactTestRenderer | undefined
   beforeEach(() => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
     state.worldRenders = 0
     state.callArkme.mockReset()
     state.callArkme.mockImplementation(async (operation: string) => {

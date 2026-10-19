@@ -7,6 +7,12 @@ vi.mock('../src/client/api.js', async importOriginal => ({
   callArkme: vi.fn(async () => await new Promise(() => undefined)),
 }))
 
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => {} }),
+  ownImportQueue: async (_key: string, _signal: AbortSignal, work: () => Promise<void>) => { await work() },
+}))
+
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'

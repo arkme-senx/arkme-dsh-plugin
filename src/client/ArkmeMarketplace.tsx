@@ -1,3 +1,4 @@
+import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -33,6 +34,7 @@ import { parseArkmeDesktopQuarantineStatus } from './desktop-quarantine-status.j
 import { resolveExtensionSharePresentation } from './extension-share-presentation.js'
 import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 import { createArkmeSdk } from '../sdk/index.js'
+import { ArkmeExtensionPublishHistory } from './ArkmeExtensionPublishHistory.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
 } from './my-extension-model.js'
@@ -2238,6 +2240,10 @@ export function ArkmeMarketplace({
   }
 
   const startInstall = async (target: { extensionId: string; version?: string }) => {
+    if (arkmeAuthStore.getSnapshot().config?.hostPolicy?.capabilities.executableExtensionInstall === false) {
+      setInstallError(tr('该功能仅在官网版本中可用。'))
+      return
+    }
     setActionBusyExtensionId(target.extensionId); setInstallError(''); setRestartNotice('')
     try {
       const preview = await callArkme<ArkmeExtensionInstallPreview>('extensions.install.preview', {
@@ -2452,6 +2458,7 @@ export function ArkmeMarketplace({
         ...publishValue,
         clientMutationId: mutation.id,
       })
+      if (result.status !== 'published') throw new Error(result.error_message || result.validation_error_message || `发布尚未完成，请打开“发布记录”查询。发布编号：${result.publish_session_id ?? '见发布记录'}`)
       publishMutation.current = undefined
       setPublishItem(undefined)
       await load('mine', 'refresh')
@@ -2811,6 +2818,7 @@ export function ArkmeMarketplace({
             </div>)}
       </>}
       {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'mine' && <>
+        <ArkmeExtensionPublishHistory sdk={extensionSdk} onPublished={() => { setRestartNotice('扩展已发布。'); void load('mine', 'refresh') }} />
         {myExtensions.map(item => {
           const extensionId = item.published?.extensionId
           const local = extensionId === undefined ? undefined : installed.find(candidate => candidate.extensionId === extensionId)

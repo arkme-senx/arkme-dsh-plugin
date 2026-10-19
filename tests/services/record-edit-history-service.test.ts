@@ -19,12 +19,17 @@ describe('Record edit history', () => {
     expect(recordManualEditFact({ has_polish: true, edit_status: 2, version: 9 })).toBe(false)
     expect(recordManualEditFact({ version: 9 })).toBeUndefined()
   })
-  it('reads owned history, preserves revision identity and renders only manual/original snapshots', async () => {
+  it('retains automatic revisions as immediate comparison baselines', async () => {
     const f = fixture({ items: [revision('manual'), revision('voice', 2), revision('polish', 3), revision('rewrite', 4), revision('original', 5)], has_more: false })
     const result = await f.service.page(target, 0)
-    expect(result.items.map(item => item.revisionUid)).toEqual(['manual', 'original'])
+    expect(result.items.map(item => item.revisionUid)).toEqual(['manual', 'voice', 'polish', 'rewrite', 'original'])
+    expect(result.items.map(item => item.kind)).toEqual(['manual', 'transcription', 'polish', 'rewrite', 'original'])
     expect(f.runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/revisions/query', { record_uid: 'r1', limit: 50 }, { userId: 42 }, undefined)
     expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+  it('preserves future revision kinds instead of silently skipping an intervening change', async () => {
+    const result = await fixture({ items: [revision('future', 6)], has_more: false }).service.page(target)
+    expect(result.items[0]?.kind).toBe('other')
   })
   it('routes chat through its relation gate without falling back to owned reads', async () => {
     const f = fixture({ items: [], has_more: true, next_cursor_edit_at: 100 })

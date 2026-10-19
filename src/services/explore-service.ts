@@ -1,4 +1,6 @@
 import { CapabilityService } from './capability-service.js'
+import { mergeExploreEvidence } from '../explore-evidence.js'
+import type { ExploreDetailPart, ExploreEnrichment } from '../explore-contract.js'
 import { createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { EXPLORE_MODULES, type ExploreModule, type ExploreItem, type ExplorePage, type ExploreDetail, type ExploreEvidence, type ExploreQuery, type ExploreMutation, type ExploreSource, type ExploreAction, type ExploreSettings } from '../explore-contract.js'
@@ -21,15 +23,16 @@ export class ExploreService {
   private epoch = 0
   private readonly unsubscribe: () => void
   private relationCache: { scope: string; until: number; value: Doc } | undefined
+  private remarksCache = new Map<number, { until: number; value: string }>()
   constructor(private readonly runtime: ServiceRuntime,
     private readonly recording: Pick<RecordingService,'exploreRecordingEvidence'>,
     private readonly records: Pick<RecordService,'personalRecordDetail'>,
     private readonly sources: Pick<SourceService,'searchTargetSource'|'privateRemarksByUserIds'>,
     private readonly privacy: Pick<ArkmePrivacyVisibilityService,'lockedRecordUids'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), missing)
-    this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++; this.relationCache = undefined })
+    this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++; this.relationCache = undefined; this.remarksCache.clear() })
   }
-  dispose(): void { this.epoch++; this.relationCache = undefined; this.unsubscribe() }
+  dispose(): void { this.epoch++; this.relationCache = undefined; this.remarksCache.clear(); this.unsubscribe() }
   private async guard(session: ArkmeSessionCredentials, epoch: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw missing()
@@ -75,6 +78,39 @@ export class ExploreService {
     const value = await this.runtime.authenticatedRelationGet<Doc>('/api/v1/relation/list?limit=10000&offset=0',session,signal)
     await this.guard(session,epoch,signal)
     this.relationCache = {scope,until:Date.now()+30_000,value}; return value
+  }
+  private cachedRelation(session: ArkmeSessionCredentials, id: unknown): Doc {
+    if (this.relationCache?.scope !== `${this.runtime.config.environment}:${session.userId}`) return {}
+    return list(this.relationCache.value.entities).find(x => x.entity_id === id) ?? {}
+  }
+  async personEntries(signal?: AbortSignal) {
+    const session = await this.runtime.requireSession(), epoch = this.epoch
+    const rows = list((await this.relationHome(session, signal)).entities).filter(row => number(row.type) === 1)
+    const result = await Promise.all(rows.map(async row => ({ entityId: text(row.entity_id), linkedUserId: number(row.linked_user_id), aliases: strings(row.aliases),
+      item: await this.item('relations', row, session, { linkedUserId: number(row.linked_user_id) }) })))
+    await this.guard(session, epoch, signal)
+    return result
+  }
+  private async relationRemarks(ids: number[], session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Map<number,string>> {
+    const epoch=this.epoch
+    const missingIds=[...new Set(ids)].filter(id=>id>0&&id!==session.userId&&(this.remarksCache.get(id)?.until??0)<Date.now())
+    if(missingIds.length) {
+      const remarks=await this.sources.privateRemarksByUserIds(missingIds,{...(signal?{signal}:{})})
+      await this.guard(session,epoch,signal)
+      for(const id of missingIds)this.remarksCache.set(id,{until:Date.now()+120_000,value:remarks.get(id)??''})
+    }
+    return new Map(ids.map(id=>[id,this.remarksCache.get(id)?.value??'']))
+  }
+  async enrich(refs: unknown, signal?: AbortSignal): Promise<ExploreEnrichment> {
+    if(!Array.isArray(refs)||refs.length>50)throw missing()
+    const session=await this.runtime.requireSession(),epoch=this.epoch
+    const items=await Promise.all(refs.map(async value=>{
+      const ref=await this.open(value,session,'item');if(ref.module!=='relations')throw missing()
+      return {id:ref.id,linked:number(ref.linkedUserId)}
+    }))
+    const remarks=await this.relationRemarks(items.map(x=>x.linked),session,signal)
+    const result={items:await Promise.all(items.map(async x=>({key:await this.key(session,'relations',x.id),linkedContactName:remarks.get(x.linked)??''})))}
+    await this.guard(session,epoch,signal);return result
   }
   private async item(module: ExploreModule, raw: Doc, session: ArkmeSessionCredentials, extra: Doc = {}): Promise<ExploreItem> {
     const id = first(raw.fact_key,raw.entity_id,raw.event_record_id,raw.goal_id,raw.id)
@@ -123,14 +159,18 @@ export class ExploreService {
       const all = list(raw.entities), counts = new Map<number,number>()
       all.forEach(x => counts.set(number(x.type),(counts.get(number(x.type)) ?? 0)+1))
       page.filters = [{key:'',label:'全部',count:all.length},...Object.entries(ENTITY_TYPES).filter(([k]) => counts.has(Number(k))).map(([k,label])=>({key:k,label,count:counts.get(Number(k))!}))]
-      const remarks = await this.sources.privateRemarksByUserIds(all.map(x=>number(x.linked_user_id)),{...(signal ? {signal} : {})})
+      // Preserve global remark search, but never block the ordinary list on optional contact reads.
+      const remarks = query ? await this.relationRemarks(all.map(x=>number(x.linked_user_id)),session,signal)
+        : new Map(all.map(x=>{const id=number(x.linked_user_id);return [id,this.remarksCache.get(id)?.value??''] as const}))
       const rows = all.filter(x => (!filter || number(x.type) === Number(filter)) && (!query || [text(x.name),remarks.get(number(x.linked_user_id))??'',...strings(x.aliases)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase())))
       const version = await this.key(session,rows.map(x=>[x.entity_id,x.last_mention_at,x.mention_count,x.name]))
       if (cursor.version && cursor.version !== version) throw missing()
-      const selected = rows.slice(offset,offset+PAGE)
-      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session)))
+      const limit = Math.max(PAGE, Math.min(10000, Math.trunc(number(input.limit)) || PAGE))
+      const selected = rows.slice(offset,offset+limit)
+      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session,{linkedUserId:number(x.linked_user_id)})))
+      page.needsEnrichment=selected.some(x=>number(x.linked_user_id)>0&&(this.remarksCache.get(number(x.linked_user_id))?.until??0)<Date.now())
       page.total = rows.length
-      if (offset+PAGE < rows.length) next={offset:offset+PAGE,version}
+      if (offset+limit < rows.length) next={offset:offset+limit,version}
     } else if (module === 'events') {
       const raw = await this.request(module,'/api/v1/event/stream',{filter:'all',scope:'all',limit:PAGE,offset},session,signal)
       page.items = await Promise.all(list(raw.items).map(x=>this.item(module,x,session,{eventId:text(x.event_id)})))
@@ -180,21 +220,27 @@ export class ExploreService {
     await this.guard(session,epoch,signal);return page
   }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
-    return Promise.all(rows.map(async (row,index)=>{
+    const result = await Promise.all(rows.map(async (row,index)=>{
       const owner=doc(row.owner_ref),fields=doc(row.fields)
       const uid=first(row.record_uid,row.source_record_uid,owner.record_uid,strings(fields.record_uids)[0])
       const content=first(row.content,row.text,row.summary,row.value)
       const date=number(row.event_at||row.send_at||row.created_at||row.occurred_at||owner.start_at)
       const canOpen=!!uid || module==='anniversaries' && !!row.message_id
-      return {key:await this.key(session,module,parent.id,first(row.event_record_id,row.message_id,uid)||`${date}:${index}`),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
+      const identity=module==='relations'&&uid ? [uid,text(row.subject_uid),text(owner.provider)] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
+      const start=number(row.start_position),end=number(row.end_position)
+      return {key:await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
         speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,anchor:row.is_anchor===true||row.is_primary_anchor===true,
+        ...(module==='relations'&&end>start&&start>=0?{mentions:[{start,end,text:text(row.mention_text)}]}:{}),
         ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:'这条结果尚未提供可定位的原文'})}
     }))
+    return module==='relations'?mergeExploreEvidence(result):result
   }
-  async detail(itemRef: string, cursorValue?: string, signal?: AbortSignal): Promise<ExploreDetail> {
+  async detail(itemRef: string, cursorValue?: string, signal?: AbortSignal, part?: ExploreDetailPart): Promise<ExploreDetail> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(itemRef,session,'item'),module=this.module(ref.module)
     const cursor=cursorValue?await this.open(cursorValue,session,'detail-cursor'):{}
     if(cursorValue && (cursor.module!==module || cursor.id!==ref.id))throw missing()
+    if(part&&module!=='relations')throw missing()
+    if(!Number.isSafeInteger(number(cursor.offset))||number(cursor.offset)<0||number(cursor.offset)>100000)throw missing()
     let raw:Doc={},evidence:Doc[]=[],next:Doc|undefined,fields:ExploreDetail['fields']=[],actions:ExploreAction[]=[],notice:string|undefined
     let reclassifyTargets:ExploreDetail['reclassifyTargets']
     if(module==='profile') {
@@ -205,14 +251,13 @@ export class ExploreService {
       actions=[action('correct','纠正内容'),action('delete','删除这条档案',true)]
     } else if(module==='relations') {
       const [entity,records]=await Promise.all([
-        this.request(module,'/api/v1/entity/detail-full',{entity_id:ref.id},session,signal),
-        this.request(module,'/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal),
+        part==='records'?Promise.resolve({entity_id:ref.id} as Doc):this.request(module,'/api/v1/entity/detail',{entity_id:ref.id},session,signal),
+        part==='overview'?Promise.resolve({} as Doc):this.request(module,'/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal),
       ])
       raw=Object.keys(doc(entity.entity)).length?doc(entity.entity):entity
       if(raw.entity_id!==ref.id)throw missing()
-      const cached=list((await this.relationHome(session,signal)).entities).find(x=>x.entity_id===ref.id)
-      const linked=number(cached?.linked_user_id)
-      if(linked>0){const remarks=await this.sources.privateRemarksByUserIds([linked],{...(signal?{signal}:{})});raw={...raw,linked_contact_name:remarks.get(linked)}}
+      const cached=this.cachedRelation(session,ref.id)
+      raw={...cached,...raw,linked_contact_name:this.remarksCache.get(number(ref.linkedUserId??cached.linked_user_id))?.value??''}
       evidence=list(records.records);fields=[{label:'关联联系人',value:text(raw.linked_contact_name)},{label:'内容概述',value:text(raw.ai_summary)},{label:'别名',value:strings(raw.aliases).join('、')}]
       if(records.has_more===true && number(records.next_offset)>number(cursor.offset))next={offset:number(records.next_offset)}
       actions=[action('delete','删除识别实体',true)]
@@ -249,7 +294,7 @@ export class ExploreService {
       actions=[action('confirm',raw.status==='pending'?'确认纪念日':'修改纪念日'),...(raw.status==='pending'?[action('dismiss','忽略这条识别')]:[])]
     }
     if(!Object.keys(raw).length)throw missing()
-    const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,ref),actions,...(notice?{notice}:{})}
+    const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,{...ref,offset:number(cursor.offset)}),actions,...(notice?{notice}:{})}
     // Keep the originally selected identity even when a detail page contains a different chronological anchor.
     result.item.ref=itemRef
     if(reclassifyTargets)result.reclassifyTargets=reclassifyTargets

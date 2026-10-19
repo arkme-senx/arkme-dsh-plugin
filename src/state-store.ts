@@ -30,6 +30,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  dayReviewPending?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
 
   version: 2
@@ -67,7 +68,7 @@ function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
 
 function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
   const expiredTerminalJobs = Object.values(jobs)
-    .filter(candidate => !isUnresolvedRecordingImportJob(candidate))
+    .filter(candidate => !isUnresolvedRecordingImportJob(candidate) && (!candidate.clientTaskId || candidate.createdAtMillis < Date.now() - 30 * 24 * 60 * 60_000))
     .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
     .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
   for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
@@ -88,6 +89,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
+    ...(typeof source.clientTaskId === 'string' ? { clientTaskId: source.clientTaskId } : {}),
     ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
     ...(validRecordingCreateRequestUID(source.createRequestUID) ? { createRequestUID: source.createRequestUID } : {}),
     userId: source.userId as number,
@@ -353,6 +355,7 @@ function parseState(raw: string): PersistedState {
         ? Math.max(source.recordReeditDraftRevision as number, legacyRecordReeditRevision(recordReeditDraftsByUser, recordReeditSubmissionsByUser))
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
+    dayReviewPending: source.dayReviewPending ?? {},
   }
 }
 
@@ -436,6 +439,29 @@ export class ArkmeStateStore {
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
     this.boardCache = new ArrangementBoardCacheStore(directory)
+  }
+
+  private reviewPending(state: PersistedState): Record<string, unknown> {
+    const value = state.dayReviewPending ?? {}
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('日回顾提交恢复记录损坏，未创建新任务')
+    state.dayReviewPending = value
+    return value as Record<string, unknown>
+  }
+  async readDayReviewPending(scope: string, day: string): Promise<unknown> {
+    return this.read(state => structuredClone(this.reviewPending(state)[JSON.stringify([scope, day])]))
+  }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old !== undefined && JSON.stringify(old) !== JSON.stringify(request)) throw new Error('当天仍有提交结果待核对，请先核对原请求')
+      values[key] = structuredClone(request)
+    })
+  }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old && typeof old === 'object' && !Array.isArray(old) && (old as Record<string, unknown>).requestId === requestId) delete values[key]
+    })
   }
 
   async arrangementBoardCache(environment: string, userId: number, pages?: ArkmeArrangementBoardCachePages): Promise<ArkmeArrangementBoardCachePages> {
@@ -645,19 +671,17 @@ export class ArkmeStateStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): Promise<RecordingImportAdmission> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
-    if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
-      throw new Error('Recording import unresolved limit must be a positive integer')
-    }
     let admission: RecordingImportAdmission | undefined
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
         .filter(isUnresolvedRecordingImportJob)
-      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
+      const receipt = job.clientTaskId ? Object.values(jobs).find(candidate => candidate.clientTaskId === job.clientTaskId) : undefined
+      if (receipt && (!sameRecordingImportIdentity(receipt, job) || receipt.recordingKind !== job.recordingKind || !sameRecordingImportBatch(receipt.batch, job.batch))) throw new Error('Recording import task identity conflict')
+      const existing = receipt ?? unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return
@@ -665,10 +689,6 @@ export class ArkmeStateStore {
       const fileNameKey = recordingImportFileNameKey(job.fileName)
       if (unresolved.some(candidate => recordingImportFileNameKey(candidate.fileName) === fileNameKey)) {
         admission = { kind: 'duplicate-file-name' }
-        return
-      }
-      if (unresolved.length >= unresolvedLimit) {
-        admission = { kind: 'limit' }
         return
       }
       jobs[job.jobId] = cloneRecordingImportJob(job)

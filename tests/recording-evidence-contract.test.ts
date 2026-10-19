@@ -21,22 +21,22 @@ it('unknown data remains null and cannot become a single-item perfect score', ()
   expect(() => parseRecordingEvidence({ ...input, groups: [{ ...group, state: 'ready', score: 100 }] }, { action: 'consistency', groupRefs: ['opaque'] })).toThrow()
 })
 it('SDK and Host use one owner and preserve cancellation', async () => {
-  const owner = { recordingSpeakerEvidence: vi.fn(async () => ({ supported: false })) }
+  const owner = { recordingSpeakerEvidenceQuery: vi.fn(async () => ({ supported: false })) }
   const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
     const { operation, params } = JSON.parse(String(init?.body))
     const value = await dispatchArkmeHostOperation(owner as unknown as ArkmeService, operation, params, undefined, undefined, undefined, undefined, init?.signal ?? undefined)
     return new Response(JSON.stringify({ ok: true, value }))
   } })
   const signal = new AbortController().signal
-  expect(await sdk.recordingSpeakerEvidence(query, signal)).toEqual({ supported: false })
-  expect(owner.recordingSpeakerEvidence).toHaveBeenCalledExactlyOnceWith(query, signal)
+  expect(await sdk.recordingSpeakerEvidenceQuery(query, signal)).toEqual({ supported: false })
+  expect(owner.recordingSpeakerEvidenceQuery).toHaveBeenCalledExactlyOnceWith(query, signal)
 })
 it('read tool cannot schedule inference and build requires explicit write grant', async () => {
-  const ports = { recordingSpeakerEvidence: vi.fn(async () => ({ supported: false })) }
+  const ports = { recordingSpeakerEvidenceQuery: vi.fn(async () => ({ supported: false })) }
   const tools = createArkmeCoreToolDefinitions(ports as unknown as ArkmeCoreToolPorts)
   const tool = tools.find(t => t.name === 'arkme_recording_speaker_evidence')!
   await expect(tool.execute({ request_json: JSON.stringify({ action: 'build', itemRefs: ['opaque'] }) }, {} as never)).rejects.toThrow()
-  expect(ports.recordingSpeakerEvidence).not.toHaveBeenCalled()
+  expect(ports.recordingSpeakerEvidenceQuery).not.toHaveBeenCalled()
   expect(arkmeToolCatalog.modulesFor('business').find(m => m.meta.toolName === 'arkme_recording_speaker_evidence_build')?.meta).toMatchObject({ effect: 'write', grant: 'explicit-user-write' })
 })
 
@@ -50,4 +50,15 @@ it('preview uses the read Tool and the public SDK owner without a write', async 
   await tools.find(t => t.name === 'arkme_recording_speaker_correction_context')!.execute({ action: 'preview', request_json: JSON.stringify(input) }, {} as never)
   expect(ports.previewRecordingSpeakerCorrection).toHaveBeenCalledExactlyOnceWith(input, undefined)
   expect(ports.applyRecordingSpeakerCorrection).not.toHaveBeenCalled()
+})
+
+it('keeps the established page evidence and consistency routes independent of the new query route', async () => {
+  const page = { itemRefs: ['row'], referenceA: ['a'], referenceB: [] }
+  const summary = { anchorRefs: ['row'], itemRefs: [] }
+  const owner = { recordingSpeakerEvidence: vi.fn(async () => ({ supported: false })), recordingSpeakerConsistency: vi.fn(async () => ({ supported: false })), recordingSpeakerEvidenceQuery: vi.fn() }
+  await dispatchArkmeHostOperation(owner as unknown as ArkmeService, 'recordings.speaker.evidence', page)
+  await dispatchArkmeHostOperation(owner as unknown as ArkmeService, 'recordings.speaker.consistency', summary)
+  expect(owner.recordingSpeakerEvidence).toHaveBeenCalledExactlyOnceWith(page, undefined)
+  expect(owner.recordingSpeakerConsistency).toHaveBeenCalledExactlyOnceWith(summary, undefined)
+  expect(owner.recordingSpeakerEvidenceQuery).not.toHaveBeenCalled()
 })

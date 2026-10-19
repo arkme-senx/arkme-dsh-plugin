@@ -14,7 +14,7 @@
 
 | SDK | Host method | 作用 |
 | --- | --- | --- |
-| `recordingSpeakerEvidence(query, signal)` | `recordings.speaker.evidence` | 能力探测、完整组、A/B、成员／候选页、显式补证据 |
+| `recordingSpeakerEvidenceQuery(query, signal)` | `recordings.speaker.evidence.query` | 能力探测、完整组、A/B、成员／候选页、显式补证据 |
 | `recordingSpeakerCorrectionItems(query, signal)` | `recordings.speaker.correction.items` | 返回既有账号／当日／转写来源绑定的 itemRef |
 | `recordingSpeakerCorrectionContext(itemRef, signal)` | `recordings.speaker.correction.context` | 当前版本、排除人物和可撤销回执 |
 | `previewRecordingSpeakerCorrection(input, signal)` | `recordings.speaker.correction.preview` | 只读选择预检与签名 intentToken |
@@ -73,3 +73,11 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 - E2E 设置 `ARKME_DSH_CHECKOUT`、`ARKME_PACKED_PROFILE`、`ARKME_EVIDENCE_TEST_ACCOUNT`（专用测试账号）；已准备专用三行录音时可设 `ARKME_EVIDENCE_TEST_DAY` 增加真实读链验证。profile 必须由官方 CLI 安装不可变 tgz；不使用用户常驻客户端。
 
 后端纠正／撤销及负载结果由对应后端交付记录提供。未发布插件 npm 包，也未替换用户常驻客户端；页面实际消费这些新能力仍由页面负责人在本交接合同下接入。
+
+## 2026-10-19 接口交付边界
+
+本次仅交付后端、Host、Tools 与公开 SDK 能力。用户明确要求所有可见状态、文案、布局和交互保持原样；既有“已有／新人物”按钮禁用状态与等待后端支持文案不修改。因此接口可用不代表页面入口已开放。
+
+合入最新 dev 后保留页面现有 `recordings.speaker.evidence` 与 `recordings.speaker.consistency` 合同；完整证据查询使用独立 `recordings.speaker.evidence.query`，SDK 对应 `recordingSpeakerEvidenceQuery`。Tool 名称保持不变。两种请求结构不混用，也不按参数猜测版本。新增查询与既有读取共用账号/纠正版本失效检查，并传递取消信号。
+
+验证：类型检查通过；全量测试 12,602 项通过、20 项跳过，发现的两处方法清单/Tool mock 旧名称已修复并经 73 项定向复验；另有 7 项接口隔离/SDK/Tool 合同测试通过。相对最新 dev，`src/client/**`、根 README、版本及 lockfile 零改动。

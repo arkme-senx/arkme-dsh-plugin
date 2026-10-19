@@ -91,13 +91,13 @@ export class ContactDirectoryService {
   async listRecordingSpeakerUsers(
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<Array<{ userId: number; label: string; avatarRef?: string }>> {
+  ): Promise<Array<{ userId: number; label: string; avatarRef?: string; remark?: string; aliases?: string[] }>> {
     const snapshot = await this.contactSnapshot(session, signal === undefined ? {} : { signal })
     if (snapshot.value.coverage !== 'complete') throw new ArkmePluginError('directory-contact-incomplete', '联系人尚未加载完整，请稍后重试', true, 503)
     const descriptors = snapshot.value.descriptors
     const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
     const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
-    const candidates: Array<{ userId: number; label: string; avatarRef?: string }> = []
+    const candidates: Array<{ userId: number; label: string; avatarRef?: string; remark?: string; aliases?: string[] }> = []
     const currentProfile = profiles.get(session.userId)
     candidates.push({
       userId: session.userId,
@@ -117,6 +117,8 @@ export class ContactDirectoryService {
       candidates.push({
         userId: descriptor.targetUserId,
         label: identity.displayName,
+        ...(descriptor.remark?.trim() ? { remark: descriptor.remark.trim() } : {}),
+        aliases: [...new Set([profiles.get(descriptor.targetUserId)?.nickname, descriptor.displayNameSnapshot].filter((name): name is string => !!name && name !== identity.displayName))],
         ...(identity.avatarRef === undefined ? {} : { avatarRef: identity.avatarRef }),
       })
     }
