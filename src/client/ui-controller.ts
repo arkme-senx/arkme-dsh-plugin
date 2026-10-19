@@ -170,6 +170,9 @@ export class ArkmeUiController {
     else this.selectSource(this.lastSelfSource)
   }
 
+  /** Read-only access for previews; does not activate or change the remembered topic. */
+  getRememberedSelfSource(): ArkmeSourceItem | undefined { return this.lastSelfSource }
+
   private rememberSelfSource(source: ArkmeSourceItem): void {
     if (source.kind === 'topic' || source.kind === 'default_category') this.lastSelfSource = source
     else if (source.kind === 'send_to_self') this.lastSelfSource = undefined

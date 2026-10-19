@@ -4,6 +4,8 @@ import jsQRModule from 'jsqr'
 import qrcode from 'qrcode-generator'
 import type { ArkmeContactAddResult, ArkmeContactSearchResult, ArkmeSourceItem, ArkmeUserProfileSnapshot } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { teamText } from './team-messaging-i18n.js'
@@ -156,14 +158,16 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
     const team = candidate?.team
     if (!team || busy || team.state === 'pending' || team.state === 'joined') return
     const revision = requestRevision.current
+    const auth = arkmeAuthStore.getSnapshot().auth
+    const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
     teamRequestUid.current ??= crypto.randomUUID()
     setBusy(true); setError(''); setNotice('')
     try {
-      const result = await callArkme<{ state: string }>('contacts.team-join', { jotmoId: team.jotmoId, requestUid: teamRequestUid.current })
+      const result = await callArkme<{ state: string }>('contacts.team-join', { jotmoId: team.jotmoId, requestUid: teamRequestUid.current, ...(accountKey ? { expectedAccountKey: accountKey } : {}) })
       if (revision === requestRevision.current) {
         setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
         teamRequestUid.current = undefined
-        if (result.state === 'joined') arkmeContactsTab.refresh()
+        if (result.state === 'joined') { arkmeContactsTab.refresh(); if (accountKey) invalidateTeamMessages(accountKey) }
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }

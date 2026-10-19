@@ -4,6 +4,7 @@ import { contactDirectoryLetter } from '../contact-directory-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeDirectoryContactProfile,
+  ArkmeGroupAvatarFallback,
   ArkmeDirectoryItem,
   ArkmeDirectoryPage,
   ArkmeDirectorySectionKind,
@@ -29,6 +30,7 @@ interface ContactDirectoryRefEntry {
   remark: string
   accountName?: string
   avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
   expiresAtMillis: number
 }
 
@@ -172,7 +174,10 @@ export class ContactDirectoryService {
     )
     // A profile request started before a save must not put the old remark back.
     const remark = this.contactRefs.get(contactRef.trim())?.remark ?? entry.remark
-    const updated = { ...entry, ...identity, remark,
+    // A successful profile read may replace a photo with a generated avatar or
+    // remove it entirely. Do not retain the previous presentation by spreading it.
+    const { avatarRef: _oldAvatar, avatarFallback: _oldFallback, ...entryIdentity } = entry
+    const updated = { ...entryIdentity, ...identity, remark,
       displayName: remark || identity.nickname || identity.accountName || entry.displayNameSnapshot || '联系人' }
     this.contactRefs.set(contactRef.trim(), updated)
     return {
@@ -183,6 +188,7 @@ export class ContactDirectoryService {
       remark: updated.remark,
       ...(updated.accountName === undefined ? {} : { accountName: updated.accountName }),
       ...(updated.avatarRef === undefined ? {} : { avatarRef: updated.avatarRef }),
+      ...(updated.avatarFallback === undefined ? {} : { avatarFallback: updated.avatarFallback }),
     }
   }
 
@@ -226,6 +232,7 @@ export class ContactDirectoryService {
       nickname: current.nickname,
       ...(current.accountName === undefined ? {} : { accountName: current.accountName }),
       ...(current.avatarRef === undefined ? {} : { avatarRef: current.avatarRef }),
+      ...(current.avatarFallback === undefined ? {} : { avatarFallback: current.avatarFallback }),
     }
   }
 
@@ -332,6 +339,7 @@ export class ContactDirectoryService {
         identity.nickname = retained.nickname
         if (retained.accountName !== undefined) identity.accountName = retained.accountName
         if (retained.avatarRef !== undefined) identity.avatarRef = retained.avatarRef
+        if (retained.avatarFallback !== undefined) identity.avatarFallback = retained.avatarFallback
         identity.displayName = identity.remark || retained.nickname || retained.accountName || descriptor.displayNameSnapshot || retained.displayName
       }
       const recent = this.recentRemarks.get(`${session.userId}:${descriptor.targetUserId}`)
@@ -356,6 +364,7 @@ export class ContactDirectoryService {
         nickname: entry.nickname, remark: entry.remark,
         ...(entry.accountName === undefined ? {} : { accountName: entry.accountName }),
         ...(entry.avatarRef === undefined ? {} : { avatarRef: entry.avatarRef }),
+        ...(entry.avatarFallback === undefined ? {} : { avatarFallback: entry.avatarFallback }),
         letter: '#',
       }
       item.letter = contactDirectoryLetter(item)
@@ -537,7 +546,7 @@ export class ContactDirectoryService {
     profile: ArkmePublicProfile | undefined,
     session: ArkmeSessionCredentials,
     displayNameSnapshot?: string,
-  ): Promise<Pick<ContactDirectoryRefEntry, 'displayName' | 'nickname' | 'remark' | 'accountName' | 'avatarRef'>> {
+  ): Promise<Pick<ContactDirectoryRefEntry, 'displayName' | 'nickname' | 'remark' | 'accountName' | 'avatarRef' | 'avatarFallback'>> {
     const nickname = profile?.nickname?.trim() ?? ''
     const accountName = profile?.accountName?.trim() ?? ''
     const displayName = remark || nickname || accountName || displayNameSnapshot?.trim() || '联系人'
@@ -548,6 +557,7 @@ export class ContactDirectoryService {
       displayName, nickname, remark,
       ...(accountName === '' ? {} : { accountName }),
       ...(avatarRef === undefined ? {} : { avatarRef }),
+      ...(profile?.avatarFallback === undefined ? {} : { avatarFallback: profile.avatarFallback }),
     }
   }
 

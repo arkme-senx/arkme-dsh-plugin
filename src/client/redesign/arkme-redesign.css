@@ -2107,11 +2107,13 @@ body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-
 }
 
 /* Chat-specific colors follow DSH's single light/dark owner. */
-.arkme-conversation-surface {
+.arkme-conversation-surface,
+.team-conversation-pane {
   --arkme-chat-self-bubble: #eef1f8;
   --arkme-chat-other-bubble: #f3f4f6;
 }
-body[data-ds-dark-theme] .arkme-conversation-surface {
+body[data-ds-dark-theme] .arkme-conversation-surface,
+body[data-ds-dark-theme] .team-conversation-pane {
   --arkme-chat-self-bubble: #2c3142;
   --arkme-chat-other-bubble: #282a31;
   --arkme-audio-control: #8995c5;

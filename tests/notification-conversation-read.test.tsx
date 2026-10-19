@@ -15,6 +15,8 @@ vi.mock('../src/client/official-notification-store.js', () => ({
 vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => [] }))
 import { ArkmeNotificationCenter } from '../src/client/ArkmeNotificationCenter.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { ArkmeNotificationPreview } from '../src/client/ArkmeNotificationPreview.js'
+import { arkmeVisibleReadIntentAllowed } from '../src/client/read-intent-visibility.js'
 let container: HTMLDivElement, root: Root
 const tick = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(300) }) }
 beforeEach(() => {
@@ -66,4 +68,31 @@ it('filters from the header without exposing unread controls', async () => {
   expect(container.querySelector('[role="list"]')?.textContent).not.toContain('录音处理完成')
   expect(mocks.recordingRead).not.toHaveBeenCalled()
   expect(container.querySelector('[aria-label="未读"]')).toBeNull()
+})
+
+it('previews real notification cards and categories without read receipts, then resumes ordinary visible-read behavior', async () => {
+  const close = vi.fn(), open = vi.fn()
+  await act(async () => root.render(<ArkmeNotificationPreview onClose={close} onOpen={open} />))
+  await tick()
+  const dialog = document.querySelector<HTMLElement>('[aria-label="通知预览"]')!
+  expect(dialog.textContent).toContain('录音处理完成')
+  expect(dialog.textContent).toContain('公告内容')
+  expect(arkmeVisibleReadIntentAllowed()).toBe(false)
+  expect(mocks.recordingRead).not.toHaveBeenCalled()
+  expect(mocks.officialRead).not.toHaveBeenCalled()
+  await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="通知类型"]')!.click())
+  await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(button => button.textContent === '官方')!.click())
+  await tick()
+  expect(dialog.querySelector('[role="list"]')?.textContent).not.toContain('录音处理完成')
+  expect(mocks.officialRead).not.toHaveBeenCalled()
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+  expect(mocks.recordingRead).not.toHaveBeenCalled()
+  expect(mocks.call.mock.calls.filter(([op]) => /mark-read|mark-viewed|notifications-read/.test(op))).toHaveLength(0)
+  await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(close).toHaveBeenCalledOnce(); expect(open).not.toHaveBeenCalled()
+  await act(async () => dialog.querySelector<HTMLButtonElement>('footer button')!.click())
+  expect(open).toHaveBeenCalledOnce()
+  await act(async () => root.render(<ArkmeNotificationCenter />)); await tick()
+  expect(arkmeVisibleReadIntentAllowed()).toBe(true)
+  expect(mocks.recordingRead).toHaveBeenCalledOnce()
 })

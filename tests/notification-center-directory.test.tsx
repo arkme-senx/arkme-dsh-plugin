@@ -20,8 +20,11 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
+import { startOfficialTeamMembership, refreshOfficialTeamMembership } from '../src/client/official-team-membership.js'
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
+import { builtinDirectoryPreferences } from '../src/client/builtin-directory-preferences.js'
+import { notificationDirectoryPreferences } from '../src/client/notification-directory-preferences.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -44,6 +47,7 @@ const sources: ArkmeSourceItem[] = [
 let renderer: ReactTestRenderer | undefined
 let notices: ArkmeArrangementReminderEvent[]
 let stopTeamDirectory: (() => void) | undefined
+let stopOfficialMembership: (() => void) | undefined
 
 function Workspace({ showHarnessEntry = false }: { showHarnessEntry?: boolean } = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -97,6 +101,7 @@ afterEach(async () => {
   await act(async () => { renderer?.unmount() })
   renderer = undefined
   stopTeamDirectory?.(); stopTeamDirectory = undefined
+  stopOfficialMembership?.(); stopOfficialMembership = undefined
   arkmeChatDirectory.activateAccount(undefined)
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
   socialAccessStore.activate(undefined)
@@ -107,6 +112,52 @@ afterEach(async () => {
 })
 
 describe('notification directory stability', () => {
+  it('offers preview and pin only, reorders immediately, and restores the saved pin after remount', async () => {
+    const data = new Map<string, string>()
+    Object.assign(window, { localStorage: { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value) } } })
+    await act(async () => { renderer = create(<Workspace />) })
+    const context = () => notificationRows()[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 40, clientY: 60,
+      currentTarget: { focus() {}, getBoundingClientRect: () => ({ left: 20, top: 40 }) } })
+    await act(async () => context())
+    const menu = () => renderer!.root.findByProps({ role: 'menu', 'aria-label': '通知的会话操作' })
+    expect(menu().findAllByProps({ role: 'menuitem' }).map(node => node.props['aria-label'])).toEqual(['预览', '置顶对话'])
+    expect(menu().findAllByProps({ role: 'separator' })).toHaveLength(0)
+    await act(async () => menu().findByProps({ 'aria-label': '置顶对话' }).props.onClick())
+    expect(notificationDirectoryPreferences.read('test:7001')).toBe(true)
+    expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
+    await act(async () => { renderer!.unmount(); renderer = create(<Workspace />) })
+    expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
+    await act(async () => context())
+    await act(async () => menu().findByProps({ 'aria-label': '取消置顶' }).props.onClick())
+    expect(conversationOrder()).toEqual(['置顶对话', '较新对话', '通知', '较早对话'])
+    expect(arkmeUi.getViewSnapshot().mode).toBe('source')
+  })
+
+  it.each(['self', 'arko', 'harness'] as const)('offers builtin %s preview and pin without removal, restores pin and isolates accounts', async entry => {
+    const data = new Map<string, string>()
+    Object.assign(window, { localStorage: { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value) } } })
+    await act(async () => { renderer = create(<Workspace showHarnessEntry />) })
+    const row = () => renderer!.root.findByProps({ 'data-arkme-builtin-entry': entry })
+    const context = () => row().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 40, clientY: 60,
+      currentTarget: { focus() {}, getBoundingClientRect: () => ({ left: 20, top: 40 }) } })
+    const before = arkmeUi.getViewSnapshot()
+    await act(async () => context())
+    const menu = () => renderer!.root.findByProps({ role: 'menu' })
+    expect(menu().findAllByProps({ role: 'menuitem' }).map(node => node.props['aria-label'])).toEqual(['预览', '置顶对话'])
+    expect(menu().findAllByProps({ role: 'separator' })).toHaveLength(0)
+    await act(async () => menu().findByProps({ 'aria-label': '置顶对话' }).props.onClick())
+    expect(builtinDirectoryPreferences.read('test:7001')[entry]).toBeGreaterThan(0)
+    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    expect(arkmeUi.getViewSnapshot()).toBe(before)
+    await act(async () => { renderer!.unmount(); renderer = create(<Workspace showHarnessEntry />) })
+    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    await act(async () => context())
+    await act(async () => menu().findByProps({ 'aria-label': '取消置顶' }).props.onClick())
+    expect(builtinDirectoryPreferences.read('test:7001')[entry]).toBeUndefined()
+    expect(builtinDirectoryPreferences.read('test:7002')[entry]).toBeUndefined()
+    expect(mocks.callArkme.mock.calls.some(([op]) => String(op).includes('bot-pin') || String(op).includes('policy.set'))).toBe(false)
+  })
+
   it('keeps Team entries available without phone binding and avoids duplicate official entries', async () => {
     vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
     let phoneMasked: string | undefined
@@ -120,10 +171,13 @@ describe('notification directory stability', () => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, params?: { side?: string }, ...args: unknown[]) => {
       if (operation === 'user.profile' || operation === 'user.profile.refresh') return { profile: { userId: 7001, contact: { phoneMasked } } }
+      if (operation === 'team.app.official.membership') return { jotmoId: 'arkme_cn', isMember: false }
       if (operation === 'team.app.conversations') return { items: params?.side === 'external' ? conversations : [], hasMore: conversations.length > 0, nextCursor: 'next' }
       return original(operation, params, ...args)
     })
     await act(async () => {
+      stopOfficialMembership = startOfficialTeamMembership('test:7001')
+      await refreshOfficialTeamMembership('test:7001')
       stopTeamDirectory = startTeamDirectory('test:7001')
       await refreshTeamDirectory('test:7001')
       renderer = create(<Workspace />)
