@@ -16,6 +16,11 @@ const str = stringValue
 const num = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) ? v : 0
 const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map(obj) : []
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
+function receiptCounts(raw: unknown) {
+  const v = obj(raw), keys = ['recipient_count', 'read_count', 'unread_count'] as const
+  if (keys.some(k => !Number.isSafeInteger(v[k]) || Number(v[k]) < 0) || Number(v.read_count) + Number(v.unread_count) !== Number(v.recipient_count)) throw new ArkmePluginError('team-receipts-incomplete', '阅读状态返回不完整，请重试', true, 502)
+  return {total: Number(v.recipient_count), read: Number(v.read_count), unread: Number(v.unread_count)}
+}
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
@@ -430,6 +435,21 @@ export class TeamAppService {
         return {showInHome:data.show_in_home,version:num(data.version)}
       }
       case 'team.app.read': return await post('conversations/read/advance', { ...await conversation(), read_seq: num(p.readSeq) })
+      case 'team.app.receipt-summaries': {
+        if (!Array.isArray(p.messageRefs) || !p.messageRefs.length || p.messageRefs.length > 50) throw invalid()
+        const contexts = await Promise.all(p.messageRefs.map(ref => this.open('message', ref, actor)))
+        const first = contexts[0]!, ids = contexts.map(v => str(v.message_uid))
+        if (new Set(ids).size !== ids.length || contexts.some(v => v.conversation_uid !== first.conversation_uid || v.side !== first.side)) throw invalid()
+        const data = await post('conversations/read-receipts/summary-list', { conversation_uid: first.conversation_uid, side: first.side, message_uids: ids }, true)
+        const rows = list(data.items), byId = new Map(rows.map(v => [str(v.message_uid), v]))
+        if (!Array.isArray(data.items) || rows.length !== ids.length || byId.size !== ids.length || !Number.isSafeInteger(data.last_seq) || num(data.last_seq) < 0 || !Number.isSafeInteger(data.my_read_seq) || num(data.my_read_seq) < 0 || !Number.isSafeInteger(data.unread) || num(data.unread) < 0) throw invalid()
+        return { items: await Promise.all(ids.map(async id => {
+          const row = byId.get(id)
+          if (!row || typeof row.team_read !== 'boolean') throw invalid()
+          return { key: await this.key(id, actor), teamRead: row.team_read,
+            ...(first.side === 'team' ? { summary: receiptCounts(row.summary), ...(typeof row.visitor_read === 'boolean' ? {visitorRead: row.visitor_read} : {}) } : {}) }
+        })), lastSeq: num(data.last_seq), myReadSeq: num(data.my_read_seq), unread: num(data.unread) }
+      }
       case 'team.app.receipts': {
         const context = await this.open('message', p.messageRef, actor)
         const cursor = p.cursor ? await this.open('receipt-cursor', p.cursor, actor) : {}
@@ -452,7 +472,8 @@ export class TeamAppService {
             ...(num(v.read_at) > 0 ? { readAt: num(v.read_at) } : {}) })
         }
         return { ...(typeof data.team_read === 'boolean' ? { teamRead: data.team_read } : {}),
-          ...(typeof data.visitor_read === 'boolean' ? { visitorRead: data.visitor_read } : {}),
+          ...(internal && typeof data.visitor_read === 'boolean' ? { visitorRead: data.visitor_read } : {}),
+          ...(internal && data.summary !== undefined ? {summary: receiptCounts(data.summary)} : {}),
           senderExcluded: context.message_side === 'external' || !!senderId,
           ...(internal ? { hasMore: data.has_more } : { hasMore: false }),
           ...(internal && data.next_cursor ? { nextCursor: await this.ref('receipt-cursor', { message_uid: context.message_uid, cursor: data.next_cursor }, actor) } : {}), members }

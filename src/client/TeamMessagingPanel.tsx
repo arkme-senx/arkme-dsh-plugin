@@ -251,7 +251,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const [receiptMessage, setReceiptMessage] = useState<TeamMessage>()
   const receiptState = useSyncExternalStore(receiptStore.subscribe, () => receiptMessage ? receiptStore.get(receiptMessage.key) : emptyTeamReceipt, () => emptyTeamReceipt)
   useEffect(() => receiptStore.retain(), [receiptStore])
-  useEffect(() => receiptMessage ? receiptStore.watch(receiptMessage) : undefined, [receiptStore, receiptMessage])
+  useEffect(() => receiptMessage ? receiptStore.watchDetail(receiptMessage) : undefined, [receiptStore, receiptMessage])
   useEffect(() => {
     const update = () => { if (document.visibilityState === 'visible' && document.hasFocus()) receiptStore.refreshVisible() }
     const timer = window.setInterval(update, 15_000)
@@ -289,6 +289,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort() }, [])
+  useEffect(() => receiptStore.subscribeAccessLost(() => {
+    accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined);
+    latest.current = undefined; setTimeline(undefined); receiptRef.current = undefined;
+    setReceiptMessage(undefined); setEditing(undefined);
+  }), [receiptStore])
+  useEffect(() => receiptStore.subscribeReadState(state => {
+    const old = latest.current
+    // A receipt read started before a new message cannot clear its unread count.
+    if (!old || state.lastSeq < old.conversation.lastSeq || state.myReadSeq < Math.max(read.current,old.conversation.myReadSeq)) return
+    read.current = state.myReadSeq
+    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread}}
+    latest.current=next;setTimeline(next)
+  }),[receiptStore])
   const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
   const receiptAnchor = useRef<HTMLElement | null>(null)
   const readReceipts = useCallback((message: TeamMessage, more = false) => {
@@ -340,7 +353,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges(account => { if (account === accountKey) { void recover() } }) }, [recover, accountKey])
+  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else void recover() } }) }, [recover, accountKey, receiptStore])
   useEffect(() => {
     const recoverOnline = () => { void recover() }
     window.addEventListener('focus', recoverOnline)

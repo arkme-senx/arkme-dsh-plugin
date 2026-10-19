@@ -76,6 +76,33 @@ it('persists private Team marks across refreshed references without cloud writes
 })
 
 describe('Team App owner adapter', () => {
+  it('projects a complete summary batch using stable opaque identities and the Team owner only', async()=>{
+    const f=fixture((path,body)=>path.endsWith('/summary-list')
+      ? {items:(body.message_uids as string[]).map(message_uid=>({message_uid,team_read:true,visitor_read:false,summary:{recipient_count:1000,read_count:200,unread_count:800}})),last_seq:2,my_read_seq:2,unread:0}
+      : {channel,conversation:{...conversation,side:'team'},messages:[message,{...message,message_uid:'second-message',seq:1}]})
+    const opened=await open(f), timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:timeline.messages.map(m=>m.ref)}) as {items:Array<{key:string;summary:unknown}>}
+    expect(result.items.map(m=>m.key)).toEqual(timeline.messages.map(m=>m.key))
+    expect(result.items[0]!.summary).toEqual({total:1000,read:200,unread:800})
+    expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'team',message_uids:['message-private','second-message']})
+    expect(f.requests.every(r=>!r.path.includes('chat')&&!r.path.includes('record')&&!r.path.includes('read-receipts/query'))).toBe(true)
+    expect(JSON.stringify(result)).not.toMatch(/message-private|second-message|user_id|conversation_uid/)
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref,timeline.messages[0]!.ref]})).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
+  it('does not disclose counts or identities in an external summary even if the server supplies them',async()=>{
+    const own={...message,side:'external',actor_user_id:90}
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items:[{message_uid:own.message_uid,team_read:true,visitor_read:true,summary:{recipient_count:1,read_count:1,unread_count:0},members:[{user_id:11}]}],last_seq:2,my_read_seq:2,unread:0} : {channel,conversation,messages:[own]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})
+    expect(result).toEqual({items:[{key:timeline.messages[0]!.key,teamRead:true}],lastSeq:2,myReadSeq:2,unread:0})
+  })
+  it.each([[],[{message_uid:message.message_uid,team_read:true,summary:{recipient_count:10,read_count:9,unread_count:0}}]])('rejects incomplete summary truth %s instead of manufacturing unread',async items=>{
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items,last_seq:2,my_read_seq:2,unread:0} : {channel,conversation:{...conversation,side:'team'},messages:[message]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
   it.each(['external', 'team'] as const)('projects %s-side message receipts in the internal view with stable member identities and sender exclusion', async messageSide => {
     const f=fixture(path=>path.endsWith('/read-receipts/query')
       ? {team_read:true,visitor_read:false,has_more:false,members:[
@@ -419,7 +446,7 @@ describe('Team App owner adapter', () => {
   })
   it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
     const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
-    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100 })
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: event.kind==='team.receipt.changed' })
     expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()

@@ -295,7 +295,7 @@ export class ChatRealtimeService {
     if (notice.cause === 'team-invalidation') {
       void this.runtime.accountScopedSession().then(session => {
         if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) {
-          this.emitChatClientEvent({ type: 'team-invalidated', revision: this.nextChatClientRevision() })
+          this.emitChatClientEvent({ type: 'team-invalidated', revision: this.nextChatClientRevision(), ...(notice.teamReceiptOnly ? {receiptOnly: true} : {}) })
         }
       }).catch(() => undefined)
       return

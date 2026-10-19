@@ -73,7 +73,7 @@ export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, r
     {state.error && <ArkmeReadReceiptStatus onClick={onRetry}>{tr('更新失败，点击重试')}</ArkmeReadReceiptStatus>}
     {!value && !state.error && <ArkmeReadReceiptStatus>{tr('加载中...')}</ArkmeReadReceiptStatus>}
     {members.map((member, i) => <Member key={member.key ?? `unknown-${i}`} member={member} renderAvatar={renderAvatar} />)}
-    {value && !members.length && <ArkmeReadReceiptStatus>{tr(filter === 'unread' ? '暂无未读成员' : filter === 'read' ? '暂无已读成员' : '暂无其他成员')}</ArkmeReadReceiptStatus>}
+    {value && !members.length && <ArkmeReadReceiptStatus>{tr(value.hasMore ? '已加载成员中暂无符合条件的成员' : filter === 'unread' ? '暂无未读成员' : filter === 'read' ? '暂无已读成员' : '暂无其他成员')}</ArkmeReadReceiptStatus>}
     {value?.hasMore && <ArkmeReadReceiptStatus {...(!state.loading ? {onClick:onMore} : {})}>{tr(state.loading ? '加载中...' : '更多成员')}</ArkmeReadReceiptStatus>}
   </>
 }

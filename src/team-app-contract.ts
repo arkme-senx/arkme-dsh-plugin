@@ -5,7 +5,7 @@ import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
-  | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
+  | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
@@ -40,7 +40,11 @@ export interface TeamTimeline { conversation: TeamConversation; messages: TeamMe
 export interface TeamOpen { channel: TeamChannel; openInbox: boolean; conversation?: TeamConversation }
 export interface TeamSendResult { message?: TeamMessage; reason?: string }
 export interface TeamReceiptMember extends TeamIdentity { key?: string; isMe?: boolean; read?: boolean; readAt?: number }
+export interface TeamReceiptCounts { read: number; unread: number; total: number }
+export interface TeamMessageReceiptSummary { key: string; summary?: TeamReceiptCounts; teamRead?: boolean; visitorRead?: boolean }
+export interface TeamReceiptSummaryBatch { items: TeamMessageReceiptSummary[]; lastSeq: number; myReadSeq: number; unread: number }
 export interface TeamReceipts {
+  summary?: TeamReceiptCounts
   hasMore?: boolean; nextCursor?: string; teamRead?: boolean; visitorRead?: boolean
   /** Whether the sender is reliably excluded from the recipient population. */
   senderExcluded?: boolean

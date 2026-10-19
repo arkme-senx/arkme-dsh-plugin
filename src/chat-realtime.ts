@@ -100,6 +100,7 @@ export interface ArkmeChatMessagePreparingHint {
 
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
+  teamReceiptOnly?: boolean
   cause: 'team-invalidation' | 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'conversation-list-preference-invalidation' | 'chat-policy-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   policyUpdated?: ArkmeChatPolicyUpdatedHint
@@ -181,14 +182,14 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
 }
 
 export const ARKME_TEAM_NOTIFICATION_BIZ_TYPE = 28
-export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number } | undefined {
+export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number; receiptOnly: boolean } | undefined {
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
   if (Object.keys(v).some(key => !['t', 'event_uid', 'kind', 'team_id', 'conversation_uid', 'message_uid', 'revision', 'event_at'].includes(key))) return undefined
   if (!['team.message.changed', 'team.receipt.changed', 'team.access.changed', 'team.channel.changed', 'team.profile.changed'].includes(String(v.kind))) return undefined
   const eventUid = nonEmptyString(v.event_uid), eventAtMillis = positiveInteger(v.event_at)
   if (!eventUid || !eventAtMillis || !positiveInteger(v.revision)) return undefined
-  return { eventUid, eventAtMillis }
+  return { eventUid, eventAtMillis, receiptOnly: v.kind === 'team.receipt.changed' }
 }
 
 export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
@@ -760,7 +761,7 @@ export class ArkmeChatRealtimeRuntime {
       ?? messagePreparing?.eventAtMillis
       ?? hint?.eventAtMillis
     if (teamNotification) {
-      this.advanceRevision('team-invalidation', { connectionUserId, connectionSignal })
+      this.advanceRevision('team-invalidation', { connectionUserId, connectionSignal, teamReceiptOnly: teamNotification.receiptOnly })
     } else if (policyUpdated !== undefined) {
       this.advanceRevision('chat-policy-invalidation', { policyUpdated, connectionUserId, connectionSignal })
     } else if (memberJoined !== undefined) {
@@ -803,6 +804,7 @@ export class ArkmeChatRealtimeRuntime {
       projectionInvalidation?: ArkmeProjectionInvalidatedHint
       timelineChanged?: ArkmeChatTimelineChangedHint
       messagePreparing?: ArkmeChatMessagePreparingHint
+      teamReceiptOnly?: boolean
       connectionUserId?: number
       connectionSignal?: AbortSignal
       connectionStartedAtMillis?: number
@@ -818,6 +820,7 @@ export class ArkmeChatRealtimeRuntime {
       projectionInvalidation,
       timelineChanged,
       messagePreparing,
+      teamReceiptOnly,
       connectionUserId,
       connectionSignal,
       connectionStartedAtMillis,
@@ -830,6 +833,7 @@ export class ArkmeChatRealtimeRuntime {
     const notice: ArkmeChatRealtimeNotice = {
       state,
       cause,
+      ...(teamReceiptOnly === undefined ? {} : {teamReceiptOnly}),
       ...(memberJoined === undefined ? {} : { memberJoined }),
       ...(memberEvent === undefined ? {} : { memberEvent }),
       ...(timelineChanged === undefined ? {} : { timelineChanged }),
