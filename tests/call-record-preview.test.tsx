@@ -4,6 +4,7 @@ import { ArkmeCallRecordContent } from '../src/client/ArkmeCallRecordContent.js'
 import { ArkmeCallDetailDrawer } from '../src/client/ArkmeCallDetailDrawer.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { callArkme } from '../src/client/api.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { callVideoPerspectiveLabel } from '../src/client/call-detail-presentation.js'
 import type { ArkmeCallDetail, ArkmeTimelineItem } from '../src/types.js'
 
@@ -19,8 +20,12 @@ const detail: ArkmeCallDetail = {
 }
 const call = { callRef: 'sealed-call', mediaType: 'video' as const, text: '视频通话 01:05' }
 let view: ReactTestRenderer | undefined
-beforeEach(() => { vi.mocked(callArkme).mockReset() })
-afterEach(() => { act(() => { view?.unmount() }); view = undefined; vi.unstubAllGlobals() })
+beforeEach(() => {
+  vi.mocked(callArkme).mockReset()
+  arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
+  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 42 })
+})
+afterEach(() => { act(() => { view?.unmount() }); view = undefined; vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('call quick note previews', () => {
   it('resolves omitted peer flags and video owners without using the page title', () => {
@@ -62,13 +67,13 @@ describe('call quick note previews', () => {
     const open = vi.fn()
     await act(async () => { view = create(<ArkmeCallRecordContent call={call} {...(interactive ? { onOpenDetail: open } : {})} />) })
     const previews = view!.root.findByProps({ 'aria-label': '通话视频预览' })
-    expect(previews.findAll(node => node.type === 'span' && node.children.some(child => typeof child === 'string'))).toHaveLength(0)
+    expect(previews.findAll(node => node.type === 'span' && node.props.role !== 'status' && node.children.some(child => typeof child === 'string'))).toHaveLength(0)
     const frames = previews.findAll(node => node.type === 'span' && node.props.style?.aspectRatio === '9 / 16')
     expect(frames).toHaveLength(2)
     for (const frame of frames) {
       const wrapper = interactive ? frame.parent!.parent! : frame.parent!
       expect(frame.props.style).toMatchObject({ aspectRatio: '9 / 16' })
-      expect(wrapper.props.style).toMatchObject({ display: 'block', width: 88 })
+      expect(wrapper.props.style).toMatchObject({ display: 'block', width: 64 })
       expect(wrapper.props.style.gap).toBeUndefined()
       expect(wrapper.children).toHaveLength(1)
     }
@@ -87,6 +92,9 @@ describe('call quick note previews', () => {
     const video = view!.root.findByType('video')
     expect(video.props).toMatchObject({ muted: true, preload: 'metadata' })
     expect(video.props.autoPlay).toBeUndefined()
+    expect(video.parent!.findAllByProps({ role: 'status' })).toHaveLength(1)
+    act(() => { video.props.onLoadedData() })
+    expect(video.parent!.findAllByProps({ role: 'status' })).toHaveLength(0)
     act(() => { video.props.onError() })
     expect(JSON.stringify(view!.toJSON())).toContain('预览暂不可用')
   })
@@ -131,9 +139,85 @@ describe('call quick note previews', () => {
     vi.mocked(callArkme).mockRejectedValue(new Error('network'))
     await act(async () => { view = create(<ArkmeCallRecordContent call={{ ...call, summaryText: '已有摘要' }} />) })
     expect(JSON.stringify(view!.toJSON())).toContain('已有摘要')
+    expect(view!.root.findByType('button').children).toContain('预览未加载 · 重试')
     vi.mocked(callArkme).mockResolvedValue(detail)
     await act(async () => { view!.update(<ArkmeCallRecordContent call={{ ...call, mediaType: 'audio' }} revision={2} />) })
     expect(view!.root.findAllByProps({ 'aria-label': '通话视频预览' })).toHaveLength(0)
+  })
+
+  it('retains both previews across rotating call references and background revision refreshes', async () => {
+    let resolveRefresh!: (value: ArkmeCallDetail) => void
+    vi.mocked(callArkme).mockResolvedValueOnce(detail).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve as typeof resolveRefresh }))
+    const stable = { ...call, stableId: 'stable-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={{ ...stable, callRef: 'rotated' }} revision={1} />) })
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={{ ...stable, callRef: 'rotated' }} revision={2} />) })
+    expect(vi.mocked(callArkme).mock.calls[1]![1]).toEqual({ callRef: 'rotated' })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { resolveRefresh({ ...detail, summaryText: '更新后的摘要' }) })
+    expect(JSON.stringify(view!.toJSON())).toContain('更新后的摘要')
+  })
+
+  it('reuses recent previews when returning to a conversation but clears them on account changes', async () => {
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    const stable = { ...call, stableId: 'stable-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} />) })
+    act(() => { view!.unmount() })
+    await act(async () => { view = create(<ArkmeCallRecordContent call={{ ...stable, callRef: 'rotated' }} />) })
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    vi.mocked(callArkme).mockImplementation(() => new Promise(() => {}))
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 77 }) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    act(() => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 42 }) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+  })
+
+  it('bounds automatic retries, preserves old media, and lets a manual retry use the latest reference', async () => {
+    vi.useFakeTimers()
+    vi.mocked(callArkme).mockResolvedValueOnce(detail).mockRejectedValue(new Error('temporary network failure'))
+    const stable = { ...call, stableId: 'stable-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5500) })
+    expect(callArkme).toHaveBeenCalledTimes(4) // initial success + three attempts
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+    expect(callArkme).toHaveBeenCalledTimes(4)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={{ ...stable, callRef: 'fresh-reference' }} revision={2} />) })
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    await act(async () => { view!.root.findByType('button').props.onClick({ stopPropagation() {} }) })
+    expect(vi.mocked(callArkme).mock.lastCall?.[1]).toEqual({ callRef: 'fresh-reference' })
+    expect(JSON.stringify(view!.toJSON())).not.toContain('预览未加载')
+  })
+
+  it('removes cached media when the server confirms it is unavailable or access is denied', async () => {
+    vi.mocked(callArkme).mockResolvedValueOnce(detail).mockResolvedValueOnce({ ...detail, videoRecord: { available: false, source: 'real' } })
+    const stable = { ...call, stableId: 'stable-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    vi.mocked(callArkme).mockResolvedValueOnce(detail)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={3} />) })
+    vi.mocked(callArkme).mockRejectedValueOnce({ body: { code: 'forbidden', retryable: false } })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={4} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+  })
+
+  it('does not keep exposing a preview after its access reference is removed or the account logs out', async () => {
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    const stable = { ...call, stableId: 'stable-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={{ stableId: stable.stableId, mediaType: 'video', text: call.text }} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' }) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    expect(callArkme).toHaveBeenCalledTimes(1)
   })
 
   it('keeps pending/failed summaries distinct and never requests missing references', async () => {
