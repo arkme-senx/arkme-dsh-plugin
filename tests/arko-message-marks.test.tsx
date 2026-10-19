@@ -135,7 +135,12 @@ it('enables marking a newly completed synchronous reply without reloading or mov
   })
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
   await click([...document.querySelectorAll('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!)
-  await waitForUi(() => expect(body(4)).not.toBeNull())
+  // A real send restores composer focus on the next frame. Finish that transition
+  // before simulating a user's new selection; otherwise jsdom can steal the range.
+  await waitForUi(() => {
+    expect(body(4)).not.toBeNull()
+    expect(document.activeElement?.getAttribute('role')).toBe('textbox')
+  })
   const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
   Object.defineProperty(viewport, 'scrollHeight', { value: 1000 })
   Object.defineProperty(viewport, 'clientHeight', { value: 300 })

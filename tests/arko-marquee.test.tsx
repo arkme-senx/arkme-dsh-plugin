@@ -1,3 +1,13 @@
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+// Annotation geometry is exercised with real DOM in arko-message-marks.test.tsx.
+// This renderer-only suite keeps its focus on navigation/selection/orchestration.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from '../src/client/message-selection-presentation.js'
