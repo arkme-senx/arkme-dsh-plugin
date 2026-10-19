@@ -13,7 +13,7 @@ import { arkmeUi } from '../ui-controller.js'
 import { ConversationActivity } from './ConversationActivity.js'
 import { useConversationWords } from './use-conversation-words.js'
 
-const style = `
+export const conversationAnalysisStyles = `
 .conversation-words{font-size:13px;line-height:1.6}
 .conversation-words button,.conversation-words select,.conversation-words input{font:inherit;color:inherit;max-width:100%;box-sizing:border-box}
 .conversation-words button{cursor:pointer;background:transparent;border:1px solid ${arkmeTheme.borderSoft};border-radius:6px;padding:4px 8px}
@@ -74,7 +74,7 @@ export function ConversationAnalysisPanel({ source, accountScope, refreshRevisio
   const query: ConversationWordsQuery = { accountScope, sourceRef: source.sourceRef, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...bounds, sender }
   const queryKey = JSON.stringify(query)
   const choose = (p: ConversationWordParticipant | undefined) => { setPerson(p); setSender(p?.isSelf ? 'self' : p?.ref ?? 'all'); setPeopleOpen(false) }
-  return <><style>{style}</style><ArkmeDetailShell title={tr('对话分析')} subtitle={source.displayName} label={tr('对话分析面板')} className="conversation-words" onClose={onClose}
+  return <><style>{conversationAnalysisStyles}</style><ArkmeDetailShell title={tr('对话分析')} subtitle={source.displayName} label={tr('对话分析面板')} className="conversation-words" onClose={onClose}
     closeLabel={tr('关闭对话分析')} widthPreferenceKey="arkme:conversation-words-width:v1" resizeLabel={tr('调整对话分析宽度')}
     {...(returnFocusRef ? { returnFocusRef } : {})} style={{ zIndex: 32 }} onPointerDownOutside={event => {
       if (event.target instanceof Node && returnFocusRef?.current?.contains(event.target)) return

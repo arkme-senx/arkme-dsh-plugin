@@ -1,3 +1,4 @@
+import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
 import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
 import { ArkmeMessageSnapshotDialog } from '../src/client/ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
@@ -76,6 +77,25 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')?.[1]).toMatchObject({replyToRef:'parent-ref'})
     expect(JSON.parse(localStorage.getItem(storageKey)!).replyTarget).toBeUndefined()
     expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+  })
+  it('locates a bounded historical window and keeps background recovery in that window', async () => {
+    const old: TeamMessage = {ref:'old-ref',key:'old',seq:10,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
+    const head = {...old,key:'new',seq:100}, later = {...old,key:'later',seq:60}
+    mocks.call.mockImplementation(async (op,p) => op === 'team.app.timeline' ? {conversation:{...conversation,lastSeq:100},messages:p.beforeSeq===86?[later]:p.beforeSeq?[old]:[head],hasMore:p.beforeSeq===86||!p.beforeSeq,beforeSeq:p.beforeSeq===86?60:p.beforeSeq?10:100} : {})
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(old,new AbortController().signal))
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    await act(async()=>{invalidateTeamMessages('account');await tick()})
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
+    const readsBefore=mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').length
+    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(later,new AbortController().signal))
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline')).toHaveLength(readsBefore+1)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('later')
+    const latestButton=renderer!.root.findAllByType('button').find(node=>node.children.includes('回到最新消息'))!
+    await act(async()=>{latestButton.props.onClick();await tick()})
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('new')
   })
   it('can cancel extension without clearing the existing message draft', async () => {
     localStorage.setItem(storageKey,JSON.stringify({text:'已有草稿',assets:[],replyTarget:{ref:'parent',key:'parent',seq:1,senderName:'同事',text:'问题'}}))
@@ -545,7 +565,7 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
     await act(async () => renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
     await act(async () => avatar().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 20, clientY: 20 }))
-    await act(async () => { renderer!.root.findByType(ArkmeActionMenu).props.actions[0].onSelect(); await tick() })
+    await act(async () => { renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect(); await tick() })
     expect(renderer!.root.findAllByType(TeamVisitorRecords)).toHaveLength(1)
     await act(async () => renderer!.root.findByType(TeamVisitorRecords).props.onLocate(incoming, new AbortController().signal))
     expect(renderer!.root.findAllByType(TeamConversationMessage)[0]!.props.located).toBe(true)
@@ -576,7 +596,7 @@ describe('Team send UI recovery', () => {
     await act(async()=>detail.props.onLocate())
     expect(row().props.located).toBe(true)
     await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:10,clientY:10}))
-    await act(async()=>renderer!.root.findByType(ArkmeActionMenu).props.actions[0].onSelect())
+    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect())
     expect(renderer!.root.findByType(TeamVisitorRecords).props.person).toMatchObject({personKey:'person-key',nickname:'宏顺'})
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
@@ -611,7 +631,7 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('与作者的历史私聊')
-    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.home.visibility')).toBe(false)
   })
 
@@ -619,7 +639,7 @@ describe('Team send UI recovery', () => {
     const target = { ...conversation, side, channel: { ...conversation.channel, canManage: true } }
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
-    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/屏蔽此用户|解除屏蔽|对话选项/)
     expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(false)
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.block')).toBe(false)

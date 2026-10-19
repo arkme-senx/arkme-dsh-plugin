@@ -66,8 +66,8 @@ import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent }
 import { loadTeamDraft, persistTeamDraft, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
-import { useSelectedMessageSearch } from './message-selection-search.js'
-import { TeamSelectedTextSearch } from './TeamSelectedTextSearch.js'
+import { TeamConversationTools } from './TeamConversationTools.js'
+import { teamHistoryDate } from './team-history-browser.js'
 import { applyMessageTextReplacement, resolveMessageTextReplacement } from './message-text-replacement.js'
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { teamMessageMarkTransport } from './team-message-marks.js'
@@ -249,8 +249,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const closeSnapshot = useCallback(() => setSnapshotKey(undefined), [])
   const [showsInputTime, setShowsInputTime] = useArkmeComposerInputTimePreference()
   const [visitorRecords, setVisitorRecords] = useState(false), [recordPerson, setRecordPerson] = useState<TeamIdentity>(), [locatedKey, setLocatedKey] = useState<string>()
-  const [selectedSearch, setSelectedSearch] = useState<{ text: string }>()
-  useSelectedMessageSearch(conversation.ref, text => { setDetailKey(undefined); setSelectedSearch({ text }) })
+  const paneHost = useRef<HTMLElement>(null)
+  const historyWindow = useRef(0)
+  const [historyWindowOpen, setHistoryWindowOpen] = useState(false)
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
@@ -331,11 +332,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     receiptRef.current = message; setReceiptMessage(message)
     return receiptStore.load(message, more, true)
   }, [receiptStore])
-  const refresh = useCallback(async (beforeSeq = 0) => {
+  const refresh = useCallback(async (beforeSeq = 0, replace = false) => {
     const token = ++generation.current
+    const windowBefore = historyWindow.current
     try {
-      let data = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, beforeSeq }, ctrl.current.signal)
-      const head = data.conversation, old = latest.current, oldest = old?.messages[0]?.seq ?? 0
+      let data = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: beforeSeq || windowBefore }, ctrl.current.signal)
+      const head = data.conversation, old = replace ? undefined : latest.current, oldest = old?.messages[0]?.seq ?? 0
       const messages = new Map((beforeSeq && old ? [...old.messages, ...data.messages] : data.messages).map(m => [m.key, m]))
       while (!beforeSeq && oldest > 0 && data.hasMore && data.beforeSeq > oldest) {
         const before = data.beforeSeq
@@ -355,7 +357,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         receiptRef.current = undefined; setReceiptMessage(undefined)
       }
       receiptStore.refreshVisible(true)
-      if (beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
+      if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
   }, [conversation.ref, receiptStore])
@@ -576,7 +578,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
   const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
-    onOpen: () => { setSelectedSearch(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
+    onOpen: () => { setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
     resolveIdentity: personName,
     onRecords: person => { setDetailKey(undefined); setRecordPerson(person); setVisitorRecords(true) },
   })
@@ -655,7 +657,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     } catch (error) { if (!ctrl.current.signal.aborted) setError(errorText(error)) }
     finally { locateReplyBusy.current = false; if (!ctrl.current.signal.aborted) setLocatingReply(undefined) }
   }
-  return <section className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
+  return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref}
       markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove}
@@ -680,13 +682,40 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           await refresh(); onChanged()
         } }
       }} />}
-    {selectedSearch && <TeamSelectedTextSearch conversationRef={conversation.ref} accountKey={accountKey} queryRequest={selectedSearch} onClose={() => setSelectedSearch(undefined)} />}
     <header style={messageLayout.header}>
       <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}>
         <div style={messageLayout.titleLine}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><TeamVisitorMembership conversation={current} /></div>
         <small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small>
       </div></div>
+      <TeamConversationTools key={`${accountKey}:${conversation.key}`} conversation={current} accountKey={accountKey} host={paneHost}
+        overlayOpen={!!(detailKey || snapshotKey || visitorRecords || receiptMessage)} resolveIdentity={personName} onOpenPanel={() => { setDetailKey(undefined); setSnapshotKey(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) }}
+        getReadingDate={() => {
+          const node = scroller.current
+          if (!node) return undefined
+          const top = node.getBoundingClientRect().top
+          const row = [...node.querySelectorAll<HTMLElement>('[data-team-message-key]')].find(el => el.getBoundingClientRect().bottom > top)
+          const message = latest.current?.messages.find(m => m.key === row?.dataset.teamMessageKey)
+          return message ? teamHistoryDate(message.createdAt) : undefined
+        }}
+        onLocate={async (message, signal) => {
+          signal.throwIfAborted()
+          let page = latest.current
+          if (!page?.messages.some(m => m.key === message.key)) {
+            historyWindow.current = message.seq + 26
+            setHistoryWindowOpen(true)
+            page = await refresh(0, true)
+          }
+          signal.throwIfAborted()
+          const found = page?.messages.find(m => m.key === message.key)
+          if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
+          setDetailKey(undefined); setLocatedKey(undefined)
+          requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
+        }}/>
     </header>
+    {historyWindowOpen && <div style={{ textAlign: 'center', padding: 6 }}><button type="button" onClick={() => {
+      historyWindow.current = 0; setHistoryWindowOpen(false); latest.current = undefined; viewport.current = undefined
+      void refresh(0, true)
+    }}>{tr('回到最新消息')}</button></div>}
     {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}
     {error && <div role="alert" className="team-error">{error}</div>}
     {askDsh.status && <div role="status" aria-live="polite" style={{ padding: '8px 16px', color: arkmeTheme.secondary, fontSize: 12 }}>{askDsh.status}</div>}
