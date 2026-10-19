@@ -435,6 +435,23 @@ export class TeamAppService {
         return {showInHome:data.show_in_home,version:num(data.version)}
       }
       case 'team.app.read': return await post('conversations/read/advance', { ...await conversation(), read_seq: num(p.readSeq) })
+      case 'team.app.read-states': {
+        if (!Array.isArray(p.conversationRefs) || !p.conversationRefs.length || p.conversationRefs.length > 100) throw invalid()
+        const contexts = await Promise.all(p.conversationRefs.map(ref => this.open('conversation', ref, actor)))
+        const first = contexts[0]!, ids = contexts.map(v => str(v.conversation_uid))
+        if (new Set(ids).size !== ids.length || contexts.some(v => v.side !== first.side)) throw invalid()
+        const data = await post('conversations/read-state/query-list', {side: first.side, conversation_uids: ids}, true)
+        const rows = list(data.items), byId = new Map(rows.map(v => [str(v.conversation_uid), v]))
+        if (!Array.isArray(data.items) || rows.length !== ids.length || byId.size !== ids.length) throw invalid()
+        return await Promise.all(ids.map(async id => {
+          const row = byId.get(id)
+          if (!row || typeof row.accessible !== 'boolean') throw invalid()
+          const key = await this.key(`${id}:${str(first.side)}`, actor)
+          if (!row.accessible) return {key, accessible: false}
+          if (['last_seq', 'my_read_seq', 'unread'].some(k => !Number.isSafeInteger(row[k]) || Number(row[k]) < 0)) throw invalid()
+          return {key, accessible: true, lastSeq: num(row.last_seq), myReadSeq: num(row.my_read_seq), unread: num(row.unread)}
+        }))
+      }
       case 'team.app.receipt-summaries': {
         if (!Array.isArray(p.messageRefs) || !p.messageRefs.length || p.messageRefs.length > 50) throw invalid()
         const contexts = await Promise.all(p.messageRefs.map(ref => this.open('message', ref, actor)))

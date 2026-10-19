@@ -46,6 +46,7 @@ it('loads bounded summaries, keeps paged totals and refreshes receipts without t
     else if(path.endsWith('/message-channel/get')) data=channel
     else if(path.endsWith('/conversations/list')) data={items:input.side==='team'?[conversation]:[],has_more:false}
     else if(path.endsWith('/timeline/page')) data={conversation,messages,has_more:false,before_seq:0}
+    else if(path.endsWith('/read-state/query-list')) data={items:input.conversation_uids.map(conversation_uid=>({conversation_uid,accessible:true,last_seq:2,my_read_seq:2,unread:0}))}
     else if(path.endsWith('/read-receipts/summary-list')) data={items:input.message_uids.map(message_uid=>({message_uid,team_read:true,summary:summary(),...(message_uid==='colleague'?{visitor_read:true}:{})})),last_seq:2,my_read_seq:2,unread:0}
     else if(path.endsWith('/read-receipts/query')) data={summary:summary(),team_read:true,visitor_read:true,has_more:!input.cursor,next_cursor:input.cursor?'':'next',members:(input.cursor?[3]:[1,2]).map(id=>({user_id:99002000+id,identity:{nickname:`成员${id}`},read:read===1000||id===1}))}
     else if(path.endsWith('/attention')) data={external:false,team:false,applications:false}

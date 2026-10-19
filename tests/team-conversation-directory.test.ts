@@ -100,3 +100,23 @@ it('stops invalid pagination instead of repeatedly fetching the same page', asyn
   expect(mock.mock.calls).toHaveLength(count)
   expect(readTeamDirectory('a').items).toHaveLength(1)
 })
+
+it('receipt invalidation reads only cursor metadata and retains previews, identity and pagination', async () => {
+  const { invalidateTeamMessages } = await import('../src/client/team-messaging-events.js')
+  const preview = {text:'保留正文预览',status:'available',hasMedia:false}
+  let revoke = false
+  mock.mockImplementation(async (op, p) => op === 'team.app.read-states'
+    ? [{key:item('team').key,accessible:!revoke,lastSeq:1,myReadSeq:1,unread:0}]
+    : {items:p.side==='team'?[{...item('team'),preview}]:[],hasMore:false})
+  stops.push(startTeamDirectory('a'))
+  await vi.waitFor(()=>expect(readTeamDirectory('a').items).toHaveLength(1))
+  const before = readTeamDirectory('a').items[0]!
+  mock.mockClear(); invalidateTeamMessages('a',true)
+  await vi.waitFor(()=>expect(readTeamDirectory('a').items[0]?.unread).toBe(0))
+  expect(mock.mock.calls.map(v=>v[0])).toEqual(['team.app.read-states'])
+  expect(readTeamDirectory('a').items[0]!.preview).toBe(before.preview)
+  expect(readTeamDirectory('a').items[0]!.channel).toBe(before.channel)
+  expect(readTeamDirectory('a').loading).toBe(false)
+  revoke=true;invalidateTeamMessages('a',true)
+  await vi.waitFor(()=>expect(readTeamDirectory('a').items).toEqual([]))
+})

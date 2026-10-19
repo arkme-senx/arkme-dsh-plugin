@@ -500,3 +500,20 @@ describe('Team profile owner adapter',()=>{
   expect(f.requests).toHaveLength(2)
  })
 })
+
+it('projects scoped conversation cursor metadata without fetching bodies and rejects incomplete batches', async () => {
+  let broken = false
+  const f=fixture((path,body)=>path.endsWith('/read-state/query-list')
+    ? {items:broken?[]:(body.conversation_uids as string[]).map(conversation_uid=>({conversation_uid,accessible:true,last_seq:2,my_read_seq:2,unread:0}))}
+    : {channel,conversation})
+  const opened=await open(f), ref=opened.conversation!.ref
+  const data=await f.service.execute('team.app.read-states',{conversationRefs:[ref]})
+  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0}])
+  expect(f.requests.at(-1)!.body).toEqual({side:'external',conversation_uids:[conversation.conversation_uid]})
+  expect(JSON.stringify(data)).not.toContain(conversation.conversation_uid)
+  broken=true
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref,ref]})).rejects.toThrow()
+  f.changeAccount()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
+})

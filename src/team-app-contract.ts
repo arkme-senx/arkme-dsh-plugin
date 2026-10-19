@@ -5,7 +5,7 @@ import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
-  | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'block'
+  | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
@@ -60,3 +60,6 @@ export interface TeamHomeVisibility { showInHome: boolean; version: number }
 export interface TeamJotmoIdAvailability { available: boolean; reason: string }
 
 export interface TeamRecordSource { name: string; conversationRef: string }
+
+export type TeamConversationReadState = {key: string; accessible: false}
+  | {key: string; accessible: true; lastSeq: number; myReadSeq: number; unread: number}

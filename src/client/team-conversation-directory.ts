@@ -1,15 +1,15 @@
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
-import type { TeamChannel, TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
+import type { TeamChannel, TeamConversation, TeamPage, TeamSide, TeamConversationReadState } from '../team-app-contract.js'
 
 type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
 const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
 const listeners = new Set<() => void>()
-let account = '', snapshot = empty, request: ((more?: boolean) => Promise<void>) | undefined
+let account = '', snapshot = empty, request: ((more?: boolean, readStateOnly?: boolean) => Promise<void>) | undefined
 let discard: ((conversation: TeamConversation) => void) | undefined
 export const subscribeTeamDirectory = (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
 export const readTeamDirectory = (key: string): Snapshot => key === account ? snapshot : empty
-export const refreshTeamDirectory = (key: string, more = false): Promise<void> => key === account ? request?.(more) ?? Promise.resolve() : Promise.resolve()
+export const refreshTeamDirectory = (key: string, more = false, readStateOnly = false): Promise<void> => key === account ? request?.(more, readStateOnly) ?? Promise.resolve() : Promise.resolve()
 const emit = () => { for (const listener of listeners) listener() }
 export function discardTeamDirectory(key: string, conversation: TeamConversation): void {
   if (key !== account) return
@@ -20,19 +20,39 @@ export function discardTeamDirectory(key: string, conversation: TeamConversation
 export function startTeamDirectory(key: string): () => void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {}
   const controller = new AbortController(), pages = new Map<TeamSide, TeamPage<TeamConversation>>()
-  let running = false, again = false, revision = 0
+  let running = false, again = false, fullAgain = false, revision = 0
   account = key; snapshot = empty; emit()
-  const refresh = async (more = false) => {
+  const refresh = async (more = false, readStateOnly = false) => {
     if (controller.signal.aborted || account !== key) return
-    if (running) { if (!more) again = true; return }
+    if (running) { if (!more) { again = true; fullAgain ||= !readStateOnly }; return }
     running = true
     const token = revision
-    snapshot = { ...snapshot, loading: true }; emit()
+    if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined
     await Promise.all((['team', 'external'] as const).map(async side => {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
       try {
+        if (readStateOnly) {
+          if (!previous?.items.length) return
+          const states = new Map<string, TeamConversationReadState>()
+          for (let i = 0; i < previous.items.length; i += 100) {
+            const rows = await callArkme<TeamConversationReadState[]>('team.app.read-states', {
+              conversationRefs: previous.items.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key,
+            }, controller.signal)
+            for (const state of rows) states.set(state.key, state)
+          }
+          if (!controller.signal.aborted && account === key && token === revision) {
+            pages.set(side, {...previous, items: previous.items.flatMap(c => {
+              const state = states.get(c.key)
+              if (!state) throw new Error('阅读状态返回不完整')
+              if (!state.accessible) return []
+              if (state.lastSeq < c.lastSeq || state.myReadSeq < c.myReadSeq) return [c]
+              return [{...c, myReadSeq: state.myReadSeq, unread: state.unread}]
+            })})
+          }
+          return
+        }
         if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
         let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
         if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
@@ -54,7 +74,7 @@ export function startTeamDirectory(key: string): () => void {
     if (controller.signal.aborted || account !== key) return
     const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
     snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
-    if (again) { again = false; await refresh() }
+    if (again) { const full = fullAgain; again = false; fullAgain = false; await refresh(false, !full) }
   }
   request = refresh
   discard = conversation => {
@@ -64,7 +84,7 @@ export function startTeamDirectory(key: string): () => void {
     snapshot = { ...snapshot, items: snapshot.items.filter(c => c.side !== conversation.side || c.channel.jotmoId !== conversation.channel.jotmoId) }; emit()
     void refresh()
   }
-  const stop = subscribeTeamMessageChanges(changed => { if (changed === key) void refresh() })
+  const stop = subscribeTeamMessageChanges((changed, receiptOnly) => { if (changed === key) void refresh(false, receiptOnly === true) })
   const focus = () => { void refresh() }
   const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 60_000)
   window.addEventListener('focus', focus)

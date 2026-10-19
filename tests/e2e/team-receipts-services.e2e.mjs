@@ -52,9 +52,9 @@ it('runs incoming, colleague and own receipts through real services and revokes 
       else if (path.endsWith('/get-user-info')) {
         const id = JSON.parse(Buffer.from(req.headers.authorization.split(' ')[1].split('.')[1], 'base64url')).user_id
         data = { ...identity(id), phone: '13800000000' }
-      } else if (/^\/api\/(v1|public\/v1)\/team\//.test(path) || /^\/api\/v1\/(records|files|sse)\//.test(path)) {
+      } else if (/^\/api\/(v1|public\/v1)\/team\//.test(path) || /^\/api\/v1\/(records|files|sse)\//.test(path) || path.startsWith('/api/internal/v1/record/')) {
         calls.push({ path, input })
-        const upstreamOrigin = path.includes('/team/') ? origins.team : path.includes('/sse/') ? origins.im : origins.record
+        const upstreamOrigin = path.startsWith('/api/internal/v1/record/') ? origins.record : path.includes('/team/') ? origins.team : path.includes('/sse/') ? origins.im : origins.record
         const upstream = await fetch(`${upstreamOrigin}${req.url}`, { method: req.method, headers: req.headers, body: req.method === 'GET' ? undefined : body, signal: cancel.signal })
         res.writeHead(upstream.status, Object.fromEntries([...upstream.headers].filter(([k]) => !['transfer-encoding', 'content-encoding', 'content-length'].includes(k))))
         if (path.includes('/sse/')) {
@@ -111,6 +111,8 @@ it('runs incoming, colleague and own receipts through real services and revokes 
     await details.getByText(names.get(users.other), { exact: true }).waitFor()
     expect(await details.getByText(names.get(users.late), { exact: true }).count()).toBe(0)
     const bodyReads = calls.filter(c => c.path.endsWith('/timeline/page')).length
+    const recordReads = calls.filter(c => c.path === '/api/internal/v1/record/team/read').length
+    expect(recordReads).toBeGreaterThan(0)
     await row.locator('.arkme-timed-bubble').evaluate(n => window.__realReceiptBubble = n)
     const advance = async id => teamCall(id, 'conversations/read/advance', { conversation_uid: uid, side: 'team', read_seq: reply.seq })
     await advance(users.owner)
@@ -119,6 +121,7 @@ it('runs incoming, colleague and own receipts through real services and revokes 
     await poll(() => details.innerText()).toContain('3/3')
     await poll(() => details.getByText('已读', { exact: true }).count()).toBe(3)
     expect(calls.filter(c => c.path.endsWith('/timeline/page')).length).toBe(bodyReads)
+    expect(calls.filter(c => c.path === '/api/internal/v1/record/team/read').length).toBe(recordReads)
     expect(await editor.textContent()).toBe('保留的真实草稿')
     expect(await row.locator('.arkme-timed-bubble').evaluate(n => n === window.__realReceiptBubble)).toBe(true)
     const external = await teamCall(users.visitor, 'conversations/read-receipts/summary-list', { conversation_uid: uid, side: 'external', message_uids: [incoming.message_uid] })

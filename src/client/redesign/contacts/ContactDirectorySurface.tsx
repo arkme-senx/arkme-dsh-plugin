@@ -323,8 +323,8 @@ export function ContactDirectorySurface({
     })
   }, [active, accountKey, commit])
 
-  useEffect(() => subscribeTeamMessageChanges(account => {
-    if (account === accountKey && active) load('teams', 'replace', true)
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
+    if (account === accountKey && active && !receiptOnly) load('teams', 'replace', true)
   }), [accountKey, active, load])
 
   useEffect(() => {
