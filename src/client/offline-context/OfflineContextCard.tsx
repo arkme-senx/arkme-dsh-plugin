@@ -9,7 +9,7 @@ import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
 import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
 import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import type { OfflineContextAction, OfflineContextActions, OfflineContextChange, OfflineContextEntry } from '../../offline-context.js'
-import { canShareOfflineContext, offlineEvidenceRange, selectedOfflineEvidence } from '../../offline-context.js'
+import { canShareOfflineContext, offlineContextSummaryLines, offlineEvidenceRange, selectedOfflineEvidence } from '../../offline-context.js'
 import { ArkmeConfirmDialog } from '../ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from '../locale.js'
 import css from './offline-context.css?inline'
@@ -214,7 +214,7 @@ function OfflineContextCardBody({ entry, actions, preview = false, recoveryPendi
         : dialog === 'range' ? { kind: 'range', evidenceIds: rangeIds } : { kind: 'relink', messageRef })
       }}>
       {dialog === 'withdraw' ? <p>{tr('撤回后如需再次分享，请重新预览并确认。')}</p> : dialog === 'share' ? <div className="arkme-offline-share-preview">
-        {preview ? <><strong>{entry.title}</strong><ul>{entry.summary.map((line, index) => <li key={index}>{line}</li>)}</ul></> : frozen ? <><strong>{frozen.title}</strong><ul><li>{frozen.summary}</li></ul></> : <p role="status">{tr('正在取得分享预览…')}</p>}
+        {preview ? <><strong>{entry.title}</strong><ul>{entry.summary.map((line, index) => <li key={index}>{line}</li>)}</ul></> : frozen ? <><strong>{frozen.title}</strong><ul>{offlineContextSummaryLines(frozen.summary).map((line, index) => <li key={index}>{line}</li>)}</ul></> : <p role="status">{tr('正在取得分享预览…')}</p>}
         <label><input type="checkbox" checked={includeTranscript} onChange={event => setIncludeTranscript(event.target.checked)} />{tr('附上所选转写原文')}</label>
         {includeTranscript && (preview ? selected.map(item => <p key={item.id}>{item.speaker}：{item.text}</p>) : frozen?.transcript.map((line, index) => <p key={index}>{line}</p>))}
         <small>{tr('仅分享以上内容，不包含原始音频或其他录音片段。')}{preview ? ` ${tr('这是交互演示，不会发送消息。')}` : ''}</small>

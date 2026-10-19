@@ -169,3 +169,19 @@ it('projects the authoritative current selection into opaque range references', 
   await expect(f.service.offlineContext(request)).rejects.toThrow()
   f.service.dispose()
 })
+
+it.each([
+  ['第一条结论。\n第二条🙂结论。', ['第一条结论。', '第二条🙂结论。']],
+  ['单条结论。', ['单条结论。']],
+  ['\r\n保留  原文空格。\r\n\r\n第二条。\r\n', ['保留  原文空格。', '第二条。']],
+])('preserves backend summary points in the original card projection: %s', async (summary, points) => {
+  const f = await fixture()
+  f.post.mockImplementation(async path => {
+    if (path.endsWith('/capability')) return { supported: true, version: 1, timeline_version: 2 }
+    if (path.endsWith('/list')) return { items: [{ ...association, summary }], has_more: false }
+    throw new Error('unexpected request')
+  })
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  expect(page.entries[0]!.summary).toEqual(points)
+  f.service.dispose()
+})

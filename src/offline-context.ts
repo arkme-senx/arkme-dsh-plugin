@@ -1,5 +1,11 @@
 import type { OfflineContextPreview, OfflineContextRangeOptions } from './offline-context-contract.js'
 
+/** Chat separates verified points with newlines. Split only for presentation;
+ * the frozen body and preview reference remain unchanged for sharing. */
+export function offlineContextSummaryLines(summary: string): string[] {
+  return summary.split(/\r?\n/u).filter(line => line.trim().length > 0)
+}
+
 /** Browser view contract; Chat remains the timeline owner. */
 export interface OfflineContextEvidence {
   id: string

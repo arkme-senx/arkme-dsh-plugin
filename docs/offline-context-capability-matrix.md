@@ -47,3 +47,15 @@
 
 
 追加断网复核：Host 已登记但浏览器未收到响应时，现有“核对状态”只读查询 result 和 pending journal，再显示原请求恢复入口。失败复现与修复日志 `/tmp/offline-context-review2-transport-before.log`、`/tmp/offline-context-review2-transport-after.log`；无自动写、无新 requestId，不将无回执当作未执行。
+
+## 2026-10-19 摘要分点修复
+
+本轮是既有展示适配修复，不新增 Host 查询、命令或持久化能力。Chat 的换行摘要由现有 Host 投影恢复为卡片的要点数组；正式冻结预览同样逐点展示，原始冻结正文、签封引用、分享命令不变。单条、多条、空行/CRLF、Unicode 以及预览无写入和确认命令原引用均有回归。
+
+| 能力面 | 本轮范围 |
+| --- | --- |
+| UI | 保持原卡片/分享预览的逐条列表及原有交互，无 CSS 修改 |
+| Host owner | 现有响应的摘要展示投影；权限、版本、journal 与冻结正文保持原合同 |
+| SDK / Tools | 继续消费现有 owner 和公开类型；无新增接口或操作，原生连接回归沿用现有验收 |
+
+本轮门禁：局部 38 项、全量 12,668 项通过 / 21 项跳过，类型检查、构建和打包通过。产物通过官方 CLI 安装至独立 Profile 后，实际浏览器确认候选/确认卡片及冻结分享预览均保持两条独立要点；原生五服务 18 组验收通过。模型输出为合成，不声明真实模型质量；浏览器截图 `/tmp/offline-isolation-runtime/summary-preview.png`。

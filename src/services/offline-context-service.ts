@@ -1,7 +1,7 @@
 import type { MediaService } from './media-service.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
-import type { OfflineContextEntry } from '../offline-context.js'
+import { offlineContextSummaryLines, type OfflineContextEntry } from '../offline-context.js'
 import type { OfflineContextCommand, OfflineContextCommandResult, OfflineContextPort, OfflineContextRequest, OfflineContextJournalEntry } from '../offline-context-contract.js'
 import { TimelineTokenCodec } from './timeline-token.js'
 import type { SourceService } from './source-service.js'
@@ -140,7 +140,7 @@ export class OfflineContextService implements OfflineContextPort {
       const messages = available ? raw.messages : []
       if (!Array.isArray(evidence) || evidence.length > 150 || !Array.isArray(messages) || messages.length > 40) throw invalid()
       const entry: OfflineContextEntry = { id: seal({ id, chat, kind, name }, 'entry'), revision: rev, conversationKey: sourceRef, conversationName: name, conversationKind: kind,
-        startAtMillis: number(raw.occurred_start), endAtMillis: number(raw.occurred_end), title: available ? String(raw.title ?? '') : '', summary: available && raw.summary ? [text(raw.summary, 16000)] : [],
+        startAtMillis: number(raw.occurred_start), endAtMillis: number(raw.occurred_end), title: available ? String(raw.title ?? '') : '', summary: available && raw.summary ? offlineContextSummaryLines(text(raw.summary, 16000)) : [],
         hasSharedSnapshot: raw.shared_message != null, participants: [], reason: available ? String(raw.reason ?? '') : '', state: raw.state as OfflineContextEntry['state'], visibility: 'private', sourceState: available ? 'available' : 'unavailable',
         evidence: [], messages: [], selectedEvidenceIds: [] }
       for (const value of evidence) {

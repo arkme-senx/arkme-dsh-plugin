@@ -220,3 +220,18 @@ it('requires an explicit new range when current sources cannot preserve the old 
   expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'range', evidenceIds: ['s2'] } }))
   await act(async () => renderer.unmount())
 })
+
+it('keeps original card bullets and frozen preview bullets without rewriting the share command', async () => {
+  const transport = actions()
+  transport.preview = vi.fn(async () => ({ previewRef: 'server-frozen', title: '冻结标题', summary: '第一条冻结结论。\n第二条🙂冻结结论。', transcript: [], expiresAtMillis: Date.now() + 300000 }))
+  const renderer = await mount(transport, { summary: ['卡片第一条。', '卡片第二条。'] })
+  const cardList = renderer.root.findByProps({ className: 'arkme-offline-summary' })
+  expect(cardList.findAllByType('li').map(item => text(item.props.children))).toEqual(['卡片第一条。', '卡片第二条。'])
+  await act(async () => { button(renderer, '分享到此对话').props.onClick() })
+  const dialog = renderer.root.findByProps({ role: 'dialog' })
+  expect(dialog.findAllByType('li').map(item => text(item.props.children))).toEqual(['第一条冻结结论。', '第二条🙂冻结结论。'])
+  expect(transport.change).not.toHaveBeenCalled()
+  await act(async () => { button(renderer, '确认分享').props.onClick() })
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'share', includeTranscript: false, previewRef: 'server-frozen' } }))
+  await act(async () => renderer.unmount())
+})
