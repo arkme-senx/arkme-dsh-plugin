@@ -507,6 +507,8 @@ export class ArkmeService {
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
     this.teamApp = new TeamAppService(this.runtime, this.profile, {
       openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
+    }, {
+      privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
     })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,

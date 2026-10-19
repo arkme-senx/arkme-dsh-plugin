@@ -350,6 +350,7 @@ export function ArkmeMemberProfileCard(props: {
   imagePort?: ArkmeAvatarImagePort
   imageKey?: string | undefined
   error?: string
+  hideSend?: boolean
   showTopicNickname?: boolean
   busy: boolean
   onClose: () => void
@@ -372,7 +373,7 @@ export function ArkmeMemberProfileCard(props: {
         ? arkmeTheme.hover
         : arkmeTheme.elevated
   const names = arkmeMemberProfileNames(props.member, props.showTopicNickname === true)
-  return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
+  return <div style={styles.cardScrim} role="presentation" data-arkme-member-profile onMouseDown={event => {
     if (event.target === event.currentTarget) props.onClose()
   }}>
     <section style={styles.card} role="dialog" aria-modal="true" aria-label={tr("{v0} 的用户卡片", { v0: names.displayName })}>
@@ -385,7 +386,7 @@ export function ArkmeMemberProfileCard(props: {
         <h3 style={styles.cardName}>{names.displayName}</h3>
         {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>{tr("主题内昵称：")}{names.topicNickname}</p>}
         {props.error && <p role="alert" style={{ color: arkmeTheme.danger, fontSize: 12, margin: '6px 0' }}>{props.error}</p>}
-        <button data-arkme-feedback="neutral"
+        {!props.hideSend && <button data-arkme-feedback="neutral"
           type="button"
           style={{
             ...styles.cardButton,
@@ -404,7 +405,7 @@ export function ArkmeMemberProfileCard(props: {
           onClick={props.onSend}
         >
           {props.busy ? tr("正在打开…") : tr("发送消息")}
-        </button>
+        </button>}
       </div>
     </section>
   </div>

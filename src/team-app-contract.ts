@@ -8,12 +8,15 @@ export type TeamAppOperation = `team.app.${
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
-  | 'visitor.private.open'
+  | 'visitor.private.open' | 'person.private.open' | 'people.remarks'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
 export interface TeamIdentity {
   nickname: string; imageRef?: string; imageKey?: string
+  /** Viewer-scoped identity; never a display-name match or a public account id. */
+  personKey?: string; personRef?: string; isMe?: boolean
+  publicNickname?: string
   /** Current entitlement from the identity's member_type, never inferred from missing data. */
   memberType?: 'free' | 'vip' | 'svip' | 'unknown'
 }

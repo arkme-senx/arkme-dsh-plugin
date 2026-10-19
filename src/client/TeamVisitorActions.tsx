@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { TeamConversation } from '../team-app-contract.js'
+import type { TeamConversation, TeamIdentity } from '../team-app-contract.js'
 import type { ArkmeOpenPrivateChatResult } from '../types.js'
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
@@ -8,10 +8,12 @@ import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr } from './locale.js'
 
-/** External visitor actions are bound to the conversation, never matched by display name. */
-export function useTeamVisitorActions({ conversation, accountKey, onRecords, onOpen }: {
-  conversation: TeamConversation; accountKey: string; onRecords(): void; onOpen(): void
+/** All people use the same card/menu; identity is bound to the authorized conversation. */
+export function useTeamVisitorActions({ conversation, accountKey, onRecords, onOpen, resolveIdentity }: {
+  conversation: TeamConversation; accountKey: string; onRecords(person?: TeamIdentity): void; onOpen(): void
+  resolveIdentity?(identity: TeamIdentity): TeamIdentity
 }) {
+  const [selected, setSelected] = useState<{ identity: TeamIdentity; visitor: boolean }>()
   const [profile, setProfile] = useState(false), [menu, setMenu] = useState<{ x: number; y: number }>()
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const request = useRef<AbortController>()
@@ -20,14 +22,17 @@ export function useTeamVisitorActions({ conversation, accountKey, onRecords, onO
     close(); setError('')
     return () => { request.current?.abort() }
   }, [conversation.key, accountKey])
-  const visitor = conversation.visitor, name = visitor?.nickname || tr('用户')
+  const chosen = selected?.visitor ? conversation.visitor : selected?.identity ?? conversation.visitor
+  const visitor = chosen && resolveIdentity ? resolveIdentity(chosen) : chosen, name = visitor?.nickname || tr('用户')
   const openPrivate = async () => {
     if (request.current) return
     const controller = new AbortController(); request.current = controller
     setBusy(true); setError('')
     try {
-      const result = await callArkme<ArkmeOpenPrivateChatResult>('team.app.visitor.private.open', {
+      const internal = selected?.visitor === false
+      const result = await callArkme<ArkmeOpenPrivateChatResult>(internal ? 'team.app.person.private.open' : 'team.app.visitor.private.open', {
         conversationRef: conversation.ref, expectedAccountKey: accountKey,
+        ...(internal ? { personRef: visitor?.personRef } : {}),
       }, controller.signal)
       if (!controller.signal.aborted) { setProfile(false); arkmeUi.activateNotificationSource(result.source) }
     } catch (caught) {
@@ -38,21 +43,21 @@ export function useTeamVisitorActions({ conversation, accountKey, onRecords, onO
   }
   return {
     close,
-    avatar: (image: ReactNode) => conversation.side !== 'team' ? image : <button type="button"
-      aria-label={tr('{v0} 的用户卡片', { v0: name })}
+    avatar: (image: ReactNode, identity?: TeamIdentity) => conversation.side !== 'team' || identity && !identity.personRef ? image : <button type="button"
+      aria-label={tr('{v0} 的用户卡片', { v0: identity?.nickname ?? conversation.visitor?.nickname ?? tr('用户') })}
       style={{ display: 'inline-flex', flex: 'none', padding: 0, border: 0, background: 'transparent', borderRadius: '50%', cursor: 'pointer' }}
-      onClick={event => { event.stopPropagation(); onOpen(); setMenu(undefined); setError(''); setProfile(true) }}
-      onContextMenu={event => { event.preventDefault(); event.stopPropagation(); onOpen(); setProfile(false); setMenu({ x: event.clientX, y: event.clientY }) }}
+      onClick={event => { event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setError(''); setProfile(true) }}
+      onContextMenu={event => { event.preventDefault(); event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setProfile(false); setMenu({ x: event.clientX, y: event.clientY }) }}
       onKeyDown={event => { if (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey) {
-        event.preventDefault(); event.stopPropagation(); onOpen(); setProfile(false)
+        event.preventDefault(); event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setProfile(false)
         const rect = event.currentTarget.getBoundingClientRect(); setMenu({ x: rect.left, y: rect.bottom })
       } }}>{image}</button>,
     layer: conversation.side !== 'team' ? null : <>
       {menu && <div style={{ position: 'fixed', width: 0, height: 0 }}><ArkmeActionMenu
         label={tr('{v0} 的成员操作', { v0: name })} point={menu} autoFocus onClose={() => setMenu(undefined)}
-        actions={[{ id: 'owner-records', label: tr('看TA的快记'), onSelect: () => { setMenu(undefined); onRecords() } }]} /></div>}
+        actions={[{ id: 'owner-records', label: tr(visitor?.isMe ? '看我的快记' : '看TA的快记'), onSelect: () => { setMenu(undefined); onRecords(selected?.visitor === false ? visitor : undefined) } }]} /></div>}
       {profile && <ArkmeMemberProfileCard member={{ displayName: name, ...(visitor?.imageRef ? { avatarRef: visitor.imageRef } : {}) }}
-        imagePort={teamAvatarImages} imageKey={visitor?.imageKey} busy={busy} error={error} onClose={close} onSend={() => { void openPrivate() }} />}
+        imagePort={teamAvatarImages} imageKey={visitor?.imageKey} hideSend={visitor?.isMe === true} busy={busy} error={error} onClose={close} onSend={() => { void openPrivate() }} />}
     </>,
   }
 }

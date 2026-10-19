@@ -1,4 +1,5 @@
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
+import { TeamMessageDetail } from '../src/client/TeamMessageDetail.js'
 import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
@@ -466,6 +467,29 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send.enqueue')).toBe(false)
+  })
+  it('applies private remarks across internal message, card, records and detail without changing the draft', async () => {
+    const person = { nickname: '同事昵称', personKey: 'person-key', personRef: 'person-ref' }
+    const msg: TeamMessage = {key:'internal',ref:'internal-ref',seq:1,revision:1,side:'team',sender:person,own:false,state:'published',createdAt:Date.now(),canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'正文'}}
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? {conversation:{...conversation,side:'team',visitor:{nickname:'访客'}},messages:[msg],hasMore:false,beforeSeq:0}
+      : op === 'team.app.people.remarks' ? {items:[{personKey:'person-key',remark:'宏顺'}]} : {})
+    await mount()
+    const row = () => renderer!.root.findByType(TeamConversationMessage)
+    expect(row().props.message.sender.nickname).toBe('宏顺')
+    await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onClick({stopPropagation(){}}))
+    expect(renderer!.root.findByType(ArkmeMemberProfileCard).props.member.displayName).toBe('宏顺')
+    await act(async()=>renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
+    await act(async()=>row().props.onDetail())
+    const detail = renderer!.root.findByType(TeamMessageDetail)
+    expect(detail.props.message.sender.nickname).toBe('宏顺')
+    await act(async()=>detail.props.onLocate())
+    expect(row().props.located).toBe(true)
+    await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:10,clientY:10}))
+    await act(async()=>renderer!.root.findByType(ArkmeActionMenu).props.actions[0].onSelect())
+    expect(renderer!.root.findByType(TeamVisitorRecords).props.person).toMatchObject({personKey:'person-key',nickname:'宏顺'})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
   })
   it('shows directory failure and retries without claiming there are no conversations', async () => {
     let failed = true

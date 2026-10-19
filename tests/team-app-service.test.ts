@@ -31,8 +31,9 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
   const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
-  const service = new TeamAppService(runtime, avatars, privateChat as never)
-  return { service, runtime, requests, fetchImpl, avatars, privateChat, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const contacts = { privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()) }
+  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts)
+  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
@@ -557,4 +558,56 @@ it.each([
   const opened = await open(f)
   await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
   expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+})
+
+
+describe('Team people identity and private remarks', () => {
+  function setup() {
+    let current = { ...conversation, side: 'team' }
+    const f = fixture(() => ({ channel, conversation: current, messages: [message], has_more: false }))
+    return { ...f, setConversation(uid: string) { current = { ...current, conversation_uid: uid } } }
+  }
+  async function target(f: ReturnType<typeof setup>) {
+    const result = await open(f)
+    const ref = result.conversation!.ref
+    const page = await f.service.execute('team.app.timeline', { conversationRef: ref }) as TeamTimeline
+    return { ref, person: page.messages[0]!.sender }
+  }
+  it('opens the exact internal sender with a viewer/conversation-bound reference, never its nickname', async () => {
+    const f = setup(), { ref, person } = await target(f)
+    expect(person.personKey).toBeTruthy(); expect(person.personRef).toBeTruthy(); expect(person.isMe).toBe(false)
+    await f.service.execute('team.app.person.private.open', { conversationRef: ref, personRef: person.personRef, userId: 999 })
+    expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledWith(11, expect.objectContaining({ expectedViewerUserId: 90 }))
+  })
+  it('batch resolves only viewer-owned remarks without writing them to Team', async () => {
+    const f = setup(), { ref, person } = await target(f)
+    f.contacts.privateRemarksByUserIds.mockResolvedValue(new Map([[11, '我的同事备注']]))
+    const result = await f.service.execute('team.app.people.remarks', { conversationRef: ref, personRefs: [person.personRef] })
+    expect(result).toEqual({ items: [{ personKey: person.personKey, remark: '我的同事备注' }] })
+    expect(f.contacts.privateRemarksByUserIds).toHaveBeenCalledWith([11], {})
+    expect(JSON.stringify(f.requests)).not.toContain('我的同事备注')
+    f.contacts.privateRemarksByUserIds.mockResolvedValue(new Map())
+    expect(await f.service.execute('team.app.people.remarks', { conversationRef: ref, personRefs: [person.personRef] })).toEqual({items:[{personKey:person.personKey,remark:''}]})
+  })
+  it('rejects cross-conversation person references before contacts or private chat access', async () => {
+    const f = setup(), first = await target(f)
+    f.setConversation('other-conversation')
+    const second = await target(f)
+    await expect(f.service.execute('team.app.person.private.open', { conversationRef: second.ref, personRef: first.person.personRef })).rejects.toThrow()
+    await expect(f.service.execute('team.app.people.remarks', { conversationRef: second.ref, personRefs: [first.person.personRef] })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled(); expect(f.contacts.privateRemarksByUserIds).not.toHaveBeenCalled()
+  })
+  it('rejects stale membership and account changes before returning private remarks', async () => {
+    const f = setup(), first = await target(f)
+    f.setConversation('mismatched-response')
+    await expect(f.service.execute('team.app.people.remarks', { conversationRef: first.ref, personRefs:[first.person.personRef] })).rejects.toThrow()
+    expect(f.contacts.privateRemarksByUserIds).not.toHaveBeenCalled()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.person.private.open', { conversationRef:first.ref,personRef:first.person.personRef })).rejects.toThrow()
+  })
+  it('never exposes member action references to the external viewer', async () => {
+    const f = fixture(() => ({channel,conversation,messages:[message],has_more:false})), opened = await open(f)
+    const page = await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    expect(page.messages[0]!.sender.personRef).toBeUndefined(); expect(page.messages[0]!.sender.personKey).toBeUndefined()
+  })
 })

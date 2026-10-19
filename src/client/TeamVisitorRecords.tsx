@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TeamConversation, TeamMessage, TeamTimeline } from '../team-app-contract.js'
+import type { TeamConversation, TeamIdentity, TeamMessage, TeamTimeline } from '../team-app-contract.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { TeamMessageContent } from './TeamMessageContent.js'
 import { formatArkmeMemberRecordTime } from './ArkmeChatMemberActions.js'
@@ -9,8 +9,9 @@ import { arkmeTheme } from './arkme-theme.js'
 import { callArkme } from './api.js'
 import { tr } from './locale.js'
 
-/** Only the external side of this authorized conversation, with resumable bounded paging. */
-export function TeamVisitorRecords({ conversation, accountKey, onClose, onLocate }: {
+/** One authorized sender in this conversation, with resumable bounded paging. */
+export function TeamVisitorRecords({ conversation, accountKey, person, onClose, onLocate }: {
+  person?: TeamIdentity | undefined
   conversation: TeamConversation; accountKey: string; onClose(): void; onLocate(message: TeamMessage, signal: AbortSignal): Promise<void>
 }) {
   const [messages, setMessages] = useState<TeamMessage[]>([]), [loading, setLoading] = useState(true)
@@ -27,7 +28,7 @@ export function TeamVisitorRecords({ conversation, accountKey, onClose, onLocate
         }, controller.current?.signal)
         if (controller.current?.signal.aborted) return
         if (page.conversation.side !== 'team') throw new Error(tr('当前无法查看此团队对话'))
-        const items = page.messages.filter(m => m.side === 'external' && m.state === 'published' && m.contentStatus === 'available')
+        const items = page.messages.filter(m => (person ? !!person.personKey && m.sender.personKey === person.personKey : m.side === 'external') && m.state === 'published' && m.contentStatus === 'available')
         if (page.hasMore && (!page.beforeSeq || before.current > 0 && page.beforeSeq >= before.current)) throw new Error(tr('历史消息分页异常，请重试'))
         setMessages(old => [...new Map([...old, ...items].map(m => [m.key, m])).values()].sort((a, b) => b.seq - a.seq))
         before.current = page.beforeSeq; complete.current = !page.hasMore; setHasMore(page.hasMore)
@@ -42,7 +43,7 @@ export function TeamVisitorRecords({ conversation, accountKey, onClose, onLocate
       pending.current = false
       if (!controller.current?.signal.aborted) setLoading(false)
     }
-  }, [conversation.ref, accountKey])
+  }, [conversation.ref, accountKey, person?.personKey])
   useEffect(() => {
     controller.current = new AbortController(); void nextPage()
     return () => controller.current?.abort()
@@ -60,7 +61,7 @@ export function TeamVisitorRecords({ conversation, accountKey, onClose, onLocate
     catch (caught) { if (!controller.current?.signal.aborted) setError(caught instanceof Error ? caught.message : tr('定位原消息失败')) }
     finally { if (!controller.current?.signal.aborted) setLocating(false) }
   }
-  const name = conversation.visitor?.nickname || tr('用户')
+  const name = person?.nickname || conversation.visitor?.nickname || tr('用户')
   return <ArkmeDetailShell title={tr('{v0}的快记', { v0: name })} label={tr('{v0}的快记', { v0: name })}
     subtitle={tr('当前团队对话')} onClose={onClose} onPointerDownOutside={event => {
       if (!(event.target instanceof Element) || !event.target.closest('[role="menu"], [aria-modal="true"], [data-arkme-image-preview-viewport], [role="toolbar"]')) onClose()

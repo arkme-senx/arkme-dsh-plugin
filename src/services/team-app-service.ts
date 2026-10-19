@@ -12,6 +12,7 @@ import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMess
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import type { ChatService } from './chat-service.js'
+import type { SourceService } from './source-service.js'
 
 const obj = objectValue
 const str = stringValue
@@ -50,7 +51,8 @@ function imagePresentationIdentity(raw: string): string {
 export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
-    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>) {
+    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -68,9 +70,13 @@ export class TeamAppService {
   private async key(value: string, actor: number): Promise<string> {
     return createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`team:${actor}:${value}`).digest('hex')
   }
-  private async identity(raw: unknown, actor: number): Promise<TeamIdentity> {
+  private async identity(raw: unknown, actor: number, person?: { id: unknown; context: Record<string, unknown> }): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
+    const id = recordOwnerId(person?.id)
+    const actionable = person?.context.side === 'team' && typeof id === 'number' && Number.isSafeInteger(id) && id > 0
     return { nickname: str(v.nickname) || '用户', memberType: arkmePeerMemberType(v.member_type),
+      ...(actionable ? { personKey: await this.key(`person:${id}`, actor), isMe: id === actor,
+        personRef: await this.ref('person', { conversation_uid: person!.context.conversation_uid, side: 'team', user_id: id }, actor) } : {}),
       ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
   async searchContactTeam(jotmoId: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<import('../types.js').ArkmeContactTeamSearchResult | undefined> {
@@ -122,7 +128,7 @@ export class TeamAppService {
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
     return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
-      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor) } : {}), side,
+      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor, { id: v.external_user_id, context: { conversation_uid: uid, side } }) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
   }
@@ -134,7 +140,7 @@ export class TeamAppService {
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonical: quoteCanonicalText(markContent) }, actor) } : {}),
-      side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor), own: v.own === true,
+      side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
@@ -396,8 +402,35 @@ export class TeamAppService {
       }
       case 'team.app.timeline': {
         const context = await conversation(), data = await post('conversations/timeline/page', { ...context, before_seq: num(p.beforeSeq), limit: num(p.limit) || 50 }, true)
-        return { conversation: await this.conversation(data.conversation, actor), messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),
+        const current = await this.conversation(data.conversation, actor)
+        const external = list(data.messages).find(v => v.side === 'external')
+        if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
+          current.visitor = await this.identity(obj(data.conversation).visitor, actor, { id: external.actor_user_id, context })
+        }
+        return { conversation: current, messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
+      }
+      case 'team.app.person.private.open':
+      case 'team.app.people.remarks': {
+        const context = await conversation()
+        if (context.side !== 'team') throw invalid()
+        const refs = operation === 'team.app.person.private.open' ? [p.personRef] : p.personRefs
+        if (!Array.isArray(refs) || !refs.length || refs.length > 50) throw invalid()
+        const people = await Promise.all(refs.map(async ref => {
+          const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
+          if (person.conversation_uid !== context.conversation_uid || person.side !== 'team'
+            || typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw invalid()
+          return id
+        }))
+        const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
+        if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
+        if (operation === 'team.app.person.private.open') {
+          if (!this.privateChat || people[0] === actor) throw invalid()
+          return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
+        }
+        if (!this.contacts) throw new ArkmePluginError('team-remarks-unavailable', '备注暂时无法读取', true, 503)
+        const remarks = await this.contacts.privateRemarksByUserIds(people, signal ? { signal } : {})
+        return { items: await Promise.all([...new Set(people)].map(async id => ({ personKey: await this.key(`person:${id}`, actor), remark: remarks.get(id) ?? '' }))) }
       }
       case 'team.app.visitor.private.open': {
         const context = await conversation()
@@ -477,7 +510,7 @@ export class TeamAppService {
           const id = recordOwnerId(v.user_id)
           if (id && (String(id) === String(senderId) || seen.has(String(id)))) continue
           if (id) seen.add(String(id))
-          members.push({ ...await this.identity(v.identity, actor),
+          members.push({ ...await this.identity(v.identity, actor, { id, context }),
             ...(id ? { key: await this.key(`receipt-member:${id}`, actor), isMe: String(id) === String(actor) } : {}),
             ...(typeof v.read === 'boolean' ? { read: v.read } : {}),
             ...(num(v.read_at) > 0 ? { readAt: num(v.read_at) } : {}) })

@@ -2,7 +2,8 @@ import { useTeamMessageSelection } from './use-team-message-selection.js'
 import { ArkmeMessageSelectionBar } from './ArkmeMessageSelectionBar.js'
 import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
-import { ArkmeDetailShell } from './ArkmeDetailShell.js'
+import { TeamMessageDetail } from './TeamMessageDetail.js'
+import { useTeamPersonNames } from './use-team-person-names.js'
 import { TeamMessageContent, teamMessagePresentation } from './TeamMessageContent.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { copyText } from './clipboard-text.js'
@@ -235,7 +236,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const messageMarks = useMessageUnderlines(`${accountKey}:team:${conversation.key}`, conversation.ref, Number(accountKey.split(':').at(-1)), teamMessageMarkTransport)
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
-  const [visitorRecords, setVisitorRecords] = useState(false), [locatedKey, setLocatedKey] = useState<string>()
+  const [visitorRecords, setVisitorRecords] = useState(false), [recordPerson, setRecordPerson] = useState<TeamIdentity>(), [locatedKey, setLocatedKey] = useState<string>()
   const [selectedSearch, setSelectedSearch] = useState<{ text: string }>()
   useSelectedMessageSearch(conversation.ref, text => { setDetailKey(undefined); setSelectedSearch({ text }) })
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
@@ -556,10 +557,16 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     })
   }
   if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
-  const current = timeline?.conversation ?? conversation
+  const rawCurrent = timeline?.conversation ?? conversation
+  const rawVisitor = rawCurrent.visitor
+  const visitorIdentity = visibleMessages.find(m => m.side === 'external' && m.sender.personKey)?.sender
+  const withVisitorIdentity = rawVisitor && visitorIdentity && !rawVisitor.personKey ? { ...visitorIdentity, ...rawVisitor } : rawVisitor
+  const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
+  const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
-    onOpen: () => { setDetailKey(undefined); setSelectedSearch(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
-    onRecords: () => setVisitorRecords(true),
+    onOpen: () => { setSelectedSearch(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
+    resolveIdentity: personName,
+    onRecords: person => { setDetailKey(undefined); setRecordPerson(person); setVisitorRecords(true) },
   })
   const locateVisitorRecord = async (message: TeamMessage, signal: AbortSignal) => {
     let page = latest.current
@@ -588,7 +595,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     return () => clearTimeout(timer)
   }, [locatedKey])
   const selection = useTeamMessageSelection({ accountKey, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal, refresh, onChanged })
-  const displayedMessages = visibleMessages.filter(selection.keeps)
+  const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
   const detail = displayedMessages.find(message => message.key === detailKey && message.state === 'published' && message.contentStatus === 'available')
   useEffect(() => { if (detailKey && !detail) setDetailKey(undefined) }, [detailKey, !!detail])
   const copySelected = async () => {
@@ -642,8 +649,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
         <TeamConversationMessage message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
-          avatar={current.side === 'team' && m.side === 'external' && !selection.ids
-            ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />)
+          avatar={current.side === 'team' && !selection.ids
+            ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />, m.side === 'external' ? undefined : m.sender)
             : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} receiptStore={receiptStore} busy={busy || selection.busy}
           selecting={selection.ids !== undefined} selected={selection.ids?.has(m.key) ?? false}
@@ -674,23 +681,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       description={`确认删除所选 ${selection.confirm.length} 条快记？删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。`}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={selection.busy}
       onConfirm={() => { void selection.remove() }} onClose={selection.closeConfirm} />}
-    {detail && <ArkmeDetailShell title={tr('消息详情')} label={tr('消息详情')} style={{ top: 0 }} onClose={() => setDetailKey(undefined)}
-      onPointerDownOutside={event => {
-        const target = event.target instanceof Element ? event.target : null
-        if (target?.closest('[role="toolbar"], [role="menu"], [aria-modal="true"], [data-arkme-image-preview-viewport]')) return
-        setDetailKey(undefined)
-      }} subtitle={`${detail.sender.nickname} · ${new Date(detail.createdAt).toLocaleString()}`}>
-      <TeamMessageContent message={detail} conversationRef={conversation.ref} />
-    </ArkmeDetailShell>}
+    {detail && <TeamMessageDetail message={detail} conversation={current}
+      avatar={visitorActions.avatar(<TeamAvatar identity={detail.sender} size={40} />, detail.side === 'external' ? undefined : detail.sender)}
+      onClose={() => setDetailKey(undefined)} onLocate={() => { setDetailKey(undefined); setLocatedKey(detail.key) }} />}
+
     {receiptMessage && <ArkmeReadReceiptPanel anchor={receiptAnchor.current} label={tr('查看阅读状态')}
       onClose={() => { receiptRef.current = undefined; setReceiptMessage(undefined) }}>
-      <TeamReceiptDetails key={receiptMessage.key} message={receiptMessage} state={receiptState} visitor={current.visitor}
+      <TeamReceiptDetails key={receiptMessage.key} message={receiptMessage} state={{ ...receiptState, ...(receiptState.value ? { value: { ...receiptState.value, members: receiptState.value.members.map(personName) } } : {}) }} visitor={current.visitor}
         onRetry={() => { void readReceipts(receiptMessage) }} onMore={() => { void readReceipts(receiptMessage, true) }}
-        renderAvatar={identity => <TeamAvatar identity={identity} size={20} />}
+        renderAvatar={identity => visitorActions.avatar(<TeamAvatar identity={identity} size={20} />, identity)}
         renderVisitorAvatar={identity => visitorActions.avatar(<TeamAvatar identity={identity} size={20} />)} />
     </ArkmeReadReceiptPanel>}
     {visitorActions.layer}
-    {visitorRecords && current.side === 'team' && <TeamVisitorRecords conversation={{ ...conversation, ...(current.visitor ? { visitor: current.visitor } : {}) }}
+    {visitorRecords && current.side === 'team' && <TeamVisitorRecords key={`${accountKey}:${conversation.key}:${recordPerson?.personKey ?? "external"}`} person={recordPerson ? personName(recordPerson) : undefined} conversation={current}
       accountKey={accountKey} onClose={() => setVisitorRecords(false)} onLocate={locateVisitorRecord} />}
 
 
