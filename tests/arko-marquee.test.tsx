@@ -9,6 +9,16 @@ import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
+// These orchestration tests have no DOM; real underline portals are covered by arko-message-marks and message-underlines.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
 vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   const { forwardRef } = await import('react')
@@ -72,7 +82,7 @@ it('keeps display selection separate from cross-session action eligibility', asy
   await mount(); await select('history:1', 'history:2')
   expect(bar()!.props['aria-label']).toBe('已选择 2 条消息')
   expect(button('转发').props.disabled).toBe(true)
-  await act(async () => button('转发').props.onClick())
+  await act(async () => button('转发').props.onClick({ currentTarget: {} }))
   expect(vi.mocked(callArkme).mock.calls.some(([op]) => op === 'sources.list')).toBe(false)
 })
 it('clears selection on account changes and blocks marquee while a dialog is open', async () => {
@@ -119,6 +129,6 @@ it('copies selected emoji messages as visible text using the same projection as 
   vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout: vi.fn() }))
   history = [item(1, { text: '你好[jm_emoji:smiling_face]', messageActionRef: undefined })]
   await mount(); await select('history:1')
-  await act(async () => button('复制文本').props.onClick())
+  await act(async () => button('复制文本').props.onClick({ currentTarget: {} }))
   expect(writeText).toHaveBeenCalledWith('你好😊')
 })

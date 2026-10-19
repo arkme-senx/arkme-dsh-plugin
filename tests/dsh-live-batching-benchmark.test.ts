@@ -9,6 +9,7 @@ afterEach(() => { vi.useRealTimers() })
 async function run(coalesced: boolean) {
   vi.useFakeTimers({ now: 0 })
   const ages: number[] = []; const delivered: number[] = []; let batches = 0
+  const arrivalTimes: number[] = []
   const publish = async (entries: DshRemoteHistoryEntry[]) => {
     batches++
     await new Promise(resolve => setTimeout(resolve, 4 + 80))
@@ -29,8 +30,12 @@ async function run(coalesced: boolean) {
     const entries = buffer; buffer = []
     tail = tail.then(async () => { await publish(entries) })
   }
-  for (let seq = 0; seq <= 1500; seq++) {
+  // Keep one producer timer in flight. Preallocating 1501 timers makes fake-clock
+  // advancement scan a large timer heap on every tick and measures runner load.
+  // Absolute deadlines preserve the original 150 events/s stream without drift.
+  const produce = (seq: number) => {
     setTimeout(() => {
+      arrivalTimes.push(Date.now())
       const type = seq === 1500 ? 'turn/end' : seq % 120 === 0 ? 'tool/result' : 'assistant/chunk'
       const entry = { event: { seq, type, time: Date.now() + 1, data: { text: 'token' } } }
       if (coalesced) queue.enqueue('session', entry, entry.event.time)
@@ -39,11 +44,14 @@ async function run(coalesced: boolean) {
         if (type !== 'assistant/chunk' || buffer.length >= 50) flush()
         else timer ??= setTimeout(flush, 40)
       }
-    }, seq * 1000 / 150)
+      if (seq < 1500) produce(seq + 1)
+    }, Math.max(0, Math.floor(seq * 1000 / 150) - Date.now()))
   }
+  produce(0)
   await vi.advanceTimersByTimeAsync(30_000)
   if (coalesced) await queue.flush()
   else await tail
+  expect(arrivalTimes).toEqual(Array.from({ length: 1501 }, (_, seq) => Math.floor(seq * 1000 / 150)))
   expect(delivered).toEqual(Array.from({ length: 1501 }, (_, i) => i))
   ages.sort((a, b) => a - b)
   queue.close()
