@@ -11,14 +11,16 @@ import { expect, it } from 'vitest'
 const dshRoot = process.env.ARKME_DSH_CHECKOUT
 const profile = process.env.ARKME_PACKED_PROFILE
 const fixtureFile = process.env.ARKME_OFFLINE_NATIVE_FIXTURE
+const externalUrl = process.env.ARKME_OFFLINE_DSH_URL
 if (!dshRoot || !profile || !fixtureFile) throw new Error('isolated native fixture and packed DSH required')
+if (externalUrl && (new URL(externalUrl).hostname !== '127.0.0.1' || new URL(externalUrl).protocol !== 'http:')) throw new Error('isolated loopback DSH required')
 const fixture = JSON.parse(await readFile(fixtureFile, 'utf8'))
 for (const origin of Object.values(fixture.origins)) {
   const url = new URL(origin)
   if (url.hostname !== '127.0.0.1' || url.protocol !== 'https:') throw new Error('loopback TLS proxies required')
 }
 const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
-const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
+const launchWebScaffold = externalUrl ? undefined : (await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))).launchWebScaffold
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) throw new Error('immutable package required')
@@ -33,22 +35,45 @@ it('preserves the real card flow through native services and the paid gateway', 
     config.shareWebsite = fixture.origins.auth
     const overlay = join(root,'overlay.json')
     await writeFile(overlay, JSON.stringify([{insert:[{id:'arkme-offline-e2e',name:'@senguoyun/dsh-arkme',config}]}]))
-    scaffold = await launchWebScaffold({extraOverlayPath:overlay,extraInstallAnchors:[join(profile,'package.json')]})
-    expect(await scaffold.ctx.get('arkmeData').testLogin(fixture.user)).toMatchObject({status:'authenticated',userId:fixture.user})
-    const sdk = createArkmeSdk({fetchImpl:(url,init)=>fetch(new URL(url,scaffold.authenticatedUrl),{...init,headers:{...init?.headers,origin:new URL(scaffold.authenticatedUrl).origin}})})
+    if (launchWebScaffold) {
+      scaffold = await launchWebScaffold({extraOverlayPath:overlay,extraInstallAnchors:[join(profile,'package.json')]})
+      expect(await scaffold.ctx.get('arkmeData').testLogin(fixture.user)).toMatchObject({status:'authenticated',userId:fixture.user})
+    }
+    // The optional CLI instance must be caller-owned and already authenticated
+    // as this synthetic user; it exercises the installed official release.
+    const authenticatedUrl = scaffold?.authenticatedUrl ?? externalUrl
+    const sdk = createArkmeSdk({fetchImpl:(url,init)=>fetch(new URL(url,authenticatedUrl),{...init,headers:{...init?.headers,origin:new URL(authenticatedUrl).origin}})})
+    expect(await sdk.authStatus()).toMatchObject({status:'authenticated',userId:fixture.user})
     const source = (await sdk.listSources('root',{refresh:true})).items.find(s=>s.displayName===fixture.title)
     expect(source).toBeDefined()
     const initial = (await sdk.offlineContext({operation:'list',sourceRef:source.sourceRef,state:'suggested'})).entries[0]
     expect(initial).toBeDefined()
     const read = () => sdk.offlineContext({operation:'read',entryRef:initial.id})
+    // Exercise the production Host adapter as well as Audio's signed response.
+    // An Audio-only check missed the Host's M4A MIME rejection.
+    const playback = await sdk.offlineContext({operation:'playback',playbackRef:initial.evidence[0].playbackRef})
+    expect(playback.clips[0]).toMatchObject({mimeType:'audio/mp4',startOffsetMillis:0})
+    expect(JSON.stringify(playback)).not.toContain('Signature=')
     browser = await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
     page = await browser.newPage({viewport:{width:1280,height:900},locale:'zh-CN'})
-    await page.goto(scaffold.authenticatedUrl,{waitUntil:'load'})
+    await page.goto(authenticatedUrl,{waitUntil:'load'})
     await page.getByRole('button',{name:'对话',exact:true}).click()
     await page.getByText(fixture.title,{exact:true}).first().click()
     await page.getByRole('button',{name:'线下交流',exact:true}).click()
     const card = page.locator(`[data-offline-context-id="${initial.id}"]`)
     await card.waitFor()
+    await card.getByRole('button',{name:'回听',exact:true}).click()
+    const audioDialog = page.getByRole('dialog').filter({has:page.getByRole('heading',{name:'回听所选原文',exact:true})})
+    await audioDialog.waitFor()
+    if (fixture.verifyMediaBytes) {
+      // The fixture supplies actual M4A bytes through its isolated object-store
+      // adapter; a signed response or a visible audio element alone is not enough.
+      await expect.poll(()=>audioDialog.locator('audio').evaluate(audio=>audio.readyState),{timeout:15000}).toBeGreaterThanOrEqual(1)
+      expect(await audioDialog.locator('audio').evaluate(audio=>audio.duration)).toBeGreaterThan(0)
+      await audioDialog.locator('audio').evaluate(audio=>audio.play())
+      await expect.poll(()=>audioDialog.locator('audio').evaluate(audio=>audio.currentTime),{timeout:5000}).toBeGreaterThan(0)
+    }
+    await page.keyboard.press('Escape')
     await card.getByRole('button',{name:'是这次交流',exact:true}).click()
     await expect.poll(async()=> (await read()).state).toBe('linked')
     // Confirmation moves the card from candidates into the conversation timeline.
@@ -67,11 +92,11 @@ it('preserves the real card flow through native services and the paid gateway', 
     await expect.poll(()=>rangeDialog.getByRole('button',{name:'保存',exact:true}).isEnabled()).toBe(true)
     expect(await rangeDialog.textContent()).toContain('还没有实施')
     await rangeDialog.getByRole('button',{name:'保存',exact:true}).click()
-    await expect.poll(async()=> (await read()).revision,{timeout:30000}).not.toBe(beforeRange)
+    await expect.poll(()=>rangeDialog.count(),{timeout:30000}).toBe(0)
+    expect((await read()).revision).toBe(beforeRange)
     await expect.poll(async()=> (await read()).summary.length,{timeout:30000}).toBeGreaterThan(0)
     await expect.poll(()=>rangeDialog.count(),{timeout:30000}).toBe(0)
-    // Completion is asynchronous: require the real IM invalidation to update
-    // the visible card, not just the backend state observed through the SDK.
+    // Saving an unchanged range must retain the existing card and summary.
     await expect.poll(()=>card.locator('.arkme-offline-summary').textContent(),{timeout:30000}).toContain('还没有实施')
     await card.getByRole('button',{name:'分享到此对话',exact:true}).click()
     const confirm = page.getByRole('button',{name:'确认分享',exact:true})

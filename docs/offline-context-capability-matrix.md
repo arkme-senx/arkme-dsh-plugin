@@ -1,6 +1,6 @@
 # 录音与聊天上下文：能力矩阵
 
-本任务基于用户指定的 dev 分支，合并前已吸收最新基线 4b1ba7ba，所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
+本任务基于用户指定的 dev 分支，本轮复核基线为 dev 6f7ec2f7，所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
 
 | 能力面 | 入口与授权 | 完成证据 |
 | --- | --- | --- |
@@ -11,7 +11,7 @@
 
 私有来源身份、录音地址、内部分享 token 不向浏览器、SDK Consumer 或模型公开。模型输入/附件中的指令按内容处理。无法确认的命令持久保留，缺失后端回执不解释为未执行。原录音权限与公共分享快照权限分开。
 
-验收要求：单元/合同测试、独立 SDK Consumer、完整 typecheck/test/build、不可变 tgz 在未修改官方 DSH 的隔离 Profile 中安装和真实 Tools/UI 操作。真实 Tools/SDK 运行态已验证；真实浏览器 UI 尚未通过，不代表完整交付。
+验收要求：单元/合同测试、独立 SDK Consumer、完整 typecheck/test/build、不可变 tgz 在未修改官方 DSH 的隔离 Profile 中安装和真实 Tools/UI 操作。当前结论以文末 2026-10-19 复验为准：真实 Tools/SDK、Chrome 交互及合成 M4A 解码播放已通过；仍不等于真实录音模型效果与生产规模验收。下文保留此前失败和修复过程。
 
 
 ## 本轮验证记录
@@ -59,3 +59,17 @@
 | SDK / Tools | 继续消费现有 owner 和公开类型；无新增接口或操作，原生连接回归沿用现有验收 |
 
 本轮门禁：局部 38 项、全量 12,668 项通过 / 21 项跳过，类型检查、构建和打包通过。产物通过官方 CLI 安装至独立 Profile 后，实际浏览器确认候选/确认卡片及冻结分享预览均保持两条独立要点；原生五服务 18 组验收通过。模型输出为合成，不声明真实模型质量；浏览器截图 `/tmp/offline-isolation-runtime/summary-preview.png`。
+
+
+## 2026-10-19 完整链路复验与 M4A 根因修复
+
+Audio 正式回听接口对既有 `.m4a` 切片返回 `audio/mp4`，Host 原白名单只接受 flac/mpeg/wav，导致 API 成功但实际回听被拒绝。先补回归复现，再仅增加 `audio/mp4`；保留 HTTPS、OSS 域名、签名、时间范围与账号围栏。没有修改 UI 组件、布局、按钮或交互流程，没有新增依赖和产品配置。
+
+- `tests/services/media-service.test.ts` 新增 4 种合法音频格式和 6 种非法来源/边界回归；修复前仅 M4A 场景失败。
+- Node 24 全量 12,678 项通过 / 21 跳过，1,079 文件通过 / 16 跳过；typecheck、build、tgz 和官方 CLI 安装通过。
+- `tests/e2e/offline-context-native.e2e.mjs` 在未修改的官方 DSH 0.1.1-rc.2 与实际 Chrome 中完成：候选、回听、确认、原文、原样保存范围、冻结分享、撤回。Host 返回不透明 media ref，实际 M4A 解码得到时长并播放推进。音频字节为合成 AAC，精确对象存储适配器仅用于本地隔离环境，不等于真实 OSS/录音验收。
+- 原生跨服务验收 20 组通过；真实 MySQL 计费发布/结算与自动事件去重通过；模型供应商为合成替身。
+- 测试支持可选 `ARKME_OFFLINE_DSH_URL`，仅接受调用方管理的本地 HTTP 官方 CLI，先校验当前合成账号；未传入时仍使用既有 scaffold。固定测试配置，不新增运行时产品配置。源码 scaffold 缺少 loader 依赖的首次失败已保留，官方 CLI 路径通过，没有修改 DSH 仓库。
+- 证据目录：`/tmp/offline-release-loop-20261019/`（`browser-cli-e2e.log`、`browser-share.png`、`sdk.log`、`acceptance-final.log`）；全量日志 `/tmp/offline-release-loop-plugin-full.log`。
+
+测试服只读核查确认当前已发布目录 release 19 有 qwen-flash，但没有 qwen3.8-flash；未发现该模型历史 offering。真实数据候选存在，独立标注集未找到。没有改动测试服配置、开关或账号，没有把测试服与本地隔离链路混为一谈。
