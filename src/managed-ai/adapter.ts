@@ -630,6 +630,9 @@ class ManagedModelCatalog {
   private hasRemoteSnapshot = false
   private refreshedAt = 0
   private refreshPromise: Promise<void> | undefined
+  private readonly lifetime = new AbortController()
+  private listingState: string | null | undefined
+  private onListingChanged: (() => void) | undefined
 
   constructor(
     intelligentBaseUrl: string,
@@ -643,6 +646,41 @@ class ManagedModelCatalog {
 
   connection(): DeepSeekConnectionOptions {
     return this.connectionSnapshot
+  }
+
+  /** The browser caches the entire directory until the public adapter event. */
+  watch(onChanged: () => void, isActive: () => boolean): () => void {
+    let disposed = false
+    let notificationQueued = false
+    this.onListingChanged = () => {
+      if (notificationQueued || disposed) return
+      notificationQueued = true
+      queueMicrotask(() => {
+        notificationQueued = false
+        if (!disposed && isActive()) onChanged()
+      })
+    }
+    const timer = setInterval(() => {
+      // No credential reads/network work until someone has requested discovery.
+      // Check once per owner interval even if a foreground read just refreshed
+      // the cache: timer phase must not postpone discovery by another minute.
+      if (disposed || !isActive() || this.listingState === undefined) return
+      void this.refresh().catch(() => { /* last-good/expired state is published by fetchCatalog */ })
+    }, ARKME_MANAGED_CATALOG_TTL_MS)
+    timer.unref?.()
+    return () => {
+      if (disposed) return
+      disposed = true
+      clearInterval(timer)
+      this.onListingChanged = undefined
+      this.lifetime.abort(new DOMException('Managed catalog registration disposed', 'AbortError'))
+    }
+  }
+
+  private publishListingState(state: string | null): void {
+    const changed = this.listingState !== undefined && this.listingState !== state
+    this.listingState = state
+    if (changed) this.onListingChanged?.()
   }
 
   capability(model: string): ManagedModelCapability {
@@ -670,8 +708,11 @@ class ManagedModelCatalog {
     const controller = new AbortController()
     let timedOut = false
     const abortFromCaller = (): void => { controller.abort(signal?.reason) }
+    const abortFromLifetime = (): void => { controller.abort(this.lifetime.signal.reason) }
     if (signal?.aborted === true) abortFromCaller()
     else signal?.addEventListener('abort', abortFromCaller, { once: true })
+    if (this.lifetime.signal.aborted) abortFromLifetime()
+    else this.lifetime.signal.addEventListener('abort', abortFromLifetime, { once: true })
     const timeout = setTimeout(() => {
       timedOut = true
       controller.abort()
@@ -706,6 +747,7 @@ class ManagedModelCatalog {
         if (controller.signal.aborted) throw error
         throw new LlmError('Arkme 模型目录返回异常', 'MALFORMED_RESPONSE', { cause: error })
       }
+      if (controller.signal.aborted) throw controller.signal.reason
       const snapshot = parseManagedCatalog(payload)
       if (resolveModel !== undefined) {
         if (snapshot.models.length !== 1 || snapshot.models[0]?.id !== resolveModel) throw new LlmError('原回合模型信息无效', 'UNKNOWN_MODEL')
@@ -721,8 +763,16 @@ class ManagedModelCatalog {
         this.reasoningSnapshot = snapshot.reasoning
         this.hasRemoteSnapshot = true
         this.refreshedAt = Date.now()
+        this.publishListingState(JSON.stringify({
+          models: snapshot.models,
+          capabilities: [...snapshot.capabilities],
+          reasoning: [...snapshot.reasoning],
+        }))
       }
     } catch (error) {
+      if (resolveModel === undefined && !this.lifetime.signal.aborted && !this.canUseLastGood()) {
+        this.publishListingState(null)
+      }
       if (signal?.aborted === true) {
         throw localizeManagedAiError(new LlmError('Arkme 模型目录请求已取消', 'ABORTED', { cause: error }))
       }
@@ -734,6 +784,7 @@ class ManagedModelCatalog {
     } finally {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', abortFromCaller)
+      this.lifetime.signal.removeEventListener('abort', abortFromLifetime)
     }
   }
 
@@ -847,7 +898,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
   }
 }
 
-export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): LlmAdapter {
+function managedAiAdapter(options: ManagedAiLlmAdapterOptions): { adapter: LlmAdapter; catalog: ManagedModelCatalog } {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch
   const resolveAnonymousUserId = options.resolveAnonymousUserId ?? getOrCreateAnonymousUserId
   const catalog = new ManagedModelCatalog(
@@ -868,12 +919,44 @@ export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): 
     resolveAnonymousUserId,
     ...(options.prepareOperation === undefined ? {} : { prepareOperation: options.prepareOperation }),
   })
-  return new ManagedAiLlmAdapter(delegate, catalog, transport)
+  return { adapter: new ManagedAiLlmAdapter(delegate, catalog, transport), catalog }
+}
+
+export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): LlmAdapter {
+  return managedAiAdapter(options).adapter
 }
 
 export function registerManagedAiProvider(
   ctx: Context,
   options: ManagedAiLlmAdapterOptions,
 ): AdapterRegistrationHandle {
-  return ctx.llm.registerAdapter([ARKME_MANAGED_PROVIDER], createManagedAiLlmAdapter(options))
+  const { adapter, catalog } = managedAiAdapter(options)
+  const registration = ctx.llm.registerAdapter([ARKME_MANAGED_PROVIDER], adapter)
+  if (typeof registration.replace !== 'function') {
+    registration()
+    throw new LlmError('当前 DSH 不支持模型目录动态刷新，请升级后重试', 'UNSUPPORTED_DSH')
+  }
+  let routes = [ARKME_MANAGED_PROVIDER]
+  const stopWatching = ctx.effect(() => catalog.watch(() => {
+    try {
+      // Public, atomic replacement keeps this adapter and prepared calls intact
+      // while invalidating the Host-generation browser directory.
+      registration.replace(routes)
+    } catch (error) {
+      if (error instanceof LlmError && error.code === 'REGISTRATION_DISPOSED') {
+        void stopWatching()
+      } else {
+        ctx.logger.warn('Arkme managed model directory invalidation failed')
+      }
+    }
+  }, () => routes.includes(ARKME_MANAGED_PROVIDER)), 'dsh-arkme: managed model catalog refresh')
+  const handle = (() => {
+    void stopWatching()
+    registration()
+  }) as AdapterRegistrationHandle
+  handle.replace = (providers) => {
+    registration.replace(providers)
+    routes = [...providers]
+  }
+  return handle
 }

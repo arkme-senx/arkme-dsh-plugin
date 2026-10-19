@@ -1,13 +1,3 @@
-vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
-  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
-  ArkmeMessageTextSelectionToolbar: () => null,
-}))
-// Annotation geometry is exercised with real DOM in arko-message-marks.test.tsx.
-// This renderer-only suite keeps its focus on navigation/selection/orchestration.
-vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
-  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
-}))
-
 import { ConversationActionsMenu } from '../src/client/PrivateChatActions.js'
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
@@ -22,6 +12,16 @@ import type { ArkmeArkoHistoryItem } from '../src/types.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from '../src/client/composer-draft-store.js'
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
+// These orchestration tests have no DOM; real underline portals are covered by arko-message-marks and message-underlines.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
 
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: vi.fn(),
