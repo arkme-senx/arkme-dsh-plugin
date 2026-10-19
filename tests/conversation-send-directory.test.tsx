@@ -3358,7 +3358,7 @@ describe('conversation send directory projection', () => {
     act(() => { button.props.onClick({ currentTarget: {} }) })
     expect(renderer!.root.findAllByProps({ id: 'arkme-record-delete-title' }).length).toBe(1)
     const cancel = renderer!.root.findAllByType('button').find(node => node.children.includes('取消'))!
-    act(() => { cancel.props.onClick({ currentTarget: undefined }) })
+    act(() => { cancel.props.onClick() })
     expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' }).length).toBe(1)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(0)
   })
@@ -3377,7 +3377,7 @@ describe('conversation send directory projection', () => {
       sendAtMillis: 1, textContent: 'Delete me', status: 1 })
     act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }) })
     await act(async () => {
-      renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick({ currentTarget: undefined })
+      renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick()
       await Promise.resolve()
     })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
@@ -3423,7 +3423,7 @@ describe('conversation send directory projection', () => {
     })
     await enterMessageSelectMode(item)
     await act(async () => {
-      renderer!.root.find(node => node.type === 'button' && renderedText(node.props.children) === '继续加载更早消息').props.onClick({ currentTarget: undefined })
+      renderer!.root.find(node => node.type === 'button' && renderedText(node.props.children) === '继续加载更早消息').props.onClick()
       await Promise.resolve()
     })
     expect(finishPage).toBeDefined()
@@ -3616,7 +3616,7 @@ describe('conversation send directory projection', () => {
     const assignmentIndex = entries.findIndex(button => button.props['aria-label'] === '指定主题')
     expect(entries[assignmentIndex]!.props.disabled).toBe(false)
     expect(entries[assignmentIndex + 1]!.findAllByType('span').some(span => span.children.includes('多选'))).toBe(true)
-    await act(async () => { entries[assignmentIndex]!.props.onClick({ currentTarget: undefined }) })
+    await act(async () => { entries[assignmentIndex]!.props.onClick() })
     expect(renderer!.root.findAllByProps({ 'aria-label': '消息操作' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     const picker = renderer!.root.findByType(ArkmeRecordTopicAssignmentDialog)
@@ -3636,7 +3636,7 @@ describe('conversation send directory projection', () => {
     arkmeUi.selectSource(sendToSelf)
     const menu = await openMessageContextMenu({ itemUid: 'cancel-single', recordTopicAssignmentRef: 'assignment',
       senderName: '我', isMe: true, sendAtMillis: 8, textContent: '内容', status: 1 })
-    await act(async () => { menu.findByProps({ 'aria-label': '指定主题' }).props.onClick({ currentTarget: undefined }) })
+    await act(async () => { menu.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
     await act(async () => { renderer!.root.findByType(ArkmeRecordTopicAssignmentDialog).props.onCancel() })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(0)
     expect(renderer!.root.findAllByType(ArkmeRecordTopicAssignmentDialog)).toHaveLength(0)
@@ -3669,7 +3669,7 @@ describe('conversation send directory projection', () => {
     const button = menu.findByProps({ 'aria-label': '指定主题' })
     expect(button.props.disabled).toBe(true)
     // Also guard the handler, so stale/synthetic invocations cannot bypass the capability.
-    await act(async () => { button.props.onClick({ currentTarget: undefined }) })
+    await act(async () => { button.props.onClick() })
     expect(renderer!.root.findAllByType(ArkmeRecordTopicAssignmentDialog)).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(0)
   })
@@ -3761,20 +3761,20 @@ describe('conversation send directory projection', () => {
       })
     })
     await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('刚发出的记录') })
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick({ currentTarget: undefined }) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'record-new' })
     await act(async () => { row.findByProps({ 'data-arkme-message-direction': 'self' }).props.onContextMenu({
       preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
     }) })
     if (entry === 'bulk') await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
-        .find(button => button.findAllByType('span').some(span => span.children.includes('多选')))!.props.onClick({ currentTarget: undefined })
+        .find(button => button.findAllByType('span').some(span => span.children.includes('多选')))!.props.onClick()
     })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick({ currentTarget: undefined }) })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': `指定到${outcome === 'same' ? '当前主题' : '目标主题'}` }).props.onClick({ stopPropagation: vi.fn() }) })
     if (outcome === 'unknown') {
       const refresh = renderer!.root.findAllByType('button').find(button => button.children.includes('刷新核对'))!
-      await act(async () => { refresh.props.onClick({ currentTarget: undefined }) })
+      await act(async () => { refresh.props.onClick() })
       expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     }
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'moved' ? 0 : 1)

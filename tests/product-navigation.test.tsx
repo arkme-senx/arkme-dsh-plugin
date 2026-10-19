@@ -1,6 +1,3 @@
-vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
-// Node-renderer suites cover orchestration; real DOM marks are covered by arko-message-marks.test.tsx.
-vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 import { readUiSource } from './helpers/ui-source.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'

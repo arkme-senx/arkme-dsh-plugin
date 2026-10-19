@@ -1,6 +1,3 @@
-vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
-// Node-renderer suites cover orchestration; real DOM marks are covered by arko-message-marks.test.tsx.
-vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from '../src/client/message-selection-presentation.js'
