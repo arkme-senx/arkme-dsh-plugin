@@ -52,7 +52,7 @@ describe('packed Arko image input on the official Harness', () => {
         }
         if (req.url === '/image') { res.setHeader('content-type', 'image/png'); res.end(png); return }
         const body = raw.length ? JSON.parse(raw) : {}
-        if (chain && (req.url === '/api/v1/agent/model/list' || req.url.startsWith('/api/v1/qa/new-msg-v') || req.url.startsWith('/api/v1/qa/message-list') || req.url.startsWith('/api/v1/qa/stream-v2'))) {
+        if (chain && (req.url.startsWith('/api/v1/agent/model/') || req.url.startsWith('/api/v1/qa/new-msg-v') || req.url.startsWith('/api/v1/qa/message-list') || req.url.startsWith('/api/v1/qa/stream-v2'))) {
           const reply = await originalFetch(new URL(req.url, chain.origin), { method: req.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${chain.token}` }, ...(raw.length ? { body: raw } : {}) })
           const content = await reply.text()
           if (req.url.startsWith('/api/v1/qa/new-msg-v')) {
@@ -109,9 +109,19 @@ describe('packed Arko image input on the official Harness', () => {
       scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false, toolsMode: 'native' })
       expect(await scaffold.ctx.get('arkmeData').testLogin(chain?.userId ?? 42)).toMatchObject({ status: 'authenticated', userId: chain?.userId ?? 42 })
       const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), { ...init, headers: { ...init?.headers, Origin: new URL(scaffold.authenticatedUrl).origin } }) })
-      expect((await sdk.arkoModels()).options[0].imageInput.protocolVersion).toBe(1)
+      const models = await sdk.arkoModels()
+      expect(models.options.find(model => model.imageInput)?.imageInput.protocolVersion).toBe(1)
       const file = await sdk.stageFileBytes(png.toString('base64'), { fileName: 'SDK.png', mimeType: 'image/png' })
       const secondFile = chain ? await sdk.stageFileBytes(chain.secondPng, { fileName: 'SDK-second.png', mimeType: 'image/png' }) : undefined
+      const textModel = models.options.find(model => !model.imageInput)
+      if (chain) {
+        expect(textModel, 'real published text-only route required for pre-send rejection').toBeDefined()
+        const preparedBefore = requestPaths.filter(path => path === '/api/v1/files/prepare-upload').length
+        await expect(sdk.arkoAsk('请看图片', { sessionId: 88, modelRouteKey: textModel.routeKey, imageFileRefs: [file.fileRef] })).rejects.toThrow('请选择支持图片的模型')
+        expect(accepted).toHaveLength(0)
+        expect(requestPaths.filter(path => path === '/api/v1/files/prepare-upload')).toHaveLength(preparedBefore)
+        expect(await sdk.arkoPendingTurns()).toEqual([])
+      }
       const firstRefs = secondFile ? [file.fileRef, secondFile.fileRef] : [file.fileRef]
       const firstReply = await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: firstRefs, waitSeconds: 1 })
       if (chain?.realProvider) expect(['completed', 'waiting_user']).toContain(firstReply.status)
@@ -125,6 +135,14 @@ describe('packed Arko image input on the official Harness', () => {
       expect(await sdk.arkoPendingTurns()).toEqual([])
       handle = await scaffold.ctx.agents.create({ sessionId: `arko-test-${randomUUID()}`, setup: agentCtx => scaffold.ctx.agentPresets.mount(agentCtx).then(() => undefined) })
       for (const name of ['arkme_arko_models', 'arkme_arko_pending', 'arkme_arko_ask']) expect(scaffold.ctx.tools.get(name, handle.agent)).toBeDefined()
+      if (chain) {
+        const preparedBefore = requestPaths.filter(path => path === '/api/v1/files/prepare-upload').length
+        const rejected = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { text: '请看图片', session_id: 88, model_route_key: textModel.routeKey, image_file_refs: [file.fileRef] }, agent: handle.agent, signal: new AbortController().signal })
+        expect(rejected.isError).toBe(true)
+        expect(JSON.stringify(rejected)).toContain('请选择支持图片的模型')
+        expect(accepted).toHaveLength(1)
+        expect(requestPaths.filter(path => path === '/api/v1/files/prepare-upload')).toHaveLength(preparedBefore)
+      }
       const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { ...(chain?.realProvider ? { text: '按当前两张附件的顺序，说明第一张和第二张分别是什么颜色。' } : {}), session_id: 88, image_file_refs: secondFile ? [secondFile.fileRef, file.fileRef] : [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
       expect(result.isError).toBe(false)
       if (chain?.realProvider) { expect.soft(JSON.stringify(result), 'reversed current attachments must be identified in order').toMatch(/第一张[\s\S]*?[红紅][\s\S]*?第二张[\s\S]*?[蓝藍]/u) } else expect(JSON.stringify(result)).toContain('ARKO_IMAGES_OK')
@@ -171,13 +189,29 @@ describe('packed Arko image input on the official Harness', () => {
         expect(accepted).toHaveLength(4); expect(accepted[3].attachments).toBeUndefined()
       }
       if (chain) {
+        const acceptedBefore = accepted.length
+        const preparedBefore = requestPaths.filter(path => path === '/api/v1/files/prepare-upload').length
+        await page.getByRole('button', { name: '选择模型', exact: true }).click()
+        await page.getByRole('menuitemradio', { name: new RegExp(textModel.displayName) }).click()
+        await expect.poll(() => page.getByRole('button', { name: '选择模型', exact: true }).getAttribute('title')).toBe(textModel.displayName)
+        await page.locator('input[aria-label="添加 Arko 图片"]').setInputFiles({ name: 'blocked.png', mimeType: 'image/png', buffer: png })
+        await page.getByRole('textbox', { name: '发送给 Arko', exact: true }).fill('保留这条草稿')
+        await send.click()
+        await page.getByText('当前模型的图片能力尚未接通，请选择支持图片的模型；图片和文字已保留', { exact: true }).waitFor()
+        expect(await page.getByRole('textbox', { name: '发送给 Arko', exact: true }).innerText()).toContain('保留这条草稿')
+        await page.getByRole('list', { name: '待发送附件', exact: true }).getByRole('listitem', { name: 'blocked.png，第 1 个附件', exact: true }).waitFor()
+        expect(accepted).toHaveLength(acceptedBefore)
+        expect(requestPaths.filter(path => path === '/api/v1/files/prepare-upload')).toHaveLength(preparedBefore)
+        expect(await sdk.arkoPendingTurns()).toEqual([])
+        console.info('Text-only route: SDK and Tools rejected before upload/intake; UI retained image and text and displayed capability guidance')
         await page.reload({ waitUntil: 'load' })
         await page.getByRole('button', { name: '对话', exact: true }).click()
         await page.locator('[data-arkme-home-tour-target="arko"]').click()
+        if (chain.nativeRuntime) expect((await sdk.arkoModels()).effectiveRouteKey).toBe(textModel.routeKey)
         await expect.poll(() => page.getByRole('button', { name: chain?.realProvider ? /^预览图片：/u : '预览图片：circuit.png', exact: true }).count()).toBe(5)
         const hidden = await originalFetch(new URL('/__fixture/hide', chain.origin), { method: 'POST', headers: { authorization: `Bearer ${chain.token}` } })
         expect(hidden.status).toBe(204)
-        expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: firstRefs, clientTurnUid: accepted[0].client_turn_uid, waitSeconds: 1 })).toMatchObject({ status: firstReply.status, text: firstReply.text })
+        expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: firstRefs, modelRouteKey: accepted[0].model_route_key, clientTurnUid: accepted[0].client_turn_uid, waitSeconds: 1 })).toMatchObject({ status: firstReply.status, text: firstReply.text })
         await page.reload({ waitUntil: 'load' })
         await page.getByRole('button', { name: '对话', exact: true }).click()
         await page.locator('[data-arkme-home-tour-target="arko"]').click()
