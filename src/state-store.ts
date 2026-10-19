@@ -30,6 +30,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  dayReviewPending?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
 
   version: 2
@@ -354,6 +355,7 @@ function parseState(raw: string): PersistedState {
         ? Math.max(source.recordReeditDraftRevision as number, legacyRecordReeditRevision(recordReeditDraftsByUser, recordReeditSubmissionsByUser))
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
+    dayReviewPending: source.dayReviewPending ?? {},
   }
 }
 
@@ -437,6 +439,29 @@ export class ArkmeStateStore {
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
     this.boardCache = new ArrangementBoardCacheStore(directory)
+  }
+
+  private reviewPending(state: PersistedState): Record<string, unknown> {
+    const value = state.dayReviewPending ?? {}
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('日回顾提交恢复记录损坏，未创建新任务')
+    state.dayReviewPending = value
+    return value as Record<string, unknown>
+  }
+  async readDayReviewPending(scope: string, day: string): Promise<unknown> {
+    return this.read(state => structuredClone(this.reviewPending(state)[JSON.stringify([scope, day])]))
+  }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old !== undefined && JSON.stringify(old) !== JSON.stringify(request)) throw new Error('当天仍有提交结果待核对，请先核对原请求')
+      values[key] = structuredClone(request)
+    })
+  }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old && typeof old === 'object' && !Array.isArray(old) && (old as Record<string, unknown>).requestId === requestId) delete values[key]
+    })
   }
 
   async arrangementBoardCache(environment: string, userId: number, pages?: ArkmeArrangementBoardCachePages): Promise<ArkmeArrangementBoardCachePages> {

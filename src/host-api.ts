@@ -1,3 +1,4 @@
+import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -968,7 +969,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (['calendar.day-recap', 'calendar.day-review.create', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
+      if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
       if (request.operation === 'remote.session.observe') {
@@ -1672,6 +1673,9 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
+    case 'calendar.day-review.reconcile': return await service.reconcileDayReview(params, requestSignal)
+    case 'calendar.day-review.resume': return await service.resumeDayReview(params, requestSignal)
+    case 'calendar.day-review.evidence': return await service.dayReviewEvidence({ ...parseDayReviewQuery(params), resultId: reviewText(params.resultId), sourceRef: reviewText(params.sourceRef, 4096) }, requestSignal)
     case 'chat.activity.read': return await service.conversationActivityRead(params, requestSignal)
     case 'chat.activity.participants': return await service.conversationActivityParticipants(params, requestSignal)
     case 'chat.activity.messages': return await service.conversationActivityMessages(params, requestSignal)
