@@ -39,6 +39,7 @@ export interface TeamMessage {
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
+  replyToKey?: string
   recipientRead?: boolean
   /** Sealed, viewer-scoped snapshot for private local annotations, not Chat actions. */
   localMarkRef?: string

@@ -1,3 +1,5 @@
+import { teamMessageActionUnavailable } from './team-message-action-availability.js'
+import { TeamMessageReply } from './TeamMessageReply.js'
 import { conversationMessageMenu } from './conversation-message-actions.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { teamMessageSelectable } from './use-team-message-selection.js'
@@ -16,9 +18,10 @@ import { arkmeConversationMessageLayout as layout, timeLabel } from './conversat
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, located = false, onSelect, onToggle, onDetail, onSnapshot }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, located = false, onSelect, onToggle, onDetail, onSnapshot, onAskDsh, onExtend, replyParent, locatingReply, onLocateReply }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void; onSnapshot?(): void
+  onAskDsh?: (() => void) | undefined; onExtend?(): void; replyParent?: TeamMessage | undefined; locatingReply?: boolean; onLocateReply?(): void
   located?: boolean
   conversationRef?: string | undefined
   onEdit(): void; onReceipts(anchor: HTMLElement | null): void; onError(error: string): void
@@ -31,7 +34,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   useEffect(() => { setMenu(undefined) }, [message.key, message.version, message.state, message.contentStatus, selecting])
   const copy = (text: string) => select(() => { void copyText(text).catch(() => onError(tr('复制失败，请重试'))) })
   const copyMessage = () => copy(arkmeMessageCopyText(teamMessagePresentation(message)))
-  const unavailable = (id: string) => ({ id, disabled: true, disabledReason: tr('团队通道暂未支持此操作'), onSelect() {} })
+  const unavailable = (id: keyof typeof teamMessageActionUnavailable) => ({ id, disabled: true, disabledReason: tr(teamMessageActionUnavailable[id]), onSelect() {} })
   return <article data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version}
     data-team-selectable={teamMessageSelectable(message) ? message.key : undefined}
     onClickCapture={event => { if (selecting) { event.preventDefault(); event.stopPropagation(); if (!busy) onToggle?.() } }}
@@ -41,6 +44,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
       <div style={layout.messageAvatar}>{avatar}</div>
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
+        {message.replyToKey && onLocateReply && <TeamMessageReply parent={replyParent} busy={locatingReply} onLocate={onLocateReply} />}
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
         {showReceipts && message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         {!showReceipts && message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
@@ -68,10 +72,10 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           selectedText={menu.selectedText} copyIcon={<Copy />} onCopySelection={copy} onCopyMessage={copyMessage}
           point={{ x: menu.left, y: menu.top }} autoFocus onClose={() => setMenu(undefined)} actions={conversationMessageMenu([
           unavailable('reaction'),
-          { id: 'copy', onSelect: copyMessage }, unavailable('link'), unavailable('extend'),
+          { id: 'copy', onSelect: copyMessage }, unavailable('link'), { id: 'extend', disabled: busy || !writable || !onExtend, onSelect: () => select(() => onExtend?.()) },
           message.canEdit && writable && { id: 'edit', disabled: busy, onSelect: () => select(onEdit) },
           { id: 'select', disabled: busy || !onSelect, onSelect: () => select(() => onSelect?.()) },
-          unavailable('forward'), unavailable('ask-dsh'), !message.own && unavailable('report'),
+          unavailable('forward'), { id: 'ask-dsh', disabled: busy || !onAskDsh, onSelect: () => select(() => onAskDsh?.()) }, !message.own && unavailable('report'),
           message.own && { id: 'detail', disabled: !onSnapshot, onSelect: () => select(() => onSnapshot?.()) },
           showReceipts && { id: 'receipts', onSelect: () => select(() => onReceipts(bubble.current)) },
           message.own && { type: 'separator', id: 'withdraw-divider' }, message.own && unavailable('withdraw'),

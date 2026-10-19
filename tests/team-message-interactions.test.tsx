@@ -111,7 +111,7 @@ it('enters multiselect from the shared menu and keeps unsupported Team operation
   await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
   expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '查看阅读状态'])
-  expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队通道暂未支持此操作')
+  expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队消息转发尚未接通，需要确认目标对话和附件访问权限')
   await act(async () => buttons.find(button => button.textContent === '多选')!.click())
   expect(selectMessage).toHaveBeenCalledOnce()
   expect(document.querySelector('[role="menu"]')).toBeNull()
@@ -140,4 +140,20 @@ it('routes own right-click details to the snapshot while body click stays in rea
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '消息详情')!.click())
   expect(snapshot).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
+})
+
+it('enables actual extension and DSH callbacks, closes the menu and keeps backend gaps disabled', async () => {
+  const extend = vi.fn(), ask = vi.fn()
+  await act(async () => root.render(<TeamConversationMessage message={message} avatar={null} writable showReceipts={false}
+    receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error}
+    onExtend={extend} onAskDsh={ask} />))
+  for (const label of ['延展', '问 DSH']) {
+    await mouse(host.querySelector('p')!, 'contextmenu', 2)
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
+    expect(buttons.find(button => button.textContent === label)?.disabled).toBe(false)
+    expect(buttons.find(button => button.textContent === '表态')?.disabled).toBe(true)
+    await act(async () => buttons.find(button => button.textContent === label)!.click())
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  }
+  expect(extend).toHaveBeenCalledOnce(); expect(ask).toHaveBeenCalledOnce()
 })

@@ -514,6 +514,7 @@ export class ArkmeService {
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      identifyReply: (conversation, message, user) => this.teamApp.replyKey(conversation, message, user),
       execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
     })
     this.teamDelivery.start()

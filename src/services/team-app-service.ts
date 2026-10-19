@@ -67,6 +67,12 @@ export class TeamAppService {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
   }
+  async replyKey(conversationRef: string, messageRef: string, actor: number): Promise<string> {
+    const context = await this.open('conversation', conversationRef, actor)
+    const message = await this.open('message', messageRef, actor)
+    if (message.conversation_uid !== context.conversation_uid || message.side !== context.side || !str(message.message_uid)) throw invalid()
+    return await this.key(str(message.message_uid), actor)
+  }
   private async key(value: string, actor: number): Promise<string> {
     return createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`team:${actor}:${value}`).digest('hex')
   }
@@ -141,6 +147,7 @@ export class TeamAppService {
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonical: quoteCanonicalText(markContent) }, actor) } : {}),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
+      ...(str(v.reply_to) ? { replyToKey: await this.key(str(v.reply_to), actor) } : {}),
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
@@ -461,6 +468,7 @@ export class TeamAppService {
       }
       case 'team.app.send': {
         const context = await conversation()
+        if (p.replyToRef !== undefined) await this.replyKey(str(p.conversationRef), str(p.replyToRef), actor)
         try {
           const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: obj(p.content),
             ...(p.replyToRef ? { reply_to: (await this.open('message', p.replyToRef, actor)).message_uid } : {}) })

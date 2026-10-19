@@ -2,7 +2,9 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset } from '../types.js'
 import type { TeamContent, TeamMessage } from '../team-app-contract.js'
 
-export type TeamDraft = { text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; attempt?: { uid: string; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
+export type TeamReplyTarget = Pick<TeamMessage, 'ref' | 'key' | 'seq'> & { senderName: string; text: string }
+
+export type TeamDraft = { text: string; replyTarget?: TeamReplyTarget | undefined; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; attempt?: { uid: string; replyTarget?: TeamReplyTarget | undefined; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
 
 export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string, draft: TeamDraft): void {
   storage.setItem(key, JSON.stringify(draft))

@@ -611,3 +611,22 @@ describe('Team people identity and private remarks', () => {
     expect(page.messages[0]!.sender.personRef).toBeUndefined(); expect(page.messages[0]!.sender.personKey).toBeUndefined()
   })
 })
+
+it('projects server reply keys and rejects cross-conversation or cross-account reply references before sending', async () => {
+  let current = conversation
+  const f = fixture(path => path.endsWith('/messages/send') ? {...message,reply_to:message.message_uid} : {channel,conversation:current,messages:[message]})
+  const opened = await open(f), conversationRef = opened.conversation!.ref
+  const page = await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+  const parent = page.messages[0]!
+  const key = await f.service.replyKey(conversationRef,parent.ref,90)
+  expect(key).toBe(parent.key)
+  const sent = await f.service.execute('team.app.send',{conversationRef,replyToRef:parent.ref,content:{text_content:'延展',template_kind:1}}) as TeamSendResult
+  expect(sent.message?.replyToKey).toBe(parent.key)
+  expect(f.requests.at(-1)!.body.reply_to).toBe(message.message_uid)
+  current = {...conversation,conversation_uid:'another'}
+  const other = await open(f), before = f.requests.length
+  await expect(f.service.execute('team.app.send',{conversationRef:other.conversation!.ref,replyToRef:parent.ref})).rejects.toThrow()
+  expect(f.requests).toHaveLength(before)
+  f.changeAccount()
+  await expect(f.service.replyKey(conversationRef,parent.ref,91)).rejects.toThrow()
+})

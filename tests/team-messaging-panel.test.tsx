@@ -59,6 +59,40 @@ describe('Team send UI recovery', () => {
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
+  it('persists a reply draft across remount, enqueues the original reference and clears only the accepted reply', async () => {
+    const parent: TeamMessage = {ref:'parent-ref',key:'parent',seq:1,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'需要回复的问题',template_kind:1},media:[]}
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.timeline')return {conversation,messages:[parent],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue')return accepted()
+      return []
+    })
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onExtend())
+    expect(JSON.parse(localStorage.getItem(storageKey)!).replyTarget).toMatchObject({ref:'parent-ref',key:'parent',text:'需要回复的问题'})
+    expect(renderer!.root.findByProps({'data-arkme-composer-extension-target':'true'})).toBeDefined()
+    await act(async()=>renderer!.unmount());await mount()
+    expect(renderer!.root.findByProps({'data-arkme-composer-extension-target':'true'})).toBeDefined()
+    await send()
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')?.[1]).toMatchObject({replyToRef:'parent-ref'})
+    expect(JSON.parse(localStorage.getItem(storageKey)!).replyTarget).toBeUndefined()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+  })
+  it('can cancel extension without clearing the existing message draft', async () => {
+    localStorage.setItem(storageKey,JSON.stringify({text:'已有草稿',assets:[],replyTarget:{ref:'parent',key:'parent',seq:1,senderName:'同事',text:'问题'}}))
+    await mount()
+    await act(async()=>renderer!.root.findByProps({'aria-label':'取消延展'}).props.onClick())
+    const saved = JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.text).toBe('已有草稿');expect(saved.replyTarget).toBeUndefined()
+  })
+  it('shows a server reply after refresh and locates an earlier parent by pagination', async () => {
+    const parent: TeamMessage = {ref:'parent-ref',key:'parent',seq:1,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'原文',template_kind:1},media:[]}
+    const reply = {...parent,key:'reply',ref:'reply-ref',seq:10,replyToKey:'parent',content:{text_content:'回复',template_kind:1}}
+    mocks.call.mockImplementation(async (op,p) => op==='team.app.timeline' ? {conversation:{...conversation,lastSeq:10},messages:p.beforeSeq?[parent]:[reply],hasMore:!p.beforeSeq,beforeSeq:p.beforeSeq?1:10} : [])
+    await mount()
+    expect(renderer!.root.findByProps({'data-team-message-reply':true})).toBeDefined()
+    await act(async()=>{await renderer!.root.findByType(TeamConversationMessage).props.onLocateReply();await tick()})
+    await vi.waitFor(()=>expect(renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key==='parent')?.props.located).toBe(true))
+  })
   it('keeps the shared composer hint stable and preserves each draft timer across remount', async () => {
     localStorage.setItem(storageKey, JSON.stringify({ text: '', assets: [] }))
     await mount()
