@@ -65,7 +65,7 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 
 `arkme_recording_speaker_evidence` 为只读入口，拒绝 build。`arkme_recording_speaker_evidence_build` 单独注册为写操作，既有 runtime 确认机制会实际拦截未确认调用；不能靠 Tool 元数据声明代替执行层确认。参数 `request_json` 使用上述公开查询合同。原有纠正 Tool 接受新增目标、子区间和 intentToken。
 
-## 验证
+## 2026-10-16 历史验证
 
 - 完整插件套件：1021 文件、12016 项通过；20 项明确跳过。Node 25 使用 `NODE_OPTIONS=--no-experimental-webstorage` 运行既有测试环境。
 - 包构建、类型检查通过；独立 TypeScript consumer 从正式安装的 tgz 导入公开 SDK，编译并运行通过。
@@ -80,4 +80,6 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 
 合入最新 dev 后保留页面现有 `recordings.speaker.evidence` 与 `recordings.speaker.consistency` 合同；完整证据查询使用独立 `recordings.speaker.evidence.query`，SDK 对应 `recordingSpeakerEvidenceQuery`。Tool 名称保持不变。两种请求结构不混用，也不按参数猜测版本。新增查询与既有读取共用账号/纠正版本失效检查，并传递取消信号。
 
-验证：类型检查通过；全量测试 12,602 项通过、20 项跳过，发现的两处方法清单/Tool mock 旧名称已修复并经 73 项定向复验；另有 7 项接口隔离/SDK/Tool 合同测试通过。相对最新 dev，`src/client/**`、根 README、版本及 lockfile 零改动。
+最终验证：类型检查、包构建通过；完整套件 1,071 个文件通过、15 个文件跳过，12,605 项通过、20 项跳过。不可变 tgz 在未修改的官方 DSH `47f94385` 独立 profile 安装成功；独立 consumer 从 tgz 公开 SDK 导入并通过 TypeScript 编译及运行，含 AbortSignal。相对最新 dev `3c04defd`，`src/client/**`、根 README、版本及 lockfile 零改动。
+
+本轮真实后端 E2E 等待测试环境恢复；上面的历史 E2E 不代表本轮新提交已完成部署验收。没有发布安装渠道、替换常驻客户端或启用新的页面入口。
