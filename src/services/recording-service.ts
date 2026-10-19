@@ -83,6 +83,8 @@ export interface ArkmeRecordingProfileReader {
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    maxAgeMillis?: number,
+    lane?: 'interactive-read' | 'background-read',
   ): Promise<Map<number, ArkmePublicProfile>>
   sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string>
 }
@@ -1833,7 +1835,7 @@ export class RecordingService {
       ? listValue(speakerResult.value.spk_ls)
       : []
     const userIds = speakerUserIds(speakerData)
-    const profilesByUserId = await this.recordingSpeakerProfiles(userIds, session, signal)
+    const profilesByUserId = await this.recordingSpeakerProfiles(userIds, session, signal, false, 'interactive-read')
     const options = { viewerUserId: session.userId, dayStartMillis: date, dayEndMillis: dayEnd.getTime() }
     const response = transcriptResult.value
     const coverage = projectRecordingCoverage(response, date, dayEnd.getTime(), session.userId)
@@ -2393,11 +2395,12 @@ export class RecordingService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
     propagateFailure = false,
+    lane: 'interactive-read' | 'background-read' = 'background-read',
   ): Promise<Map<number, { displayName: string; avatarRef?: string }>> {
     if (this.profile === undefined) return new Map()
     if (userIds.length === 0) return new Map()
     try {
-      const publicProfiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+      const publicProfiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal, undefined, lane)
       const entries = await Promise.all([...publicProfiles].map(async ([userId, profile]) => {
         const displayName = profile.displayName.trim() || profile.nickname.trim()
         const avatarRef = profile.avatarUrl === undefined
