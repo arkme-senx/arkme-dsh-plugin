@@ -203,7 +203,8 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
         .replaceSelectionWith(editor.schema.nodes.arkmeEmoji!.create({ emojiId: emoji.id }))
       editor.view.dispatch(transaction)
       if (editor.state === previousState) return 'length-limit'
-      editor.view.dom.focus({ preventScroll: true })
+      // Reconcile the document selection after native focus restores its old caret.
+      editor.view.focus()
       return 'inserted'
     },
     captureSelection() {
