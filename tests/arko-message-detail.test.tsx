@@ -524,3 +524,29 @@ it('keeps the reading window and scroll stable when the current Run finishes in 
   expect(host.textContent).toContain('后台刚完成的回答')
  } finally { vi.useRealTimers() }
 })
+
+it('retries a failed history-window direction without refreshing the current conversation', async () => {
+ vi.useFakeTimers()
+ const original = vi.mocked(callArkme).getMockImplementation()!
+ let attempts = 0
+ vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+  const historical = otherSessionRead(method)
+  if (method === 'arko.context') return { ...historical as object, hasBefore: true, beforeCursor: 'window-before' } as never
+  if (historical) return historical as never
+  if (method === 'arko.messages' && input?.cursor === 'window-before') {
+   if (++attempts === 1) throw new Error('窗口读取超时')
+   return { items: [], hasMore: false, scanned: 1, consistency: 'live' } as never
+  }
+  return original(method, input, signal)
+ })
+ try {
+  await locateOtherSession()
+  await click([...host.querySelectorAll('button')].find(node => node.textContent === '更早')!)
+  expect(host.textContent).toContain('窗口读取超时')
+  const calls = vi.mocked(callArkme).mock.calls.length
+  await click([...host.querySelectorAll('button')].find(node => node.textContent === '重试历史读取')!)
+  expect(vi.mocked(callArkme).mock.calls.slice(calls)).toEqual([['arko.messages', { cursor: 'window-before', direction: 'desc', limit: 50 }, expect.any(AbortSignal)]])
+  expect(host.textContent).toContain('历史窗口中的原始问题')
+  expect(( [...host.querySelectorAll('button')].find(node => node.textContent === '更晚') as HTMLButtonElement).disabled).toBe(true)
+ } finally { vi.useRealTimers() }
+})

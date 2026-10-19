@@ -132,3 +132,11 @@ it('handles a large fragmented frame and many plain-text backtick runs without q
  expect(markdown).toContain('```text\n' + body + '\n```')
  expect(result.count).toBe(1)
 })
+
+it('preserves local mark projection in both published and new history reads', async () => {
+ const { service } = await setup(async () => json({ items: [wireItem], message_ls: [wireItem], has_more: false, scanned: 1, consistency: 'live' }))
+ const project = vi.spyOn(service.localMarks, 'project').mockResolvedValue('local-mark-reference')
+ expect((await service.arkoMessages()).items[0]?.localMarkRef).toBe('local-mark-reference')
+ expect((await service.arkoHistoryPage()).items[0]?.localMarkRef).toBe('local-mark-reference')
+ expect(project).toHaveBeenCalledTimes(2)
+})

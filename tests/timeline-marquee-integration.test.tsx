@@ -151,7 +151,7 @@ it('keeps the 100-item action boundary separate from selecting 101 eligible mess
 })
 it('opens the existing forward picker and suspends marquee until the picker closes', async () => {
   await render(); await select('occurrence-0', 'occurrence-1')
-  await act(async () => action('转发').props.onClick())
+  await act(async () => action('转发').props.onClick({ currentTarget: undefined }))
   const dialog = renderer.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
   const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button')
   expect(targets).toHaveLength(2)
@@ -178,7 +178,7 @@ it('freezes selection during copy-link and restores normal interaction after rej
     return previous(operation, params, signal)
   })
   await render(); await select('occurrence-0', 'occurrence-1')
-  await act(async () => action('复制链接').props.onClick())
+  await act(async () => action('复制链接').props.onClick({ currentTarget: undefined }))
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(false)
   const calls = state.callArkme.mock.calls.filter(call => call[0] === 'source.message-copy-link')
   expect(calls).toHaveLength(1)

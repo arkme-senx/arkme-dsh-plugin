@@ -456,6 +456,7 @@ export function ArkmeArkoSurface() {
   const [messages, setMessages] = useState<ArkoMessage[]>([])
   const [historyWindow, setHistoryWindow] = useState<ArkmeArkoContextWindow>()
   const [windowLoading, setWindowLoading] = useState(false)
+  const [windowError, setWindowError] = useState<{ direction: 'asc' | 'desc'; message: string }>()
   const windowController = useRef<AbortController>()
   const historyController = useRef<AbortController>()
   useEffect(() => () => { windowController.current?.abort(); historyController.current?.abort() }, [accountKey])
@@ -467,7 +468,7 @@ export function ArkmeArkoSurface() {
     const element = bodyRef.current?.querySelector<HTMLElement>(`[data-arko-selection-key="history:${locationTarget}"]`)
     element?.scrollIntoView?.({ block: 'center' })
   }, [locationTarget, historyWindow])
-  useEffect(() => { setHistoryWindow(undefined); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
+  useEffect(() => { setHistoryWindow(undefined); setWindowError(undefined); setWindowLoading(false); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
   const [historyCursor, setHistoryCursor] = useState<string>()
   const [historyError, setHistoryError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -781,12 +782,12 @@ export function ArkmeArkoSurface() {
     if (!current || !cursor || windowLoading) return
     windowController.current?.abort()
     const controller = new AbortController(); windowController.current = controller
-    setWindowLoading(true); setHistoryError('')
+    setWindowLoading(true); setWindowError(undefined)
     try {
       const page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { cursor, direction, limit: 50 }, controller.signal)
       if (controller.signal.aborted) return
       const items = page.items.length ? page.items : current.items
-      const next: ArkmeArkoContextWindow = { ...current, items, hasBefore: direction === 'desc' ? page.hasMore : true, hasAfter: direction === 'asc' ? page.hasMore : true }
+      const next: ArkmeArkoContextWindow = { ...current, items, hasBefore: direction === 'desc' ? page.hasMore : page.items.length > 0 || current.hasBefore, hasAfter: direction === 'asc' ? page.hasMore : page.items.length > 0 || current.hasAfter }
       if (direction === 'desc') {
         if (page.nextCursor) next.beforeCursor = page.nextCursor; else delete next.beforeCursor
         if (page.afterCursor) next.afterCursor = page.afterCursor
@@ -797,7 +798,7 @@ export function ArkmeArkoSurface() {
       setHistoryWindow(next)
       setLocationTarget(undefined)
       if (bodyRef.current) bodyRef.current.scrollTop = 0
-    } catch (caught) { if (!controller.signal.aborted) setHistoryError(errorMessage(caught)) }
+    } catch (caught) { if (!controller.signal.aborted) setWindowError({ direction, message: errorMessage(caught) }) }
     finally { if (!controller.signal.aborted) setWindowLoading(false) }
   }
 
@@ -905,7 +906,7 @@ export function ArkmeArkoSurface() {
       } else if (!runActive) {
         // Synchronous replies never enter finishRun. Acquire the same authoritative
         // history references without blocking the composer or moving the viewport.
-        void callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }).then(page => {
+        void callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50 }).then(page => {
           if (!stillCurrent()) return
           const completed = new Map(page.items.filter(item => item.sessionId === result.sessionId
             && [result.userMsgId, result.assistantMsgId].includes(item.messageId))
@@ -1131,7 +1132,7 @@ export function ArkmeArkoSurface() {
           return visible ? arkoHistoryDate(Number(visible.dataset.arkoOrderAt ?? visible.dataset.arkoAt)) || undefined : undefined
         }}
         onLocate={(window, item) => {
-          windowController.current?.abort(); setWindowLoading(false)
+          windowController.current?.abort(); setWindowLoading(false); setWindowError(undefined)
           setDetailSelection(undefined); followTailRef.current = false
           setHistoryWindow(window); setLocationTarget(item.messageId)
         }} />
@@ -1143,14 +1144,15 @@ export function ArkmeArkoSurface() {
       <button type="button" style={styles.retryButton} disabled={windowLoading || !historyWindow.hasBefore} onClick={() => { void pageWindow('desc') }}>{tr('更早')}</button>
       <button type="button" style={styles.retryButton} disabled={windowLoading || !historyWindow.hasAfter} onClick={() => { void pageWindow('asc') }}>{tr('更晚')}</button>
       {windowLoading && <span role="status">{tr('正在读取…')}</span>}
+      {windowError && <span role="alert">{windowError.message}<button type="button" style={styles.retryButton} disabled={windowLoading} onClick={() => { void pageWindow(windowError.direction) }}>{tr('重试历史读取')}</button></span>}
       {historyWindow.items.some(item => item.orderAtMillis && arkoHistoryDate(item.orderAtMillis) !== arkoHistoryDate(item.createdAtMillis)) && <span>{tr('日历按历史排序日期定位，消息保留原显示时间')}</span>}
-      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { windowController.current?.abort(); setWindowLoading(false); setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
+      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { windowController.current?.abort(); setWindowLoading(false); setWindowError(undefined); setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
     </div>}
     <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}
       onScroll={event => { const node = event.currentTarget; followTailRef.current = !historyViewRef.current && node.scrollHeight - node.clientHeight - node.scrollTop < 80 }}>
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
-      {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
+      {historyWindow === undefined && historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
           if (historyCursor === undefined) void retryHistory()

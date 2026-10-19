@@ -105,3 +105,30 @@ it('labels a bounded search window accurately after scanning more matches than i
  expect(vi.mocked(callArkme).mock.calls.at(-1)?.[1]).not.toHaveProperty('cursor')
  expect(host.querySelectorAll('[data-arko-search-hit]')).toHaveLength(50)
 })
+
+it('does not describe a failed first search as a completed scan or no matches', async () => {
+ vi.mocked(callArkme).mockRejectedValueOnce(new Error('读取超时'))
+ await click('[aria-label="搜索 Arko 对话"]'); await enterQuery('failure')
+ expect(host.textContent).toContain('读取超时')
+ expect(host.textContent).not.toContain('已扫描到历史末尾')
+ expect(host.textContent).not.toContain('没有匹配的消息')
+ expect(host.textContent).toContain('搜索未完成，请重试')
+})
+
+it('cancels pending original-message navigation when the user changes the search intent', async () => {
+ let finish!: (value: unknown) => void, locationSignal!: AbortSignal
+ const original = vi.mocked(callArkme).getMockImplementation()!
+ vi.mocked(callArkme).mockImplementation(async (op,args,signal) => {
+  if (op === 'arko.search') return { items: [match], hasMore: false, scanned: 1, consistency: 'live' } as never
+  if (op === 'arko.context') { locationSignal=signal!; return await new Promise(resolve => { finish=resolve }) as never }
+  return original(op,args,signal)
+ })
+ await click('[aria-label="搜索 Arko 对话"]'); await enterQuery('old intent')
+ await click('[data-arko-search-hit]')
+ expect(host.textContent).toContain('取消定位')
+ await enterQuery('new intent')
+ expect(locationSignal.aborted).toBe(true)
+ await act(async () => finish(window))
+ expect(locate).not.toHaveBeenCalled()
+ expect(host.textContent).not.toContain('正在定位原消息')
+})

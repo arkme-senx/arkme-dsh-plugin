@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
+import { registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
 import { arkoMessageMarkTarget, arkoMessageMarkTransport } from '../src/client/arko-message-marks.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -61,7 +62,7 @@ beforeEach(async () => {
   history = [item(1, 'user', '我的问题需要保留'), item(2, 'assistant', '这是 **重点结论**，以及[链接](https://example.com)。')]
   vi.mocked(callArkme).mockImplementation(async (method, params) => {
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [] } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 2 } as never
     if (method === 'user.profile') return { profile: {} } as never
@@ -135,7 +136,7 @@ it('enables marking a newly completed synchronous reply without reloading or mov
   })
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
   await click([...document.querySelectorAll('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!)
-  await waitForUi(() => expect(body(4)).not.toBeNull())
+  await waitForUi(() => expect(registeredMessageTargets('arko:test:10001').some(({ target }) => target.localMarkRef === 'mark-4')).toBe(true))
   const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
   Object.defineProperty(viewport, 'scrollHeight', { value: 1000 })
   Object.defineProperty(viewport, 'clientHeight', { value: 300 })
