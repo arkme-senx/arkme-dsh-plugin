@@ -65,7 +65,7 @@ it.each(['vip', 'svip', 'free', 'unknown', undefined] as const)('uses fresh visi
   const badge = document.querySelector('header [data-arkme-membership]')
   if (memberType === 'vip' || memberType === 'svip') {
     expect(badge?.getAttribute('data-arkme-membership')).toBe(memberType)
-    expect(badge?.parentElement?.title).toBe(`${memberType.toUpperCase()} 会员`)
+    expect(badge?.parentElement?.getAttribute('aria-label')).toBe(`${memberType.toUpperCase()} 会员`)
   } else expect(badge).toBeNull()
   expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['team.app.timeline'])
 })

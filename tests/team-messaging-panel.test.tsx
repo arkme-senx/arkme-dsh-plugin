@@ -62,7 +62,7 @@ describe('Team send UI recovery', () => {
       const visible = side === 'team' && (memberType === 'vip' || memberType === 'svip')
       expect(badges).toHaveLength(visible ? 1 : 0)
       if (visible) {
-        expect(badges[0]!.props['aria-label']).toBe(`${memberType.toUpperCase()} 会员`)
+        expect(badges[0]!.parent!.props['aria-label']).toBe(`${memberType.toUpperCase()} 会员`)
         expect(badges[0]!.props.width).toBe('13')
       }
     }
