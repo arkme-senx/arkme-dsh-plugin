@@ -65,7 +65,7 @@ import { useSelfCalendarNavigation } from './use-self-calendar-navigation.js'
 import { ArkmeCalendarNavigationStatus } from './ArkmeCalendarNavigationStatus.js'
 import { ArkmeChatCalendar } from './ArkmeChatCalendar.js'
 import type { ConversationCalendarInteractionState } from './conversation-calendar.js'
-import { arkmeConversationTargetRow } from './conversation-viewport.js'
+import { arkmeConversationTargetRow, arkmeConversationTargetAnchor } from './conversation-viewport.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
@@ -4138,7 +4138,9 @@ export function ArkmeSurface({
           viewportRestoreIntentRef.current = false
           const calendarLocate = ownsCalendarNavigation(target.revision)
           body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
-            behavior: calendarLocate ? 'auto' : 'smooth' })
+            // Virtual context chunks can change height while mounting. Match the
+            // around-page path: establish the viewport before releasing its anchor.
+            behavior: calendarLocate || target.contextRef ? 'auto' : 'smooth' })
           conversationTargetLocatedRevisionRef.current = target.revision
           const calendarFinished = finishCalendarNavigation(target.revision)
           highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
@@ -8945,7 +8947,7 @@ export function ArkmeSurface({
               {renderedMessageRows && unifiedWindow ? <WindowedTimelineRows key={`${authenticatedAccountKey}:${conversationKey}`}
                 rowIds={displayRows} scrollport={bodyRef}
                 anchorId={ui.conversationTarget?.itemUid
-                  ? displayRows.find(row => row.kind === 'message' && row.item.itemUid === ui.conversationTarget?.itemUid)?.id
+                  ? arkmeConversationTargetAnchor(displayRows, ui.conversationTarget)
                   : pendingViewportRestoreRef.current?.sourceKey === conversationKey
                   ? pendingViewportRestoreRef.current.viewport?.anchorId
                   : conversationCacheRef.current.getViewport(conversationKey)?.anchorId}>

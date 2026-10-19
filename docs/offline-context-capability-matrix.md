@@ -91,3 +91,16 @@ Audio 正式回听接口对既有 `.m4a` 切片返回 `audio/mp4`，Host 原白�
 不可变 tgz 在独立 Profile 中验收，不修改官方 DSH。UI/Host 局部 162 项通过，1 个原生环境用例在该局部命令跳过，真实原生链路另测。全量首轮 12,695 项通过，1 个 Arko 消息标记 UI 等待失败；原断言单独复跑 5 项通过，正式 pnpm 完整复验 12,696 项通过、21 跳过，零失败（1,081 文件通过、16 跳过）；见 Meta verification.md。
 
 证据：/tmp/offline-idempotence-ui-tests-final.log、/tmp/offline-ui-final-full-tests.log、/tmp/offline-ui-final-mark-retest.log、/tmp/offline-ui-runtime/dsh-idempotence.log、/tmp/offline-message-sdk-compile.log、/tmp/offline-message-sdk-run.log、/tmp/offline-ui-runtime/ui-admission-final.png。截图含合成用户与合成录音文本；不作为真实模型效果或线上数据验收。用户 3081 实例未改。
+
+
+## 2026-10-19 合并前复核：长对话定位
+
+确认并修复两处同根问题：虚拟列表仅为消息行保留导航锚点，未挂载的线下卡片无法定位；缓存路径平滑滚动尚未结束就释放锚点，导致滚动停在中间。现在将 contextRef 映射到既有虚拟列表行，按现有 around 路径先同步定位再消费目标。不增加 UI 入口、弹窗、状态机或依赖。
+
+- 单测先用旧行为复现失败，再验证修复；相关 429 项通过。
+- 正式 pnpm 全量 12,698 项通过、21 跳过（1,081 文件通过、16 跳过），typecheck、build、tgz 打包与官方 CLI 隔离安装通过。
+- 最终产物在实际浏览器中覆盖 180 条消息长窗口：卡片未挂载时点击消息标记定位；卡片和消息互在未加载分页时双向 around 导航；原待确认条、确认、原文及冻结分享预览与确认。
+- 原生 Chat 验证同群其他成员不能读取私人关联，分享后只能读取分享消息，timeline 不泄露 offline_context 私有项。Tools 和仓外 SDK 已通过正式 Host 查询；导航修复没有新增 Host 能力。
+- 本轮回听夹具返回 offline-premerge 测试桶，被正式域名白名单拒绝，错误在原卡片呈现；不计为成功播放，不放宽白名单。此前 M4A 合成播放证据见上节，不能替代本轮真实录音验收。
+
+日志：`/tmp/offline-review-navigation-red.log`、`/tmp/offline-review-navigation-final.log`、`/tmp/offline-review-plugin-full-final.log`；最终产物 `/tmp/offline-review-final.tgz`，截图 `/tmp/offline-ui-runtime/ui-final-long-navigation.png`。均为隔离合成账号和数据，未修改用户 3081 实例。
