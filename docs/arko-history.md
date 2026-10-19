@@ -23,7 +23,7 @@ const downloadURL = sdk.localFileUrl(exported.fileRef, true)
 
 ## 下载与消息操作
 
-导出固定一次只读 RR 快照。NDJSON 版本为 arko-export-v1，顺序为 start、item、complete。count、bytes、sha256 覆盖每条 item 的原始 UTF-8 JSON 行，包含 LF，禁止重新序列化后计算。Host 验证后才发布账号/Profile 绑定、限时的生成文件引用。缺失 complete、摘要/数量不匹配、取消、账号切换或磁盘失败均不发布产物。生成文件独立于附件上传限制和队列。
+Jotmo 后端不生成文件，不全量缓存历史。导出先分批读取并释放每批 DB 事务，再传输正文；结束前在一次只读 RR 中核对已发送的全部源事实（含原正文）与完整可见集合，匹配才确认完成，不匹配要求重试。用户设备的插件负责生成 Markdown，收到并校验完整完成帧后才发布下载引用。NDJSON 版本为 arko-export-v1，顺序为 start、item、complete。count、bytes、sha256 覆盖每条 item 的原始 UTF-8 JSON 行，包含 LF，禁止重新序列化后计算。Host 验证后才发布账号/Profile 绑定、限时的生成文件引用。最终一致性核验失败、缺失 complete、摘要/数量不匹配、取消、账号切换或磁盘失败均不发布产物。生成文件独立于附件上传限制和队列。
 
 新历史消息操作使用短凭证，包含正文及必要展示事实的摘要。操作时通过 ArkoMessageActionReader 批量重读当前 owner，重新校验归属、场景、状态和摘要；内容变化时要求刷新，不能静默改成另一份正文。最多 100 条同次读取，不做逐消息 SQL/HTTP，不持久化正文副本。历史 QA 的可展示、可转发与 Agent 可复制链接权限分别判断。旧已发布读取与其他消息 owner 的操作协议保持原合同，新入口无 offset 全扫描回退。
 
