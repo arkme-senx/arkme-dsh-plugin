@@ -1476,6 +1476,7 @@ export interface ArkmeProviderCapabilities {
     userProfile: true
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
+    calendarDayReview?: true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     imageRead: true
@@ -3801,6 +3802,8 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  /** Account-bound authority for private, persisted marks on completed text. */
+  localMarkRef?: string
   messageId: number
   sessionId: number
   role: ArkmeArkoMessageRole
@@ -4239,6 +4242,9 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'calendar.day-review.reconcile'
+  | 'calendar.day-review.resume'
+  | 'calendar.day-review.evidence'
   | 'statistics.detail'
   | 'statistics.active'
   | 'statistics.long'
@@ -4559,6 +4565,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
   | 'arko.profile'
+  | 'arko.local-mark.capabilities'
+  | 'arko.local-mark.list'
+  | 'arko.local-mark.change'
   | 'arko.session'
   | 'arko.new-session'
   | 'arko.models'

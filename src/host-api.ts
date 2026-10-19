@@ -1,3 +1,4 @@
+import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -75,6 +76,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
   if (operation === 'recordings.speaker.correction.apply') return 1024 * 1024
   if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
@@ -967,7 +969,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (['calendar.day-recap', 'calendar.day-review.create', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
+      if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
       if (request.operation === 'remote.session.observe') {
@@ -1671,6 +1673,9 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
+    case 'calendar.day-review.reconcile': return await service.reconcileDayReview(params, requestSignal)
+    case 'calendar.day-review.resume': return await service.resumeDayReview(params, requestSignal)
+    case 'calendar.day-review.evidence': return await service.dayReviewEvidence({ ...parseDayReviewQuery(params), resultId: reviewText(params.resultId), sourceRef: reviewText(params.sourceRef, 4096) }, requestSignal)
     case 'chat.activity.read': return await service.conversationActivityRead(params, requestSignal)
     case 'chat.activity.participants': return await service.conversationActivityParticipants(params, requestSignal)
     case 'chat.activity.messages': return await service.conversationActivityMessages(params, requestSignal)
@@ -1766,6 +1771,9 @@ export async function dispatchArkmeHostOperation(
     }
     case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
     case 'arko.profile': return await service.arkoProfile()
+    case 'arko.local-mark.capabilities': return await service.arkoLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
+    case 'arko.local-mark.list': return await service.arkoLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)
+    case 'arko.local-mark.change': return await service.changeArkoLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'markRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'arko.session': return await service.arkoEnsureSession()
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()

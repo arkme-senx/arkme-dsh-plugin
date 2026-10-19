@@ -99,6 +99,25 @@ describe('registerArkmeTools', () => {
     await mounted.dispose()
   })
 
+  it('requires a published day-review confirmation and later human input before charging', async () => {
+    const ctx = await setup()
+    const createDayReview = vi.fn(async () => ({ supported: true, job: { id: 'job', status: 'queued' } }))
+    const registration = await mountArkmeTools(ctx, 'business', { ...ports, createDayReview } as unknown as ArkmeToolPorts)
+    const events = sessionEvents()
+    const agent = { id: SessionId('day-review'), session: { get events() { return events } } } as unknown as Agent
+    const args = { account_scope: 'test:7', date: '2026-10-16', timezone: 'Asia/Shanghai', action: 'create', request_id: '00000000-0000-4000-8000-000000000000', source_kinds: ['self'] }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_day_review_generate', arguments: args, agent, signal: new AbortController().signal })
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+    expect(JSON.stringify(await run('repeat'))).toContain('confirmation_required')
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    expect(createDayReview).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '使用我的积分生成当天回顾' }] } })
+    expect((await run('confirmed')).isError).toBe(false)
+    expect(createDayReview).toHaveBeenCalledExactlyOnceWith({ accountScope: 'test:7', bucketDate: '2026-10-16', timezone: 'Asia/Shanghai', requestId: args.request_id, sourceKinds: ['self'] }, expect.any(AbortSignal))
+    await registration.dispose()
+  })
+
   it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
     const ctx = await setup()
     const reactions = vi.fn(async () => ({ revision: 0, items: [] }))
@@ -209,6 +228,7 @@ describe('registerArkmeTools', () => {
       'arkme_records_search',
       'arkme_record_calendar_days',
       'arkme_record_calendar_read',
+      'arkme_day_review_read', 'arkme_day_review_generate',
       'arkme_images_list',
       'arkme_record_create',
       'arkme_record_reedit',
