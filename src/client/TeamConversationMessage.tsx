@@ -16,9 +16,10 @@ import { arkmeConversationMessageLayout as layout, timeLabel } from './conversat
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, located = false, onSelect, onToggle, onDetail }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void
+  located?: boolean
   conversationRef?: string | undefined
   onEdit(): void; onReceipts(anchor: HTMLElement | null): void; onError(error: string): void
 }) {
@@ -46,7 +47,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           state={message.recipientRead === undefined ? 'error' : 'unread'}
           label={tr(message.recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
           {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
-        <div ref={bubble} className="arkme-timed-bubble" style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}) }} tabIndex={0}
+        <div ref={bubble} className="arkme-timed-bubble" data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
           aria-label={tr('消息操作')}
           onClick={event => {
             if (!published || !available || selecting || captureMessageTextSelection(bubble.current ?? undefined)

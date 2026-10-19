@@ -55,9 +55,10 @@ function Member({ member, renderAvatar }: { member: TeamReceiptMember; renderAva
   </div>
 }
 
-export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, renderAvatar }: {
+export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, renderAvatar, renderVisitorAvatar }: {
   message: TeamMessage; state: TeamReceiptState; visitor?: TeamIdentity | undefined
   onRetry(): void; onMore(): void; renderAvatar(identity: TeamIdentity): ReactNode
+  renderVisitorAvatar?(identity: TeamIdentity): ReactNode
 }) {
   const value = state.value, counts = teamReceiptCounts(value)
   // Keep source order for ties and unknown states; known readers are newest first.
@@ -68,7 +69,7 @@ export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, r
     {message.side === 'team' && <>
       <div className="team-receipt-heading">{tr('外部联系人')}</div>
       <Member member={{ nickname: visitor?.nickname || tr('用户'), ...visitor,
-        ...(typeof visitorRead === 'boolean' ? {read: visitorRead} : {}) }} renderAvatar={renderAvatar} />
+        ...(typeof visitorRead === 'boolean' ? {read: visitorRead} : {}) }} renderAvatar={renderVisitorAvatar ?? renderAvatar} />
     </>}
     <div className="team-receipt-heading">{tr('团队成员')}<span>{counts ? tr('已读 {v0}/{v1}', {v0:counts.read, v1:counts.total})
       : value?.hasMore ? tr('已加载 {v0} 人', {v0:value.members.length}) : value ? tr('人数暂不可用') : ''}</span></div>

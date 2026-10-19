@@ -25,6 +25,8 @@ import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
+import { useTeamVisitorActions } from './TeamVisitorActions.js'
+import { TeamVisitorRecords } from './TeamVisitorRecords.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
 import { teamDirectoryPreferences, teamConversationEntryKey, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
@@ -233,6 +235,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const messageMarks = useMessageUnderlines(`${accountKey}:team:${conversation.key}`, conversation.ref, Number(accountKey.split(':').at(-1)), teamMessageMarkTransport)
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
+  const [visitorRecords, setVisitorRecords] = useState(false), [locatedKey, setLocatedKey] = useState<string>()
   const [selectedSearch, setSelectedSearch] = useState<{ text: string }>()
   useSelectedMessageSearch(conversation.ref, text => { setDetailKey(undefined); setSelectedSearch({ text }) })
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
@@ -554,6 +557,36 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }
   if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
   const current = timeline?.conversation ?? conversation
+  const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
+    onOpen: () => { setDetailKey(undefined); setSelectedSearch(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
+    onRecords: () => setVisitorRecords(true),
+  })
+  const locateVisitorRecord = async (message: TeamMessage, signal: AbortSignal) => {
+    let page = latest.current
+    for (let pass = 0; !page?.messages.some(m => m.key === message.key) && pass < 100; pass++) {
+      signal.throwIfAborted()
+      if (page && (!page.hasMore || page.beforeSeq <= message.seq)) break
+      const previous = page?.beforeSeq
+      page = await refresh(previous ?? 0)
+      if (ctrl.current.signal.aborted) return
+      if (!page || previous && page.hasMore && page.beforeSeq >= previous) throw new Error(tr('原消息暂时无法定位，请重试'))
+    }
+    signal.throwIfAborted()
+    const found = page?.messages.find(m => m.key === message.key)
+    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
+    setLocatedKey(message.key)
+  }
+  useLayoutEffect(() => {
+    if (!locatedKey) return
+    const row = Array.from(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? []).find(node => node.dataset.teamMessageKey === locatedKey)
+    row?.scrollIntoView({ block: 'center' })
+    if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current)
+  }, [locatedKey])
+  useEffect(() => {
+    if (!locatedKey) return
+    const timer = setTimeout(() => setLocatedKey(undefined), 2400)
+    return () => clearTimeout(timer)
+  }, [locatedKey])
   const selection = useTeamMessageSelection({ accountKey, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal, refresh, onChanged })
   const displayedMessages = visibleMessages.filter(selection.keeps)
   const detail = displayedMessages.find(message => message.key === detailKey && message.state === 'published' && message.contentStatus === 'available')
@@ -608,7 +641,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
-        <TeamConversationMessage message={m} conversationRef={conversation.ref} avatar={<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
+        <TeamConversationMessage message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
+          avatar={current.side === 'team' && m.side === 'external' && !selection.ids
+            ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />)
+            : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} receiptStore={receiptStore} busy={busy || selection.busy}
           selecting={selection.ids !== undefined} selected={selection.ids?.has(m.key) ?? false}
           onSelect={() => { setDetailKey(undefined); selection.enter(new Set([m.key])) }} onToggle={() => selection.toggle(m.key)} onDetail={() => setDetailKey(m.key)}
@@ -650,8 +686,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       onClose={() => { receiptRef.current = undefined; setReceiptMessage(undefined) }}>
       <TeamReceiptDetails key={receiptMessage.key} message={receiptMessage} state={receiptState} visitor={current.visitor}
         onRetry={() => { void readReceipts(receiptMessage) }} onMore={() => { void readReceipts(receiptMessage, true) }}
-        renderAvatar={identity => <TeamAvatar identity={identity} size={20} />} />
+        renderAvatar={identity => <TeamAvatar identity={identity} size={20} />}
+        renderVisitorAvatar={identity => visitorActions.avatar(<TeamAvatar identity={identity} size={20} />)} />
     </ArkmeReadReceiptPanel>}
+    {visitorActions.layer}
+    {visitorRecords && current.side === 'team' && <TeamVisitorRecords conversation={{ ...conversation, ...(current.visitor ? { visitor: current.visitor } : {}) }}
+      accountKey={accountKey} onClose={() => setVisitorRecords(false)} onLocate={locateVisitorRecord} />}
 
 
 

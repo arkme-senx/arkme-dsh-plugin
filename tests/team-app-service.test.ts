@@ -30,8 +30,9 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
-  const service = new TeamAppService(runtime, avatars)
-  return { service, runtime, requests, fetchImpl, avatars, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
+  const service = new TeamAppService(runtime, avatars, privateChat as never)
+  return { service, runtime, requests, fetchImpl, avatars, privateChat, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
@@ -502,4 +503,58 @@ describe('Team profile owner adapter',()=>{
   await expect(f.service.execute('team.app.profile.avatar.upload',{teamRef:ref,uploadUid:'image',contentBase64:'invalid'})).rejects.toMatchObject({code:'team-not_owner'})
   expect(f.requests).toHaveLength(2)
  })
+})
+
+
+describe('Team visitor private chat authority', () => {
+  it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客' } }, messages: [] }))
+    const opened = await open(f)
+    const result = await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', peerUserId: 999, displayName: '伪造昵称' })
+    expect(result).toEqual({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })
+    expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledExactlyOnceWith(200, { presentationDisplayName: '访客', expectedViewerUserId: 90 })
+    expect(f.requests.at(-1)?.body).toEqual({ conversation_uid: 'conversation-private', side: 'team', before_seq: 0, limit: 1 })
+  })
+  it.each([undefined, 0, 90, '9223372036854775806'])('rejects missing, self, and unsafe visitor identities: %s', async external_user_id => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id }, messages: [] }))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toMatchObject({ code: 'team-visitor-identity-unavailable' })
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('does not let an external viewer use team visitor actions', async () => {
+    const f = fixture(() => ({ channel, conversation, messages: [] })), opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects changed account and a mismatched returned conversation', async () => {
+    let current: Record<string, unknown> = { ...conversation, side: 'team', external_user_id: 200 }
+    const f = fixture(() => ({ channel, conversation: current, messages: [] })), opened = await open(f)
+    current = { ...current, conversation_uid: 'wrong-conversation' }
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90' })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+})
+
+
+it('opens production visitor through the server-selected latest external message, ignoring team senders', async () => {
+  const current = { ...conversation, side: 'team', external_user_id: undefined, latest_external_seq: 7, visitor: { nickname: '访客' } }
+  const f = fixture((_path, body) => ({ channel, conversation: current, messages: body.before_seq === 8
+    ? [{ ...message, side: 'external', actor_user_id: 200, seq: 7 }]
+    : [{ ...message, side: 'team', actor_user_id: 11, seq: 9 }] }))
+  const opened = await open(f)
+  await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })
+  expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledExactlyOnceWith(200, { presentationDisplayName: '访客', expectedViewerUserId: 90 })
+  expect(f.requests.at(-1)!.body).toMatchObject({ before_seq: 8, limit: 1 })
+})
+it.each([
+  { side: 'team', actor_user_id: 200, seq: 7 },
+  { side: 'external', actor_user_id: 200, seq: 6 },
+  { side: 'external', actor_user_id: undefined, seq: 7 },
+])('never substitutes a different message or missing sender for the verified external identity', async raw => {
+  const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: undefined, latest_external_seq: 7 }, messages: [{ ...message, ...raw }] }))
+  const opened = await open(f)
+  await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+  expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
 })

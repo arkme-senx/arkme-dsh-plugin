@@ -1,4 +1,6 @@
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
+import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
+import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
@@ -437,6 +439,33 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)
     await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+  })
+  it('uses visitor avatar actions in the timeline and receipt panel while preserving the team draft', async () => {
+    const incoming: TeamMessage = { key: 'visitor-m', ref: 'visitor-ref', seq: 2, revision: 1, side: 'external', sender: { nickname: '访客' }, own: false,
+      state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [] }
+    const sent = { ...incoming, key: 'sent', ref: 'sent-ref', side: 'team', own: true }
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? { conversation: { ...conversation, side: 'team', visitor: { nickname: '访客' } }, messages: [incoming, sent], hasMore: false, beforeSeq: 0 }
+      : { visitorRead: true, members: [], hasMore: false, senderExcluded: true })
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const rows = renderer!.root.findAllByType(TeamConversationMessage)
+    const avatar = () => rows[0]!.findByProps({ 'aria-label': '访客 的用户卡片' })
+    await act(async () => avatar().props.onClick({ stopPropagation() {} }))
+    expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
+    await act(async () => renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
+    await act(async () => avatar().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 20, clientY: 20 }))
+    await act(async () => { renderer!.root.findByType(ArkmeActionMenu).props.actions[0].onSelect(); await tick() })
+    expect(renderer!.root.findAllByType(TeamVisitorRecords)).toHaveLength(1)
+    await act(async () => renderer!.root.findByType(TeamVisitorRecords).props.onLocate(incoming, new AbortController().signal))
+    expect(renderer!.root.findAllByType(TeamConversationMessage)[0]!.props.located).toBe(true)
+    await act(async () => renderer!.root.findByType(TeamVisitorRecords).props.onClose())
+    await act(async () => { rows[1]!.props.onReceipts(document.createElement('button')); await tick() })
+    const panel = renderer!.root.findByType(ArkmeReadReceiptPanel)
+    await act(async () => panel.findByProps({ 'aria-label': '访客 的用户卡片' }).props.onClick({ stopPropagation() {} }))
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send.enqueue')).toBe(false)
   })
   it('shows directory failure and retries without claiming there are no conversations', async () => {
     let failed = true

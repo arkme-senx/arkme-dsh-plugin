@@ -11,6 +11,7 @@ import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue,
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
+import type { ChatService } from './chat-service.js'
 
 const obj = objectValue
 const str = stringValue
@@ -48,7 +49,8 @@ function imagePresentationIdentity(raw: string): string {
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
-  constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort) {
+  constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
+    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -396,6 +398,33 @@ export class TeamAppService {
         const context = await conversation(), data = await post('conversations/timeline/page', { ...context, before_seq: num(p.beforeSeq), limit: num(p.limit) || 50 }, true)
         return { conversation: await this.conversation(data.conversation, actor), messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
+      }
+      case 'team.app.visitor.private.open': {
+        const context = await conversation()
+        if (context.side !== 'team') throw invalid()
+        // Resolve from a fresh authorized conversation, never a client-supplied name/id.
+        const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
+        const current = obj(data.conversation)
+        let peer = recordOwnerId(current.external_user_id)
+        if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
+        // Production omits external_user_id but identifies the canonical latest
+        // external message. Resolve that exact server-selected row, not a name,
+        // arbitrary recent sender, or a client-supplied message/account id.
+        if (!peer && num(current.latest_external_seq) > 0) {
+          const sequence = num(current.latest_external_seq)
+          const page = await post('conversations/timeline/page', { ...context, before_seq: sequence + 1, limit: 1 }, true)
+          const verified = obj(page.conversation)
+          if (verified.conversation_uid !== context.conversation_uid || verified.side !== 'team') throw invalid()
+          const external = list(page.messages).find(m => num(m.seq) === sequence && m.side === 'external')
+          peer = recordOwnerId(external?.actor_user_id)
+        }
+        if (typeof peer !== 'number' || peer <= 0 || peer === actor || !this.privateChat) {
+          throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
+        }
+        return await this.privateChat.openPrivateChatFromUser(peer, {
+          presentationDisplayName: str(obj(current.visitor).nickname), expectedViewerUserId: actor,
+          ...(signal ? { signal } : {}),
+        })
       }
       case 'team.app.send': {
         const context = await conversation()

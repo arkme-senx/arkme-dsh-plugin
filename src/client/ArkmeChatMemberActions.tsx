@@ -22,6 +22,7 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
+import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 
 const MENU_WIDTH = 188
 const MENU_ROW_HEIGHT = 44
@@ -346,13 +347,16 @@ export type ArkmeMemberProfileIdentity = Pick<
 
 export function ArkmeMemberProfileCard(props: {
   member: ArkmeMemberProfileIdentity
+  imagePort?: ArkmeAvatarImagePort
+  imageKey?: string | undefined
+  error?: string
   showTopicNickname?: boolean
   busy: boolean
   onClose: () => void
   onSend: () => void
 }) {
   useArkmeLocale()
-  const backdrop = useArkmeAvatarImage(props.member.avatarRef) ?? ''
+  const backdrop = useArkmeAvatarImage(props.member.avatarRef, undefined, { store: props.imagePort, cacheKey: props.imageKey }) ?? ''
   const [buttonState, setButtonState] = useState<'idle' | 'hover' | 'active'>('idle')
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
@@ -375,10 +379,12 @@ export function ArkmeMemberProfileCard(props: {
       {backdrop !== '' && <div aria-hidden style={{ ...styles.cardBackdrop, backgroundImage: `url(${JSON.stringify(backdrop).slice(1, -1)})` }} />}
       <div style={styles.cardContent}>
         <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
+          {...(props.imagePort ? { imagePort: props.imagePort } : {})} imageKey={props.imageKey}
           {...(props.member.avatarFallback === undefined ? {} : { fallback: props.member.avatarFallback })}
           size={100} label={tr("{v0} 的头像", { v0: names.displayName })} />
         <h3 style={styles.cardName}>{names.displayName}</h3>
         {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>{tr("主题内昵称：")}{names.topicNickname}</p>}
+        {props.error && <p role="alert" style={{ color: arkmeTheme.danger, fontSize: 12, margin: '6px 0' }}>{props.error}</p>}
         <button data-arkme-feedback="neutral"
           type="button"
           style={{
