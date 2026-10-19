@@ -54,6 +54,25 @@ it('uses the same automatic toolbar for Team text and copies only the selected s
   await act(async () => toolbar()!.querySelector('button')!.click())
   expect(copyText).toHaveBeenCalledWith('选中的文字')
 })
+it.each([
+  ['external', false, '外部用户'], ['team', false, '同事'], ['team', true, '自己'],
+] as const)('keeps the original time inside the bubble for %s own=%s', async (side, own, nickname) => {
+  const at = new Date('2026-10-19T16:12:34+08:00').getTime()
+  await render({ ...message, side, own, sender: { nickname }, createdAt: at })
+  const bubble = host.querySelector<HTMLElement>('.arkme-timed-bubble')!
+  const time = bubble.querySelector<HTMLTimeElement>(':scope > .arkme-message-timestamp')!
+  expect(time?.dateTime).toBe('2026-10-19T08:12:34.000Z')
+  expect(host.querySelectorAll('time')).toHaveLength(1)
+  expect(bubble.lastElementChild).toBe(time)
+  expect(bubble.querySelector('[data-arkme-text-selection]')?.contains(time)).toBe(false)
+  expect(bubble.style.background).toContain(own ? '--arkme-chat-self-bubble' : '--arkme-chat-other-bubble')
+  const body = bubble.parentElement!.parentElement!
+  expect(body.querySelector('strong')?.textContent).toBe(own ? undefined : nickname)
+  // Own messages have no empty sender/time header consuming another row.
+  if (own) expect(body.firstElementChild).toBe(bubble.parentElement)
+  await render({ ...message, side, own, sender: { nickname }, createdAt: at, version: 2, content: { text_content: '编辑后的内容', template_kind: 1 } })
+  expect(host.querySelector<HTMLTimeElement>('.arkme-message-timestamp')?.dateTime).toBe(time.dateTime)
+})
 it('selects just the message body and passes explicit Team mark authority without Chat authority', async () => {
   await render(); await select()
   await act(async () => (toolbar()!.querySelectorAll('button')[1] as HTMLButtonElement).click())

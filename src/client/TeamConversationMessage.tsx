@@ -10,11 +10,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import type { TeamMessage } from '../team-app-contract.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
+import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { captureMessageContextMenu, captureMessageTextSelection } from './message-text-selection.js'
 import { copyText } from './clipboard-text.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { TeamMessageContent, teamMessagePresentation } from './TeamMessageContent.js'
-import { arkmeConversationMessageLayout as layout, timeLabel } from './conversation-message-presentation.js'
+import { arkmeConversationMessageLayout as layout } from './conversation-message-presentation.js'
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
@@ -43,7 +44,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}) }}>
       <div style={layout.messageAvatar}>{avatar}</div>
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
-        <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
+        {!message.own && <div style={layout.messageHeader}><strong style={layout.sender}>{message.sender.nickname}</strong></div>}
         {message.replyToKey && onLocateReply && <TeamMessageReply parent={replyParent} busy={locatingReply} onLocate={onLocateReply} />}
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
         {showReceipts && message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
@@ -64,6 +65,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
           {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
+          <ArkmeMessageTimestamp at={message.createdAt} />
         </div>
         {showReceipts && !message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         </div>
