@@ -1375,6 +1375,12 @@ export class ArkmeService {
     return profile
   }
 
+  arkoLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return this.arko.localMarks.capabilities(sourceRef, signal) }
+  arkoLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return this.arko.localMarks.list(sourceRef, refs, signal) }
+  changeArkoLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) {
+    return this.arko.localMarks.change(sourceRef, ref, change, signal)
+  }
+
   async arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession> {
     return await this.arko.arkoEnsureSession(signal)
   }
