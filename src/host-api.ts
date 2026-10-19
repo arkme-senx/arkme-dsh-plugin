@@ -1,4 +1,5 @@
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
+import type { ArkmeArkoHistoryQuery } from './arko-history-contract.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
@@ -1774,9 +1775,15 @@ export async function dispatchArkmeHostOperation(
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()
     case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
+    case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
+    case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),
+      before: numberParam(params, 'before', 20), after: numberParam(params, 'after', 20) }, requestSignal)
+    case 'arko.export': return await service.arkoExport(requestSignal)
     case 'arko.history': return await service.arkoHistoryPage(
       numberParam(params, 'limit', 50),
       numberParam(params, 'offset', 0),
+      requestSignal,
     )
     case 'arko.ask': {
       if (params.imageFileRefs !== undefined && (!Array.isArray(params.imageFileRefs)
@@ -3076,4 +3083,21 @@ function longArticleImagesParam(params: Record<string, unknown>): import('./type
     if (typeof image.fileRef !== 'string' && typeof image.fileAssetUid !== 'string') throw new TypeError('Image reference is required')
     return { ...(typeof image.fileRef === 'string' ? {fileRef:image.fileRef} : {}), ...(typeof image.fileAssetUid === 'string' ? {fileAssetUid:image.fileAssetUid} : {}) }
   })
+}
+
+function arkoHistoryQueryParams(params: Record<string, unknown> | undefined): ArkmeArkoHistoryQuery {
+  const result: ArkmeArkoHistoryQuery = {}
+  for (const key of ['cursor', 'direction', 'role'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'string') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    Object.assign(result, { [key]: value })
+  }
+  for (const key of ['limit', 'startAtMillis', 'endAtMillis'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'number') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    result[key] = value
+  }
+  return result
 }

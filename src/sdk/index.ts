@@ -1,6 +1,9 @@
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport } from '../arko-history-contract.js'
+export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
+export type { ArkmeArkoHistoryItem } from '../types.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
@@ -506,6 +509,26 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
+  }
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.messages', { ...query }, signal)
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.search', { ...query }, signal)
+  }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.context', { ...query }, signal)
+  }
+  async arkoExport(signal?: AbortSignal): Promise<ArkmeArkoExport> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.export', {}, signal)
   }
 
   /** Explicit user command; idempotently starts recognition for the current account/day. */
@@ -2370,7 +2393,7 @@ export class ArkmeSdk {
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
   localFileUrl(fileRef: string, download = false): string {
-    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-generated-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 

@@ -1,3 +1,9 @@
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
+import { GeneratedArtifacts } from '../generated-artifacts.js'
+import { consumeArkoExport } from '../arko-history-export.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport } from '../arko-history-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeArkoAskResult,
@@ -157,7 +163,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
   const extraData = parsedJsonRecord(extra.data)
   const activityAt = [
     data.send_at, data.sendAt, extraData.send_at, extraData.sendAt,
-    data.created_at, data.create_at, data.createdAt, data.createAt,
+    data.created_at_ms, data.created_at, data.create_at, data.createdAt, data.createAt,
     extraData.create_at, extraData.createAt, extra.create_at, extra.createAt,
     extraData.update_at, extraData.updateAt, data.updated_at, data.updatedAt,
   ].map(numberValue).find(candidate => candidate > 0) ?? 0
@@ -173,7 +179,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
     role: roleCode === 2 ? 'user' : 'assistant',
     text: stringValue(data.content ?? data.text_content ?? data.textContent),
     reasoning: stringValue(data.reason_content ?? data.reason_text ?? data.reasonText),
-    createdAtMillis: activityAt > 0 && activityAt < 100_000_000_000 ? activityAt * 1000 : activityAt,
+    createdAtMillis: activityAt === data.created_at_ms ? activityAt : activityAt > 0 && activityAt < 100_000_000_000 ? activityAt * 1000 : activityAt,
     status: numberValue(data.status ?? data.msg_status),
     ...(runUid === undefined ? {} : { runUid }),
     ...(runStatus === undefined ? {} : { runStatus }),
@@ -222,6 +228,8 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ArkoService {
+  private readonly historyCodec: EncryptedReferenceCodec
+  private readonly generated: GeneratedArtifacts
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
   constructor(
@@ -229,7 +237,11 @@ export class ArkoService {
     private readonly profile: ProfileService,
     private readonly messageActions?: MessageActionService,
     private readonly images?: ArkoImagePorts,
-  ) {}
+  ) {
+    this.historyCodec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), () => new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404))
+    this.generated = new GeneratedArtifacts(join(runtime.config.fileStateDirectory ?? join(homedir(), '.arkme'), 'generated-downloads'),
+      () => runtime.stateStore.uniqueCode(), async () => (await runtime.requireSession()).userId)
+  }
 
   dispose(): void {
     this.arkoProfileDisplayNameCache.clear()
@@ -321,12 +333,34 @@ export class ArkoService {
       { limit: normalizedLimit, offset: normalizedOffset, session_type: ARKO_AGENT_DIRECT_SESSION_TYPE },
       session,
       signal,
+      { lane: 'interactive-read', bypassCache: true, cacheMs: 0 },
     )
     const rawItems = listValue(data.message_ls)
+    const items = await this.projectHistory(rawItems, session)
+    const hasMore = rawItems.length === normalizedLimit
+    return {
+      items,
+      hasMore,
+      ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
+    }
+  }
+
+  private historyFacts(rawItems: unknown[], session: ArkmeSessionCredentials, strict = false, maxItems = 50): ArkmeArkoHistoryItem[] {
+    if (strict && rawItems.length > maxItems) throw new ArkmePluginError('arko-history-contract-invalid', '历史窗口过大', true, 502)
     const projectedItems = rawItems
       .map(raw => {
         const item = arkoHistoryItemFromData(raw)
-        if (item === undefined) return undefined
+        if (item === undefined) {
+          if (strict) throw new ArkmePluginError('arko-history-contract-invalid', '历史消息无效', true, 502)
+          return undefined
+        }
+        if (strict) {
+          const wire = objectValue(raw)
+          if (![1, 2].includes(numberValue(wire.source_type)) || ![1, 2, 3].includes(numberValue(wire.type)) || ![1, 2, 3, 5].includes(item.status)
+            || !Number.isSafeInteger(wire.created_at_ms) || !Number.isSafeInteger(wire.order_at_ms)) throw new ArkmePluginError('arko-history-contract-invalid', '历史消息字段不完整', true, 502)
+          item.reasoning = ''
+          item.sourceType = numberValue(wire.source_type); item.messageType = numberValue(wire.type); item.orderAtMillis = numberValue(wire.order_at_ms)
+        }
         const attachments = listValue(objectValue(raw).attachments).map(objectValue).filter(attachment =>
           stringValue(attachment.file_asset_uid) !== ''
           && ARKO_IMAGE_MIME_TYPES.some(mime => mime === attachment.mime_type))
@@ -342,10 +376,14 @@ export class ArkoService {
         return { ...item, contentBlocks }
       })
       .filter((item): item is ArkmeArkoHistoryItem => item !== undefined)
+    return projectedItems
+  }
+
+  private async projectHistory(rawItems: unknown[], session: ArkmeSessionCredentials, strict = false): Promise<ArkmeArkoHistoryItem[]> {
+    const projectedItems = this.historyFacts(rawItems, session, strict)
     const conversationRefs = new Map<number, Promise<string>>()
-    const items = this.messageActions === undefined
-      ? projectedItems
-      : await Promise.all(projectedItems.map(async item => {
+    return await Promise.all(projectedItems.map(async original => {
+          const item = strict ? { ...original, messageRef: await this.messageRef(session.userId, original.sessionId, original.messageId) } : original
           const action = await this.messageActions?.agentHistoryItem(item, session.userId)
           if (action?.messageActionRef === undefined) return item
           let itemConversationRef = conversationRefs.get(item.sessionId)
@@ -355,13 +393,96 @@ export class ArkoService {
           }
           return { ...item, ...action, messageActionConversationRef: await itemConversationRef }
         }))
-    const hasMore = rawItems.length === normalizedLimit
-    return {
-      items,
-      hasMore,
-      ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
-    }
   }
+
+  private historyBody(query: ArkmeArkoHistoryQuery): Record<string, unknown> {
+    const limit = query.limit ?? 50, direction = query.direction ?? 'desc'
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !['asc', 'desc'].includes(direction)
+      || (query.role !== undefined && query.role !== 'user' && query.role !== 'assistant')
+      || (query.cursor !== undefined && (typeof query.cursor !== 'string' || query.cursor.length > 4096))
+      || [query.startAtMillis, query.endAtMillis].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0))) {
+      throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    }
+    return { limit, direction, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.role ? { role: query.role === 'user' ? 2 : 3 } : {}),
+      ...(query.startAtMillis === undefined ? {} : { start_at: query.startAtMillis }), ...(query.endAtMillis === undefined ? {} : { end_at: query.endAtMillis }) }
+  }
+  private async messageRef(userId: number, sessionId: number, messageId: number): Promise<string> {
+    return this.historyCodec.seal('arkme-arko-message-v1', { userId, sessionId, messageId, expiresAtMillis: Date.now() + 24 * 60 * 60_000 })
+  }
+  private historyContinuation(data: Record<string, unknown>) {
+    const hasMore = data.has_more === true, nextCursor = optionalString(data.next_cursor)
+    if (typeof data.has_more !== 'boolean' || (hasMore && !nextCursor) || !Number.isSafeInteger(data.scanned) || numberValue(data.scanned) < 0 || numberValue(data.scanned) > 500 || data.consistency !== 'live') {
+      throw new ArkmePluginError('arko-history-contract-invalid', '历史分页响应不完整', true, 502)
+    }
+    return { hasMore, ...(hasMore ? { nextCursor: nextCursor! } : {}), scanned: numberValue(data.scanned), consistency: 'live' as const }
+  }
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    return this.runtime.runCompositeOwnerRead('arko.messages', { ...query }, scoped => this.readMessages(query, scoped), signal, query.cursor ? 'background-read' : 'interactive-read')
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    return this.runtime.runCompositeOwnerRead('arko.search', { ...query }, scoped => this.readSearch(query, scoped), signal, query.cursor ? 'background-read' : 'interactive-read')
+  }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    return this.runtime.runCompositeOwnerRead('arko.context', { ...query }, scoped => this.readContext(query, scoped), signal)
+  }
+  private async readMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/query', this.historyBody(query), session, signal,
+      { lane: query.cursor ? 'background-read' : 'interactive-read', bypassCache: true, cacheMs: 0 })
+    const items = await this.projectHistory(listValue(data.items), session, true)
+    return { items, ...this.historyContinuation(data), ...(optionalString(data.before_cursor) ? { beforeCursor: stringValue(data.before_cursor) } : {}), ...(optionalString(data.after_cursor) ? { afterCursor: stringValue(data.after_cursor) } : {}) }
+  }
+  private async readSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    if (typeof query.keyword !== 'string' || query.keyword.trim() === '' || [...query.keyword.trim()].length > 200) throw new ArkmePluginError('arko-history-invalid', '请输入不超过 200 字的搜索词', false, 400)
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/search', { ...this.historyBody(query), keyword: query.keyword.trim() }, session, signal,
+      { lane: query.cursor ? 'background-read' : 'interactive-read', bypassCache: true, cacheMs: 0 })
+    if (!Array.isArray(data.items) || data.items.length > 50) throw new ArkmePluginError('arko-history-contract-invalid', '搜索响应无效', true, 502)
+    const items = await Promise.all(data.items.map(async raw => {
+      const item = objectValue(raw)
+      if (!Number.isSafeInteger(item.id) || numberValue(item.id) < 1 || !Number.isSafeInteger(item.session_id) || numberValue(item.session_id) < 1
+        || ![2, 3].includes(numberValue(item.role)) || ![1, 2, 3, 5].includes(numberValue(item.status)) || typeof item.snippet !== 'string' || item.snippet.length > 1024 || typeof item.created_at_ms !== 'number' || typeof item.order_at_ms !== 'number') throw new ArkmePluginError('arko-history-contract-invalid', '搜索响应无效', true, 502)
+      return { messageRef: await this.messageRef(session.userId, numberValue(item.session_id), numberValue(item.id)), role: item.role === 2 ? 'user' as const : 'assistant' as const,
+        snippet: item.snippet, createdAtMillis: item.created_at_ms, orderAtMillis: item.order_at_ms, status: numberValue(item.status) }
+    }))
+    return { items, ...this.historyContinuation(data) }
+  }
+  private async readContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    const before = query.before ?? 20, after = query.after ?? 20
+    if (!Number.isInteger(before) || !Number.isInteger(after) || before < 0 || after < 0 || before + after > 49 || typeof query.messageRef !== 'string') throw new ArkmePluginError('arko-history-invalid', '上下文窗口参数无效', false, 400)
+    const session = await this.runtime.requireSession(), ref = await this.historyCodec.open('arkme-arko-message-v1', query.messageRef)
+    if (ref.userId !== session.userId || numberValue(ref.expiresAtMillis) <= Date.now() || !Number.isSafeInteger(ref.messageId) || !Number.isSafeInteger(ref.sessionId)) throw new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404)
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/context', { session_id: ref.sessionId, message_id: ref.messageId, before, after }, session, signal,
+      { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+    const items = await this.projectHistory(listValue(data.items), session, true)
+    if (typeof data.has_before !== 'boolean' || typeof data.has_after !== 'boolean'
+      || (data.has_before && !optionalString(data.before_cursor)) || (data.has_after && !optionalString(data.after_cursor))
+      || !items.some(item => item.sessionId === ref.sessionId && item.messageId === ref.messageId)) throw new ArkmePluginError('arko-history-contract-invalid', '上下文响应不完整', true, 502)
+    const anchor = items.find(item => item.sessionId === ref.sessionId && item.messageId === ref.messageId)!
+    anchor.messageRef = query.messageRef
+    return { items, anchorMessageRef: query.messageRef, hasBefore: data.has_before, hasAfter: data.has_after,
+      ...(data.has_before ? { beforeCursor: stringValue(data.before_cursor) } : {}), ...(data.has_after ? { afterCursor: stringValue(data.after_cursor) } : {}) }
+  }
+  async arkoExport(signal?: AbortSignal): Promise<ArkmeArkoExport> {
+    const session = await this.runtime.requireSession()
+    const name = this.arkoProfileDisplayNameCache.get(session.userId)?.displayName ?? 'Arko'
+    const fileName = `${name.replace(/[\\/:*?"<>|\r\n]/g, '_')}-对话-${new Date().toISOString().slice(0, 10)}.md`
+    const result = await this.generated.create(session.userId, fileName,
+      write => this.runtime.intelligentExportStream(session, (body, streamSignal) => consumeArkoExport(body, streamSignal, write, name), signal), signal)
+    return { ...result.file, count: result.result }
+  }
+  async actionMessages(anchors: readonly { sessionId: number; messageId: number }[], userId: number, signal?: AbortSignal): Promise<ArkmeArkoHistoryItem[]> {
+    return this.runtime.runCompositeOwnerRead('arko.action-messages', { anchors }, async scoped => {
+      const session = await this.runtime.requireSession()
+      if (session.userId !== userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，请重新读取', false, 409)
+      const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/details',
+        { anchors: anchors.map(anchor => ({ session_id: anchor.sessionId, message_id: anchor.messageId })) }, session, scoped,
+        { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('arko-history-contract-invalid', '消息读取不完整', true, 502)
+      return this.historyFacts(data.items, session, true, 100)
+    }, signal)
+  }
+  async readGeneratedFile(ref: string) { return this.generated.read(ref) }
 
   async arkoAsk(
     text: string,

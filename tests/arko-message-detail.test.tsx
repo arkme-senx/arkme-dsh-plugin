@@ -34,7 +34,7 @@ beforeEach(async () => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
   vi.mocked(callArkme).mockImplementation(async method => {
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: [
+    if (method === 'arko.messages') return { items: [
       { messageId: 1, sessionId: 88, role: 'user', messageActionRef: 'user-action', messageActionConversationRef: 'conversation', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] },
       { messageId: 2, sessionId: 88, role: 'assistant', messageActionRef: 'assistant-action', messageActionConversationRef: 'conversation', text: '完整回答', reasoning: '已有思考内容', createdAtMillis: 1786000001000, status: 1, createdRecordUids: [] },
     ] } as never
@@ -219,7 +219,7 @@ it('updates an open running reply from the existing history polling and displays
   vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
     if (method === 'arko.ask') return { sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'running', runUid: 'run-detail', text: '生成中的回答', reasoning: '已有推理', createdRecordUids: [] } as never
     if (method === 'arko.run.status') return { status: 'failed' } as never
-    if (method === 'arko.history') return { items: [{ messageId: 4, sessionId: 88, role: 'assistant', text: '任务执行失败', reasoning: '已有推理', createdAtMillis: 1786000001000, status: 2, runUid: 'run-detail', runStatus: 'failed', createdRecordUids: [] }] } as never
+    if (method === 'arko.messages') return { items: [{ messageId: 4, sessionId: 88, role: 'assistant', text: '任务执行失败', reasoning: '已有推理', createdAtMillis: 1786000001000, status: 2, runUid: 'run-detail', runStatus: 'failed', createdRecordUids: [] }] } as never
     return original(method, input, signal)
   })
   try {
@@ -289,13 +289,20 @@ it('renders assistant Markdown in both bubble and detail without interpreting us
   expect((detail() as HTMLElement).style.top).toBe('0px')
 })
 it('locates an archive result without changing the active conversation and returns to latest', async () => {
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+    if (method === 'arko.search') return { items: [{ messageRef: 'original-1', role: 'user', snippet: '我的问题', createdAtMillis: 1786000000000 }], hasMore: false } as never
+    if (method === 'arko.context') return { items: [{ messageRef: 'original-1', messageId: 1, sessionId: 88, role: 'user', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] }], anchorMessageRef: 'original-1', hasBefore: false, hasAfter: false } as never
+    return original(method, input, signal)
+  })
   await click(host.querySelector('[aria-label="搜索 Arko 对话"]')!)
   const input = host.querySelector<HTMLInputElement>('[aria-label="搜索 Arko 关键词"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '我的问题')
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
-  await click(host.querySelector('[data-arko-search-hit="1"]')!)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+  await click(host.querySelector('[data-arko-search-hit="original-1"]')!)
   expect(host.querySelector('[data-arko-located="true"]')?.textContent).toContain('我的问题')
   expect(host.querySelector('[aria-label="Arko 历史定位"]')).not.toBeNull()
   await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
@@ -392,7 +399,7 @@ it('closes details on logout and environment change without resurrecting selecti
 it('does not parse message text as markup or fabricate missing timestamps', async () => {
   const original = vi.mocked(callArkme).getMockImplementation()!
   const unsafe = '<img src=x onerror="alert(1)">'
-  vi.mocked(callArkme).mockImplementation(async (method, input, signal) => method === 'arko.history'
+  vi.mocked(callArkme).mockImplementation(async (method, input, signal) => method === 'arko.messages'
     ? { items: [{ messageId: 9, sessionId: 88, role: 'assistant', text: unsafe, reasoning: '', createdAtMillis: 0, status: 1, createdRecordUids: [] }] } as never
     : original(method, input, signal))
   await act(async () => { root.render(<ArkmeArkoSurface key="new-mount" />) })
@@ -457,4 +464,64 @@ it('distinguishes an unconfirmed send from failure and retries the same turn wit
   const requests = vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'arko.ask')
   expect(requests).toHaveLength(2)
   expect(requests[1]![1]).toEqual(requests[0]![1])
+})
+
+async function locateOtherSession() {
+ await click(host.querySelector('[aria-label="搜索 Arko 对话"]')!)
+ const input = host.querySelector<HTMLInputElement>('[aria-label="搜索 Arko 关键词"]')!
+ await act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '历史窗口')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+ })
+ await act(async () => { await vi.advanceTimersByTimeAsync(350) })
+ await click(host.querySelector('[data-arko-search-hit="other-session"]')!)
+}
+function otherSessionRead(method: string) {
+ if (method === 'arko.search') return { items: [{ messageRef: 'other-session', role: 'user', snippet: '历史窗口', createdAtMillis: 1700000000000 }], hasMore: false }
+ if (method === 'arko.context') return { items: [{ messageRef: 'other-session', messageId: 99, sessionId: 7, role: 'user', text: '历史窗口中的原始问题', reasoning: '', createdAtMillis: 1700000000000, status: 1, createdRecordUids: [], sourceType: 1 }], anchorMessageRef: 'other-session', hasBefore: false, hasAfter: false }
+ return undefined
+}
+it('sends new input to the current session after inspecting another historical session', async () => {
+ vi.useFakeTimers()
+ const original = vi.mocked(callArkme).getMockImplementation()!
+ vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+  const historical = otherSessionRead(method)
+  if (historical) return historical as never
+  if (method === 'arko.ask') return { sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'completed', text: '当前会话的新回答', reasoning: '', createdRecordUids: [] } as never
+  return original(method, input, signal)
+ })
+ try {
+  const initialSessions = vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'arko.session').length
+  await locateOtherSession()
+  arkmeComposerDraftStore.setText(arkmeArkoComposerDraftKey(10001), '继续当前会话')
+  await act(async () => {})
+  await click(host.querySelector('[aria-label="发送"]')!)
+  expect(callArkme).toHaveBeenCalledWith('arko.ask', expect.objectContaining({ sessionId: 88, text: '继续当前会话' }))
+  expect(vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'arko.session')).toHaveLength(initialSessions)
+ } finally { vi.useRealTimers() }
+})
+it('keeps the reading window and scroll stable when the current Run finishes in the background', async () => {
+ vi.useFakeTimers()
+ const original = vi.mocked(callArkme).getMockImplementation()!
+ vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+  const historical = otherSessionRead(method)
+  if (historical) return historical as never
+  if (method === 'arko.ask') return { sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'running', runUid: 'run-current', text: '当前任务生成中', reasoning: '', createdRecordUids: [] } as never
+  if (method === 'arko.run.status') return { status: 'completed' } as never
+  if (method === 'arko.messages') return { items: [{ messageId: 4, sessionId: 88, role: 'assistant', text: '后台刚完成的回答', reasoning: '', createdAtMillis: Date.now(), status: 1, runUid: 'run-current', runStatus: 'completed', createdRecordUids: [] }] } as never
+  return original(method, input, signal)
+ })
+ try {
+  await menuAction('小助 能干什么')
+  await locateOtherSession()
+  const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
+  viewport.scrollTop = 180
+  await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+  expect(viewport.scrollTop).toBe(180)
+  expect(host.querySelector('[aria-label="Arko 历史定位"]')).not.toBeNull()
+  expect(host.textContent).toContain('历史窗口中的原始问题')
+  expect(host.textContent).not.toContain('后台刚完成的回答')
+  await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
+  expect(host.textContent).toContain('后台刚完成的回答')
+ } finally { vi.useRealTimers() }
 })

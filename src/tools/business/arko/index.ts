@@ -364,8 +364,50 @@ export const arkoCancelToolModule = defineArkmeCoreToolModule({
   create: createArkmeArkoCancelToolDefinition,
 })
 
+/** All history modes share the Host owner. Snippets and tool previews are
+ * explicitly bounded; export is the complete-original-text transport. */
+export function createArkmeArkoHistoryToolDefinition(service: ArkmeArkoToolPort): ToolDefinition {
+  return defineTool({
+    name: 'arkme_arko_history',
+    description: 'Read owned Arko history without changing the active conversation or resuming a run. action=query/search/context/export. Search is literal body text; empty pages can still have a next cursor. Use message_ref from results for original context. Export produces a verified complete Markdown download reference. Body previews may be explicitly truncated; export retains full text.',
+    parameters: {
+      action: { type: 'string', required: true, description: 'query, search, context or export' },
+      keyword: { type: 'string', description: 'Literal keyword for search; not regex or semantic search.' },
+      cursor: { type: 'string', description: 'Exact opaque nextCursor. Keep all filters unchanged.' },
+      message_ref: { type: 'string', description: 'Opaque messageRef returned by query/search; required for context.' },
+      role: { type: 'string', description: 'Optional user or assistant filter.' },
+      start_at_ms: { type: 'integer', description: 'Inclusive history order time in Unix milliseconds.' },
+      end_at_ms: { type: 'integer', description: 'Exclusive history order time in Unix milliseconds.' },
+    },
+    output: ARKO_OUTPUT,
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      if (args.action === 'export') return JSON.stringify(await service.arkoExport(exec.signal))
+      const compact = (item: ArkmeArkoHistoryItem) => ({ messageRef: item.messageRef, role: item.role,
+        text: item.text.slice(0, 2000), textTruncated: item.text.length > 2000, createdAtMillis: item.createdAtMillis,
+        orderAtMillis: item.orderAtMillis, status: item.status, runStatus: item.runStatus, createdRecordUids: item.createdRecordUids })
+      if (args.action === 'context') {
+        const window = await service.arkoContext({ messageRef: args.message_ref ?? '', before: 2, after: 2 }, exec.signal)
+        return JSON.stringify({ ...window, items: window.items.map(compact) })
+      }
+      if (args.action !== 'query' && args.action !== 'search') throw new Error('action 必须为 query/search/context/export')
+      if (args.role !== undefined && args.role !== 'user' && args.role !== 'assistant') throw new Error('role 必须为 user 或 assistant')
+      const query = { limit: 10, ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.role ? { role: args.role as 'user' | 'assistant' } : {}),
+        ...(args.start_at_ms === undefined ? {} : { startAtMillis: args.start_at_ms }), ...(args.end_at_ms === undefined ? {} : { endAtMillis: args.end_at_ms }) }
+      if (args.action === 'search') return JSON.stringify(await service.arkoSearch({ ...query, keyword: args.keyword ?? '' }, exec.signal))
+      const page = await service.arkoMessages(query, exec.signal)
+      return JSON.stringify({ ...page, items: page.items.map(compact) })
+    },
+  })
+}
+export const arkoHistoryToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.history.v1', toolName: 'arkme_arko_history', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: createArkmeArkoHistoryToolDefinition,
+})
+
 export const arkoToolModules = [
   arkoProfileToolModule,
+  arkoHistoryToolModule,
   arkoSessionToolModule,
   arkoAskToolModule,
   arkoRunStatusToolModule,

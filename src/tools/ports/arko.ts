@@ -1,3 +1,4 @@
+import type { ArkmeArkoHistoryPort } from '../../arko-history-contract.js'
 import type {
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
@@ -7,7 +8,7 @@ import type {
   ArkmeArkoSession,
 } from '../../types.js'
 
-export interface ArkmeArkoToolPort {
+export interface ArkmeArkoToolPort extends ArkmeArkoHistoryPort {
   arkoProfile(signal?: AbortSignal): Promise<ArkmeArkoProfile>
   arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession>
   arkoAsk(

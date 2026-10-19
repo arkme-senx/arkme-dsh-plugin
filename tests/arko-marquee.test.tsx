@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.mocked(callArkme).mockReset()
   vi.mocked(callArkme).mockImplementation(async operation => {
     if (operation === 'arko.session') return { sessionId: 88 } as never
-    if (operation === 'arko.history') return { items: history } as never
+    if (operation === 'arko.messages') return { items: history } as never
     if (operation === 'arko.models') return { options: [], effectiveRouteKey: 'model' } as never
     if (operation === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (operation === 'user.profile') return { profile: {} } as never

@@ -73,7 +73,7 @@ beforeEach(() => {
   vi.mocked(callArkme).mockImplementation(async (method, input) => {
     if (method === 'arko.ask') return ask(input)
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [{ routeKey: 'model-a', displayName: 'Model A', selected: true }, { routeKey: 'model-b', displayName: 'Model B', selected: false }], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never

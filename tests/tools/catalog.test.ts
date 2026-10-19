@@ -44,7 +44,7 @@ describe('Arkme tool catalog', () => {
       'arkme_team_join',
       'arkme_group_create',
       'arkme_group_rename',
-      'arkme_arko_profile',
+      'arkme_arko_profile', 'arkme_arko_history',
       'arkme_arko_session',
       'arkme_arko_ask',
       'arkme_arko_run_status',

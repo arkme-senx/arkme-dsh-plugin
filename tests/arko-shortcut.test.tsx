@@ -57,7 +57,7 @@ beforeEach(() => {
       if (!sessionAvailable) throw new Error('session unavailable')
       return { sessionId: 88 } as never
     }
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never
@@ -171,7 +171,7 @@ describe('Arko capability shortcut', () => {
     let historyCalls = 0
     const original = vi.mocked(callArkme).getMockImplementation()!
     vi.mocked(callArkme).mockImplementation(async (method, input) => {
-      if (method === 'arko.history' && ++historyCalls === 1) throw new Error('history unavailable')
+      if (method === 'arko.messages' && ++historyCalls === 1) throw new Error('history unavailable')
       return original(method, input)
     })
     history = [{ messageId: 8, sessionId: 88, role: 'assistant', text: '恢复的回答', reasoning: '', createdAtMillis: 1,
