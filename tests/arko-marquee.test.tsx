@@ -10,6 +10,9 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
+// Orchestration uses react-test-renderer; real underline portals have dedicated DOM tests.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   const { forwardRef } = await import('react')
   return { ArkmeDocumentComposerInput: forwardRef(() => null) }

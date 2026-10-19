@@ -121,6 +121,18 @@ describe('ArkoService', () => {
     expect((await service.arkoHistoryPage()).items[0]).toMatchObject({ text: '', contentBlocks: [{ kind: 'image', mediaRef: '', fileAssetUid: 'asset-1', fileName: 'old.png' }] })
   })
 
+  it('preserves repeated history positions without reusing stale media for an unavailable image', async () => {
+    const { runtime, read, upload } = imageFixture()
+    const attachment = { type: 'image', file_asset_uid: 'asset-1', file_name: 'old.png', mime_type: 'image/png', size: 128 }
+    runtime.authenticatedIntelligentPost = async () => ({ message_ls: [{ id: 101, session_id: 88, role: 2, content: '', attachments: [attachment, attachment, { ...attachment, availability: 'unavailable' }] }] })
+    const projected = { kind: 'image' as const, mediaRef: 'owned-media', fileAssetUid: 'asset-1', fileName: 'old.png', mimeType: 'image/png', size: 128, sortOrder: 7 }
+    const service = new ArkoService(runtime, new ProfileService(runtime), undefined, { read, upload, project: () => [projected] })
+    const blocks = (await service.arkoHistoryPage()).items[0]!.contentBlocks!
+    expect(blocks.map(block => block.sortOrder)).toEqual([0, 1, 2])
+    expect(blocks.map(block => block.mediaRef)).toEqual(['owned-media', 'owned-media', ''])
+    expect(projected.sortOrder).toBe(7)
+  })
+
   it('never treats a model name or permissive MIME wildcard as image capability', () => {
     expect(arkoImageInputFromWire({ display_name: 'DeepSeek v4.1' })).toBeUndefined()
     expect(arkoImageInputFromWire({ enabled: true, protocol_version: 1, max_images: 9, max_image_bytes: 1024, max_total_bytes: 1024, mime_types: ['image/*'] })).toBeUndefined()

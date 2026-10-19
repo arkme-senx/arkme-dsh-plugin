@@ -338,12 +338,14 @@ export class ArkoService {
         if (attachments.length === 0) return item
         const blocks = this.images?.project({ media_display_items: attachments.map(attachment => ({ ...attachment, file_kind: 1 })) }, session.userId) ?? []
         // Keep an explicit placeholder if the original is deleted or cannot be resolved.
-        const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock =>
-          (attachment.availability === 'unavailable' ? undefined : blocks.find(block => block.fileAssetUid === attachment.file_asset_uid)) ?? {
+        const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock => {
+          const block = attachment.availability === 'unavailable' ? undefined : blocks.find(block => block.fileAssetUid === attachment.file_asset_uid)
+          return block ? { ...block, sortOrder } : {
             kind: 'image', mediaRef: '', fileAssetUid: stringValue(attachment.file_asset_uid),
             fileName: stringValue(attachment.file_name) || '图片', mimeType: stringValue(attachment.mime_type),
             size: numberValue(attachment.size), sortOrder,
-          })
+          }
+        })
         return { ...item, contentBlocks }
       })
       .filter((item): item is ArkmeArkoHistoryItem => item !== undefined)

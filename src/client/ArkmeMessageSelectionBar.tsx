@@ -1,12 +1,12 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { messageSelectionStyles as styles } from './message-selection-presentation.js'
 
 export interface MessageSelectionAction {
   id: string; label: string; icon: ReactNode; disabled?: boolean; reason?: string | undefined; danger?: boolean; onSelect(anchor: HTMLButtonElement): void
 }
 /** Shared batch-action surface; each message owner supplies its capabilities. */
-export function ArkmeMessageSelectionBar({ count, actions, children }: { count: number; actions: readonly (MessageSelectionAction | false | undefined)[]; children?: ReactNode }) {
-  return <div role="toolbar" aria-label={`已选择 ${count} 条消息`} style={{ ...styles.selectBar, flexWrap: 'wrap' }}>
+export function ArkmeMessageSelectionBar({ count, actions, children, style }: { count: number; style?: CSSProperties; actions: readonly (MessageSelectionAction | false | undefined)[]; children?: ReactNode }) {
+  return <div role="toolbar" aria-label={`已选择 ${count} 条消息`} style={{ ...styles.selectBar, flexWrap: 'wrap', ...style }}>
     {children}
     {actions.filter((action): action is MessageSelectionAction => !!action).map(action => <span key={action.id} title={action.reason}>
       <button type="button" aria-label={action.label} disabled={action.disabled} data-arkme-feedback={action.danger ? 'danger' : 'neutral'}

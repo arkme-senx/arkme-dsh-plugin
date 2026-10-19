@@ -24,11 +24,15 @@ const { createArkmeSdk } = await importFile(join(profile, 'node_modules/@senguoy
 describe('packed Arko image input on the official Harness', () => {
   it('sends pure images through SDK, real session Tools and UI and preserves history placeholders', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arko image acceptance '))
+    const chain = process.env.ARKO_CHAIN_CONTROL ? JSON.parse(await readFile(process.env.ARKO_CHAIN_CONTROL, 'utf8')) : undefined
+    const serverAssistantIds = []
     const sharp = createRequire(join(profile, 'package.json'))('sharp')
-    const png = await sharp({ create: { width: 64, height: 32, channels: 3, background: '#3388cc' } }).png().toBuffer()
+    const png = chain ? Buffer.from(chain.png, 'base64') : await sharp({ create: { width: 64, height: 32, channels: 3, background: '#3388cc' } }).png().toBuffer()
     const imageUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/arko-isolated-fixture.png?x-oss-signature=fixture'
     const originalFetch = globalThis.fetch
-    globalThis.fetch = async (input, init) => String(input) === imageUrl
+    globalThis.fetch = async (input, init) => chain && String(input) === imageUrl + '2'
+      ? new Response(Buffer.from(chain.secondPng, 'base64'), { headers: { 'content-type': 'image/png' } })
+      : String(input) === imageUrl
       ? new Response(png, { headers: { 'content-type': 'image/png', 'content-length': String(png.length) } })
       : originalFetch(input, init)
     const uid = '5f964638-43a8-4f24-a380-6fec1482aaab'
@@ -47,6 +51,16 @@ describe('packed Arko image input on the official Harness', () => {
         }
         if (req.url === '/image') { res.setHeader('content-type', 'image/png'); res.end(png); return }
         const body = raw.length ? JSON.parse(raw) : {}
+        if (chain && (req.url === '/api/v1/agent/model/list' || req.url.startsWith('/api/v1/qa/new-msg-v3') || req.url.startsWith('/api/v1/qa/message-list') || req.url.startsWith('/api/v1/qa/stream-v2'))) {
+          const reply = await originalFetch(new URL(req.url, chain.origin), { method: req.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${chain.token}` }, ...(raw.length ? { body: raw } : {}) })
+          const content = await reply.text()
+          if (req.url === '/api/v1/qa/new-msg-v3') {
+            const envelope = JSON.parse(content)
+            if (envelope.code !== 200) throw new Error(`real intake rejected: ${content}`)
+            accepted.push(body); serverAssistantIds.push(envelope.data.assistant_msg_id)
+          }
+          res.statusCode = reply.status; res.setHeader('content-type', reply.headers.get('content-type') ?? 'application/json'); res.end(content); return
+        }
         let data = { items: [], users: [], has_more: false }
         if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: 'isolated-test-access', refresh_token: 'isolated-test-refresh' }
         if (req.url === '/api/v1/auth/get-user-info') data = { user_id: 42, nick_name: 'Arko image acceptance', phone: '13800000000' }
@@ -58,7 +72,7 @@ describe('packed Arko image input on the official Harness', () => {
         }
         if (req.url === '/api/v1/qa/latest-session') data = { id: 88, name: 'Arko' }
         if (req.url === '/api/v1/files/prepare-upload') data = { upload_session_uid: randomUUID(), upload_url: `${origin}/put`, upload_headers: {} }
-        if (req.url === '/api/v1/files/complete-upload') data = { file_asset_uid: uid, mime_type: 'image/png', size: png.length }
+        if (req.url === '/api/v1/files/complete-upload') data = { file_asset_uid: chain && uploads.at(-1)?.equals(Buffer.from(chain.secondPng, 'base64')) ? chain.secondUid : uid, mime_type: 'image/png', size: uploads.at(-1)?.length ?? png.length }
         if (req.url === '/api/v1/files/assets/query') data = { items: [{ file_asset_uid: uid, file_name: 'live.png', mime_type: 'image/png', size: png.length, file_kind: 1, status: 1, preview_url: imageUrl, download_url: imageUrl }] }
         if (req.url === '/api/v1/qa/message-list') data = { message_ls: body.offset ? [] : [
           { id: 101, session_id: 88, role: 2, content: '', status: 1, created_at: 1790000000, attachments: [
@@ -92,35 +106,57 @@ describe('packed Arko image input on the official Harness', () => {
       const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), { ...init, headers: { ...init?.headers, Origin: new URL(scaffold.authenticatedUrl).origin } }) })
       expect((await sdk.arkoModels()).options[0].imageInput.protocolVersion).toBe(1)
       const file = await sdk.stageFileBytes(png.toString('base64'), { fileName: 'SDK.png', mimeType: 'image/png' })
-      expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: [file.fileRef], waitSeconds: 1 })).toMatchObject({ status: 'completed', text: 'ARKO_IMAGES_OK' })
+      const secondFile = chain ? await sdk.stageFileBytes(chain.secondPng, { fileName: 'SDK-second.png', mimeType: 'image/png' }) : undefined
+      const firstRefs = secondFile ? [file.fileRef, secondFile.fileRef] : [file.fileRef]
+      expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: firstRefs, waitSeconds: 1 })).toMatchObject({ status: 'completed', text: 'ARKO_IMAGES_OK' })
       expect(accepted).toHaveLength(1)
-      expect(accepted[0]).toMatchObject({ content: '', attachments_protocol_version: 1, attachments: [{ type: 'image', file_asset_uid: uid }] })
+      expect(accepted[0]).toMatchObject({ content: '', attachments_protocol_version: 1, attachments: [{ type: 'image', file_asset_uid: uid }, ...(chain ? [{ type: 'image', file_asset_uid: chain.secondUid }] : [])] })
       expect(await sdk.arkoPendingTurns()).toEqual([])
       handle = await scaffold.ctx.agents.create({ sessionId: `arko-test-${randomUUID()}`, setup: agentCtx => scaffold.ctx.agentPresets.mount(agentCtx).then(() => undefined) })
       for (const name of ['arkme_arko_models', 'arkme_arko_pending', 'arkme_arko_ask']) expect(scaffold.ctx.tools.get(name, handle.agent)).toBeDefined()
-      const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { session_id: 88, image_file_refs: [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
+      const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { session_id: 88, image_file_refs: secondFile ? [secondFile.fileRef, file.fileRef] : [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
       expect(result.isError).toBe(false)
       expect(JSON.stringify(result)).toContain('ARKO_IMAGES_OK')
       expect(accepted).toHaveLength(2)
-      expect(uploads).toHaveLength(1) // Reusing an uploaded file does not reread/reupload bytes.
+      if (chain) expect(accepted[1].attachments.map(item => item.file_asset_uid)).toEqual([chain.secondUid, uid])
+      expect(uploads).toHaveLength(chain ? 2 : 1) // Reusing an uploaded file does not reread/reupload bytes.
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
       const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await page.getByRole('button', { name: '对话', exact: true }).click()
       await page.locator('[data-arkme-home-tour-target="arko"]').click()
-      await page.getByText('Historical answer', { exact: true }).waitFor()
-      await page.getByText('图片暂不可用 · missing.png', { exact: true }).waitFor()
-      await page.getByRole('button', { name: '预览图片：live.png', exact: true }).waitFor()
+      if (!chain) {
+        await page.getByText('Historical answer', { exact: true }).waitFor()
+        await page.getByText('图片暂不可用 · missing.png', { exact: true }).waitFor()
+        await page.getByRole('button', { name: '预览图片：live.png', exact: true }).waitFor()
+      } else {
+        await page.getByRole('button', { name: '预览图片：circuit.png', exact: true }).first().waitFor()
+      }
       await page.locator('input[aria-label="添加 Arko 图片"]').setInputFiles({ name: 'UI.png', mimeType: 'image/png', buffer: png })
       const send = page.getByRole('button', { name: '发送', exact: true })
       await expect.poll(() => send.isEnabled()).toBe(true)
       await send.click()
-      await expect.poll(() => accepted.length).toBe(3)
+      await expect.poll(() => accepted.length, { timeout: chain ? 60000 : 5000 }).toBe(3)
       expect(accepted[2].content).toBe('')
       expect(accepted[2].attachments[0].file_asset_uid).toBe(uid)
-      await page.locator('[data-arko-message-viewport]').getByText('ARKO_IMAGES_OK', { exact: true }).waitFor()
+      const replies = chain ? page.locator(`[data-arko-selection-key="history:${serverAssistantIds[2]}"]`) : page.locator('[data-arko-message-viewport]')
+      await replies.getByText('ARKO_IMAGES_OK', { exact: true }).waitFor()
       await expect.poll(() => send.isEnabled()).toBe(false)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+      if (chain) {
+        await page.reload({ waitUntil: 'load' })
+        await page.getByRole('button', { name: '对话', exact: true }).click()
+        await page.locator('[data-arkme-home-tour-target="arko"]').click()
+        await expect.poll(() => page.getByRole('button', { name: '预览图片：circuit.png', exact: true }).count()).toBe(5)
+        const hidden = await originalFetch(new URL('/__fixture/hide', chain.origin), { method: 'POST', headers: { authorization: `Bearer ${chain.token}` } })
+        expect(hidden.status).toBe(204)
+        expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: firstRefs, clientTurnUid: accepted[0].client_turn_uid, waitSeconds: 1 })).toMatchObject({ status: 'completed', text: 'ARKO_IMAGES_OK' })
+        await page.reload({ waitUntil: 'load' })
+        await page.getByRole('button', { name: '对话', exact: true }).click()
+        await page.locator('[data-arkme-home-tour-target="arko"]').click()
+        await page.getByText('图片暂不可用 · circuit.png', { exact: true }).first().waitFor({ timeout: 60000 })
+        expect(await page.getByText('图片暂不可用 · circuit.png', { exact: true }).count()).toBe(5)
+      }
     } catch (error) {
       if (browser && process.env.ARKME_E2E_SCREENSHOT) for (const page of browser.contexts().flatMap(context => context.pages())) {
         await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png` }).catch(() => {})
@@ -137,5 +173,5 @@ describe('packed Arko image input on the official Harness', () => {
       await rm(root, { recursive: true, force: true })
       globalThis.fetch = originalFetch
     }
-  })
+  }, 180000)
 })
