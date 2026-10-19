@@ -76,3 +76,18 @@ Audio 正式回听接口对既有 `.m4a` 切片返回 `audio/mp4`，Host 原白�
 
 
 末轮同步 dev 3f71352d（只更新消息标记测试夹具）后，4 workers 重跑出现 4 个既有发布脚本测试的默认 5 秒超时；未发生断言失败。代码、断言和超时设置不变，1 worker 定向 26 项通过，随后 2 workers 完整重跑 **12,678 通过 / 21 跳过、零失败**（1,079 文件通过 / 16 跳过）。保留失败日志 `/tmp/offline-release-loop-plugin-final-base.log`、定向日志 `...-final-focused.log` 和最终全量日志 `...-final-low-concurrency.log`。本次基线合并没有改变已验证 tgz 的生产源码。
+
+## 2026-10-19 原交互恢复与历史范围准入
+
+本轮替换先前自行增加的顶部入口和候选弹窗，复用交接预览的内联待确认条、原卡片及消息侧“线下已讨论 ↗”。原文/回听使用现有确认对话框布局。共享小组件的 CSS 内联随组件注入，避免独立插件打包后裸样式。
+
+| 能力面 | 实现与验证 |
+| --- | --- |
+| Host | 现有 list 增加 messageRefs，限制 100 个、账号/环境/会话校验、筛选范围绑定游标；Chat 复用现有来源索引 |
+| Tools | 现有 arkme_offline_context_read 的 message_refs 接入同一 Host；官方 DSH 0.1.5-rc.2 真实 Agent 会话查询通过 |
+| SDK | 独立仓外 consumer 仅 import 公开 /sdk，严格类型编译及真实 Host → Chat 消息筛选查询通过 |
+| UI | 原待确认条展开/确认、消息侧标记和跳转、卡片实际浏览器验证；无顶部自造入口 |
+
+不可变 tgz 在独立 Profile 中验收，不修改官方 DSH。UI/Host 局部 162 项通过，1 个原生环境用例在该局部命令跳过，真实原生链路另测。全量首轮 12,695 项通过，1 个 Arko 消息标记 UI 等待失败；原断言单独复跑 5 项通过，正式 pnpm 完整复验 12,696 项通过、21 跳过，零失败（1,081 文件通过、16 跳过）；见 Meta verification.md。
+
+证据：/tmp/offline-idempotence-ui-tests-final.log、/tmp/offline-ui-final-full-tests.log、/tmp/offline-ui-final-mark-retest.log、/tmp/offline-ui-runtime/dsh-idempotence.log、/tmp/offline-message-sdk-compile.log、/tmp/offline-message-sdk-run.log、/tmp/offline-ui-runtime/ui-admission-final.png。截图含合成用户与合成录音文本；不作为真实模型效果或线上数据验收。用户 3081 实例未改。

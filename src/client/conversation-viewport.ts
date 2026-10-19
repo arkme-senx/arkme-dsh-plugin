@@ -80,8 +80,10 @@ export function arkmeConversationTargetScrollTop(root: HTMLDivElement, row: HTML
   return Math.max(0, Math.min(Math.max(0, root.scrollHeight - root.clientHeight), top))
 }
 
-export function arkmeConversationTargetRow(root: HTMLDivElement | null, target: { itemUid: string; momentId?: string }): HTMLElement | undefined {
+export function arkmeConversationTargetRow(root: HTMLDivElement | null, target: { itemUid: string; momentId?: string; contextRef?: string }): HTMLElement | undefined {
   if (!root) return undefined
+  if (target.contextRef) return [...root.querySelectorAll<HTMLElement>('[data-offline-context-ref]')]
+    .find(row => row.dataset.offlineContextRef === target.contextRef)
   if (!target.momentId) return [...root.querySelectorAll<HTMLElement>('[data-arkme-message-item-uid]')]
     .find(row => row.dataset.arkmeMessageItemUid === target.itemUid)
   const id = `moment:${target.momentId}`
