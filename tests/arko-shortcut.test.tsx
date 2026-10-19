@@ -13,6 +13,16 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from '../src/client/composer-draft-store.js'
 
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
+// These orchestration tests have no DOM; real underline portals are covered by arko-message-marks and message-underlines.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: vi.fn(),
 }))
