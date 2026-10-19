@@ -11,6 +11,7 @@ export interface ArkmeRecordingToolPort extends RecordingEntityPort {
   recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext>
   applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult>
   undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult>
+  offlineContext: import('../../offline-context-contract.js').OfflineContextPort['offlineContext']
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]>
   recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence>
