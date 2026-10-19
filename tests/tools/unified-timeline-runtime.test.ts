@@ -27,7 +27,7 @@ it('discovers and invokes the unified owner through an official DSH session, pre
       default: return undefined as T
     }
   }, close() {} }
-  const post = vi.fn(async () => ({ protocol_version: 1, chat_session_uid: 'internal-chat', timeline_items: [],
+  const post = vi.fn(async () => ({ protocol_version: 2, chat_session_uid: 'internal-chat', timeline_items: [],
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'interwoven' ? 'gap' : 'ready', item_count: 0 })),
     complete: false, window_token: 'upstream-secret', older_has_more: false, newer_has_more: false, has_more: false }))
   const owner = new UnifiedChatTimelineService({ config: { environment: 'test', fileStateDirectory: directory }, requireSession: async () => ({ userId: 1 }),

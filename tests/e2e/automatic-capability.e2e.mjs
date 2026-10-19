@@ -67,7 +67,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    const sdk=createArkmeSdk({fetchImpl:(url,init)=>fetch(new URL(url,scaffold.authenticatedUrl),{...init,headers:{...init?.headers,origin:new URL(scaffold.authenticatedUrl).origin}})})
    const scope='test:10001'
    const defaults=(await sdk.automaticCapabilities(scope)).settings
-   expect(defaults).toHaveLength(5)
+   expect(defaults).toHaveLength(6)
    const established=new Set(['record_thought','chat_thought','arrangement_recognition'])
    for(const item of defaults) {
     const enabled=established.has(item.key)
@@ -112,7 +112,7 @@ describe('automatic capability consent through packed official DSH',()=>{
    await expect.poll(()=>toggle.getAttribute('aria-checked')).toBe('false')
    await page.setViewportSize({width:800,height:600})
    const automatic=page.getByRole('region',{name:/^(自动使用额度|Automatic allowance usage)$/})
-   expect(await automatic.getByRole('switch').count()).toBe(5)
+   expect(await automatic.getByRole('switch').count()).toBe(6)
    for(const item of await automatic.getByRole('switch').all()) {
     await item.click()
     const dialog=page.getByRole('dialog').filter({has:page.getByRole('button',{name:/^(同意并开启|Agree and enable)$/})})
@@ -124,6 +124,18 @@ describe('automatic capability consent through packed official DSH',()=>{
     await expect.poll(()=>dialog.count()).toBe(0)
     expect((await sdk.automaticCapabilities(scope)).settings.every(s=>!s.enabled)).toBe(true)
    }
+   // New discovery consent uses the same UI -> SDK -> Record owner chain.
+   const offline=automatic.getByRole('switch',{name:'线下交流关联',exact:true})
+   await offline.click()
+   expect((await sdk.automaticCapabilities(scope)).settings.find(s=>s.key==='offline_context').enabled).toBe(false)
+   await page.getByRole('button',{name:/^(同意并开启|Agree and enable)$/}).click()
+   await expect.poll(()=>offline.getAttribute('aria-checked')).toBe('true')
+   const offlineActive=(await sdk.automaticCapabilities(scope)).settings.find(s=>s.key==='offline_context')
+   expect(offlineActive.version).toBeGreaterThan(0);expect(offlineActive.enabledAt).toBeGreaterThan(0)
+   expect(profileWrites).toEqual([])
+   await offline.click()
+   await expect.poll(()=>offline.getAttribute('aria-checked')).toBe('false')
+   expect((await sdk.automaticCapabilities(scope)).settings.find(s=>s.key==='offline_context').enabled).toBe(false)
    await automatic.scrollIntoViewIfNeeded()
    expect(await automatic.getByRole('heading',{name:'自动使用额度'}).isVisible()).toBe(true)
    if(process.env.ARKME_E2E_SCREENSHOT)await page.screenshot({path:process.env.ARKME_E2E_SCREENSHOT})

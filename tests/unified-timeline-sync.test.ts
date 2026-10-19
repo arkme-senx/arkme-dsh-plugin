@@ -9,7 +9,7 @@ import type { TimelineCachePort, TimelineCacheCommand } from '../src/timeline-ca
 import type { ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 const cleanup: Array<() => void> = []
 afterEach(() => { for (const close of cleanup.splice(0)) close() })
-const response = (text = 'old', extra = {}) => ({ protocol_version: 1, chat_session_uid: 'chat',
+const response = (text = 'old', extra = {}) => ({ protocol_version: 2, chat_session_uid: 'chat',
   timeline_items: [{ event_id: 'event', kind: 'wechat_import', source: 'wechat_import', occurred_at: 10, order_tie: 'event', content_status: 'available', payload: { text_content: text } }],
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', item_count: source === 'wechat_import' ? 1 : 0 })),
   complete: true, window_token: 'window', older_has_more: false, newer_has_more: false, has_more: false, newer_cursor: 'tail', ...extra })
@@ -386,7 +386,7 @@ it('replays a failed terminal invalidation before any read after worker recovery
   const item: ArkmeTimelineItem = { itemUid: 'record', timelineItemKey: 'relation', sequence: 1, senderName: 'peer', isMe: false,
     sendAtMillis: 1, title: '', textContent: 'revoked body', status: 1 }
   const page: ArkmeTimelinePage = { source: { sourceRef: 'ref', sourceKey: 'source-key', kind: 'private_chat', displayName: 'peer' }, items: [item], hasMore: false,
-    unified: { protocolVersion: 1, complete: true, windowTokens: ['window'], hasMore: false, olderHasMore: false, newerHasMore: false,
+    unified: { protocolVersion: 2, complete: true, windowTokens: ['window'], hasMore: false, olderHasMore: false, newerHasMore: false,
       sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })),
       events: [{ kind: 'message', source: 'messages', eventId: 'event', occurredAtMillis: 1, orderTie: '1', contentStatus: 'available', item }] } }
   store.write(JSON.stringify(['test', 1, 'chat']), 'seed', page, { latest: true })

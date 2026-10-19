@@ -9,6 +9,7 @@ const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
   record_thought: '手机快记列表或详情',
   chat_thought: '手机聊天页面',
   arrangement_recognition: '左侧「安排」',
+  offline_context: '聊天中的线下交流关联',
   goal_insight: '「探索 → 目标」',
 }
 
