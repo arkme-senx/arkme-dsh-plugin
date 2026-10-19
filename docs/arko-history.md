@@ -13,11 +13,15 @@ const page = await sdk.arkoSearch({ keyword: '字面正文', role: 'assistant', 
 // 零匹配也可能有下一页；续页保持 keyword、role 和时间范围不变。
 const match = page.items[0]
 if (match) await sdk.arkoContext({ messageRef: match.messageRef, before: 20, after: 20 }, signal)
-const exported = await sdk.arkoExport(signal)
+const exported = await sdk.arkoExport(signal, ({ count }) => console.log(`已读取 ${count} 条`))
 const downloadURL = sdk.localFileUrl(exported.fileRef, true)
 ```
 
 `arkoMessages` 是 keyset 分页；`arkoSearch` 返回片段和不透明消息引用；`arkoContext` 返回原文和独立的双向历史窗口。startAtMillis/endAtMillis 是历史排序时间的左闭右开范围。消息显示时间保留既有 send_at 优先规则，orderAtMillis 用于历史顺序和日历；两者不同会在定位与详情中说明。搜索片段不用于替代正文。Arko 不暴露 reasoning。
+
+搜索结果的 `messageKey` 仅用于稳定展示与去重；`messageRef` 是会过期的定位凭证，不能作为 React key。UI 自动读取有下一页的候选批次，直到获得 50 条匹配、历史结束或本轮 1000 次请求预算耗尽；保留最多 200 条匹配，显示扫描进度并支持继续查找。结果沿用三行预览，定位仍打开原消息上下文，不切换当前 Run。
+
+`arkoExport` 的可选第二参数提供本次请求内的真实读取条数，Host 最多每 100ms 推送一次并在结束时补齐。SDK 使用同一 `arko.export` 操作的 NDJSON 响应接收进度和最终文件引用；无回调的 Tools/SDK 消费返回普通结果。取消会中止同一读取，不创建后台任务、订阅、轮询或任务状态表。UI 保留原菜单入口和反馈位置，读取完成且完整校验通过后才触发下载。
 
 `arkme_arko_history` 正式注册到 business/hybrid 工具集合，action 为 query/search/context/export。它是只读工具，无写入 grant。工具正文预览有明确 textTruncated 标记；完整原文通过导出文件读取。工具不返回上游凭据、存储路径或内部查询参数。
 

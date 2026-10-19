@@ -973,6 +973,25 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
+      // Content negotiation adds request-scoped progress to the same export
+      // owner. No task/status registry, polling, replay or background job exists.
+      if (request.operation === 'arko.export' && req.headers.accept === 'application/x-ndjson') {
+        const send = (frame: unknown) => {
+          if (controller.signal.aborted || res.destroyed) return
+          if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
+          if (!res.write(JSON.stringify(frame) + '\n') && res.writableLength > 16 * 1024) {
+            controller.abort(); res.destroy()
+          }
+        }
+        try {
+          const value = await service.arkoExport(controller.signal, progress => send({ kind: 'progress', ...progress }))
+          send({ kind: 'result', value })
+        } catch (error) {
+          const known = error instanceof ArkmePluginError ? error : undefined
+          send({ kind: 'error', error: { code: known?.code ?? 'arko-export-unavailable', message: known?.message ?? '导出失败，请重试', retryable: known?.retryable ?? true } })
+        } finally { if (!res.destroyed) res.end() }
+        return
+      }
       if (request.operation === 'remote.session.observe') {
         const directory = options.accountSessions?.()
         if (!directory) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)

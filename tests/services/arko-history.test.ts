@@ -140,3 +140,19 @@ it('preserves local mark projection in both published and new history reads', as
  expect((await service.arkoHistoryPage()).items[0]?.localMarkRef).toBe('local-mark-reference')
  expect(project).toHaveBeenCalledTimes(2)
 })
+
+it('reports real counts with bounded notifications and isolates broken progress observers',async()=>{
+ const {service}=await setup(async()=>stream(protocol()))
+ const notify=vi.fn(()=>{throw new Error('view observer failed')})
+ await expect(service.arkoExport(undefined,notify)).resolves.toMatchObject({count:1})
+ expect(notify.mock.calls[0]).toEqual([{count:0}])
+ expect(notify.mock.calls.at(-1)).toEqual([{count:1}])
+ expect(notify.mock.calls.length).toBeLessThanOrEqual(3)
+})
+it('keeps search display identities stable while locator capabilities expire independently',async()=>{
+ const {service}=await setup(async()=>json({items:[{...wireItem,snippet:'正文'}],has_more:false,scanned:1,consistency:'live'}))
+ const first=await service.arkoSearch({keyword:'正文'}),next=await service.arkoSearch({keyword:'正文'})
+ expect(first.items[0]?.messageKey).toBe('2:1')
+ expect(next.items[0]?.messageKey).toBe(first.items[0]?.messageKey)
+ expect(next.items[0]?.messageRef).not.toBe(first.items[0]?.messageRef)
+})

@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { GeneratedArtifacts } from '../generated-artifacts.js'
 import { consumeArkoExport } from '../arko-history-export.js'
-import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport } from '../arko-history-contract.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress } from '../arko-history-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeArkoAskResult,
@@ -448,7 +448,7 @@ export class ArkoService {
       const item = objectValue(raw)
       if (!Number.isSafeInteger(item.id) || numberValue(item.id) < 1 || !Number.isSafeInteger(item.session_id) || numberValue(item.session_id) < 1
         || ![2, 3].includes(numberValue(item.role)) || ![1, 2, 3, 5].includes(numberValue(item.status)) || typeof item.snippet !== 'string' || item.snippet.length > 1024 || typeof item.created_at_ms !== 'number' || typeof item.order_at_ms !== 'number') throw new ArkmePluginError('arko-history-contract-invalid', '搜索响应无效', true, 502)
-      return { messageRef: await this.messageRef(session.userId, numberValue(item.session_id), numberValue(item.id)), role: item.role === 2 ? 'user' as const : 'assistant' as const,
+      return { messageKey: `${numberValue(item.session_id)}:${numberValue(item.id)}`, messageRef: await this.messageRef(session.userId, numberValue(item.session_id), numberValue(item.id)), role: item.role === 2 ? 'user' as const : 'assistant' as const,
         snippet: item.snippet, createdAtMillis: item.created_at_ms, orderAtMillis: item.order_at_ms, status: numberValue(item.status) }
     }))
     return { items, ...this.historyContinuation(data) }
@@ -469,12 +469,22 @@ export class ArkoService {
     return { items, anchorMessageRef: query.messageRef, hasBefore: data.has_before, hasAfter: data.has_after,
       ...(data.has_before ? { beforeCursor: stringValue(data.before_cursor) } : {}), ...(data.has_after ? { afterCursor: stringValue(data.after_cursor) } : {}) }
   }
-  async arkoExport(signal?: AbortSignal): Promise<ArkmeArkoExport> {
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
     const session = await this.runtime.requireSession()
     const name = this.arkoProfileDisplayNameCache.get(session.userId)?.displayName ?? 'Arko'
     const fileName = `${name.replace(/[\\/:*?"<>|\r\n]/g, '_')}-对话-${new Date().toISOString().slice(0, 10)}.md`
+    let lastProgress = 0
+    const report = (progress: ArkmeArkoExportProgress, force = false) => {
+      const now = Date.now()
+      if (force || now - lastProgress >= 100) {
+        lastProgress = now
+        try { onProgress?.(progress) } catch { /* Progress observers cannot affect export integrity. */ }
+      }
+    }
+    report({ count: 0 }, true)
     const result = await this.generated.create(session.userId, fileName,
-      write => this.runtime.intelligentExportStream(session, (body, streamSignal) => consumeArkoExport(body, streamSignal, write, name), signal), signal)
+      write => this.runtime.intelligentExportStream(session, (body, streamSignal) => consumeArkoExport(body, streamSignal, write, name, report), signal), signal)
+    report({ count: result.result }, true)
     return { ...result.file, count: result.result }
   }
   async actionMessages(anchors: readonly { sessionId: number; messageId: number }[], userId: number, signal?: AbortSignal): Promise<ArkmeArkoHistoryItem[]> {

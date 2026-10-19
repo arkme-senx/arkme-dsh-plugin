@@ -1413,7 +1413,7 @@ export class ArkmeService {
   }
   async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal) { return this.arko.arkoSearch(query, signal) }
   async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal) { return this.arko.arkoContext(query, signal) }
-  async arkoExport(signal?: AbortSignal) { return this.arko.arkoExport(signal) }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: import('./arko-history-contract.js').ArkmeArkoExportProgress) => void) { return this.arko.arkoExport(signal, onProgress) }
 
   async arkoHistoryPage(
     limit = 50,

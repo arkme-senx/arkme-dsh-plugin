@@ -20,6 +20,8 @@ export interface ArkmeArkoMessagePage {
   consistency: 'live'
 }
 export interface ArkmeArkoSearchMatch {
+  /** Stable display identity; messageRef is an expiring locator, not a list key. */
+  messageKey: string
   messageRef: string
   role: 'user' | 'assistant'
   snippet: string
@@ -43,6 +45,7 @@ export interface ArkmeArkoContextWindow {
   hasBefore: boolean
   hasAfter: boolean
 }
+export interface ArkmeArkoExportProgress { count: number }
 export interface ArkmeArkoExport {
   fileRef: string
   fileName: string
@@ -54,5 +57,5 @@ export interface ArkmeArkoHistoryPort {
   arkoMessages(query?: ArkmeArkoHistoryQuery, signal?: AbortSignal): Promise<ArkmeArkoMessagePage>
   arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage>
   arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow>
-  arkoExport(signal?: AbortSignal): Promise<ArkmeArkoExport>
+  arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport>
 }

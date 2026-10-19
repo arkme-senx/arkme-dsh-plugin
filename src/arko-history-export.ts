@@ -1,3 +1,4 @@
+import type { ArkmeArkoExportProgress } from './arko-history-contract.js'
 import { createHash } from 'node:crypto'
 import { ArkmePluginError, objectValue } from './services/service.js'
 
@@ -16,7 +17,7 @@ function userBody(text: string): string {
   return `${fence}text\n${text}\n${fence}`
 }
 /** Integrity is computed over untouched byte lines, never reserialized JSON. */
-export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal: AbortSignal, write: (text: string) => Promise<void>, name: string): Promise<number> {
+export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal: AbortSignal, write: (text: string) => Promise<void>, name: string, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<number> {
   const reader = body.getReader(), digest = createHash('sha256')
   let pending: Buffer = Buffer.allocUnsafe(64 * 1024), pendingBytes = 0, state: 'initial' | 'items' | 'complete' = 'initial'
   let count = 0, bytes = 0, wire = 0
@@ -38,6 +39,7 @@ export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal
       const run = typeof item.run_status === 'string' ? item.run_status : ''
       const status = run ? ` · ${escapeHeading(Object.hasOwn(runLabels, run) ? runLabels[run]! : run)}` : item.status === 2 ? ' · 生成中' : item.status === 3 || item.status === 5 ? ' · 未完成' : ''
       await write(`## ${item.role === 2 ? '我' : escapeHeading(name)} · ${at}${status}\n\n来源：${item.source_type === 1 ? '历史助手' : 'Agent'} · 消息 ${String(item.id)}\n\n${item.role === 2 ? userBody(item.content) : item.content}\n\n`)
+      onProgress?.({ count })
     } else if (frame.kind === 'complete' && state === 'items' && frame.version === 'arko-export-v1') {
       if (frame.count !== count || frame.bytes !== bytes || frame.sha256 !== digest.digest('hex')) throw invalid()
       state = 'complete'
