@@ -817,6 +817,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.interwoven.dispose()
     this.relatedQuickNote.dispose()
     this.world.dispose()
+    this.voiceprint.dispose()
     this.arrangement.dispose()
     this.contact.dispose()
     this.contactDirectory.dispose()
@@ -1259,6 +1260,7 @@ arkoImagesV1:true,
     this.interwoven.dispose()
     this.relatedQuickNote.dispose()
     this.world.dispose()
+    this.voiceprint.dispose()
     this.linkMetadata.dispose()
   }
 

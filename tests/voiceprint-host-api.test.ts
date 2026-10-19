@@ -65,6 +65,7 @@ describe('Voiceprint built-in Host API dispatch', () => {
 
   it('keeps invitation, grant revocation and playback restoration as separate writes', async () => {
     const service = fakeVoiceprintService()
+    const signal = new AbortController().signal
 
     await dispatchArkmeHostOperation(service as never, 'voiceprint.invite' as never, { scope: 'voiceprint_play' })
     await dispatchArkmeHostOperation(service as never, 'voiceprint.person.invite' as never, {
@@ -75,12 +76,12 @@ describe('Voiceprint built-in Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'voiceprint.restore' as never, {
       consentVersion: 'browser-owned',
-    })
+    }, undefined, undefined, undefined, undefined, signal)
 
     expect(service.createVoiceprintInvitation).toHaveBeenCalledWith()
     expect(service.createRecognizedPersonVoiceprintInvitation).toHaveBeenCalledWith('person-ref', 'contact-ref')
     expect(service.revokeVoiceprintPlaybackGrant).toHaveBeenCalledWith('grant-ref')
-    expect(service.restoreVoiceprintPlayback).toHaveBeenCalledWith()
+    expect(service.restoreVoiceprintPlayback).toHaveBeenCalledWith({ signal })
   })
 
   it('keeps the contact target absent for a bound-person invitation', async () => {

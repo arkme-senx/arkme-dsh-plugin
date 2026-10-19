@@ -34,6 +34,7 @@ import type { ArkmeWorldImageEntry } from './media-service.js'
 import type { ArkmeUserProfileSnapshot } from '../types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { waitForVoiceprintRecovery } from './voiceprint-recovery.js'
 
 export interface ArkmeWorldProfileReader {
   refreshProfile(): Promise<ArkmeUserProfileSnapshot>
@@ -542,13 +543,21 @@ export class WorldService {
     chunkIndex?: number
     signal?: AbortSignal
   }): Promise<ArkmeWorldVoiceprintPlaybackChunk> {
-    const session = await this.runtime.requireSession()
+    const epoch = this.epoch
+    let session = await this.runtime.requireSession()
     const entry = this.openWorldRecordRef(input.recordRef, session.userId)
     const chunkIndex = Math.trunc(input.chunkIndex ?? 0)
     if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= 334) {
       throw new ArkmePluginError('world-voiceprint-playback-input-invalid', '世界声纹播放参数无效，请刷新后重试', false)
     }
-    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+    const assertActive = async () => {
+      const current = await this.runtime.requireSession()
+      if (this.epoch !== epoch || current.userId !== session.userId) {
+        throw new ArkmePluginError('world-account-changed', '账号已切换，请重新打开世界页面', false)
+      }
+      session = current
+    }
+    const data = await waitForVoiceprintRecovery(() => this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/voiceprint/generate-playback',
       {
         source_scene: 4,
@@ -559,7 +568,7 @@ export class WorldService {
       session,
       input.signal,
       { lane: 'write', bypassCache: true },
-    )
+    ), assertActive, input.signal)
     const mimeType = stringValue(data.mime_type).trim() || 'audio/wav'
     const responseChunkIndex = Math.trunc(numberValue(data.source_chunk_index))
     const chunkCount = Math.trunc(numberValue(data.source_chunk_count))

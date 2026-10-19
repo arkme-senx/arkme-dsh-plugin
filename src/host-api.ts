@@ -1355,7 +1355,7 @@ export async function dispatchArkmeHostOperation(
     case 'voiceprint.revoke': return await service.revokeVoiceprintPlaybackGrant(
       stringParam(params, 'grantRef').trim(),
     )
-    case 'voiceprint.restore': return await service.restoreVoiceprintPlayback()
+    case 'voiceprint.restore': return await service.restoreVoiceprintPlayback(requestSignal === undefined ? {} : { signal: requestSignal })
     case 'contacts.search': return await service.searchContact(stringParam(params, 'identifier'))
     case 'contacts.team-join': return await service.joinContactTeam(stringParam(params, 'jotmoId'), stringParam(params, 'requestUid'), requestSignal, stringParam(params, 'expectedAccountKey') || undefined)
     case 'contacts.add': return await service.addContact(stringParam(params, 'contactRef'), {

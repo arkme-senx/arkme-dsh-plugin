@@ -22,6 +22,7 @@ import {
 } from '../types.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { waitForVoiceprintRecovery } from './voiceprint-recovery.js'
 import { validateVoiceprintPcm16Wav } from '../voiceprint-wav.js'
 
 export interface ArkmeVoiceprintProfileReader {
@@ -121,6 +122,10 @@ function validSpeakerId(value: string): boolean {
 }
 
 export class VoiceprintService {
+  private epoch = 0
+
+  dispose(): void { this.epoch++ }
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ArkmeVoiceprintProfileReader,
@@ -457,12 +462,37 @@ export class VoiceprintService {
   }
 
   async restorePlayback(options: { signal?: AbortSignal } = {}): Promise<ArkmeVoiceprintPlaybackRestore> {
-    const session = await this.runtime.requireSession()
-    this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'voiceprint:self')
-    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/voiceprint/restore-playback', {}, session, options.signal,
-      { lane: 'write', key: `voiceprint:restore:${Date.now().toString(36)}`, bypassCache: true },
-    )
+    const epoch = this.epoch
+    let session = await this.runtime.requireSession()
+    const ownerUserId = session.userId
+    const assertActive = async () => {
+      options.signal?.throwIfAborted()
+      const current = await this.runtime.requireSession()
+      if (epoch !== this.epoch || current.userId !== ownerUserId) {
+        throw new ArkmePluginError('account-changed', '账号状态已变化，请重新操作', false, 409)
+      }
+      session = current
+    }
+    await assertActive()
+    this.runtime.invalidateKey(this.runtime.requestScope(ownerUserId), 'voiceprint:self')
+    let data: Record<string, unknown>
+    try {
+      data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/voiceprint/restore-playback', {}, session, options.signal,
+        { lane: 'write', key: `voiceprint:restore:${Date.now().toString(36)}`, bypassCache: true },
+      )
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-1106') throw error
+      // The restore write is limited to five calls/minute. Continue the durable candidate via /my only.
+      return await waitForVoiceprintRecovery(async () => {
+        this.runtime.invalidateKey(this.runtime.requestScope(ownerUserId), 'voiceprint:self')
+        const profile = await this.myVoiceprint(options)
+        if (profile.canPlay) return { canPlay: true, restored: true, updatedAtMillis: profile.updatedAtMillis }
+        if (profile.enrollmentPending) throw new ArkmePluginError('arkme-code-1106', '声音正在恢复，请稍候', true)
+        throw new ArkmePluginError('voiceprint-restore-unavailable', '声音恢复未完成，请稍后重试或重新录入', true)
+      }, assertActive, options.signal)
+    }
+    await assertActive()
     const result = {
       canPlay: requiredBoolean(data.can_play, 'voiceprint-restore-contract-invalid'),
       restored: requiredBoolean(data.restored, 'voiceprint-restore-contract-invalid'),

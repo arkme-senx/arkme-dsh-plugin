@@ -696,6 +696,46 @@ describe('world Provider projection', () => {
     await expect(service.fetchMedia(playback.mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
   })
 
+  it.each(['ready', 'cancelled', 'account-changed'] as const)(
+    'handles durable enrollment through real WorldService transport: %s', async outcome => {
+      vi.useFakeTimers()
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const controller = new AbortController()
+      let generations = 0
+      const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+        if (String(input).endsWith('/world-list')) return json({ code: 200, data: { list: [{
+          record_uid: 'recovery-record', user_id: 20002, nick_name: '作者', text_content: '恢复后可播放',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+        expect(String(input)).toBe('https://audio.test/api/v1/audio/voiceprint/generate-playback')
+        generations++
+        expect(JSON.parse(String(init?.body))).toMatchObject({ source_scene: 4, source_id: 'recovery-record' })
+        if (generations === 1) return json({ code: 1106, msg: '声音正在恢复，请稍候' })
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer refreshed-access' })
+        return json({ code: 200, data: {
+          audio_url: 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/voiceprint/recovered.wav?x-oss-signature=test',
+          mime_type: 'audio/wav', source_chunk_index: 0, source_chunk_count: 1,
+          source_chunk_start_rune: 0, source_chunk_end_rune: 6,
+        } })
+      })
+      const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+      try {
+        const feed = await service.listWorldFeed()
+        const pending = service.generateWorldVoiceprintPlayback({ recordRef: feed.items[0]!.recordRef, signal: controller.signal })
+        const expected = outcome === 'ready' ? expect(pending).resolves.toMatchObject({ mimeType: 'audio/wav', mediaRef: expect.stringMatching(/^arkme-media-v1\./) })
+          : expect(pending).rejects.toMatchObject(outcome === 'cancelled' ? { name: 'AbortError' } : { code: 'world-account-changed' })
+        await vi.advanceTimersByTimeAsync(0)
+        expect(generations).toBe(1)
+        if (outcome === 'cancelled') controller.abort()
+        else sessions.session = { userId: outcome === 'ready' ? 10001 : 10002, accessToken: 'refreshed-access', refreshToken: 'refresh' }
+        await vi.advanceTimersByTimeAsync(3_000)
+        await expected
+        expect(generations).toBe(outcome === 'ready' ? 2 : 1)
+      } finally { service.dispose(); vi.useRealTimers() }
+    },
+  )
+
   it('reuses world voiceprint availability cache for the same owners in a different order', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

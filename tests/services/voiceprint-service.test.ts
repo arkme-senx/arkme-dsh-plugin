@@ -529,6 +529,51 @@ describe('VoiceprintService', () => {
     expect(statusCalls).toBe(2)
   })
 
+  it('continues a pending restore via status without replaying the restore write', async () => {
+    vi.useFakeTimers()
+    try {
+      let reads = 0
+      const paths: string[] = []
+      const fetchImpl = vi.fn(async input => {
+        const path = new URL(String(input)).pathname
+        paths.push(path)
+        if (path.endsWith('/restore-playback')) return new Response(JSON.stringify({ code: 1106, msg: 'preparing' }))
+        reads++
+        return json({ has_voiceprint: true, can_identify: true, can_play: reads > 1,
+          can_restore_playback: false, enrollment_status: reads > 1 ? 'ready' : 'processing', updated_at: 456 })
+      }) as typeof fetch
+      const service = new VoiceprintService(new ServiceRuntime(config, sessions, state, fetchImpl), profileReader())
+      const result = service.restorePlayback()
+      await vi.advanceTimersByTimeAsync(3_000)
+      await expect(result).resolves.toEqual({ canPlay: true, restored: true, updatedAtMillis: 456 })
+      expect(paths.filter(path => path.endsWith('/restore-playback'))).toHaveLength(1)
+      expect(reads).toBe(2)
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each(['abort', 'dispose', 'account'] as const)('stops a pending restore on %s', async reason => {
+    vi.useFakeTimers()
+    try {
+      let owner = 42
+      const scopedSessions = { ...sessions, read: async () => ({ userId: owner, accessToken: 'access', refreshToken: 'refresh' }) }
+      const fetchImpl = vi.fn(async input => String(input).endsWith('/restore-playback')
+        ? new Response(JSON.stringify({ code: 1106, msg: 'preparing' }))
+        : json({ has_voiceprint: true, can_identify: true, can_play: false, can_restore_playback: false, enrollment_status: 'processing' })) as typeof fetch
+      const service = new VoiceprintService(new ServiceRuntime(config, scopedSessions, state, fetchImpl), profileReader())
+      const controller = new AbortController()
+      const result = service.restorePlayback({ signal: controller.signal })
+      const rejected = expect(result).rejects.toBeDefined()
+      await vi.advanceTimersByTimeAsync(0)
+      const calls = fetchImpl.mock.calls.length
+      if (reason === 'abort') controller.abort()
+      if (reason === 'dispose') service.dispose()
+      if (reason === 'account') owner = 7
+      await vi.advanceTimersByTimeAsync(3_000)
+      await rejected
+      expect(fetchImpl).toHaveBeenCalledTimes(calls)
+    } finally { vi.useRealTimers() }
+  })
+
   it('enrolls one bounded WAV sample through multipart without exposing internal session ids', async () => {
     const fetchImpl = vi.fn(async (input, init) => {
       expect(String(input)).toBe('https://audio.test/api/v1/audio/voiceprint/enroll-from-audio')
