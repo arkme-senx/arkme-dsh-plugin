@@ -9,7 +9,9 @@ if(!dsh||!profile||process.env.ARKME_EVIDENCE_TEST_ACCOUNT!=='3016')throw new Er
 const imp=path=>import(/* @vite-ignore */ pathToFileURL(path).href)
 const {launchWebScaffold}=await imp(join(dsh,'apps/web/tests/scaffold.ts'))
 const {healProfilesModuleFallback}=await imp(join(dsh,'packages/boot/app-boot/src/index.ts'))
-await healProfilesModuleFallback({installAnchor:join(dsh,'apps/cli/package.json'),home:resolve(profile,'../..')})
+const harnessHome=resolve(profile,'../..')
+healProfilesModuleFallback(join(dsh,'apps/cli/package.json'),harnessHome)
+healProfilesModuleFallback(join(profile,'package.json'),harnessHome)
 const manifest=JSON.parse(await readFile(join(profile,'package.json'),'utf8'))
 if(!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme']??''))throw new Error('immutable officially installed tgz required')
 const {createArkmeSdk}=await imp(join(profile,'node_modules/@senguoyun/dsh-arkme/lib/sdk.js'))
@@ -19,10 +21,10 @@ describe('speaker evidence immutable package on official Harness',()=>{
   try{
    const config={environment:'test',stateDirectory:join(root,'state'),keychainServicePrefix:'com.senqisi.speaker-evidence-'+randomUUID(),allowProduction:false,updateCheckEnabled:false,openApiMcpEnabled:false,dshRemoteFeatureEnabled:false,extensionShareDiscoveryEnabled:false,toolProfile:'business'}
    const overlay=join(root,'overlay.json');await writeFile(overlay,JSON.stringify([{insert:[{id:'speaker-evidence-test',name:'@senguoyun/dsh-arkme',config}]}]))
-   scaffold=await launchWebScaffold({extraOverlayPath:overlay,extraInstallAnchors:[join(profile,'package.json')]})
+   scaffold=await launchWebScaffold({extraOverlayPath:overlay,harnessHome})
    const service=scaffold.ctx.get('arkmeData')
    expect(await service.testLogin(3016)).toMatchObject({status:'authenticated',userId:3016})
-   const sdk=createArkmeSdk({fetchImpl:(_url,init)=>scaffold.hostFetch('/arkme-self/api',init)})
+   const sdk=createArkmeSdk({fetchImpl:(_url,init)=>fetch(new URL('/arkme-self/api',scaffold.baseUrl),{...init,headers:{...init.headers,Origin:scaffold.baseUrl}})})
    expect(await sdk.recordingSpeakerEvidenceQuery({action:'capabilities'})).toMatchObject({supported:true,schema_version:1})
    const fixtureDay=Number(process.env.ARKME_EVIDENCE_TEST_DAY)
    if(Number.isSafeInteger(fixtureDay)&&fixtureDay>0){

@@ -80,8 +80,16 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 
 合入最新 dev 后保留页面现有 `recordings.speaker.evidence` 与 `recordings.speaker.consistency` 合同；完整证据查询使用独立 `recordings.speaker.evidence.query`，SDK 对应 `recordingSpeakerEvidenceQuery`。Tool 名称保持不变。两种请求结构不混用，也不按参数猜测版本。新增查询与既有读取共用账号/纠正版本失效检查，并传递取消信号。
 
-最终验证：类型检查、包构建通过；完整套件 1,071 个文件通过、15 个文件跳过，12,609 项通过、20 项跳过。不可变 tgz 在未修改的官方 DSH `47f94385` 独立 profile 安装成功；独立 consumer 从 tgz 公开 SDK 导入并通过 TypeScript 编译及运行，含 AbortSignal。相对最新 dev `3c04defd`，`src/client/**`、根 README、版本及 lockfile 零改动。
+环境恢复前的验证：类型检查、包构建通过；完整套件 1,071 个文件通过、15 个文件跳过，12,609 项通过、20 项跳过。不可变 tgz 在未修改的官方 DSH `47f94385` 独立 profile 安装成功；独立 consumer 从 tgz 公开 SDK 导入并通过 TypeScript 编译及运行，含 AbortSignal。相对最新 dev `3c04defd`，`src/client/**`、根 README、版本及 lockfile 零改动。
 
-本轮真实后端 E2E 等待测试环境恢复；上面的历史 E2E 不代表本轮新提交已完成部署验收。没有发布安装渠道、替换常驻客户端或启用新的页面入口。
+环境恢复后的验证见下一节；没有发布安装渠道、替换常驻客户端或启用新的页面入口。
 
 最终异步审查补齐成员引用密钥生成后的账号/版本/取消检查；3 个回归先复现旧结果被错误返回，修复后相关 45 项及完整套件通过。一次打包与测试共用 lib 的并行运行产生构建竞态及超时，已串行重跑通过，未修改用例超时或过滤失败用例。
+
+## 2026-10-19 环境恢复后复验
+
+合入官方 dev `6f7ec2f7` 后，类型检查与完整套件 12,651 项通过、20 项跳过（1,076 文件通过、15 文件跳过）；Node 25 继续使用既有 `NODE_OPTIONS=--no-experimental-webstorage` 测试命令，避免 Node 的实验性 global localStorage 覆盖浏览器测试环境。
+
+由官方 CLI 安装不可变 tgz 至全新临时 profile，在未修改的官方 DSH `47f94385` 上通过真实后端验收：独立测试账号登录，三段新上传语音的完整一致性和 2+1 成员分页，账号绑定不透明引用，真实 Agent 的 Tools 发现、只读拒写与写操作确认拦截，以及 SDK 取消。E2E 入口按该官方版本的实际签名使用 `healProfilesModuleFallback(installAnchor, home)`、scaffold 的 `harnessHome` 与真实 HTTP `baseUrl`；不依赖另一版本的额外私有帮助方法。独立仓外 consumer 从 tgz 的公开 SDK 导入、TypeScript 编译和运行通过。
+
+相对上述 dev 基线，`src/client/**`、根 README、package.json 与 lockfile 均零差异。本轮插件仅修正验收脚本并更新交接；后端纠正、共享撤权、真实 GPU 和同负载性能证据由后端交付记录分别给出，不能把接口通过解释为页面已启用。
