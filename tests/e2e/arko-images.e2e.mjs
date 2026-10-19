@@ -25,6 +25,16 @@ describe('packed Arko image input on the official Harness', () => {
   it('sends pure images through SDK, real session Tools and UI and preserves history placeholders', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arko image acceptance '))
     const chain = process.env.ARKO_CHAIN_CONTROL ? JSON.parse(await readFile(process.env.ARKO_CHAIN_CONTROL, 'utf8')) : undefined
+    const ocr = chain?.imageTask === 'ocr'
+    const imageText = [
+      ['即我测试清单', '图片输入', 'ARKO-7319', '128.50'],
+      ['会议安排', '产品评审', '2026-10-21', '15:40', 'B-208'],
+    ]
+    const assertImageText = (answer, imageIndex, label) => {
+      const normalized = answer.normalize('NFKC').replace(/\s+/gu, '')
+      for (const fragment of imageText[imageIndex]) expect.soft(normalized, `${label}: ${fragment}`).toContain(fragment)
+    }
+    const currentQuestion = ocr ? '请逐行抄录这张图片中的文字，不补充说明。' : '这张图片是什么颜色？只回答颜色。'
     const serverAssistantIds = []
     const sharp = createRequire(join(profile, 'package.json'))('sharp')
     const png = chain ? Buffer.from(chain.png, 'base64') : await sharp({ create: { width: 64, height: 32, channels: 3, background: '#3388cc' } }).png().toBuffer()
@@ -143,9 +153,16 @@ describe('packed Arko image input on the official Harness', () => {
         expect(accepted).toHaveLength(1)
         expect(requestPaths.filter(path => path === '/api/v1/files/prepare-upload')).toHaveLength(preparedBefore)
       }
-      const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { ...(chain?.realProvider ? { text: '按当前两张附件的顺序，说明第一张和第二张分别是什么颜色。' } : {}), session_id: 88, image_file_refs: secondFile ? [secondFile.fileRef, file.fileRef] : [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
+      const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { ...(chain?.realProvider ? { text: ocr ? '请按当前附件顺序，分别逐行抄录第一张和第二张图片中的文字。' : '按当前两张附件的顺序，说明第一张和第二张分别是什么颜色。' } : {}), session_id: 88, image_file_refs: secondFile ? [secondFile.fileRef, file.fileRef] : [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
       expect(result.isError).toBe(false)
-      if (chain?.realProvider) { expect.soft(JSON.stringify(result), 'reversed current attachments must be identified in order').toMatch(/第一张[\s\S]*?[红紅][\s\S]*?第二张[\s\S]*?[蓝藍]/u) } else expect(JSON.stringify(result)).toContain('ARKO_IMAGES_OK')
+      if (chain?.realProvider) {
+        if (ocr) {
+          const answer = JSON.stringify(result)
+          assertImageText(answer, 1, 'first current attachment')
+          assertImageText(answer, 0, 'second current attachment')
+          expect.soft(answer, 'distinct image text must preserve reversed attachment order').toMatch(/B-208[\s\S]*ARKO-7319/u)
+        } else expect.soft(JSON.stringify(result), 'reversed current attachments must be identified in order').toMatch(/第一张[\s\S]*?[红紅][\s\S]*?第二张[\s\S]*?[蓝藍]/u)
+      } else expect(JSON.stringify(result)).toContain('ARKO_IMAGES_OK')
       expect(accepted).toHaveLength(2)
       if (chain) expect(accepted[1].attachments.map(item => item.file_asset_uid)).toEqual([secondUid, uid])
       if (chain?.realProvider) expect(requestPaths.filter(path => path === '/api/v1/files/prepare-upload')).toHaveLength(2)
@@ -163,12 +180,12 @@ describe('packed Arko image input on the official Harness', () => {
         await page.getByRole('button', { name: chain?.realProvider ? /^预览图片：/u : '预览图片：circuit.png', exact: true }).first().waitFor()
       }
       await page.locator('input[aria-label="添加 Arko 图片"]').setInputFiles({ name: 'UI.png', mimeType: 'image/png', buffer: png })
-      if (chain?.realProvider) await page.getByRole('textbox', { name: '发送给 Arko', exact: true }).fill('这张图片是什么颜色？只回答颜色。')
+      if (chain?.realProvider) await page.getByRole('textbox', { name: '发送给 Arko', exact: true }).fill(currentQuestion)
       const send = page.getByRole('button', { name: '发送', exact: true })
       await expect.poll(() => send.isEnabled()).toBe(true)
       await send.click()
       await expect.poll(() => accepted.length, { timeout: chain ? 60000 : 5000 }).toBe(3)
-      expect(accepted[2].content).toBe(chain?.realProvider ? '这张图片是什么颜色？只回答颜色。' : '')
+      expect(accepted[2].content).toBe(chain?.realProvider ? currentQuestion : '')
       expect(accepted[2].attachments[0].file_asset_uid).toBe(uid)
       const replies = chain ? page.locator(`[data-arko-selection-key="history:${serverAssistantIds[2]}"]`) : page.locator('[data-arko-message-viewport]')
       if (chain?.realProvider) {
@@ -178,15 +195,19 @@ describe('packed Arko image input on the official Harness', () => {
           return persisted?.runStatus
         }, { timeout: 60000 }).toBe('completed')
         await replies.getByText(persisted.text, { exact: true }).waitFor()
-        expect.soft(persisted.text, 'current image color must be correct').toMatch(/blue|蓝|藍/iu)
+        if (ocr) assertImageText(persisted.text, 0, 'current image text')
+        else expect.soft(persisted.text, 'current image color must be correct').toMatch(/blue|蓝|藍/iu)
       }
       else await replies.getByText('ARKO_IMAGES_OK', { exact: true }).waitFor()
       await expect.poll(() => send.isEnabled()).toBe(false)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       if (chain?.realProvider) {
-        const followup = await sdk.arkoAsk('我在这个会话发送的第一条消息只有两张图片、没有文字。请重新查看那条最早消息的第一张附件，它是什么颜色？只回答颜色。', { sessionId: 88, waitSeconds: 1 })
-        expect(followup.status).toBe('completed'); expect.soft(followup.text, 'historical first-image color must be correct').toMatch(/blue|蓝|藍/iu)
+        const followup = await sdk.arkoAsk(ocr ? '请重新查看这个会话最早那条没有文字、只有两张图片的消息。逐行抄录那条消息第二张附件中的文字，不是我刚刚发的这张图。' : '我在这个会话发送的第一条消息只有两张图片、没有文字。请重新查看那条最早消息的第一张附件，它是什么颜色？只回答颜色。', { sessionId: 88, waitSeconds: 1 })
+        expect(followup.status).toBe('completed')
+        if (ocr) assertImageText(followup.text, 1, 'historical second image text')
+        else expect.soft(followup.text, 'historical first-image color must be correct').toMatch(/blue|蓝|藍/iu)
         expect(accepted).toHaveLength(4); expect(accepted[3].attachments).toBeUndefined()
+        if (ocr) console.info('OCR current and historical text checks completed; no expected text was included in user prompts')
       }
       if (chain) {
         const acceptedBefore = accepted.length
