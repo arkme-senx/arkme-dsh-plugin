@@ -40,6 +40,10 @@ async function select(element: HTMLElement, phrase: string) {
   expect(node).not.toBeNull()
   const start = node!.textContent!.indexOf(phrase)
   await act(async () => {
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 30, clientY: 55 }))
+    // jsdom does not perform the browser's pointer-driven blur. Without it,
+    // the still-focused ProseMirror editor reclaims this native selection.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     const range = document.createRange(); range.setStart(node!, start); range.setEnd(node!, start + phrase.length)
     document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
     element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 30, clientY: 55 }))

@@ -1,6 +1,6 @@
 # Arko 图片输入实施
 
-基线：`origin/dev`，`3c04defd`。用户明确指定 dev；本任务不修改版本号、根 README 或 DSH 源码。
+基线：`origin/dev`，`6f7ec2f7`（最初从 `3c04defd` 建分支，已合入本轮 dev 更新）。用户明确指定 dev；本任务不修改版本号、根 README 或 DSH 源码。
 
 ## 能力矩阵
 
@@ -22,8 +22,15 @@
 
 ## 验收记录（2026-10-19）
 
-- 全量：1073 个测试文件通过，12602 个测试通过，另有 15 个文件/20 个测试按原条件跳过；构建通过。
-- 不可变包：任务工作区 `analysis-evidence/verified-package/senguoyun-dsh-arkme-3.0.15.tgz`，从该包安装到隔离 profile；未修改 DSH 源码或常驻进程。
-- 官方 DSH `0.1.5-rc.2` / `fb2c4b9e698e`：`tests/e2e/arko-images.e2e.mjs` 通过 SDK、会话 Tools、UI 三入口，观察到实际上传与 v3 请求以及流式完成；截图在任务工作区 `analysis-evidence/arko-verified-acceptance.png`。
-- 该 DSH 用例的上游 API 为隔离合同 fixture；真实供应商识图、Record 内容验证与 MySQL 结算由后端独立测试验证，不能把页面用例描述为已部署的跨服务端到端测试。
+最终包 SHA-256：`26719968da53c19719d77ecde5724723713e8d89da8ee028cfec5bad1aa76d1d`。构建、全量测试、typecheck、仓外SDK consumer均通过。
+
+审查修复包含同UID重复历史图片位置、SSR document guard；合并最新dev保留其多选覆盖布局及模型目录刷新。DOM标记测试等待真实owner metadata/焦点帧并模拟浏览器blur，未放宽生产选区权限。
+
+仅有macOS本地运行证据，Windows/Linux及Android/iOS真机不在本轮已验范围。
+
+- 全量：1078 个测试文件通过，12645 个测试通过，另有 15 个文件/20 个测试按原条件跳过；构建通过。
+- 不可变包：任务工作区 `analysis-evidence/release-review-package/senguoyun-dsh-arkme-3.0.15.tgz`，从该包安装到隔离 profile；未修改 DSH 源码或常驻进程。
+- 官方 DSH `0.1.5-rc.2` / `fb2c4b9e698e`：`tests/e2e/arko-images.e2e.mjs` 通过 SDK、会话 Tools、UI 三入口，观察到实际上传与 v3 请求以及流式完成；截图在任务工作区 `analysis-evidence/arko-release-review-full-chain.png`。
+- 新增连接 circuit：设置 `ARKO_CHAIN_BROWSER=1`，Intelligent `TestArkoImagesFrontendBackendCircuit` 启动实际受理/SQL/outbox、Camellia实际compound、managed-ai/Files物化/资金、event/SSE/history；本文件的E2E通过 `ARKO_CHAIN_CONTROL` 连接。最终不可变包通过 SDK 两图、会话Tools反向两图、UI单图发送，多轮供应商输入顺序严格断言；历史刷新5图，隐藏原图后原clientTurnUID重放和5个缺图占位通过。结算6条、唯一原图上传2份、临时资产0、预占0。
+- 上述连接 circuit 的对象投递/Record服务、供应商wire、队列调度/返回传输仍为隔离fixture，Camellia Run Mongo调度未接入；Record真实Mongo、真实供应商识图/付费replay分别验证。不能称为已部署的全套服务/OSS远程E2E。
 - 运行入口：设置 `ARKME_DSH_CHECKOUT`、`ARKME_PACKED_PROFILE`、隔离 TLS 证书/密钥路径后，在官方 DSH checkout 运行 `pnpm exec vitest run --config <plugin-worktree>/vitest.arko-images-e2e.config.mts`。证书只用于本地测试，不写入仓库。
