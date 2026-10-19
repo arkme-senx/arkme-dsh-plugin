@@ -19,7 +19,7 @@ import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { ArkmeComposerSendButton, arkmeComposerSendButtonStyle } from './ArkmeComposerSendButton.js'
 import { arkmeConversationMessageLayout, dayKey } from './conversation-message-presentation.js'
 import { ArkmeArkoHistoryTools } from './ArkmeArkoHistoryTools.js'
-import { arkoHistoryDate } from './arko-history-browser.js'
+import { arkoHistoryDate, readLatestArkoMessages } from './arko-history-browser.js'
 import type {
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
@@ -616,7 +616,7 @@ export function ArkmeArkoSurface() {
     void Promise.allSettled([
       callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal),
       callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
-      callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50 }, controller.signal),
+      readLatestArkoMessages(controller.signal),
       callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async snapshot => (
         snapshot.profile === null
           ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
@@ -658,7 +658,7 @@ export function ArkmeArkoSurface() {
     const finishRun = async (knownHistory?: ArkmeArkoMessagePage): Promise<void> => {
       const [historyResult, profileResult] = await Promise.allSettled([
         knownHistory === undefined
-          ? callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50 }, controller.signal)
+          ? readLatestArkoMessages(controller.signal)
           : Promise.resolve(knownHistory),
         callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
       ])
@@ -703,11 +703,7 @@ export function ArkmeArkoSurface() {
           if (controller.signal.aborted) return
           consecutiveFailures += 1
           try {
-            const history = await callArkme<ArkmeArkoMessagePage>(
-              'arko.messages',
-              { limit: 50 },
-              controller.signal,
-            )
+            const history = await readLatestArkoMessages(controller.signal)
             if (controller.signal.aborted) return
             if (arkoHistoryHasTerminalRun(
               history.items,
@@ -808,7 +804,7 @@ export function ArkmeArkoSurface() {
     setHistoryError('')
     const controller = new AbortController(); historyController.current = controller
     try {
-      const page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50 }, controller.signal)
+      const page = await readLatestArkoMessages(controller.signal)
       if (controller.signal.aborted) return
       setMessages(current => mergeHistory(current, page.items))
       setHistoryCursor(page.nextCursor)
