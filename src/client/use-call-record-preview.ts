@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { ArkmeCallDetail } from '../types.js'
+import type { ArkmeCallDetail, ArkmeCallVideoRecord } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 
@@ -29,6 +29,34 @@ function cachedPreview(identity: string): Preview | undefined {
   return undefined
 }
 
+function hasVideo(record: ArkmeCallVideoRecord | undefined): boolean {
+  return record?.available === true && Boolean(record.videoUrl || record.posterUrl
+    || record.perspectives?.some(clip => clip.videoUrl || clip.posterUrl))
+}
+
+/** Missing media is an incomplete read, not evidence that a recording was removed. */
+function retainKnownVideo(previous: ArkmeCallDetail | undefined, incoming: ArkmeCallDetail): ArkmeCallDetail {
+  if (incoming.videoRecord?.available === false || !hasVideo(previous?.videoRecord)) return incoming
+  const known = previous!.videoRecord!
+  if (!hasVideo(incoming.videoRecord)) return { ...incoming, videoRecord: known }
+  const next = incoming.videoRecord!
+  // One missing camera in a partial response must not remove an already known view.
+  // Only match unambiguous named perspectives; never guess between unknown cameras.
+  const oldViews = known.perspectives ?? []
+  const newViews = next.perspectives ?? []
+  const slot = (view: NonNullable<ArkmeCallVideoRecord['perspectives']>[number]) => view.userId !== undefined
+    ? `user:${view.userId}` : view.perspective === 'unknown' ? undefined : view.perspective
+  const matches = (old: typeof oldViews[number], fresh: typeof newViews[number]) => slot(old) !== undefined && slot(old) === slot(fresh)
+    && oldViews.filter(view => slot(view) === slot(old)).length === 1 && newViews.filter(view => slot(view) === slot(fresh)).length === 1
+  if (!oldViews.some(old => newViews.some(fresh => matches(old, fresh)))) return incoming
+  const perspectives = oldViews.map(old => {
+    const fresh = newViews.find(view => matches(old, view))
+    return fresh ? { ...old, ...fresh } : old
+  })
+  perspectives.push(...newViews.filter(fresh => !oldViews.some(old => matches(old, fresh))))
+  return { ...incoming, videoRecord: { ...next, perspectives } }
+}
+
 /** callRef is a rotating access capability, never the identity of a known call. */
 export function useCallRecordPreview<Element extends HTMLElement = HTMLDivElement>(
   callRef: string | undefined, revision?: number | string, stableId?: string,
@@ -55,6 +83,7 @@ export function useCallRecordPreview<Element extends HTMLElement = HTMLDivElemen
     let timer: ReturnType<typeof setTimeout> | undefined
     const valid = () => !controller.signal.aborted && previewScope() === scope
     const saved = account ? cachedPreview(identity) : undefined
+    let lastDetail = current?.detail ?? saved?.detail
     if (saved && saved.revision === revision && Date.now() - saved.savedAt < freshMillis && retryVersion === 0) {
       setSnapshot({ identity, detail: saved.detail })
       return
@@ -63,15 +92,20 @@ export function useCallRecordPreview<Element extends HTMLElement = HTMLDivElemen
       if (!valid() || !latestRef.current) return
       attempts++
       setSnapshot(previous => ({ identity, ...(previous?.identity === identity ? previous : saved ? { detail: saved.detail } : {}), loading: true }))
-      void callArkme<ArkmeCallDetail>('calls.history.detail', { callRef: latestRef.current }, controller.signal).then(detail => {
+      void callArkme<ArkmeCallDetail>('calls.history.detail', { callRef: latestRef.current }, controller.signal).then(incoming => {
         if (!valid()) return
+        const detail = retainKnownVideo(lastDetail, incoming)
+        lastDetail = detail
+        const incomplete = detail.mediaType === 'video' && detail.durationSeconds > 0
+          && detail.videoRecord?.available !== false && !hasVideo(detail.videoRecord)
         if (account) {
           previews.delete(identity)
-          previews.set(identity, { detail, revision, savedAt: Date.now() })
+          // Do not mark an incomplete media read fresh; returning to the chat must retry it.
+          if (!incomplete) previews.set(identity, { detail, revision, savedAt: Date.now() })
           while (previews.size > 48) previews.delete(previews.keys().next().value!)
         }
-        // A successful response is authoritative, including a removed recording.
-        setSnapshot({ identity, detail })
+        setSnapshot({ identity, detail, loading: incomplete && attempts < 3, failed: incomplete && attempts >= 3 })
+        if (incomplete && attempts < 3) timer = setTimeout(fetchPreview, attempts === 1 ? 1500 : 4000)
       }).catch(error => {
         if (!valid()) return
         const body = (error as { body?: { code?: string; retryable?: boolean } })?.body

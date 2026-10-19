@@ -1,4 +1,4 @@
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeCallRecordContent } from '../src/client/ArkmeCallRecordContent.js'
 import { ArkmeCallDetailDrawer } from '../src/client/ArkmeCallDetailDrawer.js'
@@ -20,6 +20,12 @@ const detail: ArkmeCallDetail = {
 }
 const call = { callRef: 'sealed-call', mediaType: 'video' as const, text: '视频通话 01:05' }
 let view: ReactTestRenderer | undefined
+function ancestorWithStyle(node: ReactTestInstance, property: string): ReactTestInstance {
+  let parent = node.parent
+  while (parent && parent.props.style?.[property] === undefined) parent = parent.parent
+  if (!parent) throw new Error(`Missing ancestor style: ${property}`)
+  return parent
+}
 beforeEach(() => {
   vi.mocked(callArkme).mockReset()
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
@@ -92,9 +98,10 @@ describe('call quick note previews', () => {
     const video = view!.root.findByType('video')
     expect(video.props).toMatchObject({ muted: true, preload: 'metadata' })
     expect(video.props.autoPlay).toBeUndefined()
-    expect(video.parent!.findAllByProps({ role: 'status' })).toHaveLength(1)
+    const frame = ancestorWithStyle(video, 'aspectRatio')
+    expect(frame.findAllByProps({ role: 'status' })).toHaveLength(1)
     act(() => { video.props.onLoadedData() })
-    expect(video.parent!.findAllByProps({ role: 'status' })).toHaveLength(0)
+    expect(frame.findAllByProps({ role: 'status' })).toHaveLength(0)
     act(() => { video.props.onError() })
     expect(JSON.stringify(view!.toJSON())).toContain('预览暂不可用')
   })
@@ -158,6 +165,106 @@ describe('call quick note previews', () => {
     expect(view!.root.findAllByType('img')).toHaveLength(2)
     await act(async () => { resolveRefresh({ ...detail, summaryText: '更新后的摘要' }) })
     expect(JSON.stringify(view!.toJSON())).toContain('更新后的摘要')
+  })
+
+  it('reserves the final preview geometry on cold entry, through loading and failure', async () => {
+    let resolve!: (value: ArkmeCallDetail) => void
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(done => { resolve = done as typeof resolve }))
+    const stable = { ...call, stableId: 'cold-call', durationSeconds: 65 }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    const geometry = () => ({
+      card: view!.root.findByProps({ 'data-arkme-call-record': 'video' }).props.style,
+      preview: view!.root.findByProps({ 'aria-label': '通话视频预览' }).props.style,
+    })
+    const initial = geometry()
+    expect(JSON.stringify(view!.toJSON())).toContain('预览加载中')
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    await act(async () => { resolve(detail) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    expect(geometry()).toEqual(initial)
+    vi.mocked(callArkme).mockRejectedValueOnce({ body: { code: 'forbidden', retryable: false } })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(0)
+    expect(JSON.stringify(view!.toJSON())).toContain('预览暂不可用')
+    expect(geometry()).toEqual(initial)
+  })
+
+  it.each(['对方无应答', '已取消', '已拒绝', '视频通话，未接通'])('does not reserve a recording for %s', async text => {
+    vi.mocked(callArkme).mockImplementation(() => new Promise(() => {}))
+    await act(async () => { view = create(<ArkmeCallRecordContent call={{ ...call, text, durationSeconds: 0 }} />) })
+    expect(view!.root.findAllByProps({ 'aria-label': '通话视频预览' })).toHaveLength(0)
+  })
+
+  it('retains decoded media when background detail succeeds without media, including on re-entry', async () => {
+    const { videoRecord: _video, ...withoutVideo } = detail
+    vi.mocked(callArkme).mockResolvedValueOnce(detail)
+      .mockResolvedValueOnce({ ...withoutVideo, summaryText: '新的摘要，无视频字段' })
+      .mockResolvedValueOnce({ ...withoutVideo, videoRecord: { available: true, source: 'real', perspectives: [] } })
+    const stable = { ...call, stableId: 'partial-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(JSON.stringify(view!.toJSON())).toContain('新的摘要，无视频字段')
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={3} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    act(() => { view!.unmount() })
+    await act(async () => { view = create(<ArkmeCallRecordContent call={{ ...stable, callRef: 'new-ref' }} revision={3} />) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    expect(callArkme).toHaveBeenCalledTimes(3)
+  })
+
+  it('bounds retries for successful but incomplete first reads and keeps the placeholder on exhaustion', async () => {
+    vi.useFakeTimers()
+    const { videoRecord: _video, ...withoutVideo } = detail
+    vi.mocked(callArkme).mockResolvedValue(withoutVideo)
+    const stable = { ...call, stableId: 'incomplete-call' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} />) })
+    expect(view!.root.findAllByProps({ 'aria-label': '通话视频预览' })).toHaveLength(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5500) })
+    expect(callArkme).toHaveBeenCalledTimes(3)
+    expect(JSON.stringify(view!.toJSON())).toContain('预览未加载 · 重试')
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+    expect(callArkme).toHaveBeenCalledTimes(3)
+    const style = view!.root.findByProps({ 'aria-label': '通话视频预览' }).props.style
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    await act(async () => { view!.root.findByType('button').props.onClick({ stopPropagation() {} }) })
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+    expect(view!.root.findByProps({ 'aria-label': '通话视频预览' }).props.style).toEqual(style)
+  })
+
+  it('retains the other known camera when only one perspective is returned in a background read', async () => {
+    vi.mocked(callArkme).mockResolvedValueOnce(detail).mockResolvedValueOnce({ ...detail, videoRecord: {
+      available: true, source: 'real', perspectives: [{ perspective: 'self', posterUrl: 'https://example.com/self-new.jpg' }],
+    } })
+    const stable = { ...call, stableId: 'partial-camera' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(view!.root.findByProps({ src: 'https://example.com/peer.jpg' })).toBeDefined()
+    expect(view!.root.findByProps({ src: 'https://example.com/self-new.jpg' })).toBeDefined()
+    expect(view!.root.findAllByType('img')).toHaveLength(2)
+  })
+
+  it('keeps the previous decoded frame until renewed URLs load, even when perspective order changes', async () => {
+    vi.mocked(callArkme).mockResolvedValueOnce(detail).mockResolvedValueOnce({ ...detail, videoRecord: {
+      available: true, source: 'real', perspectives: [
+        { perspective: 'self', posterUrl: 'https://example.com/self-new.jpg' },
+        { perspective: 'peer', posterUrl: 'https://example.com/peer-new.jpg' },
+      ],
+    } })
+    const stable = { ...call, stableId: 'renewed-urls' }
+    await act(async () => { view = create(<ArkmeCallRecordContent call={stable} revision={1} />) })
+    act(() => { view!.root.findAllByType('img').forEach(img => img.props.onLoad()) })
+    const oldSelf = view!.root.findByProps({ src: 'https://example.com/self.jpg' })
+    await act(async () => { view!.update(<ArkmeCallRecordContent call={stable} revision={2} />) })
+    expect(view!.root.findByProps({ src: 'https://example.com/self.jpg' })).toBe(oldSelf)
+    const nextSelf = view!.root.findByProps({ src: 'https://example.com/self-new.jpg' })
+    expect(ancestorWithStyle(nextSelf, 'opacity').props.style.opacity).toBe(0)
+    expect(ancestorWithStyle(oldSelf, 'opacity').props.style.opacity).toBe(1)
+    act(() => { nextSelf.props.onLoad() })
+    expect(view!.root.findAllByProps({ src: 'https://example.com/self.jpg' })).toHaveLength(0)
+    expect(ancestorWithStyle(view!.root.findByProps({ src: 'https://example.com/self-new.jpg' }), 'opacity').props.style.opacity).toBe(1)
+    act(() => { view!.root.findByProps({ src: 'https://example.com/peer-new.jpg' }).props.onError() })
+    expect(ancestorWithStyle(view!.root.findByProps({ src: 'https://example.com/peer.jpg' }), 'opacity').props.style.opacity).toBe(1)
   })
 
   it('reuses recent previews when returning to a conversation but clears them on account changes', async () => {
