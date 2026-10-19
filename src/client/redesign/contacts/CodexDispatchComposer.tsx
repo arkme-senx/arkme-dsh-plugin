@@ -16,7 +16,7 @@ const hints: Record<Exclude<CodexDispatchAvailability, 'ready'>, string> = {
   integration_pending: '助手派发功能接入中，暂不可发送',
   helper_unavailable: '本机助手尚未就绪，暂不能派发',
   authorization_required: '请先在本机助手开启自动输入',
-  remote_readonly: '这项任务来自其他电脑，云端派发尚未接通',
+  remote_readonly: '当前查看云端副本，本地派发连接尚未接通',
   blocked: '当前账号、团队或任务暂不允许派发',
 }
 export function codexDispatchStatus(value: Pick<CodexDispatchRequest, 'state' | 'reason'>): string {
