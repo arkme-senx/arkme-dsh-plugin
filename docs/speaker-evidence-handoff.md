@@ -80,6 +80,8 @@ const result = await sdk.applyRecordingSpeakerCorrection(
 
 合入最新 dev 后保留页面现有 `recordings.speaker.evidence` 与 `recordings.speaker.consistency` 合同；完整证据查询使用独立 `recordings.speaker.evidence.query`，SDK 对应 `recordingSpeakerEvidenceQuery`。Tool 名称保持不变。两种请求结构不混用，也不按参数猜测版本。新增查询与既有读取共用账号/纠正版本失效检查，并传递取消信号。
 
-最终验证：类型检查、包构建通过；完整套件 1,071 个文件通过、15 个文件跳过，12,605 项通过、20 项跳过。不可变 tgz 在未修改的官方 DSH `47f94385` 独立 profile 安装成功；独立 consumer 从 tgz 公开 SDK 导入并通过 TypeScript 编译及运行，含 AbortSignal。相对最新 dev `3c04defd`，`src/client/**`、根 README、版本及 lockfile 零改动。
+最终验证：类型检查、包构建通过；完整套件 1,071 个文件通过、15 个文件跳过，12,609 项通过、20 项跳过。不可变 tgz 在未修改的官方 DSH `47f94385` 独立 profile 安装成功；独立 consumer 从 tgz 公开 SDK 导入并通过 TypeScript 编译及运行，含 AbortSignal。相对最新 dev `3c04defd`，`src/client/**`、根 README、版本及 lockfile 零改动。
 
 本轮真实后端 E2E 等待测试环境恢复；上面的历史 E2E 不代表本轮新提交已完成部署验收。没有发布安装渠道、替换常驻客户端或启用新的页面入口。
+
+最终异步审查补齐成员引用密钥生成后的账号/版本/取消检查；3 个回归先复现旧结果被错误返回，修复后相关 45 项及完整套件通过。一次打包与测试共用 lib 的并行运行产生构建竞态及超时，已串行重跑通过，未修改用例超时或过滤失败用例。
