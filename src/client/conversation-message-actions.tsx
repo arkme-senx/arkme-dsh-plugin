@@ -57,4 +57,3 @@ export function ArkmeDesktopExtensionIcon() {
     <path d="M12 7L10 8.5M13.5 14L10 11.5M2.5 10.5H5.5" stroke="currentColor" />
   </svg>
 }
-
