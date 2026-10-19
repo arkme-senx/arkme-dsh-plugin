@@ -52,13 +52,13 @@ function ArrangementNoticeContent({ arrangementRef }: { arrangementRef: string }
   </div>
 }
 
-export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onOpen, busy }: {
+export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onOpen, busy, readOnly = false }: {
   item: ArkmeNotificationItem; scope: string; category: string; timeLabel: string
-  onOpen(item: ArkmeNotificationItem): void; busy: boolean
+  onOpen(item: ArkmeNotificationItem): void; busy: boolean; readOnly?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const long = item.preview.length > 320 || item.preview.split('\n').length > 6
-  const canExpand = item.kind === 'official' || item.kind === 'arrangement' || long
+  const canExpand = item.kind === 'official' || (!readOnly && item.kind === 'arrangement') || long
   return <article role="listitem" aria-label={`${category}：${item.title}`} className="arkme-notification-message">
     {timeLabel && <time className="arkme-notification-time" dateTime={new Date(item.atMillis).toISOString()}>{timeLabel}</time>}
     <div className="arkme-notification-message-row" data-notification-id={item.id}>
@@ -70,12 +70,12 @@ export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onO
         <div className="arkme-notification-bubble">
           <h3><ArkmeRichText text={item.title} /></h3>
           {item.sourceLabel && <div className="arkme-notification-source">{item.sourceLabel}</div>}
-          {item.recording ? <ArkmeRecordingNotificationDetail notice={item.recording} embedded /> : <>
+          {item.recording ? <ArkmeRecordingNotificationDetail notice={item.recording} embedded readOnly={readOnly} /> : <>
             {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${item.kind === 'reaction' ? ' arkme-notification-original' : ''}${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
             {item.kind === 'official' && expanded && <ArkmeOfficialNotificationDetail id={item.id.slice('official:'.length)} scope={scope} embedded />}
-            {item.arrangement && expanded && <ArrangementNoticeContent arrangementRef={item.arrangement.arrangementRef} />}
-            {canExpand && <button type="button" className="arkme-notification-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? tr('收起') : item.kind === 'arrangement' ? tr('查看安排') : tr('展开全文')}</button>}
-            {(item.kind === 'world' || item.kind === 'reaction') && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{item.kind === 'world' ? tr('查看互动') : tr('查看原消息')} →</button></div>}
+            {item.arrangement && expanded && !readOnly && <ArrangementNoticeContent arrangementRef={item.arrangement.arrangementRef} />}
+            {canExpand && <button type="button" className="arkme-notification-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? tr('收起') : item.kind === 'arrangement' && !readOnly ? tr('查看安排') : tr('展开全文')}</button>}
+            {!readOnly && (item.kind === 'world' || item.kind === 'reaction') && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{item.kind === 'world' ? tr('查看互动') : tr('查看原消息')} →</button></div>}
           </>}
         </div>
       </div>

@@ -178,7 +178,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
-  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
+  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
 export interface ArkmeDirectoryPage {
   section: ArkmeDirectorySectionKind
@@ -280,6 +280,7 @@ export interface ArkmeDirectoryContactProfile {
   remark: string
   accountName?: string
   avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
 }
 
 export type ArkmeUnmarkedSpeakerInferenceState = 'pending' | 'ready' | 'failed' | 'unavailable'
@@ -1502,6 +1503,7 @@ arkoImagesV1?:true
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+    offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
     accountMessageSync?: true
@@ -1998,6 +2000,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
   timelineOrderTie?: string
@@ -4039,7 +4042,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4106,6 +4109,7 @@ export type ArkmePluginOperation =
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
   | 'recordings.speaker.correction.items'
@@ -4272,6 +4276,7 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'
   | 'calendar.day-review.source'
+  | 'calendar.day-review.models'
   | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'

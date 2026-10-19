@@ -6,6 +6,7 @@ import { callArkme } from '../../api.js'
 import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
 import { arkmeIntlLocale, tr } from '../../locale.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
+import { codexCollectorUnavailable } from './CodexSyncStatus.js'
 
 export interface CodexReadingState {
   items: TeamCodexEvent[]
@@ -154,7 +155,7 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
           </article>
         </div>)}
         {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{current.text || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
-        {task.state === 'working' && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working="true"/>{tr('等待同步本轮回答…')}</p>}
+        {task.state === 'working' && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working={!task.cloud?.remote&&!codexCollectorUnavailable(task)}/>{tr(codexCollectorUnavailable(task) || task.cloud?.remote ? '尚未收到本轮结束状态，请查看同步状态。' : '等待同步本轮回答…')}</p>}
       </div>
     </div>
     {awayFromBottom && <button type="button" className="arkme-codex-jump" onClick={() => { const el = scroller.current; if (el) { el.scrollTop = el.scrollHeight; rememberScroll() } }}>{tr(newContent ? '有新内容 ↓' : '回到最新 ↓')}</button>}

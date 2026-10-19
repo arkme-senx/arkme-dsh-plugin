@@ -430,3 +430,25 @@ it('preserves the last summary and retries a transient session-store failure', a
     expect(service.chatRealtimeInitialEvent()).toMatchObject({ attentionSummary: { badgeCount: 0 } })
   } finally { service.dispose(); vi.useRealTimers() }
 })
+
+it('publishes offline-context changes after cache invalidation and fences account switches', async () => {
+  let userId = 1
+  const runtime = new ServiceRuntime(config, {
+    async read() { return { userId, accessToken: 'access', refreshToken: `refresh-${userId}` } },
+    async write() {}, async delete() {},
+  }, { async uniqueCode() { return 'secret' } } as StateStore, vi.fn() as typeof fetch)
+  const service = new ChatRealtimeService(runtime, {} as SourceService, { chatTimelineItems: vi.fn(async () => []) })
+  const emit = vi.spyOn(service, 'emitChatClientEvent')
+  const invalidate = vi.fn(async () => { expect(emit).not.toHaveBeenCalled() })
+  service.offlineContextInvalidation = invalidate
+  await service.invalidateOfflineContextProjection(1)
+  expect(invalidate).toHaveBeenCalledOnce()
+  expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'projection-invalidated', projection: 'offline_context' }))
+  emit.mockClear()
+  invalidate.mockImplementation(async () => { userId = 2 })
+  await service.invalidateOfflineContextProjection(1)
+  expect(emit).not.toHaveBeenCalled()
+  await service.invalidateOfflineContextProjection(1)
+  expect(invalidate).toHaveBeenCalledTimes(2)
+  service.dispose()
+})

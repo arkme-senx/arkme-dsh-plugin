@@ -16,6 +16,7 @@ import { arkmeMarkdownPlainText } from '../markdown.js'
 import { downloadArkmeConversationMarkdown } from './conversation-export.js'
 import { arkoHistoryDate, arkoHistoryDays, arkoHistoryKey, exportArkoHistory, readArkoHistory, searchArkoHistory } from './arko-history-browser.js'
 import { tr } from './locale.js'
+import { useSelectedMessageSearch } from './message-selection-search.js'
 
 const button: CSSProperties = { border: 0, padding: '6px 8px', borderRadius: 6, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 12 }
 type Archive = { items: ArkmeArkoHistoryItem[]; loading: boolean; complete: boolean; error: string }
@@ -58,6 +59,11 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     if (next !== 'menu') onOpenPanel(); setOpen(next)
     if (next !== 'menu') void read().catch(() => {})
   }
+  useSelectedMessageSearch(accountScope ? `arko:${accountScope}` : undefined, text => {
+    setQuery(text); setVisibleCount(50); onOpenPanel(); setOpen('search')
+    void read().catch(() => {})
+    requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
+  })
   const exportMessages = async () => {
     if (exporting) return
     setExporting(true); setExportNotice('正在读取对话记录…')

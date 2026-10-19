@@ -39,6 +39,9 @@ arkoFileRefs(userId:number):Promise<string[]>
   readDayReviewPending?(scope: string, day: string): Promise<unknown>
   prepareDayReview?(scope: string, day: string, request: Record<string, unknown>): Promise<void>
   acknowledgeDayReview?(scope: string, day: string, requestId: string): Promise<void>
+ readOfflineContextJournal?(scope:string):Promise<Record<string,import('../offline-context-contract.js').OfflineContextJournalEntry>>
+ putOfflineContextJournal?(scope:string,id:string,entry:import('../offline-context-contract.js').OfflineContextJournalEntry):Promise<void>
+ deleteOfflineContextJournal?(scope:string,id:string,fingerprint:string):Promise<void>
   readConversationViewports?(accountKey: string, surface: string): Promise<import('../conversation-viewport-state.js').ConversationViewportEntries>
   writeConversationViewports?(accountKey: string, surface: string, entries: import('../conversation-viewport-state.js').ConversationViewportEntries): Promise<void>
   arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>

@@ -31,8 +31,5 @@
 .arkme-offline-preview-attachment { background: var(--dsw-alias-bg-base, #fff); border: 1px solid var(--dsw-alias-border-l2, #e1e4e9); border-radius: 7px; padding: 18px; font-size: 12px; margin: 8px 0; }
 .arkme-offline-preview-attachment small { color: var(--dsw-alias-label-secondary, #737c89); }
 .arkme-offline-preview-note { text-align: center; color: var(--dsw-alias-label-tertiary, #8a929e); font-size: 11px; margin-top: 28px; }
-.arkme-offline-preview-pending { margin-bottom: 24px; }
-.arkme-offline-preview-pending > button { width: 100%; display: flex; align-items: center; gap: 8px; background: var(--dsw-alias-bg-layer-1, #f7f8fa); color: var(--dsw-alias-label-secondary, #697483); border: 0; padding: 9px 12px; border-radius: 7px; cursor: pointer; font-size: 12px; margin-bottom: 10px; }
-.arkme-offline-preview-pending > button > span { margin-left: auto; }
 @media (max-width: 650px) { .arkme-offline-preview-layout { grid-template-columns: 1fr; } .arkme-offline-preview-layout > aside { display: flex; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e4e9); } .arkme-offline-preview-brand, .arkme-offline-preview-tools { display: none; } .arkme-offline-preview-layout > aside > button { padding: 8px; } .arkme-offline-preview-layout > aside > button small { display: none; } .arkme-offline-preview-banner { padding: 8px 12px; } .arkme-offline-preview-scroll { padding: 14px; } .arkme-offline-preview-conversation > header { padding: 14px; } }
 @media (prefers-reduced-motion: reduce) { .arkme-offline-preview-scroll { scroll-behavior: auto; } .arkme-offline-preview-message { transition: none; } }

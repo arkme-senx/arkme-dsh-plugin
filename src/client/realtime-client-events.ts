@@ -307,6 +307,11 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'offline_context') {
+            const active = arkmeUi.getSnapshot().selectedSource
+            arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])
+            return
+          }
           if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection === 'topic-directory') {

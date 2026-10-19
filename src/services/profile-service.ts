@@ -518,6 +518,7 @@ export class ProfileService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
     maxAgeMillis = PUBLIC_PROFILE_CACHE_TTL_MS,
+    lane: 'interactive-read' | 'background-read' = 'background-read',
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
       .sort((left, right) => left - right)
@@ -546,7 +547,7 @@ export class ProfileService {
         session,
         signal,
         {
-          lane: 'background-read',
+          lane,
           key: `public-profiles:${batch.join('|')}`,
           failureCooldownMs: 5_000,
         },

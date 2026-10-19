@@ -51,6 +51,8 @@ export interface TeamCodexTask {
   projectExcluded?: boolean
   queue?: TeamCodexQueueSnapshot
   currentInput?: { turnId: string; text: string; at: number }
+  /** Local, account-checked source evidence. Absence does not mean another physical computer. */
+  captureHealth?: { status: 'online' | 'buffering' | 'offline' | 'paused'; checkedAt: number; lastReceivedAt: number }
 }
 export interface TeamCodexInstallation {
   id: string

@@ -2,6 +2,7 @@
 import { act, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { arkmeConversationTargetAnchor, arkmeConversationTargetRow } from '../src/client/conversation-viewport.js'
 import { WindowedTimelineRows } from '../src/client/WindowedTimelineRows.js'
 it('does not remount existing rows when a new message extends the last chunk', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -129,4 +130,31 @@ it('fills the viewport after removals leave many short chunks, while keeping the
     expect(host.querySelector('[data-row="row-763"]')).not.toBeNull()
     expect(host.querySelectorAll('[data-row]').length).toBeLessThanOrEqual(240)
   } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers() }
+})
+
+it('mounts an offscreen context target in a long conversation before DOM locating', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  const rows = Array.from({ length: 2000 }, (_, index) => index === 505
+    ? { id: 'context:505', kind: 'offline-context', entryRef: 'opaque-card' }
+    : { id: `message:${index}`, kind: 'message', item: { itemUid: String(index) } })
+  function Fixture({ locate }: { locate: boolean }) {
+    const body = useRef<HTMLDivElement>(null)
+    const target = { itemUid: 'opaque-card', contextRef: 'opaque-card' }
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}
+      anchorId={locate ? arkmeConversationTargetAnchor(rows, target) : undefined}>
+      {rows.map(row => <li key={row.id} data-offline-context-ref={row.entryRef}>{row.id}</li>)}
+    </WindowedTimelineRows></ul></div>
+  }
+  try {
+    await act(async () => root.render(<Fixture locate={false} />))
+    expect(arkmeConversationTargetRow(host, { itemUid: 'opaque-card', contextRef: 'opaque-card' })).toBeUndefined()
+    await act(async () => root.render(<Fixture locate />))
+    expect(arkmeConversationTargetRow(host, { itemUid: 'opaque-card', contextRef: 'opaque-card' })).toBeDefined()
+    expect(host.querySelectorAll('[data-arkme-timeline-chunk]:not([aria-hidden])')).toHaveLength(1)
+    expect(arkmeConversationTargetAnchor(rows, { itemUid: '3' })).toBe('message:3')
+    expect(arkmeConversationTargetAnchor(rows, { itemUid: 'missing', contextRef: 'missing' })).toBeUndefined()
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
 })

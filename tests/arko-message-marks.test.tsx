@@ -100,7 +100,7 @@ afterEach(async () => {
 it('marks both roles, preserves rendered Markdown, and restores the same local marks after remount', async () => {
   await select(body(1), '我的问题')
   expect(toolbar()!.textContent).toContain('仅本机')
-  expect([...toolbar()!.querySelectorAll('button')].map(button => button.textContent)).toEqual(['复制', '全选', '标记'])
+  expect([...toolbar()!.querySelectorAll('button')].map(button => button.textContent)).toEqual(['复制', '全选', '标记', '查找'])
   await mark()
   await waitForUi(() => expect(markedTexts()).toContain('我的问题'))
   await select(body(2), '重点结论'); await mark()

@@ -1903,6 +1903,10 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-context > span:not([data-arkme-avatar]) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80%; }
 .arkme-codex-context select { color:inherit; background:transparent; border:0; max-width:48%; min-width:0; font:inherit; padding:4px; cursor:pointer; }
 .arkme-codex-context button { font:inherit; color:inherit; background:transparent; border:0; cursor:pointer; }
+.arkme-codex-sync-status { grid-column:1/-1; text-align:center; color:var(--arkme-muted); font-size:11px; line-height:1.5; }
+.arkme-codex-sync-status small { font:inherit; }
+.arkme-codex-sync-status button { color:inherit; font:inherit; background:none; border:0; padding:0 4px; text-decoration:underline; cursor:pointer; }
+.arkme-codex-sync-status p { margin:6px auto 0; max-width:620px; text-align:left; }
 .arkme-codex-task-picker { position:absolute; top:54px; left:50%; transform:translateX(-50%); width:min(520px,calc(100% - 24px)); max-height:min(64vh,620px); display:flex; border:1px solid var(--arkme-line); border-radius:12px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 12px 40px #0003; overflow:hidden; }
 .arkme-codex-task-picker .arkme-codex-task-sidebar { display:block !important; flex:1; padding:10px 12px; border:0; background:transparent; }
 .arkme-codex-task-picker .arkme-team-codex-project { margin-bottom:12px; }
@@ -2107,11 +2111,13 @@ body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-
 }
 
 /* Chat-specific colors follow DSH's single light/dark owner. */
-.arkme-conversation-surface {
+.arkme-conversation-surface,
+.team-conversation-pane {
   --arkme-chat-self-bubble: #eef1f8;
   --arkme-chat-other-bubble: #f3f4f6;
 }
-body[data-ds-dark-theme] .arkme-conversation-surface {
+body[data-ds-dark-theme] .arkme-conversation-surface,
+body[data-ds-dark-theme] .team-conversation-pane {
   --arkme-chat-self-bubble: #2c3142;
   --arkme-chat-other-bubble: #282a31;
   --arkme-audio-control: #8995c5;
