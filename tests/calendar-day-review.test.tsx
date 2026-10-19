@@ -313,6 +313,66 @@ describe('calendar review interaction', () => {
     expect(callArkme).toHaveBeenCalledTimes(change === 'close' ? 1 : 2)
     if (view) { expect(content()).not.toContain('讨论了录音存储方案'); expect(content()).toContain('把这一天串起来') }
   })
+  it('coalesces new hints during a trailing read without losing the final update', async () => {
+    const resolve: Array<(value: unknown) => void> = []
+    vi.mocked(callArkme).mockImplementation(() => new Promise(r => { resolve.push(r) }) as never)
+    await mount()
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    await act(async () => resolve[0]!(current()))
+    for (const revision of [2, 3, 4]) await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={revision} />))
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    await act(async () => resolve[1]!(current()))
+    expect(callArkme).toHaveBeenCalledTimes(3)
+    await act(async () => resolve[2]!({ ...current(), freshness: 'changed' }))
+    expect(content()).toContain('有新内容可更新')
+    expect(button('检查更新').props.disabled).toBe(false)
+    expect(callArkme).toHaveBeenCalledTimes(3)
+  })
+  it('resumes owner progress polling only after an explicit retry recovers a failed poll', async () => {
+    vi.useFakeTimers()
+    const pending = { ...current(), job: { id: 'job', status: 'collecting', message: '', resumable: false } }
+    vi.mocked(callArkme).mockResolvedValueOnce(pending)
+    await mount()
+    vi.mocked(callArkme).mockRejectedValueOnce(new Error('进度读取失败'))
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(content()).toContain('进度读取失败')
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    vi.mocked(callArkme).mockResolvedValueOnce(pending)
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).toContain('收集资料')
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(callArkme).toHaveBeenCalledTimes(4)
+    expect(content()).not.toContain('进度读取失败')
+    expect(button('更新回顾').props.disabled).toBe(false)
+    expect(vi.mocked(callArkme).mock.calls.every(x => x[0] === 'calendar.day-review.state')).toBe(true)
+  })
+  it.each(['version', 'generate', 'resume'])('a deliberate %s action can recover after a historical refresh failure', async action => {
+    vi.useFakeTimers()
+    const previous = { ...current(), job: action === 'resume' ? { id: 'job', status: 'failed', message: '生成失败', resumable: true } : null }
+    vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.result' ? current().result : previous as never)
+    await mount()
+    await act(async () => view!.root.findByType('select').props.onChange({ target: { value: 'result-1' } }))
+    vi.mocked(callArkme).mockImplementation(async op => { if (op === 'calendar.day-review.result') throw new Error('历史读取失败'); return previous as never })
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).toContain('历史读取失败')
+    const reads = () => vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.state').length
+    const before = reads()
+    vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.create' || op === 'calendar.day-review.resume'
+      ? { ...current(), job: { id: 'job', status: 'collecting', message: '', resumable: false } } as never : current() as never)
+    if (action === 'version') {
+      await act(async () => view!.root.findByType('select').props.onChange({ target: { value: '' } }))
+      await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    } else {
+      await act(async () => button(action === 'generate' ? '更新回顾' : '继续生成').props.onClick())
+      await act(async () => vi.advanceTimersByTimeAsync(5000))
+    }
+    expect(reads()).toBe(before + 1)
+    expect(content()).not.toContain('历史读取失败')
+    expect(button('更新回顾').props.disabled).toBe(false)
+    if (action === 'resume') expect(vi.mocked(callArkme).mock.calls.some(x => x[0] === 'calendar.day-review.create')).toBe(false)
+  })
   it('does not read or generate before an account scope is established', async () => {
     await act(async () => { view = create(<ArkmeCalendarDayReview query={{ ...query, accountScope: '' }} view="summary" />) })
     expect(content()).toContain('账号范围尚未确认')
