@@ -413,6 +413,14 @@ export class TeamAppService {
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
+      case 'team.app.official.membership': {
+        const [official, mine] = await Promise.all([post('official-feedback-target', {}, true), post('list-mine', {}, true)])
+        const officialId = recordOwnerId(official.team_id), jotmoId = str(official.jotmo_id).trim()
+        if (!officialId || !jotmoId || !Array.isArray(mine.teams)
+          || mine.teams.some(raw => !recordOwnerId(obj(raw).team_id))) throw invalid()
+        // Compare provider-owned IDs here, never names or rotating encrypted refs.
+        return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
+      }
       case 'team.app.open': {
         const data = await post('conversations/open', { public_ref: str(p.publicRef) })
         return { channel: await this.channel(data.channel, actor), openInbox: data.open_inbox === true,

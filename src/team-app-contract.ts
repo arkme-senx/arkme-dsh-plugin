@@ -4,7 +4,7 @@ import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
-  | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
+  | 'source' | 'channel' | 'channel.configure' | 'official' | 'official.membership' | 'open' | 'conversations' | 'timeline'
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
@@ -12,6 +12,8 @@ export type TeamAppOperation = `team.app.${
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
+/** Presentation-only status; current membership is resolved against the official target by the Host. */
+export interface TeamOfficialMembership { jotmoId: string; isMember: boolean }
 export interface TeamIdentity {
   nickname: string; imageRef?: string; imageKey?: string
   /** Viewer-scoped identity; never a display-name match or a public account id. */

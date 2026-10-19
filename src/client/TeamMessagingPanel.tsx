@@ -51,6 +51,7 @@ import { conversationDirectoryStyles as directoryStyles, conversationTimeLabel }
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
 import { startTeamDirectory, subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory } from './team-conversation-directory.js'
+import { startOfficialTeamMembership } from './official-team-membership.js'
 import { startTeamAttention } from './team-attention-store.js'
 import { showBrowserNotification } from './browser-notification.js'
 import { teamText as tr } from './team-messaging-i18n.js'
@@ -159,6 +160,7 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
     let live = true
     const notices = new Set<() => void>()
     const stopDirectory = startTeamDirectory(accountKey)
+    const stopMembership = startOfficialTeamMembership(accountKey)
     const stop = startTeamAttention(accountKey, value => {
       if (document.visibilityState === 'visible' && document.hasFocus()) return
       const close = showBrowserNotification(tr('团队消息'), value.external || value.team ? tr('你有新的团队消息，点击查看') : tr('有待处理的团队加入申请'), `arkme-team-${accountKey}`, () => {
@@ -166,7 +168,7 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
       })
       if (close) { for (const previous of notices) previous(); notices.clear(); notices.add(close) }
     })
-    return () => { live = false; stop(); stopDirectory(); for (const close of notices) close() }
+    return () => { live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close() }
   }, [accountKey, active])
   return null
 }

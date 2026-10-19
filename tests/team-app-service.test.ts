@@ -108,6 +108,18 @@ it('persists private Team marks across refreshed references without cloud writes
 })
 
 describe('Team App owner adapter', () => {
+  it('resolves official membership by provider identity, including users with no team conversations', async () => {
+    let teams: unknown = [{ ...channel, team_id: '9223372036854775801', name: channel.name }]
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : { teams })
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: false })
+    teams = [{ ...channel, name: '官方改名后', role: 3 }]
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: true })
+    teams = []
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: false })
+    teams = undefined
+    await expect(f.service.execute('team.app.official.membership', {})).rejects.toMatchObject({ code: 'team-reference-invalid' })
+    expect(f.requests.every(r => !r.path.endsWith('/conversations/open'))).toBe(true)
+  })
   it.each(['external', 'team'] as const)('projects %s-side message receipts in the internal view with stable member identities and sender exclusion', async messageSide => {
     const f=fixture(path=>path.endsWith('/read-receipts/query')
       ? {team_read:true,visitor_read:false,has_more:false,members:[

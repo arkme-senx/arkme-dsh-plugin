@@ -7,6 +7,7 @@ import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js
 import { TeamConversationDirectory, TeamConversationGroupRow } from './TeamConversationDirectory.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
 import { useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { readOfficialTeamMembership, subscribeOfficialTeamMembership, shouldShowOfficialContact } from './official-team-membership.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
@@ -1048,6 +1049,7 @@ export function ArkmeNavigation({
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
   const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
+  const officialMembership = useSyncExternalStore(subscribeOfficialTeamMembership, () => readOfficialTeamMembership(currentAccountKey ?? ''), () => readOfficialTeamMembership(currentAccountKey ?? ''))
   const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
@@ -2147,7 +2149,7 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
           </span>
         </button>}
-        {authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow
+        {authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow
           onClick={() => { void openOfficialAuthor() }}
         />}
         {showArkoInSearch && <ArkmeArkoRow

@@ -120,7 +120,7 @@ describe('Arkme conversation directory load state', () => {
     const peer = { sourceRef: 'peer-chat', kind: 'private_chat' as const, peerUserId: 12, displayName: '朋友', activeAtMillis: 2, unreadCount: 0 }
     expect(arkmeOfficialAuthorSource([peer, author], 11)).toBe(author)
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
-    expect(workspaceSource).toContain("authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow")
+    expect(workspaceSource).toContain('authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow')
     expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
     expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
@@ -163,7 +163,7 @@ describe('Arkme conversation directory load state', () => {
   it('commits owner visibility immediately but retains shared inline removal feedback', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
-    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error)')
+    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)')
     expect(workspaceSource).toContain('= [...mergedConversationRows]')
     expect(workspaceSource).toContain("rootDirectoryRows.map(row =>")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
