@@ -1502,6 +1502,7 @@ export interface ArkmeProviderCapabilities {
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+    offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
     accountMessageSync?: true
@@ -1998,6 +1999,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
   timelineOrderTie?: string
@@ -4038,7 +4040,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4100,6 +4102,7 @@ export type ArkmePluginOperation =
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
   | 'recordings.speaker.correction.items'

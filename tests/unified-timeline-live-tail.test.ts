@@ -7,7 +7,7 @@ import type { ArkmeTimelineItem } from '../src/types.js'
 const item = (sequence: number): ArkmeTimelineItem => ({ itemUid: `record-${sequence}`, timelineEventId: `event-${sequence}`,
   timelineItemKey: `relation-${sequence}`, timelineOrderTie: String(sequence).padStart(8, '0'), sequence,
   senderName: '同事', isMe: false, status: 1, sendAtMillis: sequence, title: '', textContent: `message ${sequence}` })
-const window = (sequences: number[]): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 1, complete: true,
+const window = (sequences: number[]): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 2, complete: true,
   events: sequences.map(sequence => ({ eventId: item(sequence).timelineEventId!, kind: 'message', source: 'messages',
     occurredAtMillis: sequence, orderTie: item(sequence).timelineOrderTie!, contentStatus: 'available', item: item(sequence), windowToken: 'confirmed' })),
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })),

@@ -120,7 +120,7 @@ describe('cold conversation entry preserves durable reading', () => {
   const anchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'message:event-history', anchorOffset: -12,
     messageAnchor: { itemUid: 'history', recordOwnerUserId: '9223372036854775806' } }
   const history = { ...record(5), itemUid: 'history' }
-  const restored = { ...page([history]), unified: { protocolVersion: 1 as const,
+  const restored = { ...page([history]), unified: { protocolVersion: 2 as const,
     events: [{ kind: 'message' as const, source: 'messages' as const, eventId: 'event-history', item: history }],
     sources: [], windowTokens: ['confirmed'], complete: true, hasMore: true, olderHasMore: true, newerHasMore: true } } as ArkmeTimelinePage
   it('locates old history in one bounded read after all message cache rows were removed', async () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
+import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { ArkmeLocalDatabase } from '../../src/local-database.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
@@ -28,6 +29,31 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('finishes the foreground day while background slots are occupied, including a queued shared profile read', async () => {
+    const f = await speakerCacheFixture()
+    const profile = new ProfileService(f.runtime)
+    const service = new RecordingService(f.runtime, dependencies(gatewayNoop(), { profile }))
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const blockers = [1, 2].map(() => f.runtime.requestCoordinator.run({
+      scope: 'test:42', lane: 'background-read', service: 'audio', operation: () => gate,
+    }))
+    f.state.rows = [{ speaker_id: 'speaker', nick_name: '甲', ref_usr_id: 7 }]
+    const session = await f.runtime.requireSession()
+    const background = profile.publicProfileSummariesByUserIds([7], session)
+    let completed = false
+    const day = service.recordingDay(new Date(2026, 9, 12).getTime()).then(value => { completed = true; return value })
+    try {
+      await vi.waitFor(() => expect(completed).toBe(true))
+      expect(f.calls.filter(path => path.endsWith('/get-public-users-by-ids'))).toHaveLength(1)
+      expect((await day).transcript.state).not.toBe('error')
+      await background
+    } finally {
+      release(); await Promise.allSettled([...blockers, background, day])
+      service.dispose(); await f.close()
+    }
+  })
+
   async function speakerCacheFixture(overrides: Partial<RecordingServiceDependencies> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'arkme-speaker-persistence-'))
     const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
@@ -46,6 +72,7 @@ describe('RecordingService', () => {
       if (state.failWrite && path.endsWith('/assign-asr-item-to-spk')) throw new Error('unknown write result')
       if (state.presenceMissing && path.endsWith('/speaker-presence/list')) return new Response('', { status: 404 })
       let data: Record<string, unknown> = {}
+      if (path.endsWith('/get-public-users-by-ids')) data = { items: [{ user_id: 7, nick_name: '甲' }] }
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
       if (path.endsWith('/speaker-presence/list')) data = state.presence
       if (path.endsWith('/speaker-presence/detail')) data = state.members
@@ -214,7 +241,7 @@ describe('RecordingService', () => {
         { speaker_id: 'manual', nick_name: '同名' },
       ]
       expect(await fixture.service.directorySpeakerAvatars(['selected', 'manual', 'unknown'], 42)).toEqual(new Map([['selected', 'sealed-42-7']]))
-      expect(profiles).toHaveBeenCalledWith([7], expect.objectContaining({ userId: 42 }), undefined)
+      expect(profiles).toHaveBeenCalledWith([7], expect.objectContaining({ userId: 42 }), undefined, undefined, 'background-read')
       expect(seal).toHaveBeenCalledWith(42, 7)
       expect(contacts).not.toHaveBeenCalled()
       expect(fixture.calls).toEqual(['/api/v1/audio/get-speaker-ls'])

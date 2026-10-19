@@ -97,7 +97,7 @@ it('clears a transient read error after a successful focus refresh', async () =>
 })
 
 it('uses the same business names in controls and usage help without performing analysis', async () => {
-  const names = { personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标' }
+  const names = { personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联' }
   mocks.call.mockResolvedValue({ accountScope: 'prod:1', settings: Object.entries(names).map(([key, title]) => ({ key, title, enabled: false, version: 0, enabledAt: 0 })) })
   await render()
   expect(host.querySelector('h3')?.textContent).toBe('自动使用额度')
