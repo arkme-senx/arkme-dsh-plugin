@@ -11,7 +11,11 @@ export type TeamAppOperation = `team.app.${
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
-export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
+export interface TeamIdentity {
+  nickname: string; imageRef?: string; imageKey?: string
+  /** Current entitlement from the identity's member_type, never inferred from missing data. */
+  memberType?: 'free' | 'vip' | 'svip' | 'unknown'
+}
 export interface TeamChannel {
   avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string

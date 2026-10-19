@@ -57,6 +57,31 @@ it('folder selection previews a visitor before opening the real conversation', a
   expect(document.activeElement).toBe(document.querySelector('[role="dialog"]'))
 })
 
+it.each(['vip', 'svip', 'free', 'unknown', undefined] as const)('uses fresh visitor membership %s in the preview title without read acknowledgements', async memberType => {
+  const old: TeamConversation = { ...conversation, visitor: { nickname: '访客', memberType: 'svip' } }
+  const fresh: TeamConversation = { ...old, visitor: { nickname: '访客', ...(memberType ? { memberType } : {}) } }
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: fresh })
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: old }} onClose={close} />)
+  const badge = document.querySelector('header [data-arkme-membership]')
+  if (memberType === 'vip' || memberType === 'svip') {
+    expect(badge?.getAttribute('data-arkme-membership')).toBe(memberType)
+    expect(badge?.parentElement?.title).toBe(`${memberType.toUpperCase()} 会员`)
+  } else expect(badge).toBeNull()
+  expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['team.app.timeline'])
+})
+
+it('shows stars in folder visitor rows without applying a visitor membership to the team itself', async () => {
+  const visitor: TeamConversation = { ...conversation, visitor: { nickname: '会员访客', memberType: 'vip' } }
+  const group = groupTeamConversations([visitor])[0]!
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'folder', group }} onClose={close} />)
+  expect(document.querySelector('header [data-arkme-membership]')).toBeNull()
+  expect(document.querySelector('[aria-label="团队对话预览列表"] [data-arkme-membership="vip"]')).not.toBeNull()
+  const external: TeamConversation = { ...visitor, side: 'external' }
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: external })
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: external }} onClose={close} />)
+  expect(document.querySelector('header [data-arkme-membership]')).toBeNull()
+})
+
 it('has a loading state, retries failures, and aborts a pending request on dismissal', async () => {
   let fail!: (error: Error) => void
   mocks.call.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))

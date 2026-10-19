@@ -14,6 +14,7 @@ import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import type { TeamEntryTarget } from './team-directory-preferences.js'
+import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
 const button = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '6px 8px', fontSize: 13 }
 /** Read-only history: deliberately does not mount the conversation pane, composer or read-ack effect. */
@@ -23,7 +24,10 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
   const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? target.group : undefined
   const [chosen, setChosen] = useState<TeamConversation | undefined>(target.kind === 'conversation' ? target.conversation : undefined)
   const conversation = target.kind === 'conversation' ? target.conversation : chosen
-  const title = conversation ? conversation.side === 'team' ? conversation.visitor?.nickname ?? '用户' : conversation.channel.name : group?.channel.name ?? '团队消息'
+  const [loadedConversation, setLoadedConversation] = useState<TeamConversation>()
+  // A preview opens from a directory snapshot; the authorized timeline can carry newer identity data.
+  const current = loadedConversation?.key === conversation?.key && loadedConversation?.side === conversation?.side ? loadedConversation : conversation
+  const title = current ? current.side === 'team' ? current.visitor?.nickname ?? '用户' : current.channel.name : group?.channel.name ?? '团队消息'
   const dialog = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const previous = document.activeElement
@@ -48,17 +52,18 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
         }
       }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}>
-        {group && chosen && <button style={button} aria-label="返回团队预览" onClick={() => setChosen(undefined)}><ArrowLeft size={16} /></button>}
-        {conversation?.side === 'team' ? <ArkmeUserAvatar size={28} label={conversation.visitor?.nickname ?? '用户'} avatarRef={conversation.visitor?.imageRef} imageKey={conversation.visitor?.imageKey} imagePort={teamAvatarImages} />
-          : <ArkmeTeamChannelAvatar channel={conversation?.channel ?? group!.channel} size={28} />}
+        {group && chosen && <button style={button} aria-label="返回团队预览" onClick={() => { setChosen(undefined); setLoadedConversation(undefined) }}><ArrowLeft size={16} /></button>}
+        {current?.side === 'team' ? <ArkmeUserAvatar size={28} label={current.visitor?.nickname ?? '用户'} avatarRef={current.visitor?.imageRef} imageKey={current.visitor?.imageKey} imagePort={teamAvatarImages} />
+          : <ArkmeTeamChannelAvatar channel={current?.channel ?? group!.channel} size={28} />}
         <strong style={{ fontSize: 16, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</strong>
+        {current && <TeamVisitorMembership conversation={current} />}
         <span style={{ flex: 'none', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, padding: '3px 8px', fontSize: 11 }}>预览中</span>
         <button style={{ ...button, marginLeft: 'auto', color: arkmeTheme.secondary }} aria-label="关闭聊天预览" onClick={onClose}><X size={18} /></button>
       </header>
-      {conversation ? <TeamPreviewMessages key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation} />
+      {conversation ? <TeamPreviewMessages key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation} onConversation={setLoadedConversation} />
         : <div aria-label="团队对话预览列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 16px' }}>
           {group?.conversations.map(c => <button key={c.key} style={{ ...button, width: '100%', textAlign: 'left', padding: '12px 0', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, color: arkmeTheme.text }} onClick={() => setChosen(c)}>
-            <span style={{ display: 'block', fontSize: 14 }}>{c.visitor?.nickname ?? '用户'}{c.unread > 0 && <span style={{ float: 'right', color: arkmeTheme.accent }}>{c.unread} 条未读</span>}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}><span style={{ minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.visitor?.nickname ?? '用户'}</span><TeamVisitorMembership conversation={c} />{c.unread > 0 && <span style={{ marginLeft: 'auto', flexShrink: 0, color: arkmeTheme.accent }}>{c.unread} 条未读</span>}</span>
             <span style={{ display: 'block', marginTop: 5, fontSize: 12, color: arkmeTheme.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? '[附件]' : '[消息]') : '内容暂不可用'}</span>
           </button>)}
           {directory.error && <p role="alert">{directory.error}</p>}
@@ -71,7 +76,7 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
   </div>, document.body)
 }
 
-function TeamPreviewMessages({ accountKey, conversation }: { accountKey: string; conversation: TeamConversation }) {
+function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation(value: TeamConversation): void }) {
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
   const body = useRef<HTMLDivElement>(null), geometry = useRef<{ height: number; top: number }>()
@@ -84,10 +89,11 @@ function TeamPreviewMessages({ accountKey, conversation }: { accountKey: string;
         if (value.hasMore && (!value.beforeSeq || request.before > 0 && value.beforeSeq >= request.before)) throw new Error('消息分页异常，请重试')
         if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
         setPage(old => ({ ...value, messages: [...new Map([...(request.before ? old?.messages ?? [] : []), ...value.messages].map(message => [message.key, message])).values()].sort((a, b) => a.seq - b.seq) }))
+        onConversation(value.conversation)
       }).catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [accountKey, conversation.ref, request])
+  }, [accountKey, conversation.ref, request, onConversation])
   useLayoutEffect(() => {
     if (body.current && page) body.current.scrollTop = request.before && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
   }, [page])

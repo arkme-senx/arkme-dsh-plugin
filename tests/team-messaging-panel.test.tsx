@@ -54,6 +54,32 @@ describe('Team send UI recovery', () => {
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
+  it.each(['vip', 'svip', 'free', 'unknown', undefined] as const)('shows visitor %s with the private-chat star only on the team side', async memberType => {
+    const visitor = { nickname: '访客', ...(memberType ? { memberType } : {}) }
+    for (const side of ['team', 'external'] as const) {
+      await act(async () => { renderer?.unmount(); renderer = create(<TeamConversationRow conversation={{ ...conversation, side, visitor }} onClick={() => {}} />) })
+      const badges = renderer!.root.findAll(node => node.type === 'svg' && !!node.props['data-arkme-membership'])
+      const visible = side === 'team' && (memberType === 'vip' || memberType === 'svip')
+      expect(badges).toHaveLength(visible ? 1 : 0)
+      if (visible) {
+        expect(badges[0]!.props['aria-label']).toBe(`${memberType.toUpperCase()} 会员`)
+        expect(badges[0]!.props.width).toBe('13')
+      }
+    }
+  })
+
+  it('refreshes the conversation title membership from the authorized timeline', async () => {
+    const value = { ...conversation, side: 'team' as const, visitor: { nickname: '访客', memberType: 'vip' as const } }
+    let fresh: TeamConversation = { ...value, visitor: { nickname: '访客', memberType: 'svip' } }
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: fresh, messages: [], hasMore: false, beforeSeq: 0 } : [])
+    await act(async () => { renderer = create(<TeamConversationPane conversation={value} accountKey="account" onChanged={() => {}} />); await tick() })
+    const badges = () => renderer!.root.findByType('header').findAll(node => node.type === 'svg' && !!node.props['data-arkme-membership'])
+    expect(badges()[0]!.props['data-arkme-membership']).toBe('svip')
+    fresh = { ...value, visitor: { nickname: '访客', memberType: 'free' } }
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    expect(badges()).toHaveLength(0)
+  })
+
   it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
     const mine: TeamMessage = { ref:'own-ref',key:'own',seq:1,revision:1,side,sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'自己的消息',template_kind:1},media:[] }
     const other: TeamMessage = {...mine,ref:'other-ref',key:'other',seq:2,own:false,canEdit:false,canDelete:false,content:{text_content:'对方消息',template_kind:1}}

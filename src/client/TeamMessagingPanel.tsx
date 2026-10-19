@@ -24,6 +24,7 @@ import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-cache.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
 import { teamDirectoryPreferences, teamConversationEntryKey, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
@@ -132,6 +133,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
       <span style={directoryStyles.chatTop}>
         <span style={directoryStyles.entryName}>{c.side === 'team' ? c.visitor?.nickname ?? tr('用户') : c.channel.name}</span>
+        <TeamVisitorMembership conversation={c} />
         <ArkmeTopicTagBadge label={c.side === 'team' ? `${showTeamName ? `${c.channel.name} · ` : ''}${tr('外部用户')}` : c.channel.name} selected={selected} truncate />
         <span style={{ ...directoryStyles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(c.updatedAt)}</span>
       </span>
@@ -589,7 +591,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       }} />}
     {selectedSearch && <TeamSelectedTextSearch conversationRef={conversation.ref} accountKey={accountKey} queryRequest={selectedSearch} onClose={() => setSelectedSearch(undefined)} />}
     <header style={messageLayout.header}>
-      <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
+      <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}>
+        <div style={messageLayout.titleLine}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><TeamVisitorMembership conversation={current} /></div>
+        <small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small>
+      </div></div>
     </header>
     {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}
     {error && <div role="alert" className="team-error">{error}</div>}

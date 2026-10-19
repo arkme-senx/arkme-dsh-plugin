@@ -35,6 +35,36 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it.each([
+  [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
+  [undefined, 'unknown'], [null, 'unknown'], [99, 'unknown'],
+])('projects current visitor member_type %s consistently across directory and timeline', async (raw, expected) => {
+  const visitor = { nickname: '访客', ...(raw === undefined ? {} : { member_type: raw }) }
+  const value = { ...conversation, side: 'team', visitor }
+  const f = fixture(path => path.endsWith('/conversations/list') ? { items: [value], has_more: false }
+    : { channel, conversation: value, messages: [{ ...message, sender: { ...message.sender, member_type: 'svip' } }] })
+  const page = await f.service.execute('team.app.conversations', { side: 'team' }) as { items: TeamConversation[] }
+  const result = await f.service.execute('team.app.timeline', { conversationRef: page.items[0]!.ref }) as TeamTimeline
+  expect(page.items[0]!.visitor?.memberType).toBe(expected)
+  expect(result.conversation.visitor?.memberType).toBe(expected)
+  // A team sender's membership must not be substituted for the visitor's.
+  expect(result.messages[0]!.sender.memberType).toBe('svip')
+  expect(f.requests).toHaveLength(2)
+  expect(JSON.stringify(result.conversation)).not.toMatch(/external_user_id|member_type|actor_user_id/)
+})
+
+it('clears a former membership when a fresh response is free or unavailable', async () => {
+  let visitor: Record<string, unknown> = { nickname: '访客', member_type: 'svip' }
+  const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', visitor }, messages: [] }))
+  const opened = await open(f)
+  expect(opened.conversation!.visitor?.memberType).toBe('svip')
+  for (const raw of ['free', undefined]) {
+    visitor = { nickname: '访客', member_type: raw }
+    const value = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
+    expect(value.conversation.visitor?.memberType).toBe(raw ?? 'unknown')
+  }
+})
+
 it('persists private Team marks across refreshed references without cloud writes or Chat authority', async () => {
   let rawConversation = conversation, rawMessage = message
   const f = fixture(() => ({ channel, conversation: rawConversation, messages: [rawMessage] }))

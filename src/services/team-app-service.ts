@@ -10,6 +10,7 @@ import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
+import { arkmePeerMemberType } from '../peer-membership.js'
 
 const obj = objectValue
 const str = stringValue
@@ -67,7 +68,8 @@ export class TeamAppService {
   }
   private async identity(raw: unknown, actor: number): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
-    return { nickname: str(v.nickname) || '用户', ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
+    return { nickname: str(v.nickname) || '用户', memberType: arkmePeerMemberType(v.member_type),
+      ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
   async searchContactTeam(jotmoId: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<import('../types.js').ArkmeContactTeamSearchResult | undefined> {
     const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/discovery/search', { jotmo_id: jotmoId }, session, signal, true))
