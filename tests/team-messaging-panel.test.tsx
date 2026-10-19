@@ -410,7 +410,7 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.receipts')).toBe(false)
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
   })
-  it.each(['team', 'external'] as const)('keeps all-read %s messages inspectable and separates external contact from team filters',async side=>{
+  it.each(['team', 'external'] as const)('keeps all-read %s messages inspectable and separates external contact from team readers without filters',async side=>{
     const msg:TeamMessage={key:'m',ref:'m',seq:1,revision:1,side,sender:{nickname:'发信人'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
     mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
       ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
@@ -421,9 +421,8 @@ describe('Team send UI recovery', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('团队已读 2/2')
     const panel=renderer!.root.findByType(ArkmeReadReceiptPanel)
     expect(panel.findAllByProps({className:'team-receipt-heading'})).toHaveLength(side==='team'?2:1)
-    const unread=panel.findByProps({role:'group'}).findAllByType('button')[2]!
-    await act(async()=>{unread.props.onClick();await tick()})
-    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无未读成员')
+    expect(panel.findAllByProps({className:'team-receipt-filters'})).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('内部甲')
     expect(receiptButton()).toBeDefined()
   })
   it('lets a team member open the shared receipt panel from its persistent status', async () => {
@@ -431,8 +430,8 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? {conversation:{...conversation,side:'team'},messages:[own],hasMore:false,beforeSeq:0}
       : {teamRead:true,visitorRead:false,members:[]})
-    await mount()
-    const button = renderer!.root.findByProps({className:'team-receipt-badge'})
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const button = renderer!.root.findAllByType('button').find(node => node.props['aria-label']?.startsWith('查看阅读状态：'))!
     expect(button.type).toBe('button')
     await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)

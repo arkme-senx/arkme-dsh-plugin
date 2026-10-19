@@ -41,6 +41,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         <div style={layout.messageHeader}>{!message.own && <strong style={layout.sender}>{message.sender.nickname}</strong>}<time style={layout.meta}>{timeLabel(message.createdAt)}</time></div>
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
+        {showReceipts && message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         {!showReceipts && message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
           state={message.recipientRead === undefined ? 'error' : 'unread'}
           label={tr(message.recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
@@ -59,9 +60,8 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           } }}>
           {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
         </div>
-        {showReceipts && message.side === 'external' && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
+        {showReceipts && !message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         </div>
-        {showReceipts && message.side === 'team' && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
         {/* A point menu must not create another flex gap and move the message. */}
         {menu && published && available && <div style={{ position: 'fixed', width: 0, height: 0 }}><ArkmeMessageContextMenu
           selectedText={menu.selectedText} copyIcon={<Copy />} onCopySelection={copy} onCopyMessage={copyMessage}
