@@ -2017,7 +2017,7 @@ export class RecordingService {
   }
 
   /** Resolve an Explore audio anchor against the owned original ASR version, including historical Doubao sources. */
-  async exploreRecordingEvidence(owner: Record<string, unknown>, quote: string, signal?: AbortSignal): Promise<Extract<import('../explore-contract.js').ExploreSource, {kind:'recording'}>> {
+  async exploreRecordingEvidence(owner: Record<string, unknown>, quote: string, signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<Extract<import('../explore-contract.js').ExploreSource, {kind:'recording'}>> {
     const session = await this.runtime.requireSession()
     const start = Number(owner.start_at)
     const source = owner.transcript_source
@@ -2026,8 +2026,9 @@ export class RecordingService {
     }
     const dayStart = new Date(start)
     dayStart.setHours(0, 0, 0, 0)
-    const date = this.recordingDayStart(dayStart.getTime()).getTime()
-    const data = await this.readRecordingTranscripts(date, session, signal, undefined, true)
+    this.validateRecordingWindow(window)
+    const date = window?.dateStamp ?? this.recordingDayStart(dayStart.getTime()).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal, window, true)
     const rows = data.section(source as ArkmeRecordingTranscriptSource).items
     const index = rows.findIndex(row => row.sessionId === owner.container_id && row.childId === owner.child_id && row.asrItemIndex === owner.item_ordinal)
     const row = rows[index]
@@ -2042,10 +2043,10 @@ export class RecordingService {
       const target = source === 'system' ? item : data.section('system').items.find(candidate =>
         candidate.sessionId === item.sessionId && candidate.childId === item.childId
         && candidate.startAtMillis <= item.startAtMillis && candidate.endAtMillis > item.startAtMillis)
-      return target ? [{itemId:item.itemId,item:this.workbenchItem(date,target,1,session.userId,refKey,speakerKey)}] : []
+      return target ? [{itemId:item.itemId,item:this.workbenchItem(date,target,1,session.userId,refKey,speakerKey,window)}] : []
     })
     return { kind: 'recording', dateStamp: date, focusItemId: row.itemId,
-      items: context.map(item => this.workbenchItem(date, item, 1, session.userId, refKey, speakerKey)),
+      items: context.map(item => this.workbenchItem(date, item, 1, session.userId, refKey, speakerKey, window)),
       playbackTargets,
       ...(source === 'system' ? { segment: { sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: 'system' as const, transcriptVersion: recordingSearchVersion({...row, text:row.rawTranscriptText ?? row.text}) } } : {}),
     }

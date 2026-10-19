@@ -1476,6 +1476,7 @@ export interface ArkmeProviderCapabilities {
     userProfile: true
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
+    calendarDayReview?: true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     imageRead: true
@@ -4239,6 +4240,9 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'calendar.day-review.reconcile'
+  | 'calendar.day-review.resume'
+  | 'calendar.day-review.evidence'
   | 'statistics.detail'
   | 'statistics.active'
   | 'statistics.long'
