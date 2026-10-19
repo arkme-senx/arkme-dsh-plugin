@@ -17,7 +17,7 @@ const exported = await sdk.arkoExport(signal, ({ count }) => console.log(`已读
 const downloadURL = sdk.localFileUrl(exported.fileRef, true)
 ```
 
-`arkoMessages` 是 keyset 分页；`arkoSearch` 返回片段和不透明消息引用；`arkoContext` 返回原文和独立的双向历史窗口。startAtMillis/endAtMillis 是历史排序时间的左闭右开范围。消息显示时间保留既有 send_at 优先规则，orderAtMillis 用于历史顺序和日历；两者不同会在定位与详情中说明。搜索片段不用于替代正文。Arko 不暴露 reasoning。
+`arkoMessages` 是 keyset 分页；`arkoSearch` 返回片段和不透明消息引用；`arkoContext` 返回原文和独立的双向历史窗口。startAtMillis/endAtMillis 是历史排序时间的左闭右开范围。新历史消息显示时间以消息自身 created_at_ms 为准，不被 extra.data.send_at 等记录缓存时间覆盖；orderAtMillis 用于历史顺序和日历。两者不同会在定位与详情中说明。旧读取接口的时间合同保持原样。搜索片段不用于替代正文。Arko 不暴露 reasoning。
 
 搜索结果的 `messageKey` 仅用于稳定展示与去重；`messageRef` 是会过期的定位凭证，不能作为 React key。UI 自动读取有下一页的候选批次，直到获得 50 条匹配、历史结束或本轮 1000 次请求预算耗尽；保留最多 200 条匹配，显示扫描进度并支持继续查找。结果沿用三行预览，定位仍打开原消息上下文，不切换当前 Run。
 
