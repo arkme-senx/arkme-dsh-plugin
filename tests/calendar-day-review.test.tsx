@@ -189,6 +189,130 @@ describe('calendar review interaction', () => {
     expect(content()).toContain('有新内容可更新')
     expect(vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.state')).toHaveLength(2)
   })
+  it('finishes an in-flight read and coalesces soft invalidations into one trailing read', async () => {
+    const resolve: Array<(value: unknown) => void> = []
+    vi.mocked(callArkme).mockImplementation(() => new Promise(r => { resolve.push(r) }) as never)
+    await mount()
+    const firstSignal = vi.mocked(callArkme).mock.calls[0]![2]!
+    for (const revision of [1, 2, 3]) {
+      await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={revision} />))
+    }
+    expect(firstSignal.aborted).toBe(false)
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    await act(async () => resolve[0]!(current()))
+    expect(content()).toContain('讨论了录音存储方案')
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    await act(async () => resolve[1]!({ ...current(), freshness: 'changed' }))
+    expect(content()).toContain('有新内容可更新')
+    expect(button('检查更新').props.disabled).toBe(false)
+    expect(callArkme).toHaveBeenCalledTimes(2)
+  })
+  it('does not extend the read deadline when soft invalidations arrive', async () => {
+    vi.useFakeTimers()
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(() => {}) as never)
+    await mount()
+    const firstSignal = vi.mocked(callArkme).mock.calls[0]![2]!
+    await act(async () => vi.advanceTimersByTimeAsync(20_000))
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    expect(firstSignal.aborted).toBe(false)
+    await act(async () => vi.advanceTimersByTimeAsync(10_000))
+    expect(firstSignal.aborted).toBe(true)
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    expect(content()).toContain('读取超时')
+    expect(button('检查更新').props.disabled).toBe(false)
+    await act(async () => button('检查更新').props.onClick())
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    expect(content()).toContain('讨论了录音存储方案')
+  })
+  it('keeps timeout recovery available under continuous hints and restores automatic reads after manual retry', async () => {
+    vi.useFakeTimers()
+    let late!: (value: unknown) => void
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(r => { late = r }) as never)
+    await mount()
+    for (const revision of [1, 2, 3, 4, 5]) {
+      await act(async () => vi.advanceTimersByTimeAsync(20_000))
+      await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={revision} />))
+    }
+    expect(callArkme).toHaveBeenCalledTimes(1)
+    expect(content()).toContain('读取超时')
+    expect(content()).not.toContain('正在读取当天回顾')
+    expect(button('检查更新').props.disabled).toBe(false)
+    await act(async () => late(current()))
+    expect(content()).not.toContain('讨论了录音存储方案')
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).toContain('讨论了录音存储方案')
+    expect(content()).not.toContain('读取超时')
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={6} />))
+    expect(callArkme).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(callArkme).mock.calls.every(x => x[0] === 'calendar.day-review.state')).toBe(true)
+  })
+  it('ends a failed trailing read and permits repeated explicit retries', async () => {
+    let resolve!: (value: unknown) => void
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(r => { resolve = r }) as never)
+    await mount()
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    vi.mocked(callArkme).mockRejectedValue(new Error('连接失败'))
+    await act(async () => resolve(current()))
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    expect(content()).toContain('连接失败')
+    expect(content()).not.toContain('讨论了录音存储方案')
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={2} />))
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    await act(async () => button('检查更新').props.onClick())
+    expect(callArkme).toHaveBeenCalledTimes(3)
+    expect(content()).toContain('连接失败')
+    expect(button('检查更新').props.disabled).toBe(false)
+    vi.mocked(callArkme).mockResolvedValue(current())
+    await act(async () => button('检查更新').props.onClick())
+    expect(content()).not.toContain('连接失败')
+    expect(content()).toContain('讨论了录音存储方案')
+  })
+  it.each(['history', 'source'])('preserves %s permission failures despite queued refresh hints', async kind => {
+    const historical = { ...current().result!, id: 'old' }
+    const original = { kind: 'evidence', evidence: { ref: 'source-1', resultId: 'old', kind: 'call', subtype: 'imported', label: '通话原文', text: '受限原文', startAtMillis: at, endAtMillis: at } }
+    vi.mocked(callArkme).mockImplementation(async method => method === 'calendar.day-review.result' ? historical : method === 'calendar.day-review.source' ? original : current() as never)
+    await mount()
+    await act(async () => view!.root.findByType('select').props.onChange({ target: { value: 'old' } }))
+    await act(async () => button('12:00 · 录音原文').props.onClick())
+    let reject!: (reason: Error) => void
+    vi.mocked(callArkme).mockImplementation(method => method === (kind === 'history' ? 'calendar.day-review.result' : 'calendar.day-review.source') ? new Promise((_, r) => { reject = r }) as never : Promise.resolve(method === 'calendar.day-review.result' ? historical : method === 'calendar.day-review.source' ? original : current()) as never)
+    await act(async () => { button('检查更新').props.onClick() })
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    await act(async () => reject(new Error('来源权限已撤销')))
+    const count = vi.mocked(callArkme).mock.calls.length
+    expect(content()).toContain('来源权限已撤销')
+    expect(content()).not.toContain('受限原文')
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={2} />))
+    expect(callArkme).toHaveBeenCalledTimes(count)
+    expect(content()).toContain('来源权限已撤销')
+    expect(button('检查更新').props.disabled).toBe(false)
+  })
+  it.each(['date', 'account', 'privacy'])('does not carry a read failure into a new %s scope', async change => {
+    vi.mocked(callArkme).mockRejectedValueOnce(new Error('读取失败'))
+    await mount()
+    expect(content()).toContain('读取失败')
+    await act(async () => view!.update(<ArkmeCalendarDayReview key={change === 'privacy' ? 'new' : undefined}
+      query={{ ...query, ...(change === 'date' ? { bucketDate: '2026-10-14' } : change === 'account' ? { accountScope: 'prod:8' } : {}) }} view="summary" />))
+    expect(callArkme).toHaveBeenCalledTimes(2)
+    expect(content()).not.toContain('读取失败')
+  })
+  it.each(['date', 'account', 'privacy', 'close'])('discards a queued soft refresh on %s changes', async change => {
+    let resolve!: (value: unknown) => void
+    vi.mocked(callArkme).mockImplementationOnce(() => new Promise(r => { resolve = r }) as never)
+    await mount()
+    const firstSignal = vi.mocked(callArkme).mock.calls[0]![2]!
+    await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
+    vi.mocked(callArkme).mockResolvedValue({ supported: true, result: null, job: null, versions: [], freshness: 'unknown' })
+    await act(async () => {
+      if (change === 'close') { view!.unmount(); view = undefined }
+      else view!.update(<ArkmeCalendarDayReview key={change === 'privacy' ? 'new' : undefined}
+        query={{ ...query, ...(change === 'date' ? { bucketDate: '2026-10-14' } : change === 'account' ? { accountScope: 'prod:8' } : {}) }} view="summary" />)
+    })
+    expect(firstSignal.aborted).toBe(true)
+    await act(async () => resolve(current()))
+    expect(callArkme).toHaveBeenCalledTimes(change === 'close' ? 1 : 2)
+    if (view) { expect(content()).not.toContain('讨论了录音存储方案'); expect(content()).toContain('把这一天串起来') }
+  })
   it('does not read or generate before an account scope is established', async () => {
     await act(async () => { view = create(<ArkmeCalendarDayReview query={{ ...query, accountScope: '' }} view="summary" />) })
     expect(content()).toContain('账号范围尚未确认')
