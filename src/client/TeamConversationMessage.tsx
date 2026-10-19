@@ -16,9 +16,9 @@ import { arkmeConversationMessageLayout as layout, timeLabel } from './conversat
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, located = false, onSelect, onToggle, onDetail }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onReceipts, onError, selecting = false, selected = false, located = false, onSelect, onToggle, onDetail, onSnapshot }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
-  selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void
+  selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void; onSnapshot?(): void
   located?: boolean
   conversationRef?: string | undefined
   onEdit(): void; onReceipts(anchor: HTMLElement | null): void; onError(error: string): void
@@ -72,7 +72,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           message.canEdit && writable && { id: 'edit', disabled: busy, onSelect: () => select(onEdit) },
           { id: 'select', disabled: busy || !onSelect, onSelect: () => select(() => onSelect?.()) },
           unavailable('forward'), unavailable('ask-dsh'), !message.own && unavailable('report'),
-          { id: 'detail', disabled: !onDetail, onSelect: () => select(() => onDetail?.()) },
+          message.own && { id: 'detail', disabled: !onSnapshot, onSelect: () => select(() => onSnapshot?.()) },
           showReceipts && { id: 'receipts', onSelect: () => select(() => onReceipts(bubble.current)) },
           message.own && { type: 'separator', id: 'withdraw-divider' }, message.own && unavailable('withdraw'),
         ])} /></div>}

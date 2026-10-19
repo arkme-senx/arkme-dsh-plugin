@@ -1,3 +1,5 @@
+import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
+import { ArkmeMessageSnapshotDialog } from '../src/client/ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
 import { TeamMessageDetail } from '../src/client/TeamMessageDetail.js'
 import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
@@ -56,6 +58,60 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('keeps the shared composer hint stable and preserves each draft timer across remount', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ text: '', assets: [] }))
+    await mount()
+    const input = () => renderer!.root.findByType(ArkmeRichComposerInput)
+    const stats = () => renderer!.root.findByType(ArkmeComposerInfoRow).props.children
+    expect(stats().props.visible).toBe(false)
+    await act(async () => input().props.onFocus())
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.focused).toBe(true)
+    expect(stats().props.textLength).toBe(0)
+    await act(async () => input().props.onTextChange('你好🌱'))
+    expect(stats().props.textLength).toBe(3)
+    const start = stats().props.startedAtMillis
+    expect(start).toBeGreaterThan(0)
+    await act(async () => input().props.onBlur())
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.focused).toBe(false)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).startedAtMillis).toBe(start)
+    await act(async () => renderer!.unmount()); await mount()
+    expect(stats().props.startedAtMillis).toBe(start)
+    await act(async () => stats().props.onToggle())
+    expect(localStorage.getItem('arkme.composer.show-input-time')).toBe('hidden')
+    await act(async () => input().props.onTextChange(''))
+    expect(stats().props.startedAtMillis).toBeUndefined()
+  })
+
+  it('freezes a failed attempt timer separately from the next draft and restores it on rejection', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ text: '原草稿', assets: [], startedAtMillis: 1234 }))
+    let reject!: (error: unknown) => void
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.send.enqueue') return new Promise((_resolve, fail) => { reject = fail })
+      return []
+    })
+    await mount(); await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.startedAtMillis).toBe(1234)
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.children.props.startedAtMillis).toBeUndefined()
+    await act(async () => reject({ body: { code: 'team-invalid_request' } }))
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.children.props.startedAtMillis).toBe(1234)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('原草稿')
+  })
+
+  it('opens the common snapshot for own messages without requesting unrelated Chat record metadata', async () => {
+    const own: TeamMessage = {key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1800000000000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'我的消息',template_kind:1},media:[]}
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[own],hasMore:false,beforeSeq:0} : [])
+    await mount()
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
+    expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
+    expect(snapshot.props.metadataUnavailable).toContain('暂未接通')
+    expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
+    expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
+    await act(async () => snapshot.props.onClose())
+    expect(renderer!.root.findAllByType(ArkmeMessageSnapshotDialog)).toHaveLength(0)
+  })
 
   it.each(['vip', 'svip', 'free', 'unknown', undefined] as const)('shows visitor %s with the private-chat star only on the team side', async memberType => {
     const visitor = { nickname: '访客', ...(memberType ? { memberType } : {}) }
@@ -268,7 +324,7 @@ describe('Team send UI recovery', () => {
       release(accepted())
       await tick()
     })
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[],startedAtMillis:expect.any(Number)})
   })
 
   it.each(['idempotency_conflict', 'not_accessible'])('does not automatically retry %s after reconnect', async reason => {
@@ -350,7 +406,7 @@ describe('Team send UI recovery', () => {
     })
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.state).toBe('published')
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[],startedAtMillis:expect.any(Number)})
     expect(JSON.stringify(renderer!.toJSON())).toContain('刷新失败')
     refreshFails = false
     await act(async () => {invalidateTeamMessages('account');await tick()})
@@ -569,7 +625,7 @@ describe('Team send UI recovery', () => {
     await mount(); await send()
     await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条'); await tick() })
     await act(async () => { reject(Object.assign(new Error('发送未接受'), { body: { code } })); await tick() })
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text: '问题\n\n下一条', assets: []})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text: '问题\n\n下一条', assets: [], startedAtMillis: expect.any(Number)})
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题\n\n下一条')
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)

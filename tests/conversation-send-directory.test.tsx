@@ -1866,6 +1866,7 @@ describe('conversation send directory projection', () => {
     const localStorage = new Map<string, string>()
     const sessionStorage = new Map<string, string>()
     vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(() => true),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,

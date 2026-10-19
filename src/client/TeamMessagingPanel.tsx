@@ -1,3 +1,6 @@
+import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
+import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
+import { ArkmeMessageSnapshotDialog } from './ArkmeMessageSnapshotDialog.js'
 import { useTeamMessageSelection } from './use-team-message-selection.js'
 import { ArkmeMessageSelectionBar } from './ArkmeMessageSelectionBar.js'
 import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
@@ -56,7 +59,7 @@ import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
-import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
+import { loadTeamDraft, persistTeamDraft, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
@@ -236,6 +239,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const messageMarks = useMessageUnderlines(`${accountKey}:team:${conversation.key}`, conversation.ref, Number(accountKey.split(':').at(-1)), teamMessageMarkTransport)
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
+  const [snapshotKey, setSnapshotKey] = useState<string>()
+  const closeSnapshot = useCallback(() => setSnapshotKey(undefined), [])
+  const [showsInputTime, setShowsInputTime] = useArkmeComposerInputTimePreference()
   const [visitorRecords, setVisitorRecords] = useState(false), [recordPerson, setRecordPerson] = useState<TeamIdentity>(), [locatedKey, setLocatedKey] = useState<string>()
   const [selectedSearch, setSelectedSearch] = useState<{ text: string }>()
   useSelectedMessageSearch(conversation.ref, text => { setDetailKey(undefined); setSelectedSearch({ text }) })
@@ -282,7 +288,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     document.addEventListener('visibilitychange', update)
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update) }
   }, [receiptStore])
-  const [editing, setEditing] = useState<{ message: TeamMessage; text: string; needsReload?: boolean; latestText?: string }>()
+  const [editing, setEditing] = useState<{ message: TeamMessage; text: string; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const fileInput = useRef<HTMLInputElement>(null)
   const editor = useRef<ArkmeRichComposerHandle>(null), composer = useRef<HTMLDivElement>(null)
@@ -294,8 +300,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const beginPasteFocus = useComposerPasteFocus({ scope: composerScope, active: !editing, editor, container: composer, onReady: setSelectionRequest })
   const richDraft = arkmeComposerDraftFromText(editing?.text ?? draft.text)
   const updateText = (text: string) => {
-    if (editing) setEditing({ ...editing, text })
-    else { const next = { ...draftRef.current, text }; draftRef.current = next; setDraft(next) }
+    if (editing) setEditing({ ...editing, text, startedAtMillis: editing.startedAtMillis ?? Date.now() })
+    else { const next = updateTeamDraftText(draftRef.current, text); draftRef.current = next; setDraft(next) }
   }
   const editorSelection = useRef({start:0,end:0})
   const captureSelection = () => { if (editor.current) editorSelection.current = {start:editor.current.selectionStart,end:editor.current.selectionEnd} }
@@ -427,8 +433,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     catch (e) { if (!ctrl.current.signal.aborted && !isSocialBindingRequired(e)) setError(errorText(e)); return }
     finally { sendBusy.current = false }
     if (ctrl.current.signal.aborted || latest.current?.conversation.ref !== timeline.conversation.ref || draftRef.current !== draft) return
-    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
-    const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', attempt }
+    const attempt = draft.attempt ?? { uid: crypto.randomUUID(), createdAt: Date.now(), startedAtMillis: draft.startedAtMillis, content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
+    const acceptedDraft = { ...draft, text: draft.attempt ? draft.text : '', startedAtMillis: draft.attempt ? draft.startedAtMillis : undefined, attempt }
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
     setOutgoing(outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender))
@@ -437,7 +443,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       if (ctrl.current.signal.aborted) return
       if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送状态暂时无法确认，请重试'))
       delivery.accept(task)
-      const next = { text: draftRef.current.text, assets: [] }
+      const next = { text: draftRef.current.text, startedAtMillis: draftRef.current.startedAtMillis, assets: [] }
       // Host admission is durable even if browser draft cleanup fails. The old
       // on-disk attempt keeps its UID so a remount can only replay the same send.
       try { persistTeamDraft(localStorage, storageKey, next) }
@@ -452,7 +458,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
         if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
-          const kept = { text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
+          const kept = { text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
         }
@@ -485,7 +491,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
         if (ctrl.current.signal.aborted) return
         // Persist before exposing a staged file. A storage failure stops the batch;
         // an individual invalid file does not discard the remaining selections.
-        const next = { ...draftRef.current, localFiles: [...(draftRef.current.localFiles ?? []), local] }
+        const next = { ...draftRef.current, startedAtMillis: draftRef.current.startedAtMillis ?? Date.now(), localFiles: [...(draftRef.current.localFiles ?? []), local] }
         persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
       }
       if (errors.length) setError(errors.join('；'))
@@ -501,7 +507,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }
   const updateLocalFiles = (update: (files: ArkmeLocalFile[]) => ArkmeLocalFile[]) => {
     if (busy || uploadBusy.current || draftRef.current.attempt) return
-    const next = {...draftRef.current, localFiles: update([...(draftRef.current.localFiles ?? [])])}
+    const next = updateTeamDraftText({...draftRef.current, localFiles: update([...(draftRef.current.localFiles ?? [])])}, draftRef.current.text)
     try { persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next) }
     catch (e) { setError(errorText(e)) }
   }
@@ -596,6 +602,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }, [locatedKey])
   const selection = useTeamMessageSelection({ accountKey, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal, refresh, onChanged })
   const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
+  const snapshot = displayedMessages.find(message => message.key === snapshotKey && message.own && message.state === 'published' && message.contentStatus === 'available')
+  useEffect(() => { if (snapshotKey && !snapshot) setSnapshotKey(undefined) }, [snapshotKey, !!snapshot])
   const detail = displayedMessages.find(message => message.key === detailKey && message.state === 'published' && message.contentStatus === 'available')
   useEffect(() => { if (detailKey && !detail) setDetailKey(undefined) }, [detailKey, !!detail])
   const copySelected = async () => {
@@ -654,7 +662,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
             : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
           showReceipts={current.side === 'team'} receiptStore={receiptStore} busy={busy || selection.busy}
           selecting={selection.ids !== undefined} selected={selection.ids?.has(m.key) ?? false}
-          onSelect={() => { setDetailKey(undefined); selection.enter(new Set([m.key])) }} onToggle={() => selection.toggle(m.key)} onDetail={() => setDetailKey(m.key)}
+          onSelect={() => { setDetailKey(undefined); selection.enter(new Set([m.key])) }} onToggle={() => selection.toggle(m.key)} onDetail={() => setDetailKey(m.key)} onSnapshot={() => { setDetailKey(undefined); setSnapshotKey(m.key) }}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }) }}
           onReceipts={anchor => { if (receiptRef.current?.key === m.key) { receiptRef.current = undefined; setReceiptMessage(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
@@ -681,6 +689,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       description={`确认删除所选 ${selection.confirm.length} 条快记？删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。`}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={selection.busy}
       onConfirm={() => { void selection.remove() }} onClose={selection.closeConfirm} />}
+    {snapshot && <ArkmeMessageSnapshotDialog item={teamMessagePresentation(snapshot)}
+      metadataUnavailable={tr('团队消息的发送位置、设备和输入时长暂未接通。')} createdAtMillis={snapshot.createdAt}
+      backgroundSoundSupported={false} onClose={closeSnapshot} />}
     {detail && <TeamMessageDetail message={detail} conversation={current}
       avatar={visitorActions.avatar(<TeamAvatar identity={detail.sender} size={40} />, detail.side === 'external' ? undefined : detail.sender)}
       onClose={() => setDetailKey(undefined)} onLocate={() => { setDetailKey(undefined); setLocatedKey(detail.key) }} />}
@@ -701,6 +712,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !uploading && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
       onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !uploading && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
       style={{...composerLayout.composer, flexDirection: 'column', ...(selection.ids ? { display: 'none' } : {})}} data-team-composer={editing ? 'reedit' : 'message'}>
+      <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused && !editing}>
+        <ArkmeComposerInputStats active visible={composerFocused || !!richDraft.text || !!draft.localFiles?.length || !!draft.assets.length}
+          textLength={Array.from(richDraft.text).length} startedAtMillis={validTeamDraftStart(editing ? editing.startedAtMillis : draft.startedAtMillis)}
+          showsInputTime={showsInputTime} onToggle={() => setShowsInputTime(!showsInputTime)} />
+      </ArkmeComposerInfoRow>
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={busy} onClose={() => {setEditing(undefined);setError('')}} />}
       <div ref={composer} className="arkme-conversation-composer-inner" data-arkme-primary-composer="true" data-arkme-composer-focused={composerFocused ? 'true' : 'false'}
         style={{ ...composerLayout.composerInner, cursor: 'text', transition: 'background-color 140ms ease, box-shadow 140ms ease', boxShadow: composerFocused ? '0 0 0 1px rgba(0,0,0,0.02)' : 'none', ...arkmeConversationComposerBorder(composerFocused || editing ? arkmeTheme.border : 'transparent', !!editing, resize.highlighted), background: composerFocused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)' }}>

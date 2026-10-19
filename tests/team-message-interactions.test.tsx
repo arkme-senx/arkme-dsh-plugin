@@ -15,13 +15,13 @@ const message: TeamMessage = { ref: 'team-message-ref', key: 'm1', seq: 1, revis
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   localMarkRef: 'team-mark-ref', content: { text_content: '前缀选中的文字后缀', template_kind: 1 } }
 let root: Root, host: HTMLDivElement
-const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
+const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
 function Fixture({ msg = message, includeToolbar = true, selecting = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage="local" />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -88,7 +88,7 @@ it('shares the fallback context menu and retains the captured selection after fo
 it('keeps whole-message commands permission gated and clears the menu after deletion', async () => {
   await render(); const p = host.querySelector('p')!
   await mouse(p, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '消息详情', '查看阅读状态'])
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '查看阅读状态'])
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '复制')!.click())
   expect(copyText).toHaveBeenCalledWith(message.content!.text_content)
   await render({ ...message, own: true, canEdit: true, canDelete: true })
@@ -110,7 +110,7 @@ it('dismisses on Escape and does not register deleted or pending messages for ma
 it('enters multiselect from the shared menu and keeps unsupported Team operations disabled', async () => {
   await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
-  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '消息详情', '查看阅读状态'])
+  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '查看阅读状态'])
   expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队通道暂未支持此操作')
   await act(async () => buttons.find(button => button.textContent === '多选')!.click())
   expect(selectMessage).toHaveBeenCalledOnce()
@@ -131,4 +131,13 @@ it('clicks into details but never opens details when selecting prose', async () 
   expect(detail).toHaveBeenCalledOnce(); detail.mockClear()
   const p = await select(); await mouse(p, 'click')
   expect(detail).not.toHaveBeenCalled()
+})
+
+it('routes own right-click details to the snapshot while body click stays in reading details', async () => {
+  await render({ ...message, own: true })
+  await mouse(host.querySelector('p')!, 'click')
+  expect(detail).toHaveBeenCalledOnce(); expect(snapshot).not.toHaveBeenCalled()
+  await mouse(host.querySelector('p')!, 'contextmenu', 2)
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '消息详情')!.click())
+  expect(snapshot).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
 })
