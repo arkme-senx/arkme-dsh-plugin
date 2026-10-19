@@ -38,7 +38,20 @@ it.skipIf(!process.env.ARKME_OFFLINE_CONTEXT_NATIVE_HOST)('executes the existing
   expect(source).toBeDefined()
   const list = await sdk.offlineContext({ operation: 'list', sourceRef: source!.sourceRef, state: 'suggested' }) as OfflineContextList
   expect(list.entries).toHaveLength(1)
-  const initial = list.entries[0]!
+  let initial = list.entries[0]!
+  // Prepare an explicit partial quote through the public SDK. Reopening the
+  // original from/to editor must preserve it without a write or another charge.
+  const options = await sdk.offlineContext({ operation: 'range-options', entryRef: initial.id, revision: initial.revision }) as import('../src/offline-context-contract.js').OfflineContextRangeOptions
+  expect(options.selectedEvidenceIds.length).toBeGreaterThan(0)
+  const original = options.evidence[0]!
+  await sdk.offlineContext({ operation: 'command', command: { action: 'range', requestId: crypto.randomUUID(), entryRef: initial.id, revision: initial.revision, evidenceRefs: [original.id], startOffset: 1 } })
+  const preparedBy = Date.now() + 30000
+  while (Date.now() < preparedBy) {
+    const fresh = await sdk.offlineContext({ operation: 'read', entryRef: initial.id }) as OfflineContextEntry
+    if (fresh.revision !== initial.revision && fresh.summary.length > 0) { initial = fresh; break }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  expect(initial.evidence[0]?.text).toBe(Array.from(original.text).slice(1).join(''))
   let renderer!: ReactTestRenderer
   const button = (label: string) => renderer.root.findAllByType('button').find(node => text(node.props.children).trim() === label)
   const until = async (check: () => boolean) => {
@@ -54,6 +67,12 @@ it.skipIf(!process.env.ARKME_OFFLINE_CONTEXT_NATIVE_HOST)('executes the existing
     await act(async () => { renderer = create(<OfflineContextConnected entryRef={initial.id} revision={initial.revision} title={initial.title} source={source!} />) })
     await until(() => !!button('是这次交流'))
     expect(renderer.root.findByType('article').props['data-offline-context-id']).toBe(initial.id)
+    await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
+    await click('调整录音范围')
+    await click('保存')
+    const unchanged = await sdk.offlineContext({ operation: 'read', entryRef: initial.id }) as OfflineContextEntry
+    expect(unchanged.revision).toBe(initial.revision)
+    expect(unchanged.evidence[0]?.text).toBe(initial.evidence[0]?.text)
     await click('是这次交流')
     await until(() => !!button('分享到此对话') && !button('分享到此对话')!.props.disabled)
     await click('分享到此对话')

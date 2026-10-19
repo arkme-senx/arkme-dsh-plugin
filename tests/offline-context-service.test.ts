@@ -90,7 +90,7 @@ it('loads current range options and maps Unicode boundaries without accepting ca
   const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
   const entry = page.entries[0]!
   f.post.mockImplementation(async(path, body) => {
-    if (path.endsWith('/range-options')) return {revision:2,evidence:[{...association.evidence[0], id:'restored-speech',version:'fresh-version',text:'甲🙂乙丙',from:0,to:4}]}
+    if (path.endsWith('/range-options')) return {revision:2,selected_evidence_ids:[],evidence:[{...association.evidence[0], id:'restored-speech',version:'fresh-version',text:'甲🙂乙丙',from:0,to:4}]}
     if (path.endsWith('/apply')) {
       expect(body.selections).toEqual([{evidence_id:'restored-speech',version:'fresh-version',from:1,to:3}])
       return {request_id:body.request_id,outcome:'applied',revision:3}
@@ -150,4 +150,22 @@ it('invalidates Host timeline after a completed command even without a mounted c
  await f.service.offlineContext({operation:'command',command:{action:'confirm',entryRef:entry.id,revision:entry.revision,requestId:'native-confirm'}})
  expect(invalidate).toHaveBeenCalledExactlyOnceWith(7)
  f.service.dispose()
+})
+
+it('projects the authoritative current selection into opaque range references', async () => {
+  const f = await fixture()
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  const entry = page.entries[0]!
+  const option = association.evidence[0]!
+  let selected: string[] = [option.id]
+  f.post.mockImplementation(async () => ({ revision: 2, evidence: [option], selected_evidence_ids: selected }))
+  const request = { operation: 'range-options' as const, entryRef: entry.id, revision: entry.revision }
+  const range = await f.service.offlineContext(request) as import('../src/offline-context-contract.js').OfflineContextRangeOptions
+  expect(range.selectedEvidenceIds).toEqual([range.evidence[0]!.id])
+  expect(JSON.stringify(range)).not.toContain(option.id)
+  selected = ['not-an-option']
+  await expect(f.service.offlineContext(request)).rejects.toThrow()
+  selected = [option.id, option.id]
+  await expect(f.service.offlineContext(request)).rejects.toThrow()
+  f.service.dispose()
 })

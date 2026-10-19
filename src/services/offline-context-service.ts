@@ -174,12 +174,19 @@ export class OfflineContextService implements OfflineContextPort {
       const identity = open(input.entryRef, 'entry')
       const raw = await post('range-options', { association_id: text(identity.id), expected_revision: revision(input.revision) })
       if (String(raw.revision) !== input.revision || !Array.isArray(raw.evidence) || raw.evidence.length < 1 || raw.evidence.length > 150) throw invalid()
+      if (!Array.isArray(raw.selected_evidence_ids) || raw.selected_evidence_ids.length > raw.evidence.length) throw invalid()
+      const selected = raw.selected_evidence_ids.map(value => text(value))
+      if (new Set(selected).size !== selected.length) throw invalid()
+      const selectedEvidenceIds: string[] = []
       const evidence = raw.evidence.map(value => {
         const e = objectValue(value), rawText = text(e.text, 192000), from = number(e.from, true), to = number(e.to)
         if (to <= from || to > Array.from(rawText).length || !['unknown', 'in_person'].includes(String(e.sound_source)) || e.contains_playback) throw invalid()
-        return { id: seal({ association: text(identity.id), evidence_id: text(e.id), version: text(e.version), from, to }, 'evidence'), text: Array.from(rawText).slice(from,to).join(''), startAtMillis: number(e.occurred_start), endAtMillis: number(e.occurred_end), speaker: '说话人', soundSource: e.sound_source as 'unknown' | 'in_person' }
+        const id = seal({ association: text(identity.id), evidence_id: text(e.id), version: text(e.version), from, to }, 'evidence')
+        if (selected.includes(text(e.id))) selectedEvidenceIds.push(id)
+        return { id, text: Array.from(rawText).slice(from,to).join(''), startAtMillis: number(e.occurred_start), endAtMillis: number(e.occurred_end), speaker: '说话人', soundSource: e.sound_source as 'unknown' | 'in_person' }
       })
-      return { revision: input.revision, evidence }
+      if (selectedEvidenceIds.length !== selected.length) throw invalid()
+      return { revision: input.revision, evidence, selectedEvidenceIds }
     }
     if (input.operation === 'read') {
       const identity = open(input.entryRef, 'entry')

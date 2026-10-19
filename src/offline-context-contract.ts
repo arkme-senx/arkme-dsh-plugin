@@ -29,7 +29,7 @@ export interface OfflineContextList {
   hasMore: boolean
   nextCursor?: string
 }
-export interface OfflineContextRangeOptions { revision: string; evidence: OfflineContextEvidence[] }
+export interface OfflineContextRangeOptions { revision: string; evidence: OfflineContextEvidence[]; selectedEvidenceIds: string[] }
 export interface OfflineContextCapability { supported: boolean; version: number }
 export interface OfflineContextCoverage { observations: { startAtMillis: number; endAtMillis: number; observedAtMillis: number; complete: boolean; evidenceSeen: boolean; messagesSeen: boolean; matches: number; issues: string[] }[] }
 export interface OfflineContextPlayback { clips: import('./types.js').ArkmeRecordingPlayback[] }

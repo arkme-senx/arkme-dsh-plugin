@@ -128,7 +128,7 @@ describe('offline context actions', () => {
 
 it('keeps the original from/to selection while submitting fresh source references', async () => {
   const transport = actions()
-  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: [
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, selectedEvidenceIds: ['fresh-1', 'fresh-2'], evidence: [
     { ...entry.evidence[0]!, id: 'fresh-1', text: '甲🙂乙丙' },
     { ...entry.evidence[1]!, id: 'fresh-2' },
   ] }))
@@ -167,5 +167,56 @@ it('preserves the original preview list presentation with authoritative server c
   const dialog = renderer.root.findByProps({ role: 'dialog' })
   expect(dialog.findByType('strong').props.children).toBe('服务端冻结标题')
   expect(dialog.findByType('ul').findByType('li').props.children).toBe('服务端冻结要点')
+  await act(async () => renderer.unmount())
+})
+
+it('preserves a narrowed partial quote when opening and saving without an edit', async () => {
+  const transport = actions()
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: entry.evidence, selectedEvidenceIds: ['s2'] }))
+  const renderer = await mount(transport, { evidence: [{ ...entry.evidence[1]!, text: '二句' }], selectedEvidenceIds: ['s2'] })
+  const open = async () => {
+    await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
+    await act(async () => button(renderer, '调整录音范围').props.onClick())
+  }
+  await open()
+  expect(renderer.root.findAllByType('select').map(node => node.props.value)).toEqual(['s2', 's2'])
+  expect(renderer.root.findByProps({ role: 'dialog' }).findAllByType('p').map(node => text(node.props.children))).toContain('二句')
+  await act(async () => button(renderer, '保存').props.onClick())
+  expect(transport.change).not.toHaveBeenCalled()
+  expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
+  await open()
+  await act(async () => renderer.root.findAllByType('select')[0]!.props.onChange({ target: { value: 's1' } }))
+  await act(async () => button(renderer, '保存').props.onClick())
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'range', evidenceIds: ['s1', 's2'] } }))
+  await act(async () => renderer.unmount())
+})
+
+it('does not fill excluded gaps merely by reopening the range editor', async () => {
+  const transport = actions()
+  const third = { ...entry.evidence[1]!, id: 's3', text: '第三句话' }
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: [...entry.evidence, third], selectedEvidenceIds: ['s1', 's3'] }))
+  const renderer = await mount(transport, { evidence: [entry.evidence[0]!, third], selectedEvidenceIds: ['s1', 's3'] })
+  await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
+  await act(async () => button(renderer, '调整录音范围').props.onClick())
+  const preview = renderer.root.findByProps({ role: 'dialog' }).findAllByType('p').map(node => text(node.props.children))
+  expect(preview).not.toContain('第二句话')
+  await act(async () => button(renderer, '保存').props.onClick())
+  expect(transport.change).not.toHaveBeenCalled()
+  await act(async () => renderer.unmount())
+})
+
+it('requires an explicit new range when current sources cannot preserve the old selection', async () => {
+  const transport = actions()
+  transport.rangeOptions = vi.fn(async () => ({ revision: entry.revision, evidence: entry.evidence, selectedEvidenceIds: [] }))
+  const renderer = await mount(transport, { sourceState: 'unavailable', evidence: [], selectedEvidenceIds: [] })
+  await act(async () => renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick())
+  await act(async () => button(renderer, '调整录音范围').props.onClick())
+  const selects = renderer.root.findAllByType('select')
+  expect(selects.map(node => node.props.value)).toEqual(['', ''])
+  expect(button(renderer, '保存').props.disabled).toBe(true)
+  await act(async () => { selects[0]!.props.onChange({ target: { value: 's2' } }); selects[1]!.props.onChange({ target: { value: 's2' } }) })
+  expect(button(renderer, '保存').props.disabled).toBe(false)
+  await act(async () => button(renderer, '保存').props.onClick())
+  expect(transport.change).toHaveBeenCalledWith(expect.objectContaining({ change: { kind: 'range', evidenceIds: ['s2'] } }))
   await act(async () => renderer.unmount())
 })
