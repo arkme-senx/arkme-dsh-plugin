@@ -55,7 +55,11 @@ export interface TeamReceipts {
   senderExcluded?: boolean
   members: TeamReceiptMember[]
 }
-export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
+export interface TeamMembers {
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
+  avatarState?: 'pending' | 'ready' | 'unavailable'
+}
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }

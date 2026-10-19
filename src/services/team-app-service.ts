@@ -50,6 +50,7 @@ function imagePresentationIdentity(raw: string): string {
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
+  private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'>) {
@@ -327,15 +328,37 @@ export class TeamAppService {
         const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         const members = list(data.items)
-        // Reuse the profile presentation owner; optional avatars must not hide membership.
-        const avatarSignal = AbortSignal.any([AbortSignal.timeout(1_500), ...(signal ? [signal] : [])])
-        const presentations = await this.avatars.publicAvatarPresentationsByArkmeIds(
-          members.flatMap(v => v.jotmo_id ? [str(v.jotmo_id)] : []), avatarSignal,
-        ).catch(error => {
-          if (signal?.aborted) throw error
-          return new Map()
-        })
-        return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true,
+        // Membership renders immediately; the App can enrich this page separately.
+        // Cache only decoration, scoped to the viewer. Membership/permissions are
+        // still obtained above on every request, never from this cache.
+        const ids = [...new Set(members.flatMap(v => v.jotmo_id ? [str(v.jotmo_id)] : []))]
+        const presentations = new Map<string, { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback }>()
+        for (const [key, cached] of this.memberAvatars) if (cached.expires <= Date.now()) this.memberAvatars.delete(key)
+        for (const id of ids) {
+          const cached = this.memberAvatars.get(`${actor}:${id}`)
+          if (cached) presentations.set(id, cached.value)
+        }
+        let avatarState: TeamMembers['avatarState'] = ids.length ? 'pending' : 'ready'
+        if (ids.length && p.avatarMode !== 'deferred') {
+          const avatarSignal = AbortSignal.any([AbortSignal.timeout(p.avatarMode === 'wait' ? 8_000 : 1_500), ...(signal ? [signal] : [])])
+          try {
+            const fresh = await this.avatars.publicAvatarPresentationsByArkmeIds(ids, avatarSignal)
+            avatarState = 'ready'
+            for (const id of ids) {
+              const value = fresh.get(id)
+              // Missing entries are not evidence of a removed avatar.
+              if (value === undefined) { avatarState = 'unavailable'; continue }
+              presentations.set(id, value)
+              this.memberAvatars.delete(`${actor}:${id}`)
+              this.memberAvatars.set(`${actor}:${id}`, { value, expires: Date.now() + 5 * 60_000 })
+            }
+            while (this.memberAvatars.size > 1_000) this.memberAvatars.delete(this.memberAvatars.keys().next().value!)
+          } catch (error) {
+            if (signal?.aborted) throw error
+            avatarState = 'unavailable'
+          }
+        }
+        return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true, avatarState,
           ...(data.next_page_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_page_cursor }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),

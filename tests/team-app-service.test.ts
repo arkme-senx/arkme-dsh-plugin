@@ -436,7 +436,28 @@ describe('Team App owner adapter', () => {
     f.avatars.publicAvatarPresentationsByArkmeIds.mockRejectedValue(new Error('avatar unavailable'))
     const degraded = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(degraded.items).toHaveLength(2)
-    expect(degraded.items[0]?.avatarRef).toBeUndefined()
+    expect(degraded.items[0]?.avatarRef).toBe('profile-avatar')
+    expect(degraded.avatarState).toBe('unavailable')
+  })
+  it('returns membership without waiting for avatars, then enriches and caches only viewer-scoped presentation', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
+      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 }], total_count: 1,
+    } : { teams: [{ ...channel, role: 1 }] })
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const first = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' }) as TeamMembers
+    expect(first.avatarState).toBe('pending')
+    expect(f.avatars.publicAvatarPresentationsByArkmeIds).not.toHaveBeenCalled()
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', { avatarRef: 'real-avatar' }]]))
+    const fresh = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'wait' }) as TeamMembers
+    expect(fresh).toMatchObject({ avatarState: 'ready', items: [{ avatarRef: 'real-avatar' }] })
+    const cached = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' }) as TeamMembers
+    expect(cached.items[0]?.avatarRef).toBe('real-avatar')
+    // An explicit empty presentation is authoritative; a failure is not.
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', {} as { avatarRef: string }]]))
+    const cleared = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'wait' }) as TeamMembers
+    expect(cleared.items[0]?.avatarRef).toBeUndefined()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' })).rejects.toMatchObject({ code: 'team-reference-invalid' })
   })
   it('rechecks membership on every byte request and never forwards provider credentials or URLs', async () => {
     let denied = false

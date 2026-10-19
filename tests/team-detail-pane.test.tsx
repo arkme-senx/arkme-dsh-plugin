@@ -87,6 +87,66 @@ describe('TeamDetailPane', () => {
     await act(async () => { renderer?.unmount(); await tick() })
     arkmeAvatarImages.activateScope(undefined)
     renderer = undefined
+    vi.useRealTimers()
+  })
+
+  it('shows members while avatars are pending and retries enrichment without replacing the list', async () => {
+    vi.useFakeTimers()
+    const pending = page(teamRefA, '团队 A', { avatarState: 'pending' })
+    const fresh = page(teamRefA, '团队 A', { avatarState: 'ready' })
+    fresh.items[0]!.avatarRef = 'recovered-avatar'
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation !== 'team.app.members') return { mediaType: 'image/png', dataBase64: 'AA==' }
+      if (params.avatarMode === 'deferred') return pending
+      if (++attempts === 1) return { ...pending, avatarState: 'unavailable' }
+      return fresh
+    })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    const container = renderer!.root.findByProps({ className: 'arkme-team-members-container' })
+    expect(text(renderer!.root)).toContain('团队 A成员')
+    expect(text(renderer!.root)).not.toContain('正在加载团队成员')
+    expect(attempts).toBe(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); await tick() })
+    expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBe('recovered-avatar')
+    expect(renderer!.root.findByProps({ className: 'arkme-team-members-container' })).toBe(container)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(attempts).toBe(2)
+  })
+
+  it('retains known avatars on background failure and stops after bounded retries', async () => {
+    vi.useFakeTimers()
+    const pending = page(teamRefA, '团队 A', { avatarState: 'pending' })
+    pending.items[0]!.avatarRef = 'cached-avatar'
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation !== 'team.app.members') return { mediaType: 'image/png', dataBase64: 'AA==' }
+      if (params.avatarMode === 'deferred') return pending
+      attempts++; throw new Error('temporary network error')
+    })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); await tick() })
+    expect(attempts).toBe(3)
+    expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBe('cached-avatar')
+    expect(text(renderer!.root)).not.toContain('temporary network error')
+  })
+
+  it('ignores an old team avatar response after switching teams', async () => {
+    const later = deferred<TeamMembers>()
+    let avatarSignal: AbortSignal | undefined
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation !== 'team.app.members') return { mediaType: 'image/png', dataBase64: 'AA==' }
+      if (params.avatarMode === 'wait') { avatarSignal = signal; return later.promise }
+      return page(params.teamRef, params.teamRef === teamRefA ? '团队 A' : '团队 B',
+        params.teamRef === teamRefA ? { avatarState: 'pending' } : {})
+    })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { renderer!.update(<TeamDetailPane accountKey="account-a" teamRef={teamRefB} />); await tick() })
+    expect(avatarSignal?.aborted).toBe(true)
+    const old = page(teamRefA, '团队 A', { avatarState: 'ready' }); old.items[0]!.avatarRef = 'old-avatar'
+    await act(async () => { later.resolve(old); await tick() })
+    expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBeUndefined()
+    expect(text(renderer!.root)).toContain('团队 B成员')
   })
 
   it('keeps a failed leave on the existing Team detail and permits retry', async () => {
@@ -189,7 +249,7 @@ describe('TeamDetailPane', () => {
 
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.app.members', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.app.members', { teamRef: teamRefA, limit: 50, avatarMode: 'deferred' }, expect.any(AbortSignal))
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBeDefined()
     expect(text(renderer!.root)).toContain('团队 A')
     expect(text(renderer!.root)).toContain('@team_a')
@@ -308,6 +368,7 @@ describe('TeamDetailPane', () => {
     expect(mocks.callArkme).toHaveBeenLastCalledWith('team.app.members', {
       teamRef: teamRefA,
       limit: 50,
+      avatarMode: 'deferred',
       pageCursor: 'cursor_v1_next',
     }, expect.any(AbortSignal))
     expect(text(renderer!.root)).toContain('加载中…')
