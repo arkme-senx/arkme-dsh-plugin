@@ -1,6 +1,6 @@
 # 录音与聊天上下文：能力矩阵
 
-本任务基于用户指定的 dev 分支，本轮复核基线为 dev 6f7ec2f7，所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
+本任务基于用户指定的 dev 分支，本轮最终基线为 dev 3f71352d（末轮仅新增消息标记测试夹具调整），所有业务改动位于任务 worktree。后端事实归 Chat，原始录音归 Audio，附件和共享正文归 Record，推断归 Intelligent。插件只承接当前账号的安全投影和交互。
 
 | 能力面 | 入口与授权 | 完成证据 |
 | --- | --- | --- |
@@ -73,3 +73,6 @@ Audio 正式回听接口对既有 `.m4a` 切片返回 `audio/mp4`，Host 原白�
 - 证据目录：`/tmp/offline-release-loop-20261019/`（`browser-cli-e2e.log`、`browser-share.png`、`sdk.log`、`acceptance-final.log`）；全量日志 `/tmp/offline-release-loop-plugin-full.log`。
 
 测试服只读核查确认当前已发布目录 release 19 有 qwen-flash，但没有 qwen3.8-flash；未发现该模型历史 offering。真实数据候选存在，独立标注集未找到。没有改动测试服配置、开关或账号，没有把测试服与本地隔离链路混为一谈。
+
+
+末轮同步 dev 3f71352d（只更新消息标记测试夹具）后，4 workers 重跑出现 4 个既有发布脚本测试的默认 5 秒超时；未发生断言失败。代码、断言和超时设置不变，1 worker 定向 26 项通过，随后 2 workers 完整重跑 **12,678 通过 / 21 跳过、零失败**（1,079 文件通过 / 16 跳过）。保留失败日志 `/tmp/offline-release-loop-plugin-final-base.log`、定向日志 `...-final-focused.log` 和最终全量日志 `...-final-low-concurrency.log`。本次基线合并没有改变已验证 tgz 的生产源码。
