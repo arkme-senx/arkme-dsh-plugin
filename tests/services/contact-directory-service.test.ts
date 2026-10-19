@@ -62,6 +62,37 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it('preserves generated avatars through list, detail, remark saves and temporary profile outages', async () => {
+    const avatarFallback = { kind: 'phone_default', colorIndex: 3, label: '林' }
+    const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'chat-88' }], has_more: false },
+      profiles: new Map([[88, { nickname: '林', avatarFallback }]]) })
+    const first = await f.service.list('contacts')
+    const contact = first.items[0]!
+    if (contact.kind !== 'contact') throw Error('expected contact')
+    expect(contact.avatarFallback).toEqual(avatarFallback)
+    expect((await f.service.contactProfile(contact.contactRef)).avatarFallback).toEqual(avatarFallback)
+    f.runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { user_id: 88, chat_session_uid: 'chat-88', remark: '同事' } })
+    expect((await f.service.updateContactRemark(contact.contactRef, '同事')).avatarFallback).toEqual(avatarFallback)
+    f.profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-timeout', '繁忙', true, 502, { recovery: { owner: 'host', attempts: 3, exhausted: true } }))
+    expect((await f.service.list('contacts')).items[0]).toMatchObject({ avatarFallback })
+  })
+
+  it('replaces an old photo with a generated avatar and clears a removed avatar', async () => {
+    const profiles = new Map([[88, { nickname: '林', avatarUrl: 'https://photo.invalid' } as Record<string, unknown>]])
+    const f = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false }, profiles })
+    const contact = (await f.service.list('contacts')).items[0]!
+    if (contact.kind !== 'contact') throw Error('expected contact')
+    expect(contact.avatarRef).toBe('avatar-ref-88')
+    const avatarFallback = { kind: 'phone_default', colorIndex: 2, label: '林' }
+    profiles.set(88, { nickname: '林', avatarFallback })
+    const generated = await f.service.contactProfile(contact.contactRef)
+    expect(generated.avatarRef).toBeUndefined()
+    expect(generated.avatarFallback).toEqual(avatarFallback)
+    profiles.set(88, { nickname: '林' })
+    const cleared = await f.service.contactProfile(contact.contactRef)
+    expect(cleared.avatarRef).toBeUndefined()
+    expect(cleared.avatarFallback).toBeUndefined()
+  })
   it.each(['contacts', 'bots'] as const)('continues %s pagination after fresh-cache expiry without rescanning', async section => {
     vi.useFakeTimers()
     const { service, runtime } = fixture({

@@ -8,6 +8,8 @@ import type { ArkmeTimelineItem } from '../types.js'
 import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import type { MessageUnderline } from '../message-annotations.js'
 import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
+import { findSelectedMessageText } from './message-selection-search.js'
+import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './ArkmeSelectedTextReplace.js'
 
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
@@ -115,7 +117,7 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, canReplace, prepareReplace }: {
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
   replyLabel?: string | undefined
@@ -123,7 +125,10 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   onUnderline?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => Promise<string | undefined>) | undefined
   getMarks?: ((target: MessageSelectionTarget) => MessageUnderline[]) | undefined
   onRemoveMark?: ((target: MessageSelectionTarget, mark: MessageUnderline) => Promise<string | undefined>) | undefined
+  canReplace?: ((target: MessageSelectionTarget) => boolean) | undefined
+  prepareReplace?: PrepareSelectedTextReplace | undefined
 } = {}) {
+  const [replacing, setReplacing] = useState<{ target: MessageSelectionTarget; quote: ArkmeMessageQuote; rect: DOMRect }>()
   const [verified, setVerified] = useState<{ snapshot: Snapshot; quote: ArkmeMessageQuote }>()
   const [snapshot, setSnapshot] = useState<Snapshot>()
   const [notice, setNotice] = useState('')
@@ -244,7 +249,10 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     const top = rect.top - box.height - 8 >= 8 ? rect.top - box.height - 8 : rect.bottom + 8
     setPosition({ left, top: Math.max(8, Math.min(window.innerHeight - box.height - 8, top)) })
   }, [snapshot, notice, verified])
-  if (!snapshot || typeof document === 'undefined') return null
+  if (typeof document === 'undefined') return null
+  if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
+    {...replacing} prepare={prepareReplace} onClose={() => setReplacing(undefined)} />
+  if (!snapshot) return null
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const quote = verified?.snapshot === snapshot ? verified.quote : undefined
   const marks = quote && replyTarget ? (getMarks?.(replyTarget) ?? []).filter(mark => mark.state === 'available'
@@ -263,6 +271,21 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   }
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
     && replyTarget.item.status === 1 && !!replyTarget.item.messageActionRef
+  const find = () => {
+    if (!stillValid(snapshot) || !replySourceRef) return
+    if (!findSelectedMessageText(replySourceRef, snapshot.text)) { setNotice('当前对话暂不支持查找'); return }
+    document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
+  }
+  const replace = async () => {
+    if (!replyTarget || replyTarget.sourceRef !== replySourceRef || !canReplace?.(replyTarget) || !prepareReplace || !stillValid(snapshot)) return
+    try {
+      const item = { ...replyTarget.item }, source = quoteSourceContent(item)
+      const anchor = { ...captureQuoteAnchor(snapshot.start, snapshot.range, snapshot.text, item), sourceDigest: await quoteDigest(item) }
+      if (!stillValid(snapshot) || current.current !== snapshot || quoteSourceContent(snapshot.startEntry!.reply!.item) !== source) return
+      setReplacing({ target: { ...replyTarget, item }, quote: anchor, rect: snapshot.rect })
+      document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
+    } catch (error) { setNotice(error instanceof Error ? error.message : '无法读取选区，请重新选择') }
+  }
   const reply = async (underline = false) => {
     if ((!canReply && !underline) || !replyTarget || replyTarget.sourceRef !== replySourceRef || !stillValid(snapshot)) return
     try {
@@ -332,6 +355,10 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       title={ownMark ? `取消你对“${ownMark.anchor.text}”的标记` : undefined}
       style={{ ...buttonStyle, ...(ownMark ? { color: arkmeTheme.info, background: arkmeTheme.active } : {}) }}
       onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(ownMark ? '取消标记' : '标记')}</button>}
+    {replySourceRef && snapshot.startEntry?.reply?.sourceRef === replySourceRef && snapshot.endEntry?.reply?.sourceRef === replySourceRef
+      && <button type="button" style={buttonStyle} onClick={find}>{tr('查找')}</button>}
+    {prepareReplace && replyTarget && replyTarget.sourceRef === replySourceRef && canReplace?.(replyTarget)
+      && <button type="button" style={buttonStyle} onClick={() => { void replace() }}>{tr('替换')}</button>}
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
     </div>
     {(authors.length > 0 || (markStorage === 'local' && onUnderline && replyTarget?.sourceRef === replySourceRef)) && <div data-arkme-mark-authors style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}

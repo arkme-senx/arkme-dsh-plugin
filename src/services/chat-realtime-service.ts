@@ -232,6 +232,7 @@ export class ChatRealtimeService {
     this.chatClientListeners.clear()
   }
 
+  offlineContextInvalidation?: () => Promise<void>
   selfRoleInvalidation?: () => Promise<void>
 
   startChatRealtime(): () => void {
@@ -327,6 +328,10 @@ export class ChatRealtimeService {
       void this.reconcileChatConnectionBaseline(generation, notice.connectionUserId)
       void this.refreshAttentionSummary()
       void this.invalidateRecordProjection()
+      return
+    }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'offline_context') {
+      void this.invalidateOfflineContextProjection(notice.connectionUserId, notice.connectionSignal)
       return
     }
     if (notice.cause === 'projection-invalidation'
@@ -566,6 +571,19 @@ export class ChatRealtimeService {
       })
     } catch (error) {
       console.warn('dsh-arkme: Chat read receipt invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
+  async invalidateOfflineContextProjection(userId: number | undefined, signal?: AbortSignal): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (this.disposed || signal?.aborted || !session || session.userId !== userId) return
+      await this.offlineContextInvalidation?.()
+      const current = await this.runtime.sessionStore.read()
+      if (this.disposed || signal?.aborted || current?.userId !== userId || current.refreshToken !== session.refreshToken) return
+      this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'offline_context', revision: this.nextChatClientRevision() })
+    } catch (error) {
+      console.warn('dsh-arkme: Offline context invalidation failed:', safeFailureMessage(error))
     }
   }
 

@@ -111,7 +111,7 @@ it.each([false,true])('paints background (native=%s) and opens the shared toolba
     const toolbar=document.querySelector('[role="toolbar"]')!
     expect(toolbar.textContent).toContain('你、宏顺')
     expect(toolbar.textContent).toContain('仅本机')
-    expect([...toolbar.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','✓ 取消标记','延展'])
+    expect([...toolbar.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','✓ 取消标记','查找','延展'])
     expect(document.getSelection()?.toString()).toBe('重点')
     const cancel=toolbar.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!
     await act(async()=>cancel.click())

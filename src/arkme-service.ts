@@ -3,6 +3,8 @@ import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
+import { OfflineContextService } from './services/offline-context-service.js'
+import type { OfflineContextRequest } from './offline-context-contract.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
@@ -391,6 +393,7 @@ export class ArkmeService {
   private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly offlineContexts: OfflineContextService
   private readonly recordingWorkflowService: RecordingWorkflowService
   private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
@@ -505,11 +508,16 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
-    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamApp = new TeamAppService(this.runtime, this.profile, {
+      openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
+    }, {
+      privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+    })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      identifyReply: (conversation, message, user) => this.teamApp.replyKey(conversation, message, user),
       execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
     })
     this.teamDelivery.start()
@@ -538,6 +546,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.offlineContexts = new OfflineContextService(this.runtime,this.source,this.media, async userId => await this.realtime.invalidateOfflineContextProjection(userId))
     this.recordingWorkflowService = new RecordingWorkflowService(this.runtime)
     this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
@@ -615,6 +624,7 @@ export class ArkmeService {
         void this.realtime.refreshAttentionSummary()
       },
       async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+    this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
@@ -634,7 +644,7 @@ export class ArkmeService {
       this.messageActions,
       this.callHistory,
     )
-    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
         ...(sourceKeys?.length ? { sourceKeys } : {}) })
@@ -1067,6 +1077,7 @@ export class ArkmeService {
         recordingEntities: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        offlineContextV1:true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
         durableChatTimeline: true,
@@ -1210,6 +1221,7 @@ export class ArkmeService {
     this.extensionReview.dispose()
     this.media.dispose()
     this.recordingEntitiesOwner.dispose()
+    this.offlineContexts.dispose()
     this.explore.dispose()
     this.calendarDayReview.dispose()
     this.conversationActivity.dispose()
@@ -1526,6 +1538,7 @@ export class ArkmeService {
     return await this.source.renameTopic(sourceRef, title)
   }
 
+  offlineContext(input: OfflineContextRequest,signal?:AbortSignal) { return this.offlineContexts.offlineContext(input,signal) }
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }

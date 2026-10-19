@@ -9,7 +9,7 @@ import type { ArkmeTimelinePage } from '../src/types.js'
 
 const page = (index: number, retired = false): ArkmeTimelinePage => ({
   source: { sourceRef: 'opaque', kind: 'private_chat', displayName: 'Peer' }, items: [], hasMore: false,
-  unified: { protocolVersion: 1, events: Array.from({ length: 40 }, (_, n) => ({
+  unified: { protocolVersion: 2, events: Array.from({ length: 40 }, (_, n) => ({
     eventId: `${index}:${n}`, source: 'interwoven', occurredAtMillis: 10, orderTie: `${n}`,
     contentStatus: 'available', kind: 'notice', text: `${index}:${n}:${'x'.repeat(1000)}`,
   })), sources: CHAT_TIMELINE_SOURCES.map(source => ({ source,

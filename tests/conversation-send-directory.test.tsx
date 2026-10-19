@@ -30,7 +30,7 @@ import type {
 } from '../src/types.js'
 
 function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], moments: import('../src/types.js').ArkmeInterwovenMention[] = [], hasMore = false, cursor?: { beforeSequence: number }) {
-  const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 1, events: [
+  const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: [
     ...items.map(item => ({ kind: 'message' as const, eventId: item.itemUid, source: 'messages' as const, occurredAtMillis: item.sendAtMillis,
       orderTie: String(item.sequence ?? 0).padStart(12, '0'), contentStatus: 'available' as const, item: { ...item, timelineEventId: item.itemUid } })),
     ...moments.map(item => ({ kind: 'moment' as const, eventId: item.momentId, source: 'interwoven' as const, occurredAtMillis: item.occurredAtMillis,
@@ -437,7 +437,7 @@ describe('conversation send directory projection', () => {
         const query = params?.cursor?.unified
         if (query?.cacheOnly) throw new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'no cache', retryable: false })
         modes.push(query?.mode ?? 'initial')
-        const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 1,
+        const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2,
           events: [{ eventId: 'stable-event', source: 'world_public', occurredAtMillis: 100, orderTie: 'stable', contentStatus: 'available', kind: 'external', title: '公开快记', text }],
           sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'world_public' ? 'ready' : 'not_applicable', itemCount: source === 'world_public' ? 1 : 0 })),
           complete: true, windowTokens: ['opaque-window'], hasMore: false, olderHasMore: false, newerHasMore: false }
@@ -1866,6 +1866,7 @@ describe('conversation send directory projection', () => {
     const localStorage = new Map<string, string>()
     const sessionStorage = new Map<string, string>()
     vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(() => true),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,
