@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { isValidArkoPendingTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from '../arko-turn-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeArkoAskResult,
@@ -20,6 +22,7 @@ import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 
 export interface ArkoImagePorts {
+  withReferences?<T>(refs: readonly string[], userId: number, persist: () => Promise<T>): Promise<T>
   read(fileRef: string): Promise<{ file: ArkmeLocalFile }>
   upload(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]>
   project(raw: unknown, userId: number): ArkmeContentBlock[]
@@ -318,7 +321,7 @@ export class ArkoService {
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
       '/api/v1/qa/message-list',
-      { limit: normalizedLimit, offset: normalizedOffset, session_type: ARKO_AGENT_DIRECT_SESSION_TYPE },
+      { limit: normalizedLimit, offset: normalizedOffset, session_type: ARKO_AGENT_DIRECT_SESSION_TYPE, client_capabilities: ['dsh.arko.images.v1'] },
       session,
       signal,
     )
@@ -334,7 +337,7 @@ export class ArkoService {
         const blocks = this.images?.project({ media_display_items: attachments.map(attachment => ({ ...attachment, file_kind: 1 })) }, session.userId) ?? []
         // Keep an explicit placeholder if the original is deleted or cannot be resolved.
         const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock =>
-          blocks.find(block => block.fileAssetUid === attachment.file_asset_uid) ?? {
+          (attachment.availability === 'unavailable' ? undefined : blocks.find(block => block.fileAssetUid === attachment.file_asset_uid)) ?? {
             kind: 'image', mediaRef: '', fileAssetUid: stringValue(attachment.file_asset_uid),
             fileName: stringValue(attachment.file_name) || '图片', mimeType: stringValue(attachment.mime_type),
             size: numberValue(attachment.size), sortOrder,
@@ -381,7 +384,20 @@ export class ArkoService {
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
       throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
     }
-    const sessionId = options.sessionId ?? (await this.arkoEnsureSession(options.signal)).sessionId
+    const clientTurnUid=options.clientTurnUid?.trim() || randomUUID()
+    const previous=await this.runtime.stateStore.arkoTurn(session.userId,clientTurnUid)
+    if (previous!==undefined) {
+      const turn=previous.turn
+      if (turn.text!==text || (options.sessionId!==undefined && turn.sessionId!==options.sessionId)
+        || JSON.stringify(turn.images?.map(file=>file.fileRef) ?? [])!==JSON.stringify(options.imageFileRefs ?? [])
+        || turn.replyToRunUid!==(options.replyToRunUid?.trim() || undefined)
+        || turn.replyToAssistantMsgId!==options.replyToAssistantMsgId
+        || (options.modelRouteKey!==undefined && turn.modelRouteKey!==options.modelRouteKey)) {
+        throw new ArkmePluginError('arko-turn-conflict','本轮发送内容已冻结，请确认原请求结果',false)
+      }
+      if (previous.request!==undefined) return this.postArkoTurn(session,previous,options.waitMillis,options.signal)
+    }
+    const sessionId=previous?.turn.sessionId ?? options.sessionId ?? (await this.arkoEnsureSession(options.signal)).sessionId
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const replyToRunUid = options.replyToRunUid?.trim() ?? ''
     const replyToAssistantMsgId = options.replyToAssistantMsgId
@@ -391,7 +407,7 @@ export class ArkoService {
     if (hasContinuationRun !== hasContinuationMessage) {
       throw new ArkmePluginError('arko-continuation-invalid', 'Arko 续接参数不完整', false)
     }
-    let modelRouteKey = options.modelRouteKey?.trim() ?? ''
+    let modelRouteKey = previous?.turn.modelRouteKey ?? options.modelRouteKey?.trim() ?? ''
     if (hasContinuationRun && modelRouteKey !== '') {
       throw new ArkmePluginError('arko-continuation-model-invalid', '继续 Arko 任务时不能切换模型', false)
     }
@@ -408,21 +424,26 @@ export class ArkoService {
     }
     const imageFileRefs = options.imageFileRefs ?? []
     let attachments: ArkmeUploadedAsset[] = []
+    let files: ArkmeLocalFile[] = previous?.turn.images ?? []
     if (imageFileRefs.length > 0) {
-      if (hasContinuationRun) throw new ArkmePluginError('arko-image-continuation-unavailable', '当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留', false)
+      if (hasContinuationRun && !(await this.arkoRunStatus(sessionId,replyToRunUid,options.signal)).imageInputSupported) {
+        throw new ArkmePluginError('arko-image-continuation-unavailable','当前任务使用的模型不支持图片，图片已保留',false)
+      }
       if (imageFileRefs.length > 9 || new Set(imageFileRefs).size !== imageFileRefs.length
         || imageFileRefs.some(ref => !/^arkme-file-v1\.[0-9a-f-]{36}$/.test(ref))) {
         throw new ArkmePluginError('arko-image-invalid', '请选择有效的图片附件', false)
       }
       // A cached UI capability must not allow an obsolete backend to accept text only.
-      const catalog = await this.arkoModelCatalog(options.signal)
-      const capability = catalog.options.find(option => option.routeKey === modelRouteKey)?.imageInput
+      const capability = hasContinuationRun ? { protocolVersion: 1 as const, maxImages: 9, maxImageBytes: 20*1024*1024, maxTotalBytes: 180*1024*1024, mimeTypes: [...ARKO_IMAGE_MIME_TYPES] } : (await this.arkoModelCatalog(options.signal)).options.find(option => option.routeKey === modelRouteKey)?.imageInput
       if (capability === undefined || this.images === undefined) {
         throw new ArkmePluginError('arko-images-unavailable', arkoImageInputError(undefined, [{ mimeType: '', size: 0, fileName: '' }])!, false)
       }
-      const files = await Promise.all(imageFileRefs.map(async ref => (await this.images!.read(ref)).file))
+      files = await Promise.all(imageFileRefs.map(async ref => (await this.images!.read(ref)).file))
       const invalid = arkoImageInputError(capability, files)
       if (invalid !== undefined) throw new ArkmePluginError('arko-image-invalid', invalid, false)
+      const turn=previous?.turn ?? this.newPendingTurn(session.userId,sessionId,clientTurnUid,text,files,modelRouteKey,replyToRunUid,replyToAssistantMsgId)
+      if (this.images.withReferences===undefined) throw new ArkmePluginError('arko-recovery-unavailable','当前插件缺少可靠图片恢复能力，请更新插件',false)
+      await this.images.withReferences(imageFileRefs,session.userId,()=>this.runtime.stateStore.prepareArkoTurn(session.userId,turn))
       attachments = await this.images.upload(imageFileRefs, options.signal)
       if (attachments.length !== imageFileRefs.length) throw new ArkmePluginError('arko-image-upload-incomplete', '图片上传未完成，请重试', true)
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
@@ -433,9 +454,7 @@ export class ArkoService {
       content: text,
       extra: '{}',
       ...(timezone === undefined || timezone.trim() === '' ? {} : { tz_inna: timezone.trim() }),
-      ...(options.clientTurnUid === undefined || options.clientTurnUid.trim() === ''
-        ? {}
-        : { client_turn_uid: options.clientTurnUid.trim() }),
+      client_turn_uid:clientTurnUid,
       ...(hasContinuationRun ? {
         reply_to_run_uid: replyToRunUid,
         reply_to_assistant_msg_id: replyToAssistantMsgId,
@@ -448,11 +467,42 @@ export class ArkoService {
       }),
     }
     if (modelRouteKey !== '') body.model_route_key = modelRouteKey
+    const turn=previous?.turn ?? this.newPendingTurn(session.userId,sessionId,clientTurnUid,text,files,modelRouteKey,replyToRunUid,replyToAssistantMsgId)
+    await this.runtime.stateStore.prepareArkoTurn(session.userId,turn,body)
+    return this.postArkoTurn(session,{turn,request:body},options.waitMillis,options.signal)
+  }
+
+  private newPendingTurn(userId:number,sessionId:number,clientTurnUid:string,text:string,images:ArkmeLocalFile[],modelRouteKey:string,replyToRunUid:string,replyToAssistantMsgId?:number):ArkmeArkoPendingTurn {
+    return {userId,sessionId,clientTurnUid,text,...(images.length?{images}:{}),createdAtMillis:Date.now(),localUserMessageId:randomUUID(),localAssistantMessageId:randomUUID(),
+      ...(replyToRunUid ? {replyToRunUid,replyToAssistantMsgId:replyToAssistantMsgId!} : modelRouteKey ? {modelRouteKey} : {})}
+  }
+  async arkoPendingTurns(expectedUserId?:number):Promise<ArkmeArkoPendingTurn[]> {
+    const session=await this.runtime.requireSession()
+    if (expectedUserId!==undefined && session.userId!==expectedUserId) throw new ArkmePluginError('arko-account-changed','账号已切换',false)
+    return this.runtime.stateStore.arkoPendingTurns(session.userId)
+  }
+  async arkoPrepareTurn(turn:ArkmeArkoPendingTurn):Promise<void> {
+    const session=await this.runtime.requireSession()
+    if (!isValidArkoPendingTurn(turn,session.userId)) throw new ArkmePluginError('arko-turn-invalid','Arko 待确认消息无效',false)
+    const refs=turn.images?.map(file=>file.fileRef) ?? []
+    if (refs.length) {
+      if (!this.images?.withReferences) throw new ArkmePluginError('arko-recovery-unavailable','可靠图片恢复能力不可用',false)
+      await this.images.withReferences(refs,session.userId,()=>this.runtime.stateStore.prepareArkoTurn(session.userId,turn))
+    } else await this.runtime.stateStore.prepareArkoTurn(session.userId,turn)
+  }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number):Promise<void> {
+    const session=await this.runtime.requireSession()
+    if (expectedUserId!==undefined && session.userId!==expectedUserId) throw new ArkmePluginError('arko-account-changed','账号已切换',false)
+    await this.runtime.stateStore.acknowledgeArkoTurn(session.userId,uid)
+  }
+  private async postArkoTurn(session:ArkmeSessionCredentials,stored:ArkmeArkoStoredTurn,waitMillis?:number,signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    const body=stored.request!,sessionId=stored.turn.sessionId
+    if ((await this.runtime.requireSession()).userId!==stored.turn.userId) throw new ArkmePluginError('arko-account-changed','账号已切换，本次发送已取消',false)
     const accepted = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
-      '/api/v1/qa/new-msg-v2',
+      Array.isArray(body.attachments) && body.attachments.length ? '/api/v1/qa/new-msg-v3' : '/api/v1/qa/new-msg-v2',
       body,
       session,
-      options.signal,
+      signal,
     )
     const userMsgId = numberValue(accepted.user_msg_id)
     const assistantMsgId = numberValue(accepted.assistant_msg_id)
@@ -466,14 +516,20 @@ export class ArkoService {
     if (runUid === '') {
       throw new ArkmePluginError('arko-ask-contract-invalid', 'Arko 消息响应缺少运行标识', true, 502)
     }
+    // The server receipt is authoritative even if the local acknowledgement
+    // cannot reach disk. Retaining the frozen intent is safe: replay returns
+    // this same accepted turn and never creates a second user message.
+    try {
+      await this.runtime.stateStore.acknowledgeArkoTurn(stored.turn.userId,stored.turn.clientTurnUid)
+    } catch { /* Recover the accepted turn through its original identity. */ }
     let events: { events: string[]; timedOut: boolean }
     try {
       events = await this.authenticatedIntelligentSseEvents(
         '/api/v1/qa/stream-v2',
         { session_id: acceptedSessionId, user_msg_id: userMsgId, assistant_msg_id: assistantMsgId },
-        options.waitMillis ?? 25_000,
+        waitMillis ?? 25_000,
         session,
-        options.signal,
+        signal,
       )
     } catch (error) {
       if (error instanceof ArkmePluginError && error.code === 'arko-stream-cancelled') throw error
@@ -517,6 +573,7 @@ export class ArkoService {
       sequence,
       surfaceAssistantMsgId,
       retryable: booleanValue(data.retryable),
+      imageInputSupported:booleanValue(data.image_input_supported),
       ...(stringValue(data.error_code).trim() === '' ? {} : { errorCode: stringValue(data.error_code).trim() }),
       ...(stringValue(data.retry_of_run_uid).trim() === '' ? {} : { retryOfRunUid: stringValue(data.retry_of_run_uid).trim() }),
       ...(clientAction === undefined ? {} : { clientAction }),

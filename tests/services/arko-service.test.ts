@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync,rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ArkmeStateStore } from '../../src/state-store.js'
+const testDirectories:string[]=[]
+function testStateStore(){const root=mkdtempSync(join(tmpdir(),'arko-service-'));testDirectories.push(root);return new ArkmeStateStore(root)}
+afterEach(()=>{for(const root of testDirectories.splice(0))rmSync(root,{recursive:true,force:true})})
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ArkoService } from '../../src/services/arko-service.js'
 import { LocalMessageActionCapabilityCodec } from '../../src/services/message-action-infrastructure.js'
@@ -27,20 +34,29 @@ function messageActions(runtime: ServiceRuntime): MessageActionService {
 describe('ArkoService', () => {
   function imageFixture(imageInput: unknown = { enabled: true, protocol_version: 1, max_images: 2, max_image_bytes: 1024, max_total_bytes: 2048, mime_types: ['image/png'] }) {
     const sessions: ArkmeSessionStore = { async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
-    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, async () => new Response('data: {"tail":{"status":"completed"}}\n\n', { headers: { 'Content-Type': 'text/event-stream' } }))
+    const runtime = new ServiceRuntime(config, sessions, testStateStore(), async () => new Response('data: {"tail":{"status":"completed"}}\n\n', { headers: { 'Content-Type': 'text/event-stream' } }))
     const calls = vi.fn(async (path: string, body: unknown) => {
       if (path.endsWith('/model/list')) return { default_route_key: 'deepseek/flash', effective_route_key: 'deepseek/flash', selection_source: 'default',
         items: [{ route_key: 'deepseek/flash', provider: 'deepseek', display_name: 'Flash', description: '', selected: true, image_input: imageInput }] }
-      if (path.endsWith('/new-msg-v2')) return { session_id: 88, user_msg_id: 101, assistant_msg_id: 102, run_uid: 'run-image' }
+      if (path.endsWith('/new-msg-v3')) return { session_id: 88, user_msg_id: 101, assistant_msg_id: 102, run_uid: 'run-image' }
+      if(path.endsWith('/runs/status'))return {run_uid:'run',status:'waiting_user',sequence:1,surface_assistant_msg_id:5,image_input_supported:false}
       throw new Error(`Unexpected ${path}`)
     })
     runtime.authenticatedIntelligentPost = calls as never
     const read = vi.fn(async (fileRef: string) => ({ file: { fileRef, fileName: 'test.png', mimeType: 'image/png', size: 128, fileKind: 1 as const } }))
     const upload = vi.fn(async (refs: readonly string[]) => refs.map((_, index) => ({ fileAssetUid: `asset-${index}`, fileName: 'test.png', mimeType: 'image/png', size: 128, fileKind: 1 as const })))
-    const service = new ArkoService(runtime, new ProfileService(runtime), undefined, { read, upload, project: () => [] })
+    const service = new ArkoService(runtime, new ProfileService(runtime), undefined, { read, upload, project: () => [],withReferences:async(_refs,_user,persist)=>persist() })
     return { service, runtime, calls, read, upload }
   }
   const imageRef = 'arkme-file-v1.11111111-1111-4111-8111-111111111111'
+
+  it('returns the accepted receipt even if clearing local recovery fails', async () => {
+    const { service, runtime } = imageFixture()
+    vi.spyOn(runtime.stateStore, 'acknowledgeArkoTurn').mockRejectedValue(new Error('disk unavailable'))
+    await expect(service.arkoAsk('', { sessionId: 88, modelRouteKey: 'deepseek/flash', imageFileRefs: [imageRef] }))
+      .resolves.toMatchObject({ sessionId: 88, userMsgId: 101, assistantMsgId: 102, runUid: 'run-image' })
+    expect(await runtime.stateStore.arkoPendingTurns(10001)).toHaveLength(1)
+  })
 
   it.each([null, { enabled: true, protocol_version: 2 }, { enabled: true, protocol_version: 1, max_images: 9 }])('does not upload or send text when image capability is absent or incomplete: %j', async capability => {
     const { service, calls, read, upload } = imageFixture(capability)
@@ -62,10 +78,10 @@ describe('ArkoService', () => {
   it('sends image-only input with ordered owned assets, explicit protocol and the original retry identity', async () => {
     const { service, calls, upload } = imageFixture()
     const refs = [imageRef, imageRef.replace('11111111', '22222222')]
-    await service.arkoAsk('', { sessionId: 88, modelRouteKey: 'deepseek/flash', imageFileRefs: refs, clientTurnUid: 'same-turn', expectedUserId: 10001 })
+    await service.arkoAsk('', { sessionId: 88, modelRouteKey: 'deepseek/flash', imageFileRefs: refs, clientTurnUid: '11111111-1111-4111-8111-111111111111', expectedUserId: 10001 })
     expect(upload).toHaveBeenCalledWith(refs, undefined)
-    expect(calls.mock.calls.find(([path]) => path.endsWith('/new-msg-v2'))?.[1]).toMatchObject({
-      content: '', client_turn_uid: 'same-turn', attachments_protocol_version: 1, client_capabilities: ['dsh.arko.v1', 'dsh.arko.images.v1'],
+    expect(calls.mock.calls.find(([path]) => path.endsWith('/new-msg-v3'))?.[1]).toMatchObject({
+      content: '', client_turn_uid: '11111111-1111-4111-8111-111111111111', attachments_protocol_version: 1, client_capabilities: ['dsh.arko.v1', 'dsh.arko.images.v1'],
       attachments: [{ type: 'image', file_asset_uid: 'asset-0' }, { type: 'image', file_asset_uid: 'asset-1' }],
     })
     expect(JSON.stringify(calls.mock.calls)).not.toContain('arkme-file-v1')
@@ -76,6 +92,26 @@ describe('ArkoService', () => {
     await expect(service.arkoAsk('', { sessionId: 88, imageFileRefs: [imageRef], expectedUserId: 20002 })).rejects.toMatchObject({ code: 'arko-account-changed' })
     await expect(service.arkoAsk('', { sessionId: 88, imageFileRefs: [imageRef], replyToRunUid: 'run', replyToAssistantMsgId: 5 })).rejects.toMatchObject({ code: 'arko-image-continuation-unavailable' })
     expect(upload).not.toHaveBeenCalled()
+  })
+
+  it('replays a frozen uploaded request after an ambiguous response without local files or catalog access', async()=>{
+    const {service,runtime,calls,read,upload}=imageFixture()
+    const post=runtime.authenticatedIntelligentPost.bind(runtime),uid='11111111-1111-4111-8111-111111111111'
+    let lost=true
+    runtime.authenticatedIntelligentPost=async(path,body,...rest)=>{
+      if(path.endsWith('/new-msg-v3') && lost){lost=false;await post(path,body,...rest);throw new Error('response lost')}
+      return post(path,body,...rest)
+    }
+    const options={sessionId:88,modelRouteKey:'deepseek/flash',imageFileRefs:[imageRef],clientTurnUid:uid}
+    await expect(service.arkoAsk('',options)).rejects.toThrow('response lost')
+    read.mockRejectedValue(new Error('local file gone'))
+    const restarted=new ArkoService(runtime,new ProfileService(runtime),undefined,{read,upload,project:()=>[],withReferences:async(_refs,_user,persist)=>persist()})
+    const modelCalls=calls.mock.calls.filter(([path])=>path.endsWith('/model/list')).length
+    await restarted.arkoAsk('',options)
+    expect(calls.mock.calls.filter(([path])=>path.endsWith('/model/list'))).toHaveLength(modelCalls)
+    expect(read).toHaveBeenCalledTimes(1);expect(upload).toHaveBeenCalledTimes(1)
+    const attempts=calls.mock.calls.filter(([path])=>path.endsWith('/new-msg-v3'))
+    expect(attempts).toHaveLength(2);expect(attempts[1]![1]).toEqual(attempts[0]![1])
   })
 
   it('keeps an image-only historical message visible when media is unavailable', async () => {
@@ -91,7 +127,7 @@ describe('ArkoService', () => {
   })
   it('keeps a retired personal selection explicit with authoritative point prices', async () => {
     const sessions: ArkmeSessionStore = { async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
-    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, testStateStore())
     runtime.authenticatedIntelligentPost = async () => ({
       default_route_key: 'managed-ai/flash-custom', effective_route_key: 'managed-ai/retired-pro', selection_source: 'unavailable',
       items: [{ route_key: 'managed-ai/flash-custom', display_name: 'Flash', provider: 'managed-ai', description: '日常使用', cost_description: '报价来自当前发布目录', recommended: true, selected: false }],
@@ -102,7 +138,7 @@ describe('ArkoService', () => {
 
   it('rejects an invalid model route before owner access', async () => {
     const sessions: ArkmeSessionStore = { async read() { return undefined }, async write() {}, async delete() {} }
-    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, testStateStore())
     const service = new ArkoService(runtime, new ProfileService(runtime))
     await expect(service.arkoActivateModel('../invalid')).rejects.toMatchObject({ code: 'arko-model-route-invalid' })
   })
@@ -113,7 +149,7 @@ describe('ArkoService', () => {
       async write() {},
       async delete() {},
     }
-    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, testStateStore())
     runtime.authenticatedIntelligentPost = async () => ({
       message_ls: [{
         id: 101,
@@ -138,7 +174,7 @@ describe('ArkoService', () => {
       async write() {},
       async delete() {},
     }
-    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'arko-action-key' } } as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, Object.assign(testStateStore(),{ async uniqueCode() { return 'arko-action-key' } }))
     const paths: string[] = []
     runtime.authenticatedIntelligentPost = async path => {
       paths.push(path)
@@ -157,7 +193,7 @@ describe('ArkoService', () => {
       async write() {},
       async delete() {},
     }
-    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'arko-action-key' } } as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, Object.assign(testStateStore(),{ async uniqueCode() { return 'arko-action-key' } }))
     const paths: string[] = []
     runtime.authenticatedIntelligentPost = async path => {
       paths.push(path)
@@ -189,7 +225,7 @@ describe('ArkoService', () => {
       async write() {},
       async delete() {},
     }
-    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'arko-action-key' } } as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, Object.assign(testStateStore(),{ async uniqueCode() { return 'arko-action-key' } }))
     runtime.authenticatedIntelligentPost = async () => ({
       message_ls: [{
         id: 101, session_id: 88, role: 2, content: '用户问题', send_at: 1_786_000_100, status: 1,
@@ -216,7 +252,7 @@ describe('ArkoService', () => {
       async write() {},
       async delete() {},
     }
-    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'arko-action-key' } } as StateStore)
+    const runtime = new ServiceRuntime(config, sessions, Object.assign(testStateStore(),{ async uniqueCode() { return 'arko-action-key' } }))
     runtime.authenticatedIntelligentPost = async () => ({
       session_id: 88,
       message_ls: [

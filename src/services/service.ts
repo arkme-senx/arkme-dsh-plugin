@@ -31,6 +31,11 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
+arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
+prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>
+acknowledgeArkoTurn(userId:number,uid:string):Promise<void>
+arkoFileRefs(userId:number):Promise<string[]>
   readDayReviewPending?(scope: string, day: string): Promise<unknown>
   prepareDayReview?(scope: string, day: string, request: Record<string, unknown>): Promise<void>
   acknowledgeDayReview?(scope: string, day: string, requestId: string): Promise<void>
@@ -747,7 +752,11 @@ export class ServiceRuntime {
     // budget. Keep its receipt reachable instead of aborting at the 30s default.
     const publishing = baseUrl === this.config.extensionPublishBaseUrl?.trim()
       && ['/api/v1/extensions/publish-session/complete', '/api/v1/extensions/publish-session/resume'].includes(path)
-    const timeout = setTimeout(() => controller.abort(), publishing ? Math.max(100_000, this.config.requestTimeoutMs) : this.config.requestTimeoutMs)
+    const imageIntake = baseUrl === this.config.intelligentBaseUrl && path === '/api/v1/qa/new-msg-v3'
+    // Intake verifies the owned originals before acceptance (a two-minute
+    // server budget). Keep that receipt reachable without a new user setting.
+    const requestBudget = imageIntake ? 150_000 : publishing ? 100_000 : 0
+    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, this.config.requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {

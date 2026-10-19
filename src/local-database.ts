@@ -921,6 +921,12 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
 
+  async arkoPendingTurns(userId:number) { return this.operationalState.arkoPendingTurns(userId) }
+  async arkoTurn(userId:number,uid:string) { return this.operationalState.arkoTurn(userId,uid) }
+  async prepareArkoTurn(userId:number,turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>) { return this.operationalState.prepareArkoTurn(userId,turn,request) }
+  async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
+  async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
+
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
   async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }

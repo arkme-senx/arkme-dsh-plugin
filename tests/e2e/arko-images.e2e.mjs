@@ -1,0 +1,141 @@
+import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:https'
+import { once } from 'node:events'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
+import { describe, expect, it } from 'vitest'
+
+const dshRoot = process.env.ARKME_DSH_CHECKOUT
+const profile = process.env.ARKME_PACKED_PROFILE
+if (!dshRoot || !profile) throw new Error('Use an unmodified DSH and a fresh packed-plugin profile')
+const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
+const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
+const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
+const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
+if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) throw new Error('An immutable tgz installation is required')
+const { createArkmeSdk } = await importFile(join(profile, 'node_modules/@senguoyun/dsh-arkme/lib/sdk.js'))
+
+// This lane exercises the real packaged Host, private state, SDK, Tool registry
+// and browser. Upstream API contracts are isolated fixtures; provider billing
+// and immutable Record reads are separately verified in the Go/MySQL lanes.
+describe('packed Arko image input on the official Harness', () => {
+  it('sends pure images through SDK, real session Tools and UI and preserves history placeholders', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arko image acceptance '))
+    const sharp = createRequire(join(profile, 'package.json'))('sharp')
+    const png = await sharp({ create: { width: 64, height: 32, channels: 3, background: '#3388cc' } }).png().toBuffer()
+    const imageUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/arko-isolated-fixture.png?x-oss-signature=fixture'
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (input, init) => String(input) === imageUrl
+      ? new Response(png, { headers: { 'content-type': 'image/png', 'content-length': String(png.length) } })
+      : originalFetch(input, init)
+    const uid = '5f964638-43a8-4f24-a380-6fec1482aaab'
+    const accepted = []
+    const uploads = []
+    const requestPaths = []
+    let origin, scaffold, browser, handle
+    const proxy = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
+      try {
+        requestPaths.push(req.url)
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        const raw = Buffer.concat(chunks)
+        if (req.method === 'PUT') {
+          uploads.push(raw); res.setHeader('etag', 'test-generation'); res.end(); return
+        }
+        if (req.url === '/image') { res.setHeader('content-type', 'image/png'); res.end(png); return }
+        const body = raw.length ? JSON.parse(raw) : {}
+        let data = { items: [], users: [], has_more: false }
+        if (req.url === '/api/public/v1/auth/the-best-api-for-testing') data = { access_token: 'isolated-test-access', refresh_token: 'isolated-test-refresh' }
+        if (req.url === '/api/v1/auth/get-user-info') data = { user_id: 42, nick_name: 'Arko image acceptance', phone: '13800000000' }
+        if (req.url === '/api/v1/agent/profile/query') data = { display_name: 'Arko', version: 0 }
+        if (req.url === '/api/v1/agent/model/list') data = {
+          default_route_key: 'managed-ai/vision', effective_route_key: 'managed-ai/vision', selection_source: 'default',
+          items: [{ route_key: 'managed-ai/vision', provider: 'managed-ai', display_name: 'Image Test', description: 'isolated', selected: true,
+            image_input: { enabled: true, protocol_version: 1, max_images: 9, max_image_bytes: 20 << 20, max_total_bytes: 180 << 20, mime_types: ['image/png'] } }],
+        }
+        if (req.url === '/api/v1/qa/latest-session') data = { id: 88, name: 'Arko' }
+        if (req.url === '/api/v1/files/prepare-upload') data = { upload_session_uid: randomUUID(), upload_url: `${origin}/put`, upload_headers: {} }
+        if (req.url === '/api/v1/files/complete-upload') data = { file_asset_uid: uid, mime_type: 'image/png', size: png.length }
+        if (req.url === '/api/v1/files/assets/query') data = { items: [{ file_asset_uid: uid, file_name: 'live.png', mime_type: 'image/png', size: png.length, file_kind: 1, status: 1, preview_url: imageUrl, download_url: imageUrl }] }
+        if (req.url === '/api/v1/qa/message-list') data = { message_ls: body.offset ? [] : [
+          { id: 101, session_id: 88, role: 2, content: '', status: 1, created_at: 1790000000, attachments: [
+            { type: 'image', file_asset_uid: uid, file_name: 'live.png', mime_type: 'image/png', size: png.length, availability: 'available', preview_url: imageUrl },
+            { type: 'image', file_asset_uid: '5f964638-43a8-4f24-a380-6fec1482aaaa', file_name: 'missing.png', mime_type: 'image/png', size: 100, availability: 'unavailable' },
+          ] },
+          { id: 102, session_id: 88, role: 3, content: 'Historical answer', status: 1, created_at: 1790000001 },
+        ] }
+        if (req.url === '/api/v1/qa/new-msg-v3') {
+          accepted.push(body)
+          data = { session_id: 88, user_msg_id: 200 + accepted.length * 2, assistant_msg_id: 201 + accepted.length * 2, run_uid: randomUUID() }
+        }
+        if (req.url.startsWith('/api/v1/qa/stream-v2')) {
+          res.setHeader('content-type', 'text/event-stream')
+          res.end('data: {"mid":{"content":"ARKO_IMAGES_OK"}}\n\ndata: {"tail":{"status":"completed"}}\n\n'); return
+        }
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ code: req.url.startsWith('/api/v1/files/') ? 0 : 200, data }))
+      } catch { if (!res.destroyed) { res.statusCode = 500; res.end('isolated fixture failed') } }
+    })
+    try {
+      proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening')
+      origin = `https://127.0.0.1:${proxy.address().port}`
+      const config = { environment: 'test', stateDirectory: join(root, 'state'), keychainServicePrefix: `com.senqisi.arko-e2e-${randomUUID()}`, allowProduction: false, updateCheckEnabled: false, openApiMcpEnabled: false, dshRemoteFeatureEnabled: false, extensionShareDiscoveryEnabled: false, toolProfile: 'business' }
+      for (const key of ['auth', 'subject', 'record', 'data', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
+      config.shareWebsite = origin
+      const overlay = join(root, 'overlay.json')
+      await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-arko-images-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
+      scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false, toolsMode: 'native' })
+      expect(await scaffold.ctx.get('arkmeData').testLogin(42)).toMatchObject({ status: 'authenticated', userId: 42 })
+      const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), { ...init, headers: { ...init?.headers, Origin: new URL(scaffold.authenticatedUrl).origin } }) })
+      expect((await sdk.arkoModels()).options[0].imageInput.protocolVersion).toBe(1)
+      const file = await sdk.stageFileBytes(png.toString('base64'), { fileName: 'SDK.png', mimeType: 'image/png' })
+      expect(await sdk.arkoAsk('', { sessionId: 88, imageFileRefs: [file.fileRef], waitSeconds: 1 })).toMatchObject({ status: 'completed', text: 'ARKO_IMAGES_OK' })
+      expect(accepted).toHaveLength(1)
+      expect(accepted[0]).toMatchObject({ content: '', attachments_protocol_version: 1, attachments: [{ type: 'image', file_asset_uid: uid }] })
+      expect(await sdk.arkoPendingTurns()).toEqual([])
+      handle = await scaffold.ctx.agents.create({ sessionId: `arko-test-${randomUUID()}`, setup: agentCtx => scaffold.ctx.agentPresets.mount(agentCtx).then(() => undefined) })
+      for (const name of ['arkme_arko_models', 'arkme_arko_pending', 'arkme_arko_ask']) expect(scaffold.ctx.tools.get(name, handle.agent)).toBeDefined()
+      const result = await scaffold.ctx.tools.execute({ callId: randomUUID(), name: 'arkme_arko_ask', arguments: { session_id: 88, image_file_refs: [file.fileRef], wait_seconds: 1 }, agent: handle.agent, signal: new AbortController().signal })
+      expect(result.isError).toBe(false)
+      expect(JSON.stringify(result)).toContain('ARKO_IMAGES_OK')
+      expect(accepted).toHaveLength(2)
+      expect(uploads).toHaveLength(1) // Reusing an uploaded file does not reread/reupload bytes.
+      browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
+      const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+      await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await page.getByRole('button', { name: '对话', exact: true }).click()
+      await page.locator('[data-arkme-home-tour-target="arko"]').click()
+      await page.getByText('Historical answer', { exact: true }).waitFor()
+      await page.getByText('图片暂不可用 · missing.png', { exact: true }).waitFor()
+      await page.getByRole('button', { name: '预览图片：live.png', exact: true }).waitFor()
+      await page.locator('input[aria-label="添加 Arko 图片"]').setInputFiles({ name: 'UI.png', mimeType: 'image/png', buffer: png })
+      const send = page.getByRole('button', { name: '发送', exact: true })
+      await expect.poll(() => send.isEnabled()).toBe(true)
+      await send.click()
+      await expect.poll(() => accepted.length).toBe(3)
+      expect(accepted[2].content).toBe('')
+      expect(accepted[2].attachments[0].file_asset_uid).toBe(uid)
+      await page.locator('[data-arko-message-viewport]').getByText('ARKO_IMAGES_OK', { exact: true }).waitFor()
+      await expect.poll(() => send.isEnabled()).toBe(false)
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+    } catch (error) {
+      if (browser && process.env.ARKME_E2E_SCREENSHOT) for (const page of browser.contexts().flatMap(context => context.pages())) {
+        await page.screenshot({ path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png` }).catch(() => {})
+        await writeFile(`${process.env.ARKME_E2E_SCREENSHOT}.failure.txt`, await page.locator('body').innerText()).catch(() => {})
+      }
+      throw new Error(`${error.message} (${error.code ?? 'unknown'}); paths=${requestPaths.join(',')}`, { cause: error })
+    } finally {
+      await browser?.close()
+      await handle?.dispose()
+      if (scaffold) await scaffold.ctx.get('arkmeData').logout()
+      await scaffold?.close()
+      proxy.closeAllConnections()
+      await new Promise(resolve => proxy.close(resolve))
+      await rm(root, { recursive: true, force: true })
+      globalThis.fetch = originalFetch
+    }
+  })
+})

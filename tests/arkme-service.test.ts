@@ -26,6 +26,13 @@ class MemorySessionStore {
 }
 
 class MemoryStateStore {
+ readonly arkoTurns=new Map<string,import('../src/arko-turn-contract.js').ArkmeArkoStoredTurn>()
+ async arkoPendingTurns(user:number){return [...this.arkoTurns.values()].filter(value=>value.turn.userId===user).map(value=>value.turn)}
+ async arkoTurn(user:number,uid:string){return this.arkoTurns.get(`${user}:${uid}`)}
+ async prepareArkoTurn(user:number,turn:import('../src/arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>){this.arkoTurns.set(`${user}:${turn.clientTurnUid}`,{turn,...(request ? {request} : {})})}
+ async acknowledgeArkoTurn(user:number,uid:string){this.arkoTurns.delete(`${user}:${uid}`)}
+ async arkoFileRefs(user:number){return (await this.arkoPendingTurns(user)).flatMap(turn=>turn.images?.map(file=>file.fileRef) ?? [])}
+
   readonly pending = new Map<number, ArkmePendingWrite[]>()
   readonly cached = new Map<number, ArkmeSelfRecordItem[]>()
   readonly events: string[] = []
@@ -5173,7 +5180,7 @@ describe('ArkmeService', () => {
     })
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
-    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: 'turn-1', waitMillis: 1000 }))
+    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: '11111111-1111-4111-8111-111111111111', waitMillis: 1000 }))
       .resolves.toEqual({
         sessionId: 88,
         userMsgId: 1001,
@@ -5200,7 +5207,7 @@ describe('ArkmeService', () => {
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
-      client_turn_uid: 'turn-1',
+      client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
       model_route_key: 'dashscope/qwen3.8-max',
     })
@@ -5290,7 +5297,7 @@ describe('ArkmeService', () => {
       ],
     })
     expect(bodies).toContainEqual({ route_key: 'dashscope/qwen3.8-max' })
-    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2 })
+    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2,client_capabilities:['dsh.arko.images.v1'] })
   })
 
   it('continues a waiting Arko run without switching its model', async () => {

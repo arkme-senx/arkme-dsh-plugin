@@ -551,7 +551,9 @@ export function ArkmeArkoSurface() {
       setPendingTurn(undefined)
       return
     }
-    const restored = readArkoPendingTurn(profileUserId)
+    let active=true
+    void readArkoPendingTurn(profileUserId).then(restored=>{
+    if (!active) return
     setPendingTurn(restored)
     if (restored === undefined) return
     setMessages(current => {
@@ -574,6 +576,8 @@ export function ArkmeArkoSurface() {
       }]
     })
     scrollToBottom()
+    }).catch(caught=>{if(active)setError(errorMessage(caught))})
+    return ()=>{active=false}
   }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
@@ -798,7 +802,6 @@ export function ArkmeArkoSurface() {
           arkmeComposerDraftStore.clear(key)
         }
       }
-      removeArkoPendingTurn(turn.userId)
       setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
       setSession(current => current === undefined ? current : { ...current, sessionId: result.sessionId })
       if (result.profile !== undefined && profileUserId !== undefined) {
@@ -846,13 +849,13 @@ export function ArkmeArkoSurface() {
       const retryable = !(caught instanceof ArkmeClientError) || caught.body.retryable
       if (retryable) {
         setPendingTurn(turn)
-        writeArkoPendingTurn(turn)
+        await writeArkoPendingTurn(turn)
         setError(`Arko 发送结果暂未确认：${message}。请重试确认，系统会复用同一次请求，不会重复执行。`)
         setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
           ...item, role: 'assistant', text: '', status: 'error',
         } : item))
       } else {
-        removeArkoPendingTurn(turn.userId)
+        await removeArkoPendingTurn(turn.userId,turn.clientTurnUid)
         setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
         setError(message)
         setMessages(current => turn.images?.length
@@ -891,11 +894,9 @@ export function ArkmeArkoSurface() {
       return
     }
     if (attachments.length !== images.length) { setError('图片草稿无效，请重新添加图片'); return }
-    const imageError = arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images)
+    const imageError = latestContinuation(messages, session.sessionId) === undefined ? arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images) : undefined
     if (imageError !== undefined) { setError(imageError); return }
-    if (images.length && latestContinuation(messages, session.sessionId) !== undefined) {
-      setError('当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留'); return
-    }
+
     sendInFlightRef.current = true
     setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
     try {
@@ -917,7 +918,7 @@ export function ArkmeArkoSurface() {
           replyToAssistantMsgId: continuation.assistantMsgId,
         }),
       }
-      writeArkoPendingTurn(turn)
+      await writeArkoPendingTurn(turn)
       pendingComposerFocusRef.current = true
       shortcutFocusOriginRef.current = focusOrigin
       setPendingTurn(turn)

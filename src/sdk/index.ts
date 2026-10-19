@@ -1,3 +1,7 @@
+import type { ArkmeArkoAskOptions, ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+import type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoHistoryPage,ArkmeArkoRunStatus } from '../types.js'
+export type { ArkmeArkoAskOptions,ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+export type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoModelOption,ArkmeArkoImageInput,ArkmeArkoHistoryPage,ArkmeArkoHistoryItem,ArkmeArkoRunStatus } from '../types.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
@@ -506,6 +510,34 @@ export class ArkmeSdk {
           message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
       }
     }
+  }
+
+  private async requireArkoImages(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoImagesV1!==true) throw new Error('当前 Provider 不支持可靠 Arko 图文输入')
+  }
+  async arkoModels(signal?:AbortSignal):Promise<ArkmeArkoModelCatalog> {
+    await this.requireArkoImages(signal);return this.call('arko.models',{},signal)
+  }
+  /** Explicit human instruction. Images are owned staged file refs, never paths or URLs. */
+  async arkoAsk(text:string,options:ArkmeArkoAskOptions={},signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    await this.requireArkoImages(signal);return this.call('arko.ask',{text,...options},signal)
+  }
+  async arkoPendingTurns(signal?:AbortSignal):Promise<ArkmeArkoPendingTurn[]> {
+    await this.requireArkoImages(signal);return this.call('arko.pending.read',{},signal)
+  }
+  async arkoResumeTurn(clientTurnUid:string,signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    const turn=(await this.arkoPendingTurns(signal)).find(turn=>turn.clientTurnUid===clientTurnUid)
+    if (!turn) throw new Error('待确认 Arko 消息不存在或账号已切换')
+    return this.arkoAsk(turn.text,{sessionId:turn.sessionId,clientTurnUid:turn.clientTurnUid,expectedUserId:turn.userId,
+      ...(turn.images ? {imageFileRefs:turn.images.map(file=>file.fileRef)} : {}),
+      ...(turn.modelRouteKey ? {modelRouteKey:turn.modelRouteKey} : {}),
+      ...(turn.replyToRunUid ? {replyToRunUid:turn.replyToRunUid,replyToAssistantMsgId:turn.replyToAssistantMsgId!} : {})},signal)
+  }
+  async arkoHistory(limit=50,offset=0,signal?:AbortSignal):Promise<ArkmeArkoHistoryPage> {
+    await this.requireArkoImages(signal);return this.call('arko.history',{limit,offset},signal)
+  }
+  async arkoRunStatus(sessionId:number,runUid:string,signal?:AbortSignal):Promise<ArkmeArkoRunStatus> {
+    await this.requireArkoImages(signal);return this.call('arko.run.status',{sessionId,runUid},signal)
   }
 
   /** Explicit user command; idempotently starts recognition for the current account/day. */

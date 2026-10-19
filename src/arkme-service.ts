@@ -584,7 +584,8 @@ export class ArkmeService {
       this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
-      read: ref => this.filesOwner().readLocal(ref),
+      read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
+withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
       upload: (refs, signal) => this.filesOwner().uploadRefs(refs, signal),
       project: (raw, userId) => this.media.richContentBlocks(raw, userId),
     })
@@ -1048,6 +1049,7 @@ export class ArkmeService {
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         imageRead: true,
@@ -1421,6 +1423,10 @@ export class ArkmeService {
   ): Promise<ArkmeArkoAskResult> {
     return await this.arko.arkoAsk(text, options)
   }
+
+  async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }
+  async arkoPrepareTurn(turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn) { return this.arko.arkoPrepareTurn(turn) }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number) { return this.arko.arkoAcknowledgeTurn(uid,expectedUserId) }
 
   async arkoRunStatus(sessionId: number, runUid: string, signal?: AbortSignal): Promise<ArkmeArkoRunStatus> {
     return await this.arko.arkoRunStatus(sessionId, runUid, signal)
