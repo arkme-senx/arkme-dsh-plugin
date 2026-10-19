@@ -63,6 +63,8 @@ import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { useArkmeNotificationSummary } from './ArkmeNotificationCenter.js'
+import { useNotificationEntryActions } from './NotificationEntryActions.js'
+import { useNotificationDirectoryPin } from './notification-directory-preferences.js'
 import { startEmbeddedHarnessSession } from './harness-new-session.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
@@ -497,19 +499,24 @@ export function ArkmeNotificationsRow({ selected, onClick }: { selected: boolean
   return <ArkmeNotificationRowContent selected={selected} onClick={onClick} summary={summary} />
 }
 
-function ArkmeNotificationRowContent({ selected, onClick, summary }: {
+function ArkmeNotificationRowContent({ selected, onClick, summary, active = true }: {
   selected: boolean
   onClick(): void
   summary: ReturnType<typeof useArkmeNotificationSummary>
+  active?: boolean
 }) {
   useArkmeLocale()
+  const { auth } = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const account = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  const actions = useNotificationEntryActions(account, active, onClick)
   if (!summary.ready || !summary.hasNotifications) return null
   const time = timeLabel(summary.atMillis)
-  return <button
+  return <><button
     type="button" role="treeitem" aria-selected={selected} data-arkme-directory-row="notifications"
     aria-label={summary.unreadCount > 0 ? tr("通知，{v0} 条未读", { v0: String(summary.unreadCount) }) : tr("通知")}
-    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick} onContextMenu={actions.onContextMenu}
   >
+    {actions.pinned && <ArkmePinnedCorner />}
     <span style={{ ...styles.sourceAvatarWrap, overflow: 'visible' }}>
       <NotificationAvatar />
       {summary.unreadCount > 0 && <span style={styles.mentionUnread}>{summary.unreadCount > 99 ? '99+' : summary.unreadCount}</span>}
@@ -523,7 +530,7 @@ function ArkmeNotificationRowContent({ selected, onClick, summary }: {
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={summary.preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
-  </button>
+  </button>{actions.overlays}</>
 }
 
 export function ArkmeContactAddRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
@@ -1041,6 +1048,7 @@ export function ArkmeNavigation({
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
   const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
+  const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
@@ -1176,7 +1184,8 @@ export function ArkmeNavigation({
   const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
   const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications' }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
-    const index = mergedConversationRows.findIndex(row => !row.pinned && row.activeAtMillis < notificationSummary.atMillis)
+    const index = mergedConversationRows.findIndex(row => Number(notificationPinned) > Number(row.pinned)
+      || row.pinned === notificationPinned && row.activeAtMillis < notificationSummary.atMillis)
     rootDirectoryRows.splice(index < 0 ? rootDirectoryRows.length : index, 0, { kind: 'notifications' })
   }
   const directoryContextMenu = useMemo(() => {
@@ -2114,7 +2123,7 @@ export function ArkmeNavigation({
     >
       {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
       {directory !== 'root' && authenticated && <ArkmeNotificationRowContent
-        selected={ui.mode === 'notifications'} onClick={showNotifications} summary={notificationSummary}
+        active={active} selected={ui.mode === 'notifications'} onClick={showNotifications} summary={notificationSummary}
       />}
       {directory === 'root' && <>
         {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
@@ -2166,7 +2175,7 @@ export function ArkmeNavigation({
         <ArkmeConversationRemovalStyles />
         <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.map(row => {
           if (row.kind === 'notifications') return <ArkmeNotificationRowContent key="notifications"
-            selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
+            active={active} selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
             onClick={showNotifications} summary={notificationSummary}
           />
           if (row.kind === 'team-folder') {

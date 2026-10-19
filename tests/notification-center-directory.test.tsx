@@ -22,6 +22,7 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
+import { notificationDirectoryPreferences } from '../src/client/notification-directory-preferences.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -107,6 +108,27 @@ afterEach(async () => {
 })
 
 describe('notification directory stability', () => {
+  it('offers preview and pin only, reorders immediately, and restores the saved pin after remount', async () => {
+    const data = new Map<string, string>()
+    Object.assign(window, { localStorage: { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value) } } })
+    await act(async () => { renderer = create(<Workspace />) })
+    const context = () => notificationRows()[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 40, clientY: 60,
+      currentTarget: { focus() {}, getBoundingClientRect: () => ({ left: 20, top: 40 }) } })
+    await act(async () => context())
+    const menu = () => renderer!.root.findByProps({ role: 'menu', 'aria-label': '通知的会话操作' })
+    expect(menu().findAllByProps({ role: 'menuitem' }).map(node => node.props['aria-label'])).toEqual(['预览', '置顶对话'])
+    expect(menu().findAllByProps({ role: 'separator' })).toHaveLength(0)
+    await act(async () => menu().findByProps({ 'aria-label': '置顶对话' }).props.onClick())
+    expect(notificationDirectoryPreferences.read('test:7001')).toBe(true)
+    expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
+    await act(async () => { renderer!.unmount(); renderer = create(<Workspace />) })
+    expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
+    await act(async () => context())
+    await act(async () => menu().findByProps({ 'aria-label': '取消置顶' }).props.onClick())
+    expect(conversationOrder()).toEqual(['置顶对话', '较新对话', '通知', '较早对话'])
+    expect(arkmeUi.getViewSnapshot().mode).toBe('source')
+  })
+
   it('keeps Team entries available without phone binding and avoids duplicate official entries', async () => {
     vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
     let phoneMasked: string | undefined

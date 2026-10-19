@@ -31,6 +31,10 @@ it('uses the real native Menu and retains its viewport fitting for pointer ancho
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
   expect(menu.getAttribute('aria-label')).toBe('统一菜单')
   expect(host.contains(menu)).toBe(false)
+  // Even the native empty anchor must not create a line between conversation rows.
+  const anchor = host.querySelector<HTMLElement>('[data-arkme-command-menu]')!
+  expect(getComputedStyle(anchor).position).toBe('fixed')
+  expect(anchor.style.height).toBe('0px')
   expect(menu.style.left).toBe('970px'); expect(menu.style.top).toBe('660px')
   const buttons = [...menu.querySelectorAll('button')]
   await act(async () => buttons[0]!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })))
