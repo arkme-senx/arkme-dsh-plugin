@@ -24,6 +24,7 @@ import { MessageActionService } from './message-action-service.js'
 import { arkoImageInputFromWire, arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
+import { ArkoLocalMarks } from './arko-local-marks.js'
 
 export interface ArkoImagePorts {
   read(fileRef: string): Promise<{ file: ArkmeLocalFile }>
@@ -230,6 +231,7 @@ function safeFailureMessage(error: unknown): string {
 export class ArkoService {
   private readonly historyCodec: EncryptedReferenceCodec
   private readonly generated: GeneratedArtifacts
+  readonly localMarks: ArkoLocalMarks
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
   constructor(
@@ -238,6 +240,7 @@ export class ArkoService {
     private readonly messageActions?: MessageActionService,
     private readonly images?: ArkoImagePorts,
   ) {
+    this.localMarks = new ArkoLocalMarks(runtime)
     this.historyCodec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), () => new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404))
     this.generated = new GeneratedArtifacts(join(runtime.config.fileStateDirectory ?? join(homedir(), '.arkme'), 'generated-downloads'),
       () => runtime.stateStore.uniqueCode(), async () => (await runtime.requireSession()).userId)
@@ -383,7 +386,9 @@ export class ArkoService {
     const projectedItems = this.historyFacts(rawItems, session, strict)
     const conversationRefs = new Map<number, Promise<string>>()
     return await Promise.all(projectedItems.map(async original => {
-          const item = strict ? { ...original, messageRef: await this.messageRef(session.userId, original.sessionId, original.messageId) } : original
+          const localMarkRef = await this.localMarks.project(original, session.userId)
+          const item = { ...original, ...(localMarkRef ? { localMarkRef } : {}),
+            ...(strict ? { messageRef: await this.messageRef(session.userId, original.sessionId, original.messageId) } : {}) }
           const action = await this.messageActions?.agentHistoryItem(item, session.userId)
           if (action?.messageActionRef === undefined) return item
           let itemConversationRef = conversationRefs.get(item.sessionId)
@@ -393,6 +398,7 @@ export class ArkoService {
           }
           return { ...item, ...action, messageActionConversationRef: await itemConversationRef }
         }))
+
   }
 
   private historyBody(query: ArkmeArkoHistoryQuery): Record<string, unknown> {

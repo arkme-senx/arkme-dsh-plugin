@@ -8,7 +8,6 @@ import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeComposerDraftStore, arkmeArkoComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
-import { ArkmeMessageTextSelectionToolbar } from '../src/client/ArkmeMessageTextSelection.js'
 import { copyText } from '../src/client/clipboard-text.js'
 
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
@@ -131,7 +130,7 @@ it.each(['[role="menu"]', '[aria-modal="true"]', '[data-arkme-image-preview-view
   },
 )
 it('copies a selected substring through the real portal toolbar without dismissing details', async () => {
-  await act(async () => { root.render(<><ArkmeArkoSurface /><ArkmeMessageTextSelectionToolbar /></>) })
+  await act(async () => { root.render(<ArkmeArkoSurface />) })
   await click(bubble('完整回答'))
   const text = detail()!.querySelector('p')!
   const range = document.createRange()

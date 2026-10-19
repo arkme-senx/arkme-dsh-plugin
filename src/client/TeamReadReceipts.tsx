@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { TeamIdentity, TeamMessage, TeamReceiptMember } from '../team-app-contract.js'
 import { ArkmeReadReceiptStatus, readReceiptStyles } from './ArkmeReadReceiptPanel.js'
+import { ArkmeReadReceiptControl } from './ArkmeReadReceiptControl.js'
 import { TeamReceiptStore, emptyTeamReceipt, teamReceiptCounts, type TeamReceiptState } from './team-read-receipts.js'
 import { teamText as tr } from './team-messaging-i18n.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -25,6 +26,17 @@ export function TeamReceiptBadge({ message, store, onClick }: {
   const team = counts ? tr('团队已读 {v0}/{v1}', {v0:counts.read, v1:counts.total}) : tr('团队阅读状态')
   const label = state.error ? tr('阅读状态待更新') : message.side === 'external' ? team
     : `${tr(visitor === true ? '对方已读' : visitor === false ? '对方未读' : '对方状态待同步')} · ${team}`
+  if (message.side === 'external') {
+    // Only complete, explicit member states can become a count or an all-read tick.
+    const indicator = counts && counts.total > 0
+      ? counts.read === 0 ? 'unread' : counts.unread === 0 ? 'all-read' : 'partial-read'
+      : state.error ? 'error' : 'placeholder'
+    return <ArkmeReadReceiptControl buttonRef={node} placement="after" state={indicator}
+      status={state.error ? 'error' : state.loading ? 'loading' : counts ? 'ready' : 'unknown'}
+      {...(indicator === 'partial-read' && counts ? { count: counts.read } : {})}
+      label={`${tr('查看阅读状态')}：${label}`}
+      onClick={() => { if (node.current) onClick(node.current) }} />
+  }
   return <button type="button" ref={node} className="team-receipt-badge" aria-label={`${tr('查看阅读状态')}：${label}`}
     onClick={event => onClick(event.currentTarget)}>{label}</button>
 }

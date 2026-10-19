@@ -1,3 +1,5 @@
+import { ArkmeMessageSelectionBar } from './ArkmeMessageSelectionBar.js'
+import { conversationMessageMenu, ArkmeMessageActionIcon, ArkmeDesktopExtensionIcon } from './conversation-message-actions.js'
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
@@ -1807,34 +1809,6 @@ export function arkmeForwardPreviewSubtitle(items: readonly ArkmeTimelineItem[])
   return summaryLines[0] ?? ''
 }
 
-
-function ArkmeMessageActionIcon({ kind }: { kind: 'copy' | 'link' | 'select' | 'forward' | 'report' | 'withdraw' | 'edit' }) {
-  if (kind === 'withdraw') return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden>
-    <path d="M4 7.5h8.25a4.25 4.25 0 0 1 0 8.5H9.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
-    <path d="m6.8 4.7-3 2.8 3 2.8" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-  if (kind === 'report') return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden>
-    <path d="M4.5 17.25V3.25M5 4H13.45C14.55 4 15.16 5.27 14.48 6.14L13.26 7.7C12.91 8.15 12.91 8.78 13.26 9.23L14.48 10.79C15.16 11.66 14.55 12.93 13.45 12.93H4.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-  if (kind === 'edit') return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden>
-    <path d="M4 14.8 3.5 17l2.2-.5L15.8 6.4a1.7 1.7 0 0 0 0-2.4l-.8-.8a1.7 1.7 0 0 0-2.4 0L4 14.8Z" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="m11.7 4.2 4.1 4.1" stroke="currentColor" strokeWidth="1.45" />
-  </svg>
-  return <ArkmeSelectActionIcon kind={kind} size={16} />
-}
-
-function ArkmeDesktopExtensionIcon() {
-  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-    data-arkme-message-extension-icon="desktop">
-    <circle cx="8" cy="2" r="1.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="13" cy="6" r="1.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="1.5" cy="10.5" r="1" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="14.5" cy="14.5" r="1" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="8" cy="10" r="2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8 3.5V7.5" stroke="currentColor" />
-    <path d="M12 7L10 8.5M13.5 14L10 11.5M2.5 10.5H5.5" stroke="currentColor" />
-  </svg>
-}
 
 function ArkmeForwardLinearIcon({ size = 18 }: { size?: number }) {
   return <ArkmeSelectActionIcon kind="forward" size={size} />
@@ -8590,7 +8564,7 @@ export function ArkmeSurface({
     <>
     <ArkmeBotIdentityStyles />
     {messageUnderlines.layer}
-    <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
+    {ui.mode !== 'arko' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       replyLabel={sourceIsChat ? '回复' : '延展'}
       markStorage="local"
@@ -8602,7 +8576,7 @@ export function ArkmeSurface({
         const oldQuote = composerExtensionTarget?.quote
         startMessageExtension(target.item, quote)
         if (oldQuote) showMessageActionStatus('已更换引用')
-      }} />
+      }} />}
     {selfTour.panel}
     {activeConversation && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}
@@ -9434,69 +9408,30 @@ export function ArkmeSurface({
             role="status" style={{ padding: '6px 16px', color: arkmeTheme.secondary, fontSize: 12 }}
           >{selectedMessageCount > 100 ? `已选择 ${selectedMessageCount} 条消息，批量操作最多支持 100 条，请减少选择后操作`
             : '选中的消息包含暂不支持复制链接或转发的内容，可取消这些消息后操作'}</div>}
-          {activeSelectMode !== undefined && <div style={{ ...styles.selectBar, flexWrap: 'wrap' }} role="toolbar" aria-label={tr("已选择 {v0} 条消息", { v0: selectedMessageCount })}>
+          {activeSelectMode !== undefined && <ArkmeMessageSelectionBar count={selectedMessageCount} actions={[
+            source !== undefined && isArkmeSelfWorkspaceSource(source) && {
+              id: 'assign', label: tr('指定主题'), icon: <ArkmeSelectActionIcon kind="assign" size={20} />,
+              disabled: messageActionBusy !== undefined || !canAssignRecordTopics(selectedMessageItems) || selectedMessageItems.length !== selectedMessageCount,
+              onSelect: anchor => { if (selectedMessageItems.length === selectedMessageCount) openRecordTopicAssignment(selectedMessageItems, anchor) },
+            },
+            { id: 'copy', label: ARKME_MESSAGE_SELECT_ACTION_LABELS[0], icon: <ArkmeSelectActionIcon kind="copy" />,
+              disabled: !arkmeCanCopySelectedMessageText(selectedMessageItems.length, messageActionBusy !== undefined), onSelect: () => { void copySelectedMessageText() } },
+            { id: 'link', label: ARKME_MESSAGE_SELECT_ACTION_LABELS[1], icon: <ArkmeSelectActionIcon kind="link" />,
+              disabled: !selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined, onSelect: () => { void copyMessageLink(selectedMessageItems) } },
+            { id: 'forward', label: messageActionBusy === 'forward' ? '转发中' : ARKME_MESSAGE_SELECT_ACTION_LABELS[2], icon: <ArkmeSelectActionIcon kind="forward" />,
+              disabled: !selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined, onSelect: () => { openForwardTargetPicker() } },
+            { id: 'ask-dsh', label: askDsh.busy ? '准备中' : '问 DSH', icon: <AskDshIcon size={22} />,
+              reason: selectedMessagesCanAskDsh ? '将所选快记及原件添加到 DSH 新对话，等待手动发送' : '请选择 1 至 100 条可读取的快记',
+              disabled: !selectedMessagesCanAskDsh || messageActionBusy !== undefined,
+              onSelect: () => { if (source) void askDsh.run(source.sourceRef, askDshNotesWithLocalNames(selectedMessageItems, source, conversationMemberByRef, selfProfile)) } },
+            { id: 'delete', label: tr('删除'), icon: <Trash size={22} />, danger: true,
+              reason: selectedMessagesCanDelete ? tr('删除') : '包含他人或暂不可删除的快记', disabled: !selectedMessagesCanDelete || messageActionBusy !== undefined,
+              onSelect: () => { if (source && selectedMessagesCanDelete && messageActionBusy === undefined) setRecordDeletion({ scopeKey: topicAssignmentScopeKey, sourceRef: source.sourceRef, items: [...selectedMessageItems] }) } },
+            { id: 'close', label: ARKME_MESSAGE_SELECT_ACTION_LABELS[3], icon: <ArkmeSelectActionIcon kind="close" size={18} />,
+              disabled: messageActionBusy !== undefined, onSelect: exitMessageSelectMode },
+          ]}>
             {askDsh.status && <div role="status" aria-live="polite" style={{ flexBasis: '100%', textAlign: 'center', color: arkmeTheme.secondary, fontSize: 12, overflowWrap: 'anywhere' }}>{askDsh.status}</div>}
-            {source !== undefined && isArkmeSelfWorkspaceSource(source) && <button data-arkme-feedback="neutral"
-              type="button" aria-label={tr("指定主题")} style={styles.selectBarButton}
-              disabled={messageActionBusy !== undefined || !canAssignRecordTopics(selectedMessageItems) || selectedMessageItems.length !== selectedMessageCount}
-              onClick={event => {
-                if (selectedMessageItems.length !== selectedMessageCount) return
-                openRecordTopicAssignment(selectedMessageItems, event.currentTarget)
-              }}
-            ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="assign" size={20} /></span><span style={styles.selectBarLabel}>{tr("指定主题")}</span></button>}
-            {(() => {
-              const copyTextEnabled = arkmeCanCopySelectedMessageText(selectedMessageItems.length, messageActionBusy !== undefined)
-              return <button data-arkme-feedback="neutral"
-                type="button"
-                style={{
-                  ...styles.selectBarButton,
-                  ...(!copyTextEnabled ? styles.selectBarButtonDisabled : {}),
-                }}
-                disabled={!copyTextEnabled}
-                onClick={() => { void copySelectedMessageText() }}
-              ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="copy" /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[0]}</span></button>
-            })()}
-            <button data-arkme-feedback="neutral"
-              type="button"
-              style={{
-                ...styles.selectBarButton,
-                ...(!selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
-              }}
-              disabled={!selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined}
-              onClick={() => { void copyMessageLink(selectedMessageItems) }}
-            ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="link" /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[1]}</span></button>
-            <button data-arkme-feedback="neutral"
-              type="button"
-              style={{
-                ...styles.selectBarButton,
-                ...(!selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
-              }}
-              disabled={!selectedMessagesSupportSnapshotBatch || messageActionBusy !== undefined}
-              onClick={() => { openForwardTargetPicker() }}
-            ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="forward" /></span><span style={styles.selectBarLabel}>{messageActionBusy === 'forward' ? '转发中' : ARKME_MESSAGE_SELECT_ACTION_LABELS[2]}</span></button>
-            <button data-arkme-feedback="neutral" type="button" aria-label="问 DSH" title={selectedMessagesCanAskDsh ? '将所选快记及原件添加到 DSH 新对话，等待手动发送' : '请选择 1 至 100 条可读取的快记'}
-              style={{ ...styles.selectBarButton, ...(!selectedMessagesCanAskDsh || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}) }}
-              disabled={!selectedMessagesCanAskDsh || messageActionBusy !== undefined}
-              onClick={() => { if (source) void askDsh.run(source.sourceRef, askDshNotesWithLocalNames(selectedMessageItems, source, conversationMemberByRef, selfProfile)) }}
-            ><span style={styles.selectBarIconTile}><AskDshIcon size={22} /></span><span style={styles.selectBarLabel}>{askDsh.busy ? '准备中' : '问 DSH'}</span></button>
-            <button data-arkme-feedback="danger" type="button" aria-label={tr("删除")} title={selectedMessagesCanDelete ? tr("删除") : '包含他人或暂不可删除的快记'}
-              style={{ ...styles.selectBarButton, ...(!selectedMessagesCanDelete || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}) }}
-              disabled={!selectedMessagesCanDelete || messageActionBusy !== undefined}
-              onClick={() => { if (source && selectedMessagesCanDelete && messageActionBusy === undefined) setRecordDeletion({
-                scopeKey: topicAssignmentScopeKey, sourceRef: source.sourceRef, items: [...selectedMessageItems],
-              }) }}
-            ><span style={styles.selectBarIconTile}><Trash size={22} /></span><span style={styles.selectBarLabel}>{tr("删除")}</span></button>
-            <button data-arkme-feedback="neutral"
-              type="button"
-              style={{
-                ...styles.selectBarButton,
-                ...(messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
-              }}
-              disabled={messageActionBusy !== undefined}
-              aria-label={ARKME_MESSAGE_SELECT_ACTION_LABELS[3]}
-              onClick={exitMessageSelectMode}
-            ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[3]}</span></button>
-          </div>}
+          </ArkmeMessageSelectionBar>}
           </div>
         </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
@@ -9505,7 +9440,7 @@ export function ArkmeSurface({
           selectedText={messageMenu.selectedText} copyIcon={<ArkmeMessageActionIcon kind="copy" />}
           onCopySelection={text => { void copyMessageTextValue(text) }} onCopyMessage={() => { void copyMessageText(messageMenuItem) }}
           point={{ x: messageMenu.left, y: messageMenu.top }} onClose={closeMessageMenu}
-          actions={[
+          actions={conversationMessageMenu([
             !!messageMenuItem.messageActionRef && authenticatedAccountKey !== undefined && activeSelectMode === undefined && { id: 'reaction', label: '表态', icon: <ReactionAddIcon />, onSelect: () => {
               setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(messageMenuItem) })
               closeMessageMenu()
@@ -9529,7 +9464,7 @@ export function ArkmeSurface({
             arkmeCanOpenMessageSnapshot(messageMenuItem) && { id: 'detail', label: ARKME_MESSAGE_ACTION_DETAIL_LABEL, onSelect: () => openMessageSnapshot(messageMenuItem) },
             arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && { type: 'separator', id: 'withdraw-divider' },
             arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && { id: 'withdraw', label: '撤回', icon: <ArkmeMessageActionIcon kind="withdraw" />, danger: true, onSelect: () => openMessageWithdrawal(messageMenuItem) },
-          ]}
+          ])}
         />}
         {activeConversation && messageReportItem !== undefined && <ArkmeMessageReportDialog
           item={messageReportItem}

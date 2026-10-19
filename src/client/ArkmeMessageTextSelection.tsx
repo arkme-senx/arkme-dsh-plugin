@@ -11,7 +11,7 @@ import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
-  /** Team-local authority is never passed to ordinary Chat actions. */
+  /** Owner-local authority is never passed to ordinary Chat actions. */
   localMarkRef?: string
 }
 export function messageSelectionReference(target: MessageSelectionTarget): string | undefined {
@@ -46,8 +46,8 @@ export function useMessageTextSelectionTarget(text: string, reply?: MessageSelec
   }, [text, reply?.sourceRef, reply?.item.itemUid, reply?.item.recordVersion, reply?.item.status, reply?.item.messageActionRef, reply?.localMarkRef])
 }
 
-export function ArkmeSelectableMessageText({ text, children, style }: { text: string; children: ReactNode; style?: CSSProperties }) {
-  const ref = useMessageTextSelectionTarget(text)
+export function ArkmeSelectableMessageText({ text, children, style, target }: { text: string; children: ReactNode; style?: CSSProperties; target?: MessageSelectionTarget | undefined }) {
+  const ref = useMessageTextSelectionTarget(text, target)
   return <div ref={ref} data-arkme-message-content="message" style={style}>{children}</div>
 }
 

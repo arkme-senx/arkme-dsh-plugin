@@ -1,6 +1,8 @@
 import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
 import type { ArkmeArkoContextWindow, ArkmeArkoMessagePage } from '../arko-history-contract.js'
-import { ArkmeSelectableMessageText } from './ArkmeMessageTextSelection.js'
+import { ArkmeSelectableMessageText, ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
+import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
+import { arkoMessageMarkTarget, arkoMessageMarkTransport } from './arko-message-marks.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
@@ -74,6 +76,7 @@ type ArkoMessageStatus = 'sending' | 'done' | 'error'
 const arkoQuestionMaxLength = 60 * 1024
 
 interface ArkoMessage {
+  localMarkRef?: string
   id: string
   messageId?: number
   sessionId?: number
@@ -322,6 +325,7 @@ function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
     id: `history:${String(item.messageId)}`,
     messageId: item.messageId,
     sessionId: item.sessionId,
+    ...(item.localMarkRef === undefined ? {} : { localMarkRef: item.localMarkRef }),
     role: item.role,
     text: active && placeholder ? '' : item.text,
     ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
@@ -538,6 +542,8 @@ export function ArkmeArkoSurface() {
   )), [visibleMessages])
   const messageSelectionItems = useMemo(() => visibleMessages.filter(message => message.role !== 'divider').map(message => ({ id: message.id, copyText: arkmeEmojiPlainText(message.text) })), [visibleMessages])
   const messageSelectionScope = profileUserId === undefined ? 'anonymous' : `user:${String(profileUserId)}:session:${String(session?.sessionId ?? 0)}`
+  const markSourceRef = accountKey === undefined ? undefined : `arko:${accountKey}`
+  const messageMarks = useMessageUnderlines(`${accountKey}:arko`, markSourceRef, profileUserId, arkoMessageMarkTransport)
   const messageActions = useArkmeMessageActions({
     scopeKey: messageSelectionScope,
     selectionItems: messageSelectionItems,
@@ -829,6 +835,7 @@ export function ArkmeArkoSurface() {
     const stillCurrent = () => {
       const auth = arkmeAuthStore.getSnapshot().auth
       return auth?.status === 'authenticated' && auth.userId === turn.userId
+        && `${auth.environment}:${auth.userId}` === accountKey
     }
     setMessages(current => current.map(item => item.id === turn.localAssistantMessageId
       ? { ...item, text: '', status: 'sending', runStatus: 'accepted' }
@@ -895,6 +902,18 @@ export function ArkmeArkoSurface() {
           assistantMsgId: result.assistantMsgId,
           runUid: result.runUid,
         })
+      } else if (!runActive) {
+        // Synchronous replies never enter finishRun. Acquire the same authoritative
+        // history references without blocking the composer or moving the viewport.
+        void callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }).then(page => {
+          if (!stillCurrent()) return
+          const completed = new Map(page.items.filter(item => item.sessionId === result.sessionId
+            && [result.userMsgId, result.assistantMsgId].includes(item.messageId))
+            .map(item => [`history:${item.messageId}`, historyMessage(item)]))
+          setMessages(current => current.map(item => completed.get(item.id) ?? item))
+        }).catch(caught => {
+          if (stillCurrent()) setHistoryError(tr("加载 Arko 对话记录失败：{v0}", { v0: errorMessage(caught) }))
+        })
       }
     } catch (caught) {
       if (!stillCurrent()) return
@@ -920,7 +939,7 @@ export function ArkmeArkoSurface() {
     } finally {
       if (stillCurrent() && !handedOffToPolling) setSending(false)
     }
-  }, [activeRun, detailScope, profileUserId, sending])
+  }, [accountKey, activeRun, detailScope, profileUserId, sending])
 
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
   const sendDisabled = loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
@@ -1085,6 +1104,9 @@ export function ArkmeArkoSurface() {
         : continuation === undefined ? '' : '继续当前任务'
 
   return <div ref={shellRef} style={styles.shell}>
+    {messageMarks.layer}
+    <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef}
+      markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove} />
     <style>{`
       [data-arkme-arko-composer] .ProseMirror { min-height: 38px; }
       [data-arkme-arko-composer] [data-arkme-composer-editor-box] > span[aria-hidden] {
@@ -1221,7 +1243,7 @@ export function ArkmeArkoSurface() {
                   ...(item.status === 'error' ? styles.bubbleError : {}),
                 }}>
                   <ArkoMessageImages {...(item.contentBlocks === undefined ? {} : { blocks: item.contentBlocks })} />
-                  {item.text !== '' && <ArkmeSelectableMessageText text={item.text} style={{ minWidth: 0, maxWidth: '100%' }}>
+                  {item.text !== '' && <ArkmeSelectableMessageText text={item.text} target={messageActions.selecting ? undefined : arkoMessageMarkTarget(item, markSourceRef)} style={{ minWidth: 0, maxWidth: '100%' }}>
                     {item.role === 'assistant' ? <div data-arkme-message-text-flow="true"><ArkmeMarkdownBody text={item.text} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.62 }} /></div>
                       : <p data-arkme-plain-text style={styles.text}><ArkmeRichText text={item.text} linkLabelMode="raw" highlightMentions={false} /></p>}
                   </ArkmeSelectableMessageText>}
@@ -1272,7 +1294,7 @@ export function ArkmeArkoSurface() {
       {detailMessage.sourceType !== undefined && <p style={styles.detailMeta}>{tr('来源')}：{detailMessage.sourceType === 1 ? tr('历史助手') : 'Agent'}</p>}
       {detailMessage.orderAtMillis !== undefined && detailMessage.orderAtMillis !== detailMessage.createdAtMillis && <p style={styles.detailMeta}>{tr('日历定位时间')}：{new Date(detailMessage.orderAtMillis).toLocaleString(arkmeIntlLocale())}</p>}
       <ArkoMessageImages {...(detailMessage.contentBlocks === undefined ? {} : { blocks: detailMessage.contentBlocks })} />
-      <ArkmeSelectableMessageText text={detailMessage.text}>
+      <ArkmeSelectableMessageText text={detailMessage.text} target={arkoMessageMarkTarget(detailMessage, markSourceRef)}>
       {detailMessage.role === 'assistant' ? <ArkmeMarkdownBody text={detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }} />
         : <p style={styles.detailText}><ArkmeRichText text={detailMessage.text} linkLabelMode="raw" highlightMentions={false} /></p>}
       </ArkmeSelectableMessageText>
