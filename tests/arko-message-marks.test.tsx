@@ -140,7 +140,12 @@ it('enables marking a newly completed synchronous reply without reloading or mov
   })
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
   await click([...document.querySelectorAll('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!)
-  await waitForUi(() => expect(registeredMessageTargets('arko:test:10001').some(({ target }) => target.localMarkRef === 'mark-4')).toBe(true))
+  // Wait for both the completed message target and the scheduled composer focus.
+  await waitForUi(() => {
+    expect(registeredMessageTargets('arko:test:10001').some(({ target }) => target.localMarkRef === 'mark-4')).toBe(true)
+    expect(body(4)).not.toBeNull()
+    expect(document.activeElement?.getAttribute('role')).toBe('textbox')
+  })
   const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
   Object.defineProperty(viewport, 'scrollHeight', { value: 1000 })
   Object.defineProperty(viewport, 'clientHeight', { value: 300 })
