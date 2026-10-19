@@ -205,6 +205,7 @@ import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ConversationAnalysis } from './statistics/ConversationAnalysis.js'
 import { ArkmeConversationSearch } from './ArkmeConversationSearch.js'
+import { prepareRecordSelectedTextReplace } from './record-selected-text-replace.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ArkmeBotConversationSurface } from './ArkmeBotConversationSurface.js'
 import { ArkmeBotAvatarActionMenu, ArkmeBotAvatarProfileCard, ArkmeBotRemoveDialog, arkmeInvalidateBotAvatarResolution,
@@ -8564,13 +8565,22 @@ export function ArkmeSurface({
     <>
     <ArkmeBotIdentityStyles />
     {messageUnderlines.layer}
-    {ui.mode !== 'arko' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
+    {ui.mode !== 'arko' && ui.mode !== 'team' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       replyLabel={sourceIsChat ? '回复' : '延展'}
       markStorage="local"
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}
+      canReplace={target => arkmeCanReeditTimelineMessage(target.item)}
+      prepareReplace={(target, quote, signal) => prepareRecordSelectedTextReplace(target, quote, signal, () => {
+        if (!source || target.sourceRef !== source.sourceRef || !arkmeCanReeditTimelineMessage(target.item)
+          || authenticatedAccountKey !== arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth)) throw new Error('对话或账号已变化，请重新选择')
+        if (findRecordReeditCandidate({ accountKey: authenticatedAccountKey, sourceKey: conversationKey, sourceRef: source.sourceRef }, target.item.itemUid)) {
+          throw new Error('这条消息正在重新编辑，请先处理已有草稿')
+        }
+        if (reeditSubmissions.jobs.some(job => job.itemUid === target.item.itemUid && ['pending', 'committing', 'uncertain'].includes(job.state))) throw new Error('这条消息仍在保存或核对，请稍后再修改')
+      }, reeditSubmissions.accepted)}
       onReply={(target, quote) => {
         if (!source || source.sourceRef !== target.sourceRef || (!sourceIsChat && !isArkmeSelfWorkspaceSource(source))) return
         const oldQuote = composerExtensionTarget?.quote
@@ -8700,8 +8710,8 @@ export function ArkmeSurface({
             interactions={source.kind === 'private_chat' ? { moments: interwovenMoments, state: interwovenCalendarState,
               retry: () => setInterwovenRefreshRevision(value => value + 1) } : undefined}
             onSelect={calendarNavigation.select} onOpen={calendarNavigation.cancel} />}
-          {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeConversationSearch
-            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} />}
+          {authenticated && activeConversation && source !== undefined && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) && <ArkmeConversationSearch
+            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} hideTrigger={!sourceIsChat} />}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ConversationAnalysis
             key={`chat-words:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef}
             accountScope={authenticatedAccountKey ?? ''}
@@ -9631,7 +9641,7 @@ export function ArkmeSurface({
         />}
         {activeConversation && drawer === 'detail' && detailItem !== undefined && detailItem.callRecord === undefined && detailItem.forwardRecords === undefined && detailSharedRecording === undefined && <ArkmeTimelineDetailDrawer
           key={`${authenticatedAccountKey ?? 'signed-out'}:${detailItem.itemUid}`}
-          item={detailItem}
+          item={projectRecordReedit(detailItem, reeditSubmissions.jobs)}
           sourceBadge={detailConversationBadge}
           sourceRef={source?.sourceRef}
           sourceIdentityKey={conversationKey}

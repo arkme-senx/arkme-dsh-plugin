@@ -47,7 +47,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); document.getSelection()?.removeAllRanges(); vi.unstubAllGlobals() })
 it('uses the same automatic toolbar for Team text and copies only the selected substring', async () => {
   await render(); const p = await select()
-  expect(labels(toolbar())).toEqual(['复制', '全选', '标记'])
+  expect(labels(toolbar())).toEqual(['复制', '全选', '标记', '查找'])
   expect(toolbar()?.textContent).toContain('仅本机')
   await mouse(p, 'contextmenu', 2)
   expect(document.querySelector('[role="menu"]')).toBeNull()

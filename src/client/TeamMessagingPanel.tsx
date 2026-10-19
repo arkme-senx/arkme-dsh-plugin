@@ -51,6 +51,9 @@ import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent }
 import { loadTeamDraft, persistTeamDraft, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
+import { useSelectedMessageSearch } from './message-selection-search.js'
+import { TeamSelectedTextSearch } from './TeamSelectedTextSearch.js'
+import { applyMessageTextReplacement, resolveMessageTextReplacement } from './message-text-replacement.js'
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { teamMessageMarkTransport } from './team-message-marks.js'
 import { arkmeConversationMessageLayout as messageLayout, dayKey } from './conversation-message-presentation.js'
@@ -215,6 +218,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const messageMarks = useMessageUnderlines(`${accountKey}:team:${conversation.key}`, conversation.ref, Number(accountKey.split(':').at(-1)), teamMessageMarkTransport)
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
+  const [selectedSearch, setSelectedSearch] = useState<{ text: string }>()
+  useSelectedMessageSearch(conversation.ref, text => { setDetailKey(undefined); setSelectedSearch({ text }) })
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
@@ -546,7 +551,29 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   return <section className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref}
-      markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove} />}
+      markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove}
+      canReplace={target => !!latest.current?.messages.find(message => message.key === target.item.itemUid)?.canEdit && current.channel.enabled && !current.blocked}
+      prepareReplace={async (target, quote, signal) => {
+        const old = latest.current?.messages.find(message => message.key === target.item.itemUid)
+        if (!old || editing || busy || !old.canEdit || !current.channel.enabled || current.blocked) throw new Error('请先完成当前编辑，并确认此消息仍可编辑')
+        const range = resolveMessageTextReplacement(target.item, quote)
+        const page = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: old.seq + 1 }, signal)
+        const message = page.messages.find(value => value.key === old.key)
+        if (!message?.canEdit || message.state !== 'published' || message.contentStatus !== 'available' || !message.content
+          || message.version !== old.version || message.content.text_content !== target.item.textContent) throw new Error('消息已变化或不可编辑，请重新选择')
+        const content = message.content
+        return { save: async value => {
+          signal.throwIfAborted()
+          const next = applyMessageTextReplacement(content.text_content, range, value)
+          if (!next.text.trim() && !message.media.length) throw new Error('消息内容不能为空')
+          if (next.text.length > 20_000) throw new Error('消息最多 20000 个字符')
+          if (next.text === content.text_content) return
+          await callArkme('team.app.edit', { messageRef: message.ref, expectedAccountKey: accountKey, version: message.version, content: { ...content, text_content: next.text } }, signal)
+          if (signal.aborted) return
+          await refresh(); onChanged()
+        } }
+      }} />}
+    {selectedSearch && <TeamSelectedTextSearch conversationRef={conversation.ref} accountKey={accountKey} queryRequest={selectedSearch} onClose={() => setSelectedSearch(undefined)} />}
     <header style={messageLayout.header}>
       <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small></div></div>
     </header>
