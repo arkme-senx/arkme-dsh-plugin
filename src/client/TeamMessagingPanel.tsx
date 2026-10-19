@@ -24,6 +24,10 @@ import { ConfirmedSendRetentionOwner } from './confirmed-send-retention.js'
 import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-cache.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
+import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
+import { teamDirectoryPreferences, teamConversationEntryKey, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
@@ -108,15 +112,17 @@ export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: 
     imagePort={teamAvatarImages} size={size ?? 32} label={identity.nickname} />
 }
 
-export function TeamConversationRow({ conversation: c, selected = false, showTeamName = true, role, onClick }: {
-  conversation: TeamConversation; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
+export function TeamConversationRow({ conversation: c, accountKey, selected = false, showTeamName = true, role, onClick }: {
+  conversation: TeamConversation; accountKey?: string; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
 }) {
+  const actions = useTeamConversationEntryActions(accountKey, { kind: 'conversation', conversation: c })
   const preview = c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
     : c.preview ? tr('内容暂不可用') : ''
-  return <button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
+  return <><button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
-    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onClick={onClick}>
+    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
+    {actions.pinned && <ArkmePinnedCorner />}
     <span style={directoryStyles.sourceAvatarWrap}>
       {c.side === 'team'
         ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
@@ -131,7 +137,7 @@ export function TeamConversationRow({ conversation: c, selected = false, showTea
       </span>
       <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
-  </button>
+  </button>{actions.overlays}</>
 }
 
 export function TeamMessagingMount({ accountKey, active }: { accountKey: string; active: boolean }) {
@@ -156,6 +162,7 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
 /** The existing workspace owns navigation. Team owns only its conversation content. */
 export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string; intent: TeamMessageIntent }) {
   useArkmeLocale()
+  const preferences = useTeamDirectoryPreferences(accountKey)
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot)
   const [selected, setSelected] = useState<TeamConversation>()
@@ -165,15 +172,19 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     const controller = new AbortController()
     setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
-      if (intent.kind === 'conversation') { setSelected(intent.conversation); return }
+      if (intent.kind === 'conversation') {
+        teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
+        if (intent.conversation.side === 'team') teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
+        setSelected(intent.conversation); return
+      }
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') return
+      if (intent.kind === 'team') { if (intent.channel) teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
       const publicRef = intent.kind === 'official'
         ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
       const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
-      if (value.conversation) setSelected(value.conversation)
+      if (value.conversation) { teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation)); setSelected(value.conversation) }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
       else throw new Error(tr('暂时无法打开对话，请重试'))
       void refreshTeamDirectory(accountKey)
@@ -193,14 +204,16 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   </section>
   const directoryAllowed = intent.kind === 'inbox'
   const initialDirectoryLoad = directory.loading && !directory.hasLoaded
-  const items = (directoryAllowed ? directory.items : []).filter(c => channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side)
+  const items = (directoryAllowed ? directory.items : [])
+    .filter(c => !teamEntryHidden(preferences, { kind: 'conversation', conversation: c }) && (channel ? c.side === 'team' && c.channel.jotmoId === channel.jotmoId : intent.kind !== 'inbox' || !intent.side || c.side === intent.side))
+    .sort((a, b) => Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: b })) - Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: a })))
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
     <header style={messageLayout.header}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong>{channel && <small style={messageLayout.headerSubtitle}>{tr('团队对话')}</small>}</div></header>
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
       : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
-        <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow conversation={c} showTeamName={!channel}
+        <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow accountKey={accountKey} conversation={c} showTeamName={!channel}
           onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }} /></div>)}</div>
         {items.length === 0 && !directory.error && <p className="team-empty" role={initialDirectoryLoad ? 'status' : undefined}>{tr(initialDirectoryLoad ? '正在加载团队对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
@@ -366,7 +379,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   }, [timeline, outgoing, delivery.tasks])
   const advance = useCallback(() => {
     const current = latest.current
-    if (!current || !visible.current || document.visibilityState !== 'visible' || !document.hasFocus()) return
+    if (!current || !visible.current || !arkmeVisibleReadIntentAllowed()) return
     const sequence = Math.max(0, ...current.messages.map(m => m.seq))
     if (!sequence || sequence <= read.current) return
     const previous = read.current; read.current = sequence
@@ -376,7 +389,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     const observer = new IntersectionObserver(entries => { visible.current = entries.some(v => v.isIntersecting); advance() }, { root: scroller.current, threshold: 1 })
     if (bottom.current) observer.observe(bottom.current)
     window.addEventListener('focus', advance); document.addEventListener('visibilitychange', advance); advance()
-    return () => { observer.disconnect(); window.removeEventListener('focus', advance); document.removeEventListener('visibilitychange', advance) }
+    const stopReadAvailability = subscribeArkmeReadIntentAvailability(advance)
+    return () => { stopReadAvailability(); observer.disconnect(); window.removeEventListener('focus', advance); document.removeEventListener('visibilitychange', advance) }
   }, [advance, timeline])
   const observedCompletions = useRef(new Set<string>())
   useLayoutEffect(() => {

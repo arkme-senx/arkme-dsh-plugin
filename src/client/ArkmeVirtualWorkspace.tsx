@@ -6,6 +6,7 @@ import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js'
 import { TeamConversationDirectory, TeamConversationGroupRow } from './TeamConversationDirectory.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
+import { useTeamDirectoryPreferences } from './team-directory-preferences.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
@@ -1039,6 +1040,7 @@ export function ArkmeNavigation({
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
+  const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
@@ -1171,7 +1173,7 @@ export function ArkmeNavigation({
     scope: currentAccountKey,
     enabled: active && directory === 'root',
   })
-  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error)
+  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
   const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications' }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
     const index = mergedConversationRows.findIndex(row => !row.pinned && row.activeAtMillis < notificationSummary.atMillis)
@@ -2170,13 +2172,13 @@ export function ArkmeNavigation({
           if (row.kind === 'team-folder') {
             const group = row.group
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.side === 'team' && ui.teamIntent.conversation.channel.jotmoId === group.key
-            return <TeamConversationGroupRow key={`team-folder:${group.key}`} group={group} selected={selected}
+            return <TeamConversationGroupRow key={`team-folder:${group.key}`} accountKey={currentAccountKey ?? ''} group={group} selected={selected}
               onClick={() => { activateNativeEntry(); openTeamMessages({kind:'team',teamRef:group.channel.teamRef,channel:group.channel}); onActivateSurface?.() }} />
           }
           if (row.kind === 'team') {
             const c = row.conversation
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side
-            return <TeamConversationRow key={`team:${c.side}:${c.key}`} conversation={c} selected={selected} role="treeitem"
+            return <TeamConversationRow key={`team:${c.side}:${c.key}`} accountKey={currentAccountKey ?? ''} conversation={c} selected={selected} role="treeitem"
               onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }} />
           }
 
