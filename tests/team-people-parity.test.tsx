@@ -87,6 +87,6 @@ it('uses the common author/time layout, no redundant title, resizable shell and 
   expect(host.querySelector('h2')?.textContent).not.toBe('消息详情')
   expect(host.querySelector('[role="separator"]')).toBeTruthy()
   await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="所在对话：测试团队 · 访客"]')!.click())
-  expect(onLocate).toHaveBeenCalledOnce();expect(host.textContent).toContain('相关快记与延展回复暂未接通')
+  expect(onLocate).toHaveBeenCalledOnce();expect(host.textContent).toContain('相关快记暂未接通')
   expect(host.querySelector('textarea')).toBeNull()
 })

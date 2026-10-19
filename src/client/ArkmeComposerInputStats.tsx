@@ -13,6 +13,7 @@ export function arkmeComposerShowsInputTime(): boolean {
 }
 
 export function setArkmeComposerShowsInputTime(value: boolean): void {
+  if (typeof window === 'undefined') return
   try { window.localStorage.setItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY, value ? 'shown' : 'hidden') } catch { /* storage is optional */ }
   window.dispatchEvent(new Event(INPUT_TIME_CHANGED))
 }
@@ -81,6 +82,7 @@ export const ArkmeComposerInputStats = memo(function ArkmeComposerInputStats({
 export function useArkmeComposerInputTimePreference(): [boolean, (value: boolean) => void] {
   const [value, setValue] = useState(arkmeComposerShowsInputTime)
   useEffect(() => {
+    if (typeof window === 'undefined') return
     const update = () => setValue(arkmeComposerShowsInputTime())
     window.addEventListener(INPUT_TIME_CHANGED, update)
     window.addEventListener('storage', update)

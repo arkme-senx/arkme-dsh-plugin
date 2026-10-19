@@ -42,15 +42,17 @@ export function startOfficialTeamMembership(key: string): () => void {
   refreshCurrent = refresh
   const stop = subscribeTeamMessageChanges(changed => { if (changed === key) void refresh() })
   const resume = () => { void refresh() }
-  const visible = () => { if (document.visibilityState === 'visible') resume() }
-  const timer = setInterval(visible, 60_000)
-  window.addEventListener('focus', resume); window.addEventListener('online', resume)
-  document.addEventListener('visibilitychange', visible)
+  const browserWindow = typeof window === 'undefined' ? undefined : window
+  const browserDocument = typeof document === 'undefined' ? undefined : document
+  const visible = () => { if (browserDocument?.visibilityState === 'visible') resume() }
+  const timer = browserDocument ? setInterval(visible, 60_000) : undefined
+  browserWindow?.addEventListener('focus', resume); browserWindow?.addEventListener('online', resume)
+  browserDocument?.addEventListener('visibilitychange', visible)
   void refresh()
   return () => {
     controller.abort(); stop(); clearInterval(timer)
-    window.removeEventListener('focus', resume); window.removeEventListener('online', resume)
-    document.removeEventListener('visibilitychange', visible)
+    browserWindow?.removeEventListener('focus', resume); browserWindow?.removeEventListener('online', resume)
+    browserDocument?.removeEventListener('visibilitychange', visible)
     if (refreshCurrent === refresh) { account = ''; snapshot = empty; refreshCurrent = undefined; emit() }
   }
 }

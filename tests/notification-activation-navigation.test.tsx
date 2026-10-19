@@ -27,6 +27,7 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeNotificationActivation } from '../src/client/notification-activation-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { startOfficialTeamMembership, refreshOfficialTeamMembership } from '../src/client/official-team-membership.js'
 
 const targetSource: ArkmeSourceItem = {
   sourceRef: 'notification-target-ref',
@@ -39,6 +40,7 @@ const targetSource: ArkmeSourceItem = {
 }
 
 let renderer: ReactTestRenderer | undefined
+let stopOfficialMembership: (() => void) | undefined
 
 async function flushEffects(): Promise<void> {
   await act(async () => {
@@ -64,6 +66,7 @@ beforeEach(() => {
       return { directory: 'root', items: [targetSource], hasMore: false }
     }
     if (operation === 'bots.private-chat.directory') return { items: [] }
+    if (operation === 'team.app.official.membership') return { jotmoId: 'arkme_cn', isMember: false }
     if (operation === 'chat.official-author.profile' || operation === 'arko.profile') {
       throw new Error('not needed by this navigation test')
     }
@@ -79,6 +82,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  stopOfficialMembership?.()
+  stopOfficialMembership = undefined
   renderer?.unmount()
   renderer = undefined
   arkmeChatDirectory.activateAccount(undefined)
@@ -133,6 +138,8 @@ describe('system notification navigation activation', () => {
   })
 
   it('keeps ordinary notification navigation independent of the official Team entry', async () => {
+    stopOfficialMembership = startOfficialTeamMembership('test:7001')
+    await refreshOfficialTeamMembership('test:7001')
     const opened: unknown[] = []
     const { subscribeTeamMessageOpen } = await import('../src/client/team-messaging-events.js')
     const unsubscribe = subscribeTeamMessageOpen(intent => opened.push(intent))
