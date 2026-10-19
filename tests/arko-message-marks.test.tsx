@@ -39,6 +39,10 @@ async function select(element: HTMLElement, phrase: string) {
   expect(node).not.toBeNull()
   const start = node!.textContent!.indexOf(phrase)
   await act(async () => {
+    // A real pointer selection first moves focus out of the contenteditable.
+    // Without this browser default, ProseMirror correctly restores its own caret.
+    element.closest<HTMLElement>('[role="button"]')?.focus()
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
     const range = document.createRange(); range.setStart(node!, start); range.setEnd(node!, start + phrase.length)
     document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
     element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 30, clientY: 55 }))
