@@ -156,3 +156,14 @@ it('keeps search display identities stable while locator capabilities expire ind
  expect(next.items[0]?.messageKey).toBe(first.items[0]?.messageKey)
  expect(next.items[0]?.messageRef).not.toBe(first.items[0]?.messageRef)
 })
+
+it('uses canonical message creation time instead of embedded record/cache timestamps', async () => {
+ const item = { ...wireItem, extra: JSON.stringify({ data: { send_at: 500, create_at: 600, update_at: 700 } }) }
+ const { service } = await setup(async url => url.endsWith('/query')
+  ? json({ items: [item], has_more: false, scanned: 1, consistency: 'live' })
+  : json({ items: [item], has_before: false, has_after: false }))
+ const page = await service.arkoMessages()
+ expect(page.items[0]).toMatchObject({ createdAtMillis: wireItem.created_at_ms, orderAtMillis: wireItem.order_at_ms })
+ const context = await service.arkoContext({ messageRef: page.items[0]!.messageRef!, before: 0, after: 0 })
+ expect(context.items[0]).toMatchObject({ createdAtMillis: wireItem.created_at_ms, orderAtMillis: wireItem.order_at_ms })
+})

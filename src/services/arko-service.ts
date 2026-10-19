@@ -362,6 +362,7 @@ export class ArkoService {
           if (![1, 2].includes(numberValue(wire.source_type)) || ![1, 2, 3].includes(numberValue(wire.type)) || ![1, 2, 3, 5].includes(item.status)
             || !Number.isSafeInteger(wire.created_at_ms) || !Number.isSafeInteger(wire.order_at_ms)) throw new ArkmePluginError('arko-history-contract-invalid', '历史消息字段不完整', true, 502)
           item.reasoning = ''
+          item.createdAtMillis = numberValue(wire.created_at_ms)
           item.sourceType = numberValue(wire.source_type); item.messageType = numberValue(wire.type); item.orderAtMillis = numberValue(wire.order_at_ms)
         }
         const attachments = listValue(objectValue(raw).attachments).map(objectValue).filter(attachment =>
