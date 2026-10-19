@@ -20,6 +20,7 @@ import { MessageActionService } from './message-action-service.js'
 import { arkoImageInputFromWire, arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
+import { ArkoLocalMarks } from './arko-local-marks.js'
 
 export interface ArkoImagePorts {
   withReferences?<T>(refs: readonly string[], userId: number, persist: () => Promise<T>): Promise<T>
@@ -225,6 +226,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ArkoService {
+  readonly localMarks: ArkoLocalMarks
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
   constructor(
@@ -232,7 +234,7 @@ export class ArkoService {
     private readonly profile: ProfileService,
     private readonly messageActions?: MessageActionService,
     private readonly images?: ArkoImagePorts,
-  ) {}
+  ) { this.localMarks = new ArkoLocalMarks(runtime) }
 
   dispose(): void {
     this.arkoProfileDisplayNameCache.clear()
@@ -360,7 +362,10 @@ export class ArkoService {
         }))
     const hasMore = rawItems.length === normalizedLimit
     return {
-      items,
+      items: await Promise.all(items.map(async item => {
+        const localMarkRef = await this.localMarks.project(item, session.userId)
+        return localMarkRef ? { ...item, localMarkRef } : item
+      })),
       hasMore,
       ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
     }

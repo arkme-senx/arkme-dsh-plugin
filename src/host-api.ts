@@ -76,6 +76,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
   if (operation === 'recordings.speaker.correction.apply') return 1024 * 1024
   if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
@@ -1776,6 +1777,9 @@ export async function dispatchArkmeHostOperation(
     case 'arko.pending.prepare': await service.arkoPrepareTurn(params.turn as import('./arko-turn-contract.js').ArkmeArkoPendingTurn); return {saved:true}
     case 'arko.pending.acknowledge': await service.arkoAcknowledgeTurn(stringParam(params,'clientTurnUid'),optionalPositiveIntegerParam(params,'expectedUserId'));return {saved:true}
     case 'arko.profile': return await service.arkoProfile()
+    case 'arko.local-mark.capabilities': return await service.arkoLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
+    case 'arko.local-mark.list': return await service.arkoLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)
+    case 'arko.local-mark.change': return await service.changeArkoLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'markRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'arko.session': return await service.arkoEnsureSession()
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()

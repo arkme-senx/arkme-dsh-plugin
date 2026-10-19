@@ -3803,6 +3803,8 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  /** Account-bound authority for private, persisted marks on completed text. */
+  localMarkRef?: string
   messageId: number
   sessionId: number
   role: ArkmeArkoMessageRole
@@ -4570,6 +4572,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
   | 'arko.profile'
+  | 'arko.local-mark.capabilities'
+  | 'arko.local-mark.list'
+  | 'arko.local-mark.change'
   | 'arko.session'
   | 'arko.new-session'
   | 'arko.models'
