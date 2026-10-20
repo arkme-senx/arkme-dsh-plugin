@@ -1,3 +1,5 @@
+import { AnalysisModelDialog } from './AnalysisModelDialog.js'
+import type { DayReviewModels } from '../calendar-day-review.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
 import type { DayReviewOpenSource } from '../services/calendar-day-review-service.js'
@@ -43,6 +45,10 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const selectionTouched = useRef(false), requestId = useRef('')
   const q = useRef(query).current
   const prompts = useDayReviewPrompts(q)
+  const [modelOptions, setModelOptions] = useState<DayReviewModels>(), [modelLoading, setModelLoading] = useState(false)
+  const [modelCode, setModelCode] = useState<string>()
+  const modelRequest = useRef<AbortController>()
+  useEffect(() => () => modelRequest.current?.abort(), [])
   const [reuse, setReuse] = useState<DayReviewResult>()
   const pendingSubmission = useRef<Record<string, unknown>>()
   const selectedVersionRef = useRef('')
@@ -124,7 +130,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     const timer = setTimeout(() => { if (typeof document === 'undefined' || document.visibilityState === 'visible') void read() }, 5000)
     return () => clearTimeout(timer)
   }, [active, loading, submitting, error, read])
-  const generate = async () => {
+  const generate = async (selectedModel?: string) => {
     if (submittingRef.current || (active && !uncertain) || !state?.supported || !sources.length || (!uncertain && prompts.block)) return
     submittingRef.current = true; setSubmitting(true); setError(''); setLoading(false)
     readRequest.current?.abort(); versionRequest.current?.abort(); setVersionLoading(false)
@@ -133,7 +139,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     // Retain the same id after a lost acknowledgement; do not start a second billable job.
     requestId.current ||= crypto.randomUUID()
     const config = prompts.draft.saved ?? prompts.support?.defaults
-    pendingSubmission.current ??= { ...q, sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
+    pendingSubmission.current ??= { ...q, ...(selectedModel ? { modelCode: selectedModel } : {}), sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
       ...(config ? { promptConfig: promptConfigOnly(config) } : {}), ...(reuse ? { reuseResultId: reuse.id } : {}) }
     try {
       const value = await withArkmeReadDeadline(signal => uncertain ? callArkme<DayReviewState>('calendar.day-review.reconcile', { ...q }, signal) : callArkme<DayReviewState>('calendar.day-review.create', pendingSubmission.current!, signal), controller.signal)
@@ -142,7 +148,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       apply(value); setSelectedVersion(''); setHistorical(undefined); setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setReuse(undefined)
     } catch (e) {
       if (!controller.signal.aborted) {
-        const notSubmitted = e instanceof ArkmeClientError && ['calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(e.body.code)
+        const notSubmitted = e instanceof ArkmeClientError && ['calendar-review-model-unsupported', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(e.body.code)
         if (notSubmitted) {
           setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setError(errorText(e)); void prompts.read()
         } else { setUncertain(true); setError(`${tr('提交结果尚未确认，请先检查更新。再次提交会核对同一次请求。')} ${errorText(e)}`) }
@@ -151,6 +157,17 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       submittingRef.current = false
       if (mounted.current && !controller.signal.aborted) { setSubmitting(false); if (refreshAccepted) void read() }
     }
+  }
+  const chooseModel = async () => {
+    if (uncertain) { await generate(); return }
+    if (modelRequest.current || submittingRef.current || running(state)) return
+    const controller = new AbortController(); modelRequest.current = controller
+    setModelLoading(true); setError('')
+    try {
+      const options = await withArkmeReadDeadline(signal => callArkme<DayReviewModels>('calendar.day-review.models', { ...q }, signal), controller.signal)
+      if (!controller.signal.aborted) setModelOptions(options)
+    } catch (e) { if (!controller.signal.aborted) setError(errorText(e)) }
+    finally { if (!controller.signal.aborted) { setModelLoading(false); modelRequest.current = undefined } }
   }
   const resume = async () => {
     if (!state?.job || submittingRef.current) return
@@ -196,7 +213,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   })}</div>
   return <div className="calendar-day-review" aria-label={tr(view === 'summary' ? '日总结内容' : '时间轴内容')}>
     <div className="day-review-controls">
-      <fieldset disabled={submitting || active || uncertain || !!reuse}><legend>{tr('生成范围')}</legend>
+      <fieldset disabled={modelLoading || submitting || active || uncertain || !!reuse}><legend>{tr('生成范围')}</legend>
         {DAY_REVIEW_SOURCES.map(kind => <label key={kind}><input type="checkbox" checked={sources.includes(kind)} onChange={event => {
           selectionTouched.current = true; requestId.current = ''
           setSources(current => event.target.checked ? DAY_REVIEW_SOURCES.filter(x => x === kind || current.includes(x)) : current.filter(x => x !== kind))
@@ -205,16 +222,21 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       <div className="day-review-actions">
         <button type="button" className="arkme-day-source" aria-expanded={prompts.open} onClick={prompts.toggle}>{tr('提示词')}{prompts.draft.editing ? ' · ' + tr('未保存') : prompts.draft.saved ? ' · ' + tr('自定义') : ''}</button>
         <button type="button" className="arkme-day-source" disabled={loading || submitting} onClick={() => void read(true)}>{tr('检查更新')}</button>
-        <button type="button" className="day-review-generate" disabled={!state?.supported || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void generate()}>
-          {tr(submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
+        <button type="button" className="day-review-generate" disabled={modelLoading || !state?.supported || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void chooseModel()}>
+          {tr(modelLoading ? '正在读取模型…' : submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
       </div>
     </div>
     <p className="day-review-hint">{tr('按所选来源整理当天可用内容，同时生成日总结和时间轴。')}</p>
+    {modelOptions && <AnalysisModelDialog ariaLabel={tr('选择日回顾生成模型')} initialValue={modelCode ?? modelOptions.defaultCode}
+      options={modelOptions.models.map(model => ({ value: model.code, label: model.displayName }))}
+      onClose={() => setModelOptions(undefined)} onConfirm={code => {
+        setModelCode(code); setModelOptions(undefined); void generate(code)
+      }} />}
     <CalendarDayReviewPromptEditor controller={prompts} view={view} locked={submitting || active || uncertain} />
     {prompts.block && <p className="day-review-status">{tr(prompts.block)}</p>}
     {!prompts.block && prompts.draft.saved && <p className="day-review-status">{tr('将使用已保存的自定义提示词，重新生成后生效')}</p>}
     {prompts.storageError && !prompts.open && <p role="alert" className="day-review-error">{prompts.storageError}</p>}
-    {prompts.support?.snapshotReuse && result && <label className="day-review-reuse"><input type="checkbox" checked={!!reuse} disabled={submitting || active || uncertain}
+    {prompts.support?.snapshotReuse && result && <label className="day-review-reuse"><input type="checkbox" checked={!!reuse} disabled={modelLoading || submitting || active || uncertain}
       onChange={event => setReuse(event.target.checked ? result : undefined)} />{tr('沿用当前版本的资料重新生成（便于比较提示词效果）')}</label>}
     {loading && !state && <p role="status" className="day-review-status">{tr('正在读取当天回顾…')}</p>}
     {state?.resultError === 'source_revoked' && <p role="alert" className="day-review-error">{tr('旧结果的来源权限已变化，请重新选择可用资料生成回顾')}</p>}
