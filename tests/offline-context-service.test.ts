@@ -185,3 +185,27 @@ it.each([
   expect(page.entries[0]!.summary).toEqual(points)
   f.service.dispose()
 })
+
+it('filters linked entries by scoped message references and binds pagination to the same filter', async () => {
+  const f = await fixture()
+  const ref = await f.service.messageReference('private-chat-id', 'private-relation', 'private-record', 8)
+  const other = await f.service.messageReference('other-chat', 'private-relation', 'private-record', 8)
+  f.post.mockImplementation(async (path, body) => {
+    if (path.endsWith('/capability')) return { supported: true, version: 1, timeline_version: 2 }
+    expect(body.message_uids).toEqual(['private-relation'])
+    return { items: [association], has_more: true, next: { at: 1000, id: 'private-association' } }
+  })
+  const request = { operation: 'list' as const, sourceRef: 'source-ref', state: 'linked' as const, messageRefs: [ref] }
+  const page = await f.service.offlineContext(request) as OfflineContextList
+  expect(page.entries[0]?.messages[0]?.messageRef).toBe(ref)
+  expect(JSON.stringify(page)).not.toContain('private-')
+  await f.service.offlineContext({ ...request, cursor: page.nextCursor! })
+  const count = f.post.mock.calls.length
+  await expect(f.service.offlineContext({ ...request, messageRefs: [other] })).rejects.toThrow()
+  await expect(f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref', state: 'linked', cursor: page.nextCursor! })).rejects.toThrow()
+  await expect(f.service.offlineContext({ ...request, messageRefs: [] })).rejects.toThrow()
+  expect(f.post.mock.calls).toHaveLength(count)
+  f.switchUser(9)
+  await expect(f.service.offlineContext(request)).rejects.toThrow()
+  f.service.dispose()
+})
