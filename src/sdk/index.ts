@@ -1,3 +1,5 @@
+import type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
+export type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
 export type { DayReviewModels } from '../calendar-day-review.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
@@ -6,11 +8,11 @@ import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabili
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
 export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
 export type { OfflineContextRangeOptions,OfflineContextRequest,OfflineContextCommand,OfflineContextPreview,OfflineContextCommandResult,OfflineContextList,OfflineContextPort,OfflineContextTranscript,OfflineContextPlayback,OfflineContextCapability,OfflineContextCoverage } from '../offline-context-contract.js'
 export type { OfflineContextEntry,OfflineContextEvidence,OfflineContextMessage } from '../offline-context.js'
-import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
-export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 import { connectArkmeRealtime } from '../client/realtime-connection.js'
@@ -512,6 +514,14 @@ export class ArkmeSdk {
     }
   }
 
+  async relationPage(query: Omit<ExploreQuery,'module'> = {}, signal?: AbortSignal): Promise<ExplorePage> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.list',{...query},signal)
+  }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal): Promise<ExploreDetail> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.records',{...query},signal)
+  }
   /** Explicit user command; idempotently starts recognition for the current account/day. */
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
     if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
@@ -525,6 +535,11 @@ export class ArkmeSdk {
   }
 
   /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal): Promise<RecordingPersonReferences> {
+    if ((await this.capabilities(signal)).features.recordingPersonReferences !== true) throw new Error('当前 Provider 不支持录音人物指代')
+    return this.call('recordings.person-references', { ...query }, signal)
+  }
+
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
     if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
     return this.call('recordings.entities.occurrences', { ...query }, signal)

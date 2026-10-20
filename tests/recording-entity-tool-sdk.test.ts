@@ -7,17 +7,19 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 import type { ArkmeService } from '../src/arkme-service.js'
 
 it('SDK discovers support and forwards cancellable queries through Host to the same owner', async () => {
-  const service = { startRecordingEntities: vi.fn(async () => ({ status: 'accepted' })), recordingEntities: vi.fn(async query => ({ ...query, entities: [] })), recordingEntityOccurrences: vi.fn(async query => ({ ...query, items: [] })) }
+  const service = { recordingPersonReferences: vi.fn(async query => ({ ...query, status: 'complete', references: [] })), startRecordingEntities: vi.fn(async () => ({ status: 'accepted' })), recordingEntities: vi.fn(async query => ({ ...query, entities: [] })), recordingEntityOccurrences: vi.fn(async query => ({ ...query, items: [] })) }
   const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
     init?.signal?.throwIfAborted()
     const { operation, params } = JSON.parse(String(init?.body))
-    const value = operation === 'provider.capabilities' ? { contractVersion: 1, features: { recordingEntities: true, recordingEntityStart: true } }
+    const value = operation === 'provider.capabilities' ? { contractVersion: 1, features: { recordingPersonReferences: true, recordingEntities: true, recordingEntityStart: true } }
       : await dispatchArkmeHostOperation(service as unknown as ArkmeService, operation, params, undefined, undefined, undefined, undefined, init?.signal ?? undefined)
     return new Response(JSON.stringify({ ok: true, value }))
   } })
   const signal = new AbortController().signal
   await sdk.startRecordingEntities({ dateStamp: 123 }, signal)
   expect(service.startRecordingEntities).toHaveBeenCalledWith({ dateStamp: 123, transcriptSource: 'system' }, signal)
+  await sdk.recordingPersonReferences({dateStamp:123,identityHash:'hash',transcriptVersion:'version'},signal)
+  expect(service.recordingPersonReferences).toHaveBeenCalledWith({dateStamp:123,transcriptSource:'system',identityHash:'hash',transcriptVersion:'version'},signal)
   await sdk.recordingEntities({ dateStamp: 123 }, signal)
   await sdk.recordingEntityOccurrences({ entityRef: 'opaque', offset: 50 }, signal)
   expect(service.recordingEntities).toHaveBeenCalledWith({ dateStamp: 123, transcriptSource: 'system', knownStateRevision: 0, knownProjectionRevision: 0 }, signal)
@@ -26,13 +28,16 @@ it('SDK discovers support and forwards cancellable queries through Host to the s
   const unsupported = createArkmeSdk({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, value: { contractVersion: 1, features: {} } })) })
   await expect(unsupported.startRecordingEntities({ dateStamp: 123 })).rejects.toThrow('不支持')
   await expect(unsupported.recordingEntities({ dateStamp: 123 })).rejects.toThrow('不支持')
+  await expect(unsupported.recordingPersonReferences({dateStamp:123,identityHash:'hash',transcriptVersion:'version'})).rejects.toThrow('不支持')
 })
 
 it('registers a read-only Tool with the same owner and rejects ambiguous inputs', async () => {
-  const ports = { recordingEntities: vi.fn(async () => ({ entities: [] })), recordingEntityOccurrences: vi.fn(async () => ({ items: [] })) }
+  const ports = { recordingPersonReferences: vi.fn(async () => ({ references: [] })), recordingEntities: vi.fn(async () => ({ entities: [] })), recordingEntityOccurrences: vi.fn(async () => ({ items: [] })) }
   const tool = createArkmeCoreToolDefinitions(ports as unknown as ArkmeCoreToolPorts).find(tool => tool.name === 'arkme_recording_entities')!
   expect(arkmeToolCatalog.modulesFor('business').find(module => module.meta.toolName === tool.name)?.meta.effect).toBe('read')
   const exec = { signal: new AbortController().signal } as never
+  await tool.execute({action:'person_references',date_stamp:123,identity_hash:'hash',transcript_version:'version'},exec)
+  expect(ports.recordingPersonReferences).toHaveBeenCalledWith({dateStamp:123,transcriptSource:'system',identityHash:'hash',transcriptVersion:'version'},expect.any(AbortSignal))
   await tool.execute({ action: 'list', date_stamp: 123 }, exec)
   await tool.execute({ action: 'occurrences', entity_ref: 'opaque', limit: 10 }, exec)
   expect(ports.recordingEntityOccurrences).toHaveBeenCalledWith({ entityRef: 'opaque', offset: 0, limit: 10 }, expect.any(AbortSignal))

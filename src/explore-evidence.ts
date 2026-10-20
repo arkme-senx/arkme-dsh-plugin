@@ -6,6 +6,11 @@ export function mergeExploreEvidence(...pages: readonly ExploreEvidence[][]): Ex
   for (const item of pages.flat()) {
     const previous = rows.get(item.key)
     if (!previous) { rows.set(item.key, item); continue }
+    // A current body or revoked source replaces every older attribution/ref.
+    // Merging old positions into an edited body would present stale identities.
+    if (item.personReferenceStatus === 'unavailable' || item.text !== previous.text) {
+      rows.set(item.key, item); continue
+    }
     const mentions = new Map<string, NonNullable<ExploreEvidence['mentions']>[number]>()
     for (const mention of [...previous.mentions ?? [], ...item.mentions ?? []]) {
       mentions.set(`${mention.start}:${mention.end}:${mention.text}`, mention)

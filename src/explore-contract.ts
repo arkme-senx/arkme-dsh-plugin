@@ -28,6 +28,8 @@ export interface ExplorePage {
   module: ExploreModule
   items: ExploreItem[]
   filters: ExploreFilter[]
+  totalKnown?: boolean
+  searchPending?: boolean
   total: number
   nextCursor?: string
   contextRef: string
@@ -50,10 +52,14 @@ export interface ExploreEvidence {
   ref?: string
   unavailableReason?: string
   mentions?: Array<{ start: number; end: number; text: string }>
+  /** Complete refers to current-body coverage; resolved names are AI inferences, not contact verification. */
+  personReferenceStatus?: 'complete' | 'not_analyzed' | 'unavailable'
+  personReferences?: Array<{ start: number; end: number; text: string; status: 'resolved' | 'unresolved' | 'generic' | 'group'; targetName?: string }>
 }
 export interface ExploreEnrichment { items: Array<{ key: string; linkedContactName: string }> }
 export type ExploreDetailPart = 'overview' | 'records'
 export interface ExploreDetail {
+  snapshot?: string
   item: ExploreItem
   fields: Array<{ label: string; value: string }>
   evidence: ExploreEvidence[]

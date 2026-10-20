@@ -1063,6 +1063,8 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
   if (operation === 'people.list') return service.peopleList(params.source, requestSignal)
   if (operation === 'people.open-chat') return service.peopleOpenChat(stringParam(params, 'ref'), requestSignal)
+  if (operation === 'relations.list') return service.relationPage(params as Omit<ExploreQuery,'module'>, requestSignal)
+  if (operation === 'relations.records') return service.relationRecords({ref:typeof params.ref==='string'?params.ref:'',...(typeof params.cursor==='string'?{cursor:params.cursor}:{})},requestSignal)
   if (operation === 'explore.list') return service.explorePage(params as unknown as ExploreQuery, requestSignal)
   if (operation === 'explore.detail') return service.exploreDetail(stringParam(params, 'ref'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal, params.part === 'overview' || params.part === 'records' ? params.part : undefined)
   if (operation === 'explore.enrich') return service.exploreEnrich(params.refs, requestSignal)
@@ -1496,6 +1498,11 @@ export async function dispatchArkmeHostOperation(
       knownStateRevision: numberParam(params, 'knownStateRevision', 0),
       knownProjectionRevision: numberParam(params, 'knownProjectionRevision', 0),
       ...(params.knownPersonalizationRevision === undefined ? {} : { knownPersonalizationRevision: numberParam(params, 'knownPersonalizationRevision', 0) }),
+    }, requestSignal)
+    case 'recordings.person-references': return await service.recordingPersonReferences({
+      dateStamp: numberParam(params, 'dateStamp', Number.NaN),
+      transcriptSource: (params.transcriptSource ?? 'system') as 'system' | 'doubao',
+      identityHash: stringParam(params, 'identityHash'), transcriptVersion: stringParam(params, 'transcriptVersion'),
     }, requestSignal)
     case 'recordings.entities.occurrences': return await service.recordingEntityOccurrences({
       entityRef: stringParam(params, 'entityRef'), offset: numberParam(params, 'offset', 0), limit: numberParam(params, 'limit', 50),

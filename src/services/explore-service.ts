@@ -1,3 +1,4 @@
+import { projectPersonReferences } from './person-reference-projection.js'
 import { CapabilityService } from './capability-service.js'
 import { mergeExploreEvidence } from '../explore-evidence.js'
 import type { ExploreDetailPart, ExploreEnrichment } from '../explore-contract.js'
@@ -79,6 +80,29 @@ export class ExploreService {
     await this.guard(session,epoch,signal)
     this.relationCache = {scope,until:Date.now()+30_000,value}; return value
   }
+  private async versionedPage(path: string, body: Doc, session: ArkmeSessionCredentials, required: boolean, signal?: AbortSignal): Promise<Doc | undefined> {
+    try {
+      const result = await this.request('relations', path, body, session, signal)
+      if (result.protocol_version === 2) {
+        if (typeof result.has_more !== 'boolean' || !Number.isSafeInteger(result.snapshot) || number(result.snapshot) <= 0 || (result.has_more && !text(result.next_cursor))) throw missing()
+        return result
+      }
+      if (required || result.protocol_version !== undefined) throw missing()
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || ![404,405].includes(error.upstreamStatus ?? error.httpStatus) || required) throw error
+    }
+    return undefined
+  }
+  private async relationRecords(ref: Doc, cursor: Doc, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Doc> {
+    if (!cursor.offset) {
+      const value = await this.versionedPage('/api/v1/entity/records/page', {entity_id:ref.id,limit:30,...(cursor.backendCursor?{cursor:cursor.backendCursor}:{})}, session, cursor.protocol===2, signal)
+      if(value) {
+        if(!Array.isArray(value.records) || (cursor.snapshot && cursor.snapshot!==value.snapshot)) throw missing()
+        return value
+      }
+    }
+    return this.request('relations','/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal)
+  }
   private cachedRelation(session: ArkmeSessionCredentials, id: unknown): Doc {
     if (this.relationCache?.scope !== `${this.runtime.config.environment}:${session.userId}`) return {}
     return list(this.relationCache.value.entities).find(x => x.entity_id === id) ?? {}
@@ -127,6 +151,12 @@ export class ExploreService {
     }
   }
   async page(input: ExploreQuery, signal?: AbortSignal): Promise<ExplorePage> {
+    return this.readPage(input, signal, false)
+  }
+  async relationPage(input: Omit<ExploreQuery, 'module'>, signal?: AbortSignal): Promise<ExplorePage> {
+    return this.readPage({...input, module: 'relations'}, signal, true)
+  }
+  private async readPage(input: ExploreQuery, signal: AbortSignal | undefined, paginatedRelations: boolean): Promise<ExplorePage> {
     const module = this.module(input.module), session = await this.runtime.requireSession(), epoch = this.epoch
     const filter = bounded(input.filter ?? '',100), query = bounded(input.query ?? '',200)
     const cursor = input.cursor ? await this.open(input.cursor,session,'cursor') : {}
@@ -155,6 +185,18 @@ export class ExploreService {
       }
       page.notice = '当前分析范围：'+list(home.sources).filter(x=>x.enabled===true).map(x=>text(x.display_name)).join('、')
     } else if (module === 'relations') {
+      const paged = paginatedRelations && (!input.cursor || cursor.protocol===2) ? await this.versionedPage('/api/v1/relation/entities/list', {
+        protocol_version:2,limit:Math.min(100,Math.max(1,Math.trunc(number(input.limit))||PAGE)),query,
+        ...(filter?{entity_types:[Number(filter)]}:{}),...(cursor.backendCursor?{cursor:cursor.backendCursor}:{})
+      },session,cursor.protocol===2,signal):undefined
+      if (paged) {
+        if(!Array.isArray(paged.entities) || (cursor.snapshot&&cursor.snapshot!==paged.snapshot)) throw missing()
+        page.filters=[{key:'',label:'全部'},...Object.entries(ENTITY_TYPES).map(([key,label])=>({key,label}))]
+        page.items=await Promise.all(list(paged.entities).map(row=>this.item(module,{...row,last_mention_at:row.last_mentioned_at},session,{linkedUserId:number(row.linked_user_id),aliases:strings(row.aliases)})))
+        page.totalKnown=false;page.total=page.items.length;page.searchPending=paged.search_pending===true
+        page.needsEnrichment=list(paged.entities).some(row=>number(row.linked_user_id)>0)
+        if(paged.has_more===true)next={protocol:2,backendCursor:paged.next_cursor,snapshot:paged.snapshot}
+      } else {
       const raw = await this.relationHome(session,signal)
       const all = list(raw.entities), counts = new Map<number,number>()
       all.forEach(x => counts.set(number(x.type),(counts.get(number(x.type)) ?? 0)+1))
@@ -167,10 +209,11 @@ export class ExploreService {
       if (cursor.version && cursor.version !== version) throw missing()
       const limit = Math.max(PAGE, Math.min(10000, Math.trunc(number(input.limit)) || PAGE))
       const selected = rows.slice(offset,offset+limit)
-      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session,{linkedUserId:number(x.linked_user_id)})))
+      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session,{linkedUserId:number(x.linked_user_id),aliases:strings(x.aliases)})))
       page.needsEnrichment=selected.some(x=>number(x.linked_user_id)>0&&(this.remarksCache.get(number(x.linked_user_id))?.until??0)<Date.now())
       page.total = rows.length
       if (offset+limit < rows.length) next={offset:offset+limit,version}
+      }
     } else if (module === 'events') {
       const raw = await this.request(module,'/api/v1/event/stream',{filter:'all',scope:'all',limit:PAGE,offset},session,signal)
       page.items = await Promise.all(list(raw.items).map(x=>this.item(module,x,session,{eventId:text(x.event_id)})))
@@ -221,19 +264,26 @@ export class ExploreService {
   }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
     const result = await Promise.all(rows.map(async (row,index)=>{
-      const owner=doc(row.owner_ref),fields=doc(row.fields)
+      const owner=doc(row.owner_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
       const uid=first(row.record_uid,row.source_record_uid,owner.record_uid,strings(fields.record_uids)[0])
-      const content=first(row.content,row.text,row.summary,row.value)
+      const content=row.content_status==='unavailable'?'':first(row.content,row.text,row.summary,row.value)
       const date=number(row.event_at||row.send_at||row.created_at||row.occurred_at||owner.start_at)
-      const canOpen=!!uid || module==='anniversaries' && !!row.message_id
-      const identity=module==='relations'&&uid ? [uid,text(row.subject_uid),text(owner.provider)] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
+      // The existing detail owner addresses core records only. An equal UID in
+      // another provider must never fall through to that route.
+      const canOpen=(!!uid && row.content_status!=='unavailable' && (!sourceIdentity.provider || sourceIdentity.provider==='core_record')) || module==='anniversaries' && !!row.message_id
+      const identity=module==='relations'&&uid ? [uid,text(sourceIdentity.provider||owner.provider)] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
       const start=number(row.start_position),end=number(row.end_position)
       return {key:await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
         speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,anchor:row.is_anchor===true||row.is_primary_anchor===true,
-        ...(module==='relations'&&end>start&&start>=0?{mentions:[{start,end,text:text(row.mention_text)}]}:{}),
-        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:'这条结果尚未提供可定位的原文'})}
+        ...(module==='relations'?{...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
+        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider:sourceIdentity.provider,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
     }))
     return module==='relations'?mergeExploreEvidence(result):result
+  }
+  async relationRecordsPage(ref: string, cursor?: string, signal?: AbortSignal): Promise<ExploreDetail> {
+    const session=await this.runtime.requireSession()
+    if((await this.open(ref,session,'item')).module!=='relations')throw missing()
+    return this.detail(ref,cursor,signal,'records')
   }
   async detail(itemRef: string, cursorValue?: string, signal?: AbortSignal, part?: ExploreDetailPart): Promise<ExploreDetail> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(itemRef,session,'item'),module=this.module(ref.module)
@@ -242,6 +292,7 @@ export class ExploreService {
     if(part&&module!=='relations')throw missing()
     if(!Number.isSafeInteger(number(cursor.offset))||number(cursor.offset)<0||number(cursor.offset)>100000)throw missing()
     let raw:Doc={},evidence:Doc[]=[],next:Doc|undefined,fields:ExploreDetail['fields']=[],actions:ExploreAction[]=[],notice:string|undefined
+    let snapshot:string|undefined
     let reclassifyTargets:ExploreDetail['reclassifyTargets']
     if(module==='profile') {
       const page=await this.request(module,'/api/v1/personal-profile/v3/section/get',{snapshot_id:ref.version,section_id:ref.section,page:ref.page,page_size:PAGE},session,signal)
@@ -252,14 +303,16 @@ export class ExploreService {
     } else if(module==='relations') {
       const [entity,records]=await Promise.all([
         part==='records'?Promise.resolve({entity_id:ref.id} as Doc):this.request(module,'/api/v1/entity/detail',{entity_id:ref.id},session,signal),
-        part==='overview'?Promise.resolve({} as Doc):this.request(module,'/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal),
+        part==='overview'?Promise.resolve({} as Doc):this.relationRecords(ref,cursor,session,signal),
       ])
       raw=Object.keys(doc(entity.entity)).length?doc(entity.entity):entity
       if(raw.entity_id!==ref.id)throw missing()
       const cached=this.cachedRelation(session,ref.id)
       raw={...cached,...raw,linked_contact_name:this.remarksCache.get(number(ref.linkedUserId??cached.linked_user_id))?.value??''}
-      evidence=list(records.records);fields=[{label:'关联联系人',value:text(raw.linked_contact_name)},{label:'内容概述',value:text(raw.ai_summary)},{label:'别名',value:strings(raw.aliases).join('、')}]
-      if(records.has_more===true && number(records.next_offset)>number(cursor.offset))next={offset:number(records.next_offset)}
+      const locked=part==='overview'?new Set<string>():await this.privacy.lockedRecordUids(session,signal)
+      evidence=list(records.records).map(row=>locked.has(text(row.record_uid))?{...row,content:'',text:'',summary:'',mention_text:'',mentions:[],person_references:[],person_reference_status:'unavailable',content_status:'unavailable'}:row);fields=[{label:'关联联系人',value:text(raw.linked_contact_name)},{label:'内容概述',value:text(raw.ai_summary)},{label:'别名',value:strings(raw.aliases).join('、')}]
+      if(records.protocol_version===2){snapshot=String(records.snapshot);if(records.has_more===true)next={protocol:2,backendCursor:records.next_cursor,snapshot:records.snapshot}}
+      else if(records.has_more===true && number(records.next_offset)>number(cursor.offset))next={offset:number(records.next_offset)}
       actions=[action('delete','删除识别实体',true)]
       notice='同一实体的来源在这里汇总。涉及的人物身份以已确认的信息为准。'
     } else if(module==='events') {
@@ -297,6 +350,7 @@ export class ExploreService {
     const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,{...ref,offset:number(cursor.offset)}),actions,...(notice?{notice}:{})}
     // Keep the originally selected identity even when a detail page contains a different chronological anchor.
     result.item.ref=itemRef
+    if(snapshot)result.snapshot=snapshot
     if(reclassifyTargets)result.reclassifyTargets=reclassifyTargets
     if(next)result.nextCursor=await this.seal(session,{kind:'detail-cursor',module,id:ref.id,...next})
     if(module==='anniversaries')result.dateInput={calendarType:raw.calendar_type==='lunar'?'lunar':'solar',year:number(raw.origin_year),month:number(raw.origin_month),day:number(raw.origin_day),leapMonth:raw.is_lunar_leap_month===true}
@@ -388,6 +442,7 @@ export class ExploreService {
   async source(evidenceRef: string, signal?: AbortSignal): Promise<ExploreSource> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(evidenceRef,session,'evidence'),module=this.module(ref.module)
     let uid=text(ref.uid),result:ExploreSource
+    if(ref.provider&&ref.provider!=='core_record')throw new ArkmePluginError('explore-source-unsupported','此来源暂不支持打开详情',false,400)
     if(module==='anniversaries') {
       const raw=await this.request(module,'/api/v1/insight/anniversary/evidence/open',{candidate_id:ref.parentId,message_id:ref.messageId,source_type:0,result_version:ref.version},session,signal)
       if(raw.available!==true)throw new ArkmePluginError('explore-source-unavailable','原文已删除或当前不可访问',false,404)
