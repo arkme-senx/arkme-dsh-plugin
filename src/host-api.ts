@@ -1696,6 +1696,7 @@ export async function dispatchArkmeHostOperation(
     case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
     case 'calendar.day-review.source': return await service.dayReviewSource(params, requestSignal)
+    case 'calendar.day-review.models': return await service.dayReviewModels(params, requestSignal)
     case 'calendar.day-review.prompts': return await service.dayReviewPrompts(params, requestSignal)
     case 'calendar.record-location': return await service.calendarRecordLocation(stringParam(params, 'locationRef'), requestSignal)
     case 'calendar.records': {

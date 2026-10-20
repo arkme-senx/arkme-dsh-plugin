@@ -42,12 +42,13 @@ describe('calendar review material and provenance contract', () => {
     expect(result.snapshotId).toBe('snapshot-1')
   })
 })
+const modelCatalog = { defaultCode: 'deepseek-v4-flash', models: [{ code: 'deepseek-v4-flash', displayName: 'DeepSeek V4.1 Flash（官方）' }, { code: 'qwen-flash', displayName: 'Qwen Flash' }, { code: 'qwen3.8-flash', displayName: 'Qwen 3.8 Flash' }] }
 let view: ReactTestRenderer | undefined
 const text = (node: unknown): string => typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' && 'children' in node ? text(node.children) : ''
 const content = () => text(view!.toJSON())
 const button = (label: string) => view!.root.findAllByType('button').find(x => text(x.props.children) === label)!
 const mount = async () => act(async () => { view = create(<ArkmeCalendarDayReview query={query} view="summary" />) })
-beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockResolvedValue(current()) })
+beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.models' ? modelCatalog : current()) })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
   it.each([['source_revoked', '旧结果的来源权限已变化'], ['source_changed', '原始资料已更正']])('hides %s content but preserves new generation and active progress', async (code, message) => {
@@ -149,8 +150,9 @@ describe('calendar review interaction', () => {
   })
   it('keeps the previous result on failed updates and reuses an uncertain submission id', async () => {
     await mount()
-    vi.mocked(callArkme).mockRejectedValueOnce(new Error('网络断开'))
     await act(async () => button('更新回顾').props.onClick())
+    vi.mocked(callArkme).mockRejectedValueOnce(new Error('网络断开'))
+    await act(async () => button('确认').props.onClick())
     const first = vi.mocked(callArkme).mock.calls.find(x => x[0] === 'calendar.day-review.create')![1]
     expect(content()).toContain('讨论了录音存储方案')
     expect(content()).toContain('提交结果尚未确认')
@@ -360,12 +362,13 @@ describe('calendar review interaction', () => {
     const reads = () => vi.mocked(callArkme).mock.calls.filter(x => x[0] === 'calendar.day-review.state').length
     const before = reads()
     vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.create' || op === 'calendar.day-review.resume'
-      ? { ...current(), job: { id: 'job', status: 'collecting', message: '', resumable: false } } as never : current() as never)
+      ? { ...current(), job: { id: 'job', status: 'collecting', message: '', resumable: false } } as never : op === 'calendar.day-review.models' ? modelCatalog as never : current() as never)
     if (action === 'version') {
       await act(async () => view!.root.findByType('select').props.onChange({ target: { value: '' } }))
       await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
     } else {
       await act(async () => button(action === 'generate' ? '更新回顾' : '继续生成').props.onClick())
+      if (action === 'generate') await act(async () => button('确认').props.onClick())
       await act(async () => vi.advanceTimersByTimeAsync(5000))
     }
     expect(reads()).toBe(before + 1)
@@ -378,4 +381,39 @@ describe('calendar review interaction', () => {
     expect(content()).toContain('账号范围尚未确认')
     expect(callArkme).not.toHaveBeenCalled()
   })
+})
+
+it('opens the existing model dialog, cancels without billing, and defaults to official DeepSeek', async()=>{
+ await mount()
+ await act(async()=>button('更新回顾').props.onClick())
+ expect(content()).toContain('DeepSeek V4.1 Flash（官方）')
+ expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
+ await act(async()=>button('取消').props.onClick())
+ expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
+ await act(async()=>button('更新回顾').props.onClick())
+ await act(async()=>button('确认').props.onClick())
+ expect(vi.mocked(callArkme).mock.calls.find(c=>c[0]==='calendar.day-review.create')?.[1]).toMatchObject({modelCode:'deepseek-v4-flash'})
+})
+it('a model catalog failure keeps the prior result and does not create an uncertain payment', async()=>{
+ await mount();vi.mocked(callArkme).mockRejectedValueOnce(new Error('模型目录暂不可用'))
+ await act(async()=>button('更新回顾').props.onClick())
+ expect(content()).toContain('模型目录暂不可用');expect(content()).toContain('讨论了录音存储方案');expect(content()).not.toContain('核对提交')
+ expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
+})
+it('requires an explicit choice when the default model is unavailable', async()=>{
+ await mount()
+ vi.mocked(callArkme).mockResolvedValueOnce({...modelCatalog,models:modelCatalog.models.filter(m=>m.code!=='deepseek-v4-flash')})
+ await act(async()=>button('更新回顾').props.onClick())
+ expect(content()).toContain('请选择模型')
+ expect(button('确认').props.disabled).toBe(true)
+ expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
+})
+it.each(['qwen-flash','qwen3.8-flash'])('submits the user-selected %s through the shared model dropdown', async code=>{
+ await mount()
+ await act(async()=>button('更新回顾').props.onClick())
+ await act(async()=>view!.root.findByProps({'aria-label':'选择生成模型'}).props.onClick({currentTarget:{getBoundingClientRect:()=>({left:0,right:280,top:0,bottom:36})}}))
+ const label=modelCatalog.models.find(m=>m.code===code)!.displayName
+ await act(async()=>view!.root.findAllByProps({role:'option'}).find(option=>option.props.title===label)!.props.onClick())
+ await act(async()=>button('确认').props.onClick())
+ expect(vi.mocked(callArkme).mock.calls.find(c=>c[0]==='calendar.day-review.create')?.[1]).toMatchObject({modelCode:code})
 })

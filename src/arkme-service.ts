@@ -861,6 +861,7 @@ export class ArkmeService {
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
   async dayReviewSource(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.source(input, signal) }
+  async dayReviewModels(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.models(input, signal) }
   async dayReviewPrompts(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prompts(input, signal) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {

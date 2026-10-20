@@ -27,3 +27,21 @@ it('rejects unsupported providers before dispatching a billable operation', asyn
  await expect(sdk.createDayReview({ ...query, sourceKinds: ['self'], requestId: '00000000-0000-4000-8000-000000000000' })).rejects.toThrow('不支持')
  expect(fetchImpl).toHaveBeenCalledTimes(1)
 })
+
+it('SDK and granted Tool preserve the same public model selection through the Host owner', async () => {
+ const models={defaultCode:'deepseek-v4-flash',models:[{code:'deepseek-v4-flash',displayName:'DeepSeek V4.1 Flash（官方）'}]}
+ const owner={dayReviewModels:vi.fn(async()=>models),createDayReview:vi.fn(async()=>({supported:true,job:null,result:null,freshness:'unknown',versions:[]}))}
+ const signal=new AbortController().signal
+ const sdk=createArkmeSdk({fetchImpl:async(_,init)=>{
+  const b=JSON.parse(String(init?.body));const value=b.operation==='provider.capabilities'?{contractVersion:1,features:{calendarDayReview:true}}:await dispatchArkmeHostOperation(owner as never,b.operation,b.params,undefined,undefined,undefined,undefined,signal)
+  return new Response(JSON.stringify({ok:true,value}))
+ }})
+ expect(await sdk.dayReviewModels(query,signal)).toEqual(models)
+ const request={...query,requestId:'00000000-0000-4000-8000-000000000000',sourceKinds:['self'] as ['self'],modelCode:'deepseek-v4-flash'}
+ await sdk.createDayReview(request,signal)
+ const tools=createArkmeCoreToolDefinitions(owner as never)
+ const read=tools.find(t=>t.name==='arkme_day_review_read')!
+ expect(await read.execute({account_scope:query.accountScope,date:query.bucketDate,timezone:query.timezone,action:'models'},{signal} as never)).toContain('deepseek-v4-flash')
+ await tools.find(t=>t.name==='arkme_day_review_generate')!.execute({account_scope:query.accountScope,date:query.bucketDate,timezone:query.timezone,action:'create',source_kinds:['self'],request_id:request.requestId,model_code:request.modelCode},{signal} as never)
+ expect(owner.createDayReview.mock.calls).toEqual([[request,signal],[request,signal]])
+})

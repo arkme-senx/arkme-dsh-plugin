@@ -1,4 +1,4 @@
-import { assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery, type DayReviewOriginalEvidence, type DayReviewEvidenceQuery } from '../calendar-day-review.js'
+import { parseDayReviewModels, assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery, type DayReviewOriginalEvidence, type DayReviewEvidenceQuery } from '../calendar-day-review.js'
 import { parseReviewPromptConfig, parseReviewPromptSupport, sameReviewPrompts, type ReviewPromptSupport } from '../calendar-day-review-prompts.js'
 import type { ExploreSource } from '../explore-contract.js'
 import type { ArkmeCallDetail, ArkmeRecordingWindow } from '../types.js'
@@ -89,12 +89,14 @@ export class CalendarDayReviewService {
     const sources = reviewKinds(v.sourceKinds), requestId = reviewText(v.requestId, 100)
     if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestId)) throw new Error('生成请求标识无效')
     const promptConfig = v.promptConfig === undefined ? undefined : parseReviewPromptConfig(v.promptConfig)
+    const modelCode = v.modelCode === undefined ? undefined : reviewText(v.modelCode, 100)
     const reuseResultId = v.reuseResultId === undefined ? undefined : reviewText(v.reuseResultId)
-    const request = { ...query, sourceKinds: sources, requestId, ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
+    const request = { ...query, sourceKinds: sources, requestId, ...(modelCode ? { modelCode } : {}), ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
     const pending = await this.pending(query)
     if (!pending) {
       const capability = await this.capabilities(session, signal)
       if (!capability) throw unavailable()
+      if (modelCode && capability.model_selection_v1 !== true) throw new ArkmePluginError('calendar-review-model-unsupported', '服务尚不支持自选模型，未提交生成', false, 409)
       if ((promptConfig && capability.prompt_config_v1 !== true) || (reuseResultId && capability.snapshot_reuse !== true)) throw new ArkmePluginError('calendar-review-prompt-unsupported', '服务尚不支持自定义提示词或复用资料，未提交生成', false, 409)
     }
     await this.guard(query, session, epoch, signal)
@@ -102,14 +104,14 @@ export class CalendarDayReviewService {
     await this.guard(query, session, epoch, signal)
     let value: unknown
     try {
-      value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: ['summary', 'timeline'], ...(promptConfig ? { prompt_config: promptConfig } : {}), ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
+      value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: ['summary', 'timeline'], ...(modelCode ? { model_code: modelCode } : {}), ...(promptConfig ? { prompt_config: promptConfig } : {}), ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
     } catch (error) {
       // A definite domain rejection is not a lost acknowledgement. Unknown
       // transport/settlement outcomes keep the immutable request for reconciliation.
       const rejection = error instanceof ArkmeUpstreamResponseError ? String(objectValue(error.responseData).review_error) : ''
-      if (['invalid_request', 'day_busy', 'request_conflict', 'source_changed', 'source_revoked', 'not_found', 'material_too_large'].includes(rejection)) {
+      if (['model_unavailable', 'invalid_request', 'day_busy', 'request_conflict', 'source_changed', 'source_revoked', 'not_found', 'material_too_large'].includes(rejection)) {
         await this.storage().acknowledge(query.accountScope, this.day(query), requestId)
-        throw new ArkmePluginError('calendar-review-not-accepted', rejection === 'material_too_large' ? '提示词过长，本次生成未受理，请缩短提示词后重试' : '本次生成未受理，请检查日期、资料权限或进行中的任务后重试', false, 409)
+        throw new ArkmePluginError('calendar-review-not-accepted', rejection === 'model_unavailable' ? '所选模型暂不可用，本次生成未受理，请稍后重试' : rejection === 'material_too_large' ? '提示词过长，本次生成未受理，请缩短提示词后重试' : '本次生成未受理，请检查日期、资料权限或进行中的任务后重试', false, 409)
       }
       throw error
     }
@@ -119,6 +121,7 @@ export class CalendarDayReviewService {
       || JSON.stringify(reviewKinds(receipt.source_kinds)) !== JSON.stringify(sources)
       || JSON.stringify(receipt.outputs) !== JSON.stringify(['summary', 'timeline'])
       || (promptConfig && !sameReviewPrompts(parseReviewPromptConfig(receipt.prompt_config), promptConfig))
+      || (receipt.model_code ?? '') !== (modelCode ?? '')
       || (receipt.reuse_result_id ?? '') !== (reuseResultId ?? '')
       || (state.job && state.job.id !== receipt.job_id) || (state.result && state.result.id !== receipt.job_id)) throw new Error('生成配置尚未确认，请核对同一次请求')
     parseReviewPromptConfig(receipt.prompt_config)
@@ -144,6 +147,15 @@ export class CalendarDayReviewService {
     if (v.ref !== input.sourceRef || v.result_id !== input.resultId) throw new Error('来源引用不匹配')
     const time = (value: unknown) => value === null ? null : typeof value === 'number' && Number.isSafeInteger(value) ? value : (() => { throw new Error('来源时间无效') })()
     return { ref: input.sourceRef, resultId: input.resultId, kind: reviewKinds([v.kind])[0]!, subtype: reviewText(v.subtype), label: reviewText(v.label), text: reviewText(v.text, 32 * 1024 * 1024), startAtMillis: time(v.start_at), endAtMillis: time(v.end_at) }
+  }
+  async models(input: unknown, signal?: AbortSignal) {
+    const { query, epoch, session } = await this.context(input, signal)
+    const capability = await this.capabilities(session, signal)
+    await this.guard(query, session, epoch, signal)
+    if (!capability || capability.model_selection_v1 !== true) throw new ArkmePluginError('calendar-review-model-unsupported', '服务尚不支持自选模型，请更新服务后重试', false, 409)
+    const value = await this.request('models', this.body(query), session, signal)
+    await this.guard(query, session, epoch, signal)
+    return parseDayReviewModels(value, query)
   }
   async prompts(input: unknown, signal?: AbortSignal): Promise<ReviewPromptSupport> {
     const { query, epoch, session } = await this.context(input, signal)

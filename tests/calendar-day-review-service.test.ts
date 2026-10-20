@@ -152,3 +152,30 @@ it('does not acknowledge a mismatched receipt or permit a replacement pending re
   await expect(f.service.reconcile(query)).rejects.toThrow('账号')
   expect(f.post).toHaveBeenCalledTimes(count)
 })
+
+it('preserves selected model across unknown acceptance and rejects a mismatching receipt', async () => {
+  const f = fixture(), requestId = '00000000-0000-4000-8000-000000000042'
+  const request = { ...query, sourceKinds: ['self'], requestId, modelCode: 'deepseek-v4-flash' }
+  f.post.mockResolvedValueOnce({ ...capability, model_selection_v1: true }).mockRejectedValueOnce(new Error('network'))
+  await expect(f.service.create(request)).rejects.toThrow('network')
+  const pending = await f.runtime.stateStore.readDayReviewPending(query.accountScope, JSON.stringify([query.bucketDate,query.timezone]))
+  expect(pending).toMatchObject({ modelCode: 'deepseek-v4-flash' })
+  const receipt = { request_id: requestId, job_id: 'job', source_kinds: ['self'], outputs: ['summary','timeline'], prompt_config: defaultConfig, reuse_result_id: '', model_code: 'qwen-flash' }
+  f.post.mockResolvedValueOnce({ ...idle, job: { id: 'job', status: 'queued' }, submission: receipt })
+  await expect(f.service.reconcile(query)).rejects.toThrow('生成配置尚未确认')
+  f.post.mockResolvedValueOnce({ ...idle, job: { id: 'job', status: 'queued' }, submission: { ...receipt, model_code: 'deepseek-v4-flash' } })
+  await expect(f.service.reconcile(query)).resolves.toMatchObject({ job: { id: 'job' } })
+  for (const call of f.post.mock.calls.filter(c=>c[0].endsWith('/create'))) expect(call[1]).toMatchObject({model_code:'deepseek-v4-flash',request_id:requestId})
+})
+it('rejects a model selection on an unsupported backend before persisting or billing', async () => {
+  const f = fixture()
+  await expect(f.service.create({ ...query, sourceKinds: ['self'], requestId: '00000000-0000-4000-8000-000000000000', modelCode: 'deepseek-v4-flash' })).rejects.toThrow('服务尚不支持自选模型')
+  expect(f.post.mock.calls.some(c=>c[0].endsWith('/create'))).toBe(false)
+})
+it('model discovery uses the day-review owner and enforces the response scope', async () => {
+  const f=fixture()
+  f.post.mockResolvedValueOnce({...capability,model_selection_v1:true}).mockResolvedValueOnce({...envelope,default_code:'deepseek-v4-flash',models:[{code:'deepseek-v4-flash',display_name:'DeepSeek V4.1 Flash（官方）'}]})
+  expect(await f.service.models(query)).toMatchObject({defaultCode:'deepseek-v4-flash'})
+  f.post.mockResolvedValueOnce({...capability,model_selection_v1:true}).mockResolvedValueOnce({...envelope,date:'2026-10-14',default_code:'deepseek-v4-flash',models:[]})
+  await expect(f.service.models(query)).rejects.toThrow('格式不完整')
+})

@@ -100,6 +100,17 @@ export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayRevie
     freshness: ['changed', 'unchanged', 'unknown'].includes(String(v.freshness)) ? v.freshness as DayReviewState['freshness'] : invalid(), versions }
 }
 
-export interface DayReviewCreateInput extends DayReviewQuery { requestId: string; sourceKinds: DayReviewSource[]; promptConfig?: import('./calendar-day-review-prompts.js').ReviewPromptConfig; reuseResultId?: string }
+export interface DayReviewCreateInput extends DayReviewQuery { requestId: string; modelCode?: string; sourceKinds: DayReviewSource[]; promptConfig?: import('./calendar-day-review-prompts.js').ReviewPromptConfig; reuseResultId?: string }
 export interface DayReviewEvidenceQuery extends DayReviewQuery { resultId: string; sourceRef: string }
 export interface DayReviewOriginalEvidence { ref: string; resultId: string; kind: DayReviewSource; subtype: string; label: string; text: string; startAtMillis: number | null; endAtMillis: number | null }
+
+export interface DayReviewModels { defaultCode: string; models: Array<{ code: string; displayName: string }> }
+export function parseDayReviewModels(value: unknown, q: DayReviewQuery): DayReviewModels {
+  const v = reviewObject(value); assertDayReviewEnvelope(v, q)
+  const models = array(v.models, 20).map(raw => {
+    const m = reviewObject(raw)
+    return { code: reviewText(m.code, 100), displayName: reviewText(m.display_name, 200) }
+  })
+  if (!models.length || new Set(models.map(m => m.code)).size !== models.length) invalid()
+  return { defaultCode: reviewText(v.default_code, 100), models }
+}
