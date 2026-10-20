@@ -277,7 +277,11 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
   const [previewRevision, setPreviewRevision] = useState(0)
   const [contextMenu, setContextMenu] = useState<ArkmeFavoriteStickerMenuState>()
-  const {ids: recentIds, phase: recentPhase, failedId: recentSaveError} = useRecentEmoji(accountKey)
+  const {phase: recentPhase, failedId: recentSaveError} = useRecentEmoji(accountKey)
+  const [visibleRecent, setVisibleRecent] = useState<{accountKey: string | undefined; ids: string[]}>({accountKey, ids: []})
+  const recentOpenGeneration = useRef(0)
+  const selectedDuringOpen = useRef(false)
+  const recentIds = visibleRecent.accountKey === accountKey ? visibleRecent.ids : []
   const [panelGeometry, setPanelGeometry] = useState<ArkmeEmojiPanelGeometry>()
   const previousScopeKey = useRef(scopeKey)
   const recentEmojis = recentIds.map(id => arkmeEmojiById[id]).filter((emoji): emoji is ArkmeEmoji => emoji !== undefined)
@@ -368,15 +372,29 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   }, [])
 
   const loadRecent = async () => {
-    if (accountKey) await arkmeRecentEmojiStore.recentEmojiIds(accountKey).catch(() => {})
+    if (!accountKey) return
+    const generation = recentOpenGeneration.current
+    try {
+      const ids = await arkmeRecentEmojiStore.recentEmojiIds(accountKey)
+      if (!disposedRef.current && generation === recentOpenGeneration.current && !selectedDuringOpen.current) setVisibleRecent({accountKey,ids})
+    } catch { /* The shared cache owns the retry state. */ }
   }
   useEffect(() => { setOpen(false) }, [accountKey])
-  useEffect(() => { if (open) void loadRecent() }, [open, accountKey])
+  useEffect(() => {
+    ++recentOpenGeneration.current
+    if (open) {
+      selectedDuringOpen.current = false
+      setVisibleRecent({accountKey,ids:arkmeRecentEmojiStore.snapshot(accountKey).ids})
+      void loadRecent()
+    }
+    return () => { ++recentOpenGeneration.current }
+  }, [open, accountKey])
   const recordRecent = (emojiId: string) => {
     if (accountKey) void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).catch(() => {})
   }
   const select = (emoji: ArkmeEmoji) => {
     if (disabled || onSelect(emoji) === false) return
+    selectedDuringOpen.current = true
     recordRecent(emoji.id)
   }
 

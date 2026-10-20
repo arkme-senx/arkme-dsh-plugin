@@ -29,9 +29,11 @@ describe('recent emoji picker', () => {
     await act(async () => renderer!.unmount())
     await mount('prod:43'); await toggle()
     await act(async () => renderer!.root.findByProps({ 'data-arkme-emoji-id': 'joy_face' }).props.onClick())
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:43').ids).toEqual(['joy_face'])
     await act(async () => { finishSave(['angry_face']) })
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:43').ids).toEqual(['joy_face'])
   })
 
   it('preserves selection order when the next conversation selects before the old save finishes', async () => {
@@ -50,7 +52,8 @@ describe('recent emoji picker', () => {
     await act(async () => renderer!.root.findByProps({ 'data-arkme-emoji-id': 'joy_face' }).props.onClick())
     expect(callArkme).toHaveBeenCalledTimes(2)
     await act(async () => { finishSave() })
-    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
+    expect(recentIds()).toEqual(['angry_face'])
+    expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['joy_face','angry_face'])
   })
 
   it('joins a pending load when reopening the panel', async () => {
@@ -104,7 +107,8 @@ describe('recent emoji picker', () => {
     await act(async () => renderer!.root.findByProps({ 'aria-label': '重试保存最近表情' }).props.onClick())
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onError).not.toHaveBeenCalled()
-    expect(recentIds()).toEqual(['angry_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['angry_face'])
     expect(renderer!.root.findAllByProps({ 'aria-label': '重试保存最近表情' })).toHaveLength(0)
   })
 
@@ -128,7 +132,8 @@ describe('recent emoji picker', () => {
     expect(onSelect).toHaveBeenCalledTimes(2)
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
     expect(callArkme).toHaveBeenCalledTimes(3)
-    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['joy_face','angry_face'])
   })
   it('serializes rapid selections and continues after a failed save', async () => {
     let rejectFirst!: (reason: Error) => void
@@ -141,7 +146,8 @@ describe('recent emoji picker', () => {
     expect(callArkme).toHaveBeenCalledTimes(2)
     await act(async () => { rejectFirst(new Error('write failed')) })
     expect(callArkme).toHaveBeenCalledTimes(3)
-    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['joy_face','angry_face'])
   })
   it('restores without browser storage and refreshes on every open', async () => {
     callArkme.mockResolvedValueOnce(['angry_face']).mockResolvedValueOnce(['joy_face', 'angry_face'])
@@ -159,7 +165,8 @@ describe('recent emoji picker', () => {
     await mount(); await toggle()
     await act(async () => renderer!.root.findByProps({ 'data-arkme-emoji-id': 'joy_face' }).props.onClick())
     await act(async () => { finish(['angry_face']) })
-    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
+    expect(recentIds()).toEqual([])
+    expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['joy_face','angry_face'])
     expect(callArkme).toHaveBeenCalledWith('emoji.recent.record', { accountKey: 'prod:42', emojiId: 'joy_face' }, expect.any(AbortSignal))
   })
 
@@ -190,4 +197,34 @@ describe('recent emoji picker', () => {
     expect(onError).not.toHaveBeenCalled()
     expect(renderer!.root.findByProps({ 'aria-label': '重试保存最近表情' })).toBeDefined()
   })
+})
+
+it('keeps recent tiles fixed after clicks and applies the saved order on the next open', async()=>{
+ let persisted=['angry_face','joy_face']
+ callArkme.mockImplementation(async(operation:string,params:{emojiId?:string})=>{
+  if(operation==='emoji.recent.record')persisted=[params.emojiId!,...persisted.filter(id=>id!==params.emojiId)]
+  return [...persisted]
+ })
+ await mount();await toggle()
+ expect(recentIds()).toEqual(['angry_face','joy_face'])
+ const grid=()=>renderer!.root.findByProps({'data-arkme-emoji-grid':'compact'})
+ await act(async()=>grid().findAllByType('button')[1]!.props.onClick())
+ expect(recentIds()).toEqual(['angry_face','joy_face'])
+ expect(arkmeRecentEmojiStore.snapshot('prod:42').ids).toEqual(['joy_face','angry_face'])
+ await toggle();await toggle()
+ expect(recentIds()).toEqual(['joy_face','angry_face'])
+})
+it('does not add a new recent tile or reorder for another consumer until the next open',async()=>{
+ let persisted=['angry_face']
+ callArkme.mockImplementation(async(operation:string,params:{emojiId?:string})=>{
+  if(operation==='emoji.recent.record')persisted=[params.emojiId!,...persisted.filter(id=>id!==params.emojiId)]
+  return [...persisted]
+ })
+ await mount();await toggle()
+ await act(async()=>renderer!.root.findByProps({'data-arkme-emoji-id':'joy_face'}).props.onClick())
+ expect(recentIds()).toEqual(['angry_face'])
+ await act(async()=>arkmeRecentEmojiStore.recordRecentEmoji('prod:42','awkward_face'))
+ expect(recentIds()).toEqual(['angry_face'])
+ await toggle();await toggle()
+ expect(recentIds()).toEqual(['awkward_face','joy_face','angry_face'])
 })
