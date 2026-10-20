@@ -1,11 +1,13 @@
+import { readConversationWindowBootstrap, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
 import type { ArkmeSourceItem } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
-export interface ConversationWindowTarget { accountKey: string; sourceKey: string; source: ArkmeSourceItem }
+export interface ConversationWindowTarget { accountKey: string; sourceKey: string; source: ArkmeSourceItem; bootstrap?: ConversationWindowBootstrap }
 export type ConversationWindowEvent = ({kind: 'article'; key: string; value: unknown} | {kind: 'call'; source: ArkmeSourceItem; mediaType: 'audio' | 'video'} | {kind: 'draft'; key: string; value: unknown} | {kind: 'changed'} | {kind: 'activate'; source: ArkmeSourceItem} | {kind: 'busy'; key: string; value: boolean}) & {accountKey?: string}
 export interface ConversationWindowBridge {
  version: 1
- open(target: ConversationWindowTarget): Promise<boolean>
+ bootstrapVersion?: 1
+ open(target: ConversationWindowTarget, bootstrap?: ConversationWindowBootstrap): Promise<boolean>
  account(account: string | null): Promise<boolean>
  context(): Promise<ConversationWindowTarget | null>
  active(): Promise<boolean>
@@ -45,7 +47,10 @@ export async function openConversationWindow(source: ArkmeSourceItem): Promise<v
   if ((await bridge.context())?.accountKey !== account || !await bridge.active()) throw new Error('会话窗口已失效，请重新打开')
  } else if (!await bridge.account(account)) throw new Error('账号已切换，请重试')
  if (account !== conversationAccountKey()) throw new Error('账号已切换，请重试')
- if (!await bridge.open(target)) throw new Error('会话窗口打开失败，请重试')
+ const opened = bridge.bootstrapVersion === 1
+  ? await bridge.open(target, readConversationWindowBootstrap(account, target.sourceKey, target.source))
+  : await bridge.open(target)
+ if (!opened) throw new Error('会话窗口打开失败，请重试')
 }
 
 /** Navigation policy for the shared conversation surface in a fixed child window. */

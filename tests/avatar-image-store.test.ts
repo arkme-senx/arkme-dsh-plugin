@@ -413,3 +413,49 @@ it('does not deliver an old account cache probe after switching accounts', async
  expect(reader).not.toHaveBeenCalled()
  expect(store.current('file_asset://host-cached')).toBeUndefined()
 })
+
+describe('cross-window avatar projections', () => {
+  it('restores target-only same-account images synchronously without starting reads', async () => {
+    const mainReader = vi.fn(async () => imagePayload('cached'))
+    const main = new InMemoryArkmeAvatarImageStore({reader:mainReader})
+    main.activateScope('prod:7')
+    await main.load('target-avatar'); await main.load('unrelated-avatar')
+    const snapshot = main.snapshot('prod:7',['target-avatar','pending-avatar'])
+    expect(snapshot.map(image=>image.reference)).toEqual(['target-avatar'])
+    expect(main.snapshot('test:7',['target-avatar'])).toEqual([])
+    const childReader = vi.fn(async () => imagePayload('remote'))
+    const child = new InMemoryArkmeAvatarImageStore({reader:childReader})
+    child.activateScope('prod:7'); child.restore('test:7',snapshot)
+    expect(child.current('target-avatar')).toBeUndefined()
+    child.restore('prod:7',snapshot)
+    expect(child.current('target-avatar')).toBe(imageDataUrl('cached'))
+    await expect(child.load('target-avatar')).resolves.toBe(imageDataUrl('cached'))
+    expect(childReader).not.toHaveBeenCalled()
+    expect(child.current('unrelated-avatar')).toBeUndefined()
+    child.activateScope('prod:8'); expect(child.current('target-avatar')).toBeUndefined()
+  })
+  it('preserves stale bytes during a failed refresh without replacing a newer local image', async () => {
+    let now=10
+    const main = new InMemoryArkmeAvatarImageStore({reader:async()=>imagePayload('old'),now:()=>now,ttlMillis:5,jitterMillis:0})
+    main.activateScope('prod:7'); await main.load('ref')
+    now=20
+    const reader=vi.fn(async()=>{throw new Error('offline')})
+    const child=new InMemoryArkmeAvatarImageStore({reader,now:()=>now})
+    child.activateScope('prod:7'); child.restore('prod:7',main.snapshot('prod:7',['ref']))
+    expect(child.current('ref')).toBe(imageDataUrl('old'))
+    await expect(child.load('ref')).rejects.toThrow('offline')
+    expect(child.current('ref')).toBe(imageDataUrl('old'))
+    const fresh={cacheKey:'ref',reference:'ref',value:imageDataUrl('new'),expiresAtMillis:100}
+    child.restore('prod:7',[fresh]); expect(child.current('ref')).toBe(imageDataUrl('old'))
+  })
+  it('does not wait for unresolved images and bounds or rejects transferred payloads', async () => {
+    const pending=deferred<ReturnType<typeof imagePayload>>()
+    const store=new InMemoryArkmeAvatarImageStore({reader:async()=>await pending.promise})
+    store.activateScope('prod:7'); const load=store.load('pending')
+    expect(store.snapshot('prod:7',['pending'])).toEqual([])
+    store.restore('prod:7',[{cacheKey:'invalid',reference:'invalid',value:'https://remote/image.png',expiresAtMillis:100}])
+    expect(store.current('invalid')).toBeUndefined()
+    pending.resolve(imagePayload('x'.repeat(140_000))); await load
+    expect(store.snapshot('prod:7',['pending'])).toEqual([])
+  })
+})

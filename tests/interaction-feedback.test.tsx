@@ -47,11 +47,13 @@ describe('shared Arkme interaction feedback', () => {
     // JSDOM cannot parse the nested :has/:is icon-button rule. Exercise the
     // portaled list/menu/contact rules that could override explicit feedback.
     const selectors = [...legacyCss.matchAll(/([^{}]+):hover\s*\{/g)]
-      .map(match => match[1]!.trim()).filter(selector => !selector.includes('button:is('))
-    const dom = new JSDOM(`<body><nav data-arkme-owned="product-navigation"></nav>${html}</body>`)
-    const button = dom.window.document.querySelector('button')!
-    expect(selectors.some(selector => button.matches(selector))).toBe(legacyEligible)
-    dom.window.close()
+      .map(match => match[1]!.trim().replaceAll(':hover', '')).filter(selector => !selector.includes('button:is('))
+    for (const scope of ['product-navigation', 'conversation-window']) {
+      const dom = new JSDOM(`<body><section data-arkme-owned="${scope}"></section>${html}</body>`)
+      const button = dom.window.document.querySelector('button')!
+      expect(selectors.some(selector => button.matches(selector)), scope).toBe(legacyEligible)
+      dom.window.close()
+    }
   })
 
   it.each(['hover', 'active', 'focus-visible'])('only opts interactive controls into %s', state => {

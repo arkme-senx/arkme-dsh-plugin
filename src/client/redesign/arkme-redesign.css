@@ -1085,15 +1085,19 @@ body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] > div {
   border-color: var(--dsw-alias-border-l1) !important;
   background: var(--dsw-alias-bg-layer-1) !important;
 }
-body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] {
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"],
+body[data-ds-dark-theme] [data-arkme-owned="conversation-window"] {
   background: var(--dsw-alias-bg-base) !important;
   color: var(--dsw-alias-label-primary) !important;
 }
 body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-surface,
-body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-composer {
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-composer,
+body[data-ds-dark-theme] [data-arkme-owned="conversation-window"] .arkme-conversation-surface,
+body[data-ds-dark-theme] [data-arkme-owned="conversation-window"] .arkme-conversation-composer {
   background: var(--dsw-alias-bg-base) !important;
 }
-body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] div:has(> input[aria-label="搜索"]) {
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] div:has(> input[aria-label="搜索"]),
+body[data-ds-dark-theme] [data-arkme-owned="conversation-window"] div:has(> input[aria-label="搜索"]) {
   border-color: var(--dsw-alias-border-l2) !important;
   background: var(--dsw-specific-input-major) !important;
   box-shadow: var(--dsw-shadow-lv2) !important;
