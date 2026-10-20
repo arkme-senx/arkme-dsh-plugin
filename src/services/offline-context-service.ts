@@ -4,6 +4,7 @@ import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { offlineContextSummaryLines, type OfflineContextEntry } from '../offline-context.js'
 import type { OfflineContextCommand, OfflineContextCommandResult, OfflineContextPort, OfflineContextRequest, OfflineContextJournalEntry } from '../offline-context-contract.js'
 import { TimelineTokenCodec } from './timeline-token.js'
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, type ServiceRuntime } from './service.js'
 
@@ -21,6 +22,11 @@ function number(value: unknown, zero = false): number {
 function revision(value: unknown): number {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/u.test(value)) throw invalid()
   return number(Number(value))
+}
+function messageOwner(value: unknown): RecordOwnerId {
+  const owner = recordOwnerId(value)
+  if (!owner) throw invalid()
+  return owner
 }
 const fingerprint = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
 
@@ -51,17 +57,17 @@ export class OfflineContextService implements OfflineContextPort {
     return text(identity.id)
   }
 
-  async messageReference(chat: string, relation: string, record: string, owner: number): Promise<string> {
+  async messageReference(chat: string, relation: string, record: string, owner: RecordOwnerId): Promise<string> {
     const session = await this.runtime.requireSession()
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
-    return codec.seal(JSON.stringify({ chat: text(chat), relation: text(relation), record: text(record), owner: number(owner) }), 'message')
+    return codec.seal(JSON.stringify({ chat: text(chat), relation: text(relation), record: text(record), owner: messageOwner(owner) }), 'message')
   }
-  async messageAnchor(ref: string, chat: string): Promise<{ record_uid: string; record_owner_user_id: number }> {
+  async messageAnchor(ref: string, chat: string): Promise<{ record_uid: string; record_owner_user_id: RecordOwnerId }> {
     const session = await this.runtime.requireSession()
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
     const identity = objectValue(JSON.parse(codec.open(text(ref, 32768), 'message')))
     if (identity.chat !== chat) throw invalid()
-    return { record_uid: text(identity.record), record_owner_user_id: number(identity.owner) }
+    return { record_uid: text(identity.record), record_owner_user_id: messageOwner(identity.owner) }
   }
 
   async offlineContext(input: OfflineContextRequest, signal?: AbortSignal): ReturnType<OfflineContextPort['offlineContext']> {
@@ -153,7 +159,7 @@ export class OfflineContextService implements OfflineContextPort {
       }
       for (const value of messages) {
         const m = objectValue(value)
-        entry.messages.push({ messageRef: seal({ chat: text(m.chat_session_uid), relation: text(m.relation_uid), record: text(m.record_uid), owner: number(m.record_owner) }, 'message'), label: '关联消息', excerpt: typeof m.quote === 'string' ? m.quote : '', occurredAtMillis: number(m.occurred_at) })
+        entry.messages.push({ messageRef: seal({ chat: text(m.chat_session_uid), relation: text(m.relation_uid), record: text(m.record_uid), owner: messageOwner(m.record_owner) }, 'message'), label: '关联消息', excerpt: typeof m.quote === 'string' ? m.quote : '', occurredAtMillis: number(m.occurred_at) })
       }
       return entry
     }

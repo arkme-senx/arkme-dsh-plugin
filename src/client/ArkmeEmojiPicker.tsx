@@ -7,9 +7,9 @@ import type {
   ArkmeFavoriteSticker, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList, ArkmeSourceSendResult, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { arkmeRecentEmojiStore } from './emoji-recent-store.js'
+import { arkmeRecentEmojiStore, useRecentEmoji } from './emoji-recent-store.js'
 import {
-  arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds,
+  arkmeDefaultEmojis, arkmeEmojiById,
   type ArkmeEmoji,
 } from './arkme-emoji.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
@@ -277,13 +277,11 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
   const [previewRevision, setPreviewRevision] = useState(0)
   const [contextMenu, setContextMenu] = useState<ArkmeFavoriteStickerMenuState>()
-  const [recentIds, setRecentIds] = useState<string[]>([])
-  const [recentSaveError, setRecentSaveError] = useState<string>()
-  const [recentPhase, setRecentPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const recentSelectionRevision = useRef(0)
-  const recentReadRevision = useRef(0)
-  const recentAccount = useRef(accountKey)
-  recentAccount.current = accountKey
+  const {phase: recentPhase, failedId: recentSaveError} = useRecentEmoji(accountKey)
+  const [visibleRecent, setVisibleRecent] = useState<{accountKey: string | undefined; ids: string[]}>({accountKey, ids: []})
+  const recentOpenGeneration = useRef(0)
+  const selectedDuringOpen = useRef(false)
+  const recentIds = visibleRecent.accountKey === accountKey ? visibleRecent.ids : []
   const [panelGeometry, setPanelGeometry] = useState<ArkmeEmojiPanelGeometry>()
   const previousScopeKey = useRef(scopeKey)
   const recentEmojis = recentIds.map(id => arkmeEmojiById[id]).filter((emoji): emoji is ArkmeEmoji => emoji !== undefined)
@@ -374,52 +372,29 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   }, [])
 
   const loadRecent = async () => {
-    if (accountKey === undefined) return
-    const revision = recentSelectionRevision.current
-    const readRevision = ++recentReadRevision.current
-    const current = () => !disposedRef.current && recentAccount.current === accountKey
-      && revision === recentSelectionRevision.current && readRevision === recentReadRevision.current
-    setRecentPhase('loading')
+    if (!accountKey) return
+    const generation = recentOpenGeneration.current
     try {
       const ids = await arkmeRecentEmojiStore.recentEmojiIds(accountKey)
-      if (!current()) return
-      setRecentIds(ids)
-      setRecentPhase('ready')
-    } catch {
-      if (current()) setRecentPhase('error')
+      if (!disposedRef.current && generation === recentOpenGeneration.current && !selectedDuringOpen.current) setVisibleRecent({accountKey,ids})
+    } catch { /* The shared cache owns the retry state. */ }
+  }
+  useEffect(() => { setOpen(false) }, [accountKey])
+  useEffect(() => {
+    ++recentOpenGeneration.current
+    if (open) {
+      selectedDuringOpen.current = false
+      setVisibleRecent({accountKey,ids:arkmeRecentEmojiStore.snapshot(accountKey).ids})
+      void loadRecent()
     }
-  }
-
-  useEffect(() => {
-    ++recentSelectionRevision.current
-    setRecentIds([])
-    setRecentSaveError(undefined)
-    setRecentPhase('idle')
-    setOpen(false)
-  }, [accountKey])
-
-  useEffect(() => {
-    if (open) void loadRecent()
+    return () => { ++recentOpenGeneration.current }
   }, [open, accountKey])
-
   const recordRecent = (emojiId: string) => {
-    const revision = ++recentSelectionRevision.current
-    setRecentSaveError(undefined)
-    setRecentPhase('ready')
-    if (accountKey === undefined) return
-    void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).then(
-      ids => {
-        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentIds(ids)
-      },
-      () => {
-        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentSaveError(emojiId)
-      },
-    )
+    if (accountKey) void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).catch(() => {})
   }
-
   const select = (emoji: ArkmeEmoji) => {
     if (disabled || onSelect(emoji) === false) return
-    setRecentIds(current => nextArkmeRecentEmojiIds(current, emoji.id))
+    selectedDuringOpen.current = true
     recordRecent(emoji.id)
   }
 

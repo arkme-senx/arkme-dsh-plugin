@@ -343,7 +343,7 @@ export class UnifiedChatTimelineService {
         const owner = recordOwnerId(relation.record_owner_user_id)
         projected.push({ ...order, kind: 'message', item: { ...item, timelineEventId: order.eventId, sendAtMillis: order.occurredAtMillis,
           ...(owner ? { recordOwnerUserId: owner } : {}),
-          ...(owner && this.offlineContexts ? { offlineContextMessageRef: await this.offlineContexts.messageReference(source.ownerRef, stringValue(relation.rel_uid), item.itemUid, Number(owner)) } : {}) } })
+          ...(owner && this.offlineContexts ? { offlineContextMessageRef: await this.offlineContexts.messageReference(source.ownerRef, stringValue(relation.rel_uid), item.itemUid, owner) } : {}) } })
       } else if (event.source === 'interwoven') {
         const preview = Array.isArray(payload.group_preview_items) ? objectValue(payload.group_preview_items[0]) : {}
         const moment = momentById.get(await this.interwoven.interwovenStableMomentId(stringValue(preview.moment_id)))
