@@ -14,7 +14,7 @@ export const arkmeAvatarImages: ArkmeAvatarImagePort = new InMemoryArkmeAvatarIm
       throw error
     }
   },
-  reader: async imageRef => await callArkme<ArkmeImagePayload>('image.read', { imageRef }),
+  reader: async imageRef => await callArkme<ArkmeImagePayload>('image.read', { imageRef }, undefined, { priority: 'background' }),
   onLoadFailure: ({ imageRef, scopeKey, error, ...context }) => {
     logArkmeAvatarDiagnostic('image_load_failed', {
       ...avatarScopeDiagnostic(scopeKey), ...avatarReferenceDiagnostic(imageRef), ...context,

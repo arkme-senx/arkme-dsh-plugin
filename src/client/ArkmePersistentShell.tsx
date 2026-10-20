@@ -53,7 +53,10 @@ const styles: Record<string, CSSProperties> = {
     // Share the 4px divider budget with taskDirectory's 1px border. Keeping
     // this in the flex layout leaves the native scrollbar fully hit-testable.
     position: 'relative', zIndex: 3, alignSelf: 'stretch', flex: '0 0 3px', width: 3,
-    cursor: 'ew-resize', touchAction: 'none',
+    cursor: 'ew-resize', touchAction: 'none', background: arkmeTheme.layer1,
+  },
+  sidebarDivider: {
+    position: 'relative', flex: '0 0 3px', width: 3, background: arkmeTheme.layer1,
   },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
@@ -346,22 +349,19 @@ export function ArkmePersistentSidebar({
       left: ${String(renderedSidebarWidth)}px !important;
       pointer-events: none;
     }
-    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
-    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
-      transition: none !important;
-    }
     @media (max-width: 760px) {
       :root:has([data-arkme-owned="team-conversation-layer"]) { --arkme-persistent-sidebar-width: 184px !important; }
       :root:has([data-arkme-owned="team-conversation-layer"]) [data-side="sidebar"] { left: 184px !important; }
     }
-    [data-arkme-owned="persistent-sidebar-resize-handle"]::after {
+    [data-arkme-owned="persistent-sidebar-resize-handle"]::after,
+    [data-arkme-owned="persistent-sidebar-divider"]::after {
       content: "";
       position: absolute;
       top: 0;
       right: 0;
       bottom: 0;
-      width: 1px;
-      background: var(--dsw-alias-border-l1, #e5e7eb);
+      width: 2px;
+      background: var(--arkme-directory-divider-color, #e6e6e6);
       transition: width 80ms ease, background-color 80ms ease;
     }
     [data-arkme-owned="persistent-sidebar-resize-handle"]:hover::after,
@@ -439,7 +439,7 @@ export function ArkmePersistentSidebar({
     />
     <PersistentDirectoryPanel key={`${contactsAccountKey}:contacts`} active={directoryVisible && contactsMode} mode="contacts">
       <ContactDirectorySurface active={directoryVisible && contactsMode}
-        accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
+        accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection}
         contactsAddedRevision={contactsAddedRevision}
         cacheFresh={contactsDirectoryCache?.fresh ?? false}
         expandedSections={scopedContacts.expandedSections}
@@ -504,7 +504,7 @@ export function ArkmePersistentSidebar({
       }}
     />}
     {directoryVisible && (contactsMode
-      ? <div aria-hidden style={{ flex: '0 0 3px', width: 3 }} />
+      ? <div data-arkme-owned="persistent-sidebar-divider" aria-hidden style={styles.sidebarDivider} />
       : sidebarResizeHandle)}
   </aside>
 }

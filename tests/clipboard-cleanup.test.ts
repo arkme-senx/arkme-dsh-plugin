@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
+import { copyText } from '../src/client/clipboard-text.js'
 import { arkmeCopyTextToClipboard } from '../src/client/ArkmeSidebar.js'
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.replaceChildren() })
-it.each(['throw', 'false', 'success'])('restores focus and selection after clipboard fallback: %s', async outcome => {
+it.each([
+  ['throw', arkmeCopyTextToClipboard], ['false', arkmeCopyTextToClipboard], ['success', arkmeCopyTextToClipboard],
+  ['throw', copyText], ['false', copyText], ['success', copyText],
+] as const)('restores focus and selection after clipboard fallback: %s', async (outcome, copy) => {
   vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
   const command = vi.fn(() => { if (outcome === 'throw') throw new Error('copy denied'); return outcome === 'success' })
   Object.defineProperty(document, 'execCommand', { configurable: true, value: command })
@@ -12,7 +16,7 @@ it.each(['throw', 'false', 'success'])('restores focus and selection after clipb
   document.body.append(button, text); button.focus()
   const range = document.createRange(); range.selectNodeContents(text)
   document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
-  const result = arkmeCopyTextToClipboard('https://share.test/s/test')
+  const result = copy('https://share.test/s/test')
   if (outcome === 'success') await result
   else await expect(result).rejects.toThrow()
   expect(document.querySelector('textarea')).toBeNull()

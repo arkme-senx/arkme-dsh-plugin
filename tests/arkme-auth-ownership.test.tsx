@@ -1,5 +1,11 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
 import type { ArkmeAuthSnapshot } from '../src/types.js'
 
 const testState = vi.hoisted(() => ({

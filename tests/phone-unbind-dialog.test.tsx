@@ -1,8 +1,9 @@
 import { act, create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { PhoneBindDialog } from '../src/client/ArkmeSettingsSurface.js'
 import type { ArkmeUserProfile } from '../src/types.js'
+import { socialAccessStore } from '../src/client/social-access-store.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), captcha: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/geetest.js', () => ({ verifyPhoneCaptcha: mocks.captcha }))
@@ -10,7 +11,32 @@ const profile: ArkmeUserProfile = {
   userId: 42, displayName: 'test', nickname: 'test', avatarRef: '', arkmeId: 'test42', accountType: 1, createdAt: 1,
   bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
 }
+afterEach(() => { socialAccessStore.activate(undefined) })
 describe('phone unbind dialog', () => {
+  it.each([true, false])('synchronizes confirmed bound=%s before the subsequent profile refresh finishes', async bound => {
+    mocks.call.mockReset()
+    const auth = { status: 'authenticated' as const, environment: 'test' as const, userId: 42 }
+    arkmeAuthStore.setAuth(auth)
+    socialAccessStore.confirm('test:42', !bound)
+    let failRefresh!: (reason: unknown) => void
+    mocks.call.mockImplementation((operation: string) => {
+      if (operation === 'auth.phone.unbind.check') return Promise.resolve({ allowed: true })
+      if (operation === 'auth.phone.verify' || operation === 'auth.phone.unbind') return Promise.resolve(auth)
+      return new Promise((_, reject) => { failRefresh = reject })
+    })
+    const renderer = create(<PhoneBindDialog config={undefined} profile={profile} onClose={() => {}} onUpdated={() => {}} />)
+    if (!bound) await act(async () => { renderer.root.findAllByType('button').find(b => b.children.includes('解绑手机号'))!.props.onClick() })
+    act(() => {
+      if (bound) renderer.root.findAllByType('input').find(i => i.props.inputMode === 'tel')!.props.onChange({ target: { value: '13800000000' } })
+      renderer.root.findAllByType('input').find(i => i.props.inputMode === 'numeric')!.props.onChange({ target: { value: '123456' } })
+    })
+    await act(async () => { renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(mocks.call).toHaveBeenCalledWith('user.profile.refresh')
+    expect(socialAccessStore.getSnapshot().allowed).toBe(bound)
+    await act(async () => { failRefresh(new Error('profile unavailable')) })
+    expect(socialAccessStore.getSnapshot().allowed).toBe(bound)
+    renderer.unmount()
+  })
   it('does not repeat the entry check while pending or update a closed dialog', async () => {
     mocks.call.mockReset()
     let finish!: (value: unknown) => void

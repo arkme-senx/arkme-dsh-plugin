@@ -1,9 +1,12 @@
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import type { ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { MagnifyingGlassMinus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassMinus'
 import { MagnifyingGlassPlus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassPlus'
+import { X } from '@phosphor-icons/react/dist/icons/X'
+import type { RecordingReadingRange } from './useRecordingReadingPosition.js'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import type { ArkmeRecordingCoverageInterval, ArkmeRecordingWorkbenchItem, ArkmeRecordingDailyMetrics } from '../../types.js'
@@ -14,11 +17,17 @@ import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { recordingSpeakerColor } from './recording-speaker-presentation.js'
 import { coverageStatusLabel } from './recording-coverage.js'
 import { useRecordingBreathStyle } from './recording-breath.js'
+import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const desktop = {
   base: arkmeTheme.base, surface: arkmeTheme.layer2, hover: arkmeTheme.hover, border: arkmeTheme.border,
   text: arkmeTheme.text, secondary: arkmeTheme.secondary, tertiary: arkmeTheme.tertiary,
   timelineBlue: arkmeTheme.info,
+  // Some host themes resolve layer-2 to the same white as the page. Keep the
+  // empty track visible by deriving its neutral contrast from the text color.
+  track: `color-mix(in srgb, ${arkmeTheme.text} 7%, ${arkmeTheme.base})`,
+  trackBorder: `color-mix(in srgb, ${arkmeTheme.text} 16%, ${arkmeTheme.base})`,
+  tick: `color-mix(in srgb, ${arkmeTheme.text} 20%, ${arkmeTheme.base})`,
   coverage: `color-mix(in srgb, ${arkmeTheme.info} 32%, ${arkmeTheme.layer2})`,
 }
 
@@ -30,6 +39,9 @@ export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
 const DAY_MILLIS = 86_400_000
 const DEFAULT_RECORDING_ZOOM_INDEX = 6
 const WHEEL_ZOOM_THRESHOLD = 24
+const SPEAKER_ITEM_WIDTH = 180
+const SPEAKER_LEGEND_PADDING = 6
+const SPEAKER_LEGEND_CARET_WIDTH = 16
 
 function clampWindowStart(value: number, visibleMillis: number, dayStart: number, dayEnd: number): number {
   return Math.min(Math.max(dayStart, dayEnd - visibleMillis), Math.max(dayStart, value))
@@ -219,20 +231,21 @@ export function recordingTimelineTickTimes(windowStart: number, windowEnd: numbe
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { minHeight: 162, display: 'grid', gridTemplateRows: '25px 68px auto auto auto', gap: 6, padding: '16px 8px', boxSizing: 'border-box', background: desktop.base },
-  overviewRow: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
-  overviewColumn: { minWidth: 0, height: 25, position: 'relative' },
-  overview: { position: 'relative', overflow: 'hidden', height: 10, marginTop: 4, touchAction: 'none', borderRadius: 10, background: desktop.surface, cursor: 'pointer' },
-  overviewSegment: { position: 'absolute', top: 2, height: 6, minWidth: 2, borderRadius: 3 },
+  shell: { display: 'grid', gap: 8, padding: '4px 8px', boxSizing: 'border-box', background: desktop.base },
+  overviewRow: { position: 'relative', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
+  overviewColumn: { minWidth: 0, height: 36, position: 'relative' },
+  overview: { position: 'relative', overflow: 'hidden', height: 18, marginTop: 2, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
+  overviewSegment: { position: 'absolute', top: 5, height: 6, minWidth: 2, borderRadius: 3 },
   overviewWindow: { position: 'absolute', zIndex: 3, top: 0, bottom: 0, minWidth: 2, boxSizing: 'border-box', border: `1px solid ${desktop.secondary}`, borderRadius: 10, background: 'transparent', pointerEvents: 'none' },
-  overviewLabels: { position: 'absolute', top: 18, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  overviewLabels: { position: 'absolute', top: 24, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
   overviewLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
+  detailPopover: { position: 'absolute', zIndex: 20, top: 36, width: 'min(560px, 100%)', boxSizing: 'border-box', padding: '12px 14px', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
   zoomControls: { height: 20, display: 'flex', alignItems: 'center', gap: 10, color: desktop.text },
   zoomButton: { width: 16, height: 16, padding: 0, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
   zoomHint: { marginLeft: -2, color: desktop.tertiary, fontSize: 10, lineHeight: '20px', whiteSpace: 'nowrap' },
   followButton: { height: 20, padding: '0 6px', border: 0, borderRadius: 4, background: desktop.hover, color: desktop.secondary, cursor: 'pointer', fontSize: 10 },
   track: { minWidth: 0, minHeight: 0, position: 'relative', paddingTop: 28, touchAction: 'none', userSelect: 'none' },
-  detailRail: { position: 'relative', overflow: 'hidden', height: 18, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.surface, cursor: 'grab' },
+  detailRail: { position: 'relative', overflow: 'hidden', height: 18, boxSizing: 'border-box', border: `1px solid ${desktop.trackBorder}`, borderRadius: 10, background: desktop.track, cursor: 'grab' },
   segment: { position: 'absolute', top: 1, bottom: 1, minWidth: 2, padding: 0, border: 0, borderRadius: 0, cursor: 'pointer', opacity: .96 },
   tickLabels: { position: 'relative', height: 16, display: 'block', color: desktop.tertiary, fontSize: 10, lineHeight: '16px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
   tickLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
@@ -242,12 +255,12 @@ const styles: Record<string, CSSProperties> = {
   playControl: { width: 16, height: 16, flex: 'none', padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: desktop.text, color: desktop.base, cursor: 'pointer' },
   legend: { minWidth: 0, position: 'relative', margin: 0, color: desktop.secondary, fontSize: 12 },
   legendBackdrop: { position: 'fixed', zIndex: 11, inset: 0, padding: 0, border: 0, background: 'transparent', cursor: 'default' },
-  legendSummary: { height: 28, boxSizing: 'border-box', padding: '4px 6px', display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
+  legendSummary: { height: 28, boxSizing: 'border-box', padding: `4px ${SPEAKER_LEGEND_PADDING}px`, display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
   legendItems: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden' },
-  legendItem: { width: 96, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px', boxSizing: 'border-box', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
+  legendItem: { width: SPEAKER_ITEM_WIDTH, flex: 'none', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px', boxSizing: 'border-box', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
   legendName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontWeight: 500 },
   legendDot: { width: 12, height: 12, flex: 'none', borderRadius: '50%' },
-  moreChip: { flex: 'none', marginRight: 2, padding: '0 6px', borderRadius: 10, background: desktop.hover, color: desktop.tertiary, fontSize: 11, lineHeight: '16px', fontWeight: 500 },
+  moreChip: { flex: 'none', boxSizing: 'border-box', padding: '0 6px', textAlign: 'center', whiteSpace: 'nowrap', borderRadius: 10, background: desktop.hover, color: desktop.tertiary, fontSize: 11, lineHeight: '16px', fontWeight: 500 },
   legendPanel: { position: 'absolute', zIndex: 12, top: 31, left: 0, right: 0, maxHeight: 420, overflowY: 'auto', border: `1px solid ${desktop.border}`, borderRadius: 12, background: desktop.base, boxShadow: arkmeTheme.shadow },
   legendPanelList: { padding: '8px 0', display: 'grid' },
   legendPanelItem: { minWidth: 0, padding: '8px 12px' },
@@ -266,18 +279,22 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, dayStartMillis, playheadMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: ArkmeRecordingWorkbenchItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
   dailyMetrics?: (ArkmeRecordingDailyMetrics & { speakerTextCounts?: Readonly<Record<string, number>> }) | undefined
+  arrangementEntry?: ReactNode
   dayStartMillis?: number
   playheadMillis?: number
+  readingRange?: RecordingReadingRange | undefined
+  onNavigateAtMillis?(value: number): void
   isPlaying: boolean
   playbackLoading?: boolean
   loading?: boolean
   emptyState?: boolean
   onEditSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
+  onReviewSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
   onImportAudio?(): void
   onSelectAtMillis(value: number): void
   onTogglePlayback(): void
@@ -296,28 +313,78 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     end: (dayStartMillis ?? derivedBounds.start) + DAY_MILLIS,
   }), [dayStartMillis, derivedBounds.start])
   const initialView = recordingTimelineInitialView(items, bounds.start, bounds.end)
-  const [zoomIndex, setZoomIndex] = useState(initialView.zoomIndex)
+  const [focusZoomIndex, setFocusZoomIndex] = useState(initialView.zoomIndex)
+  const [focusWindowStart, setFocusWindowStart] = useState(initialView.windowStart)
+  // Hover is a temporary view; reading/playback can keep updating the saved focus.
+  const [preview, setPreview] = useState<{ windowStart: number; zoomIndex: number }>()
+  const zoomIndex = preview?.zoomIndex ?? focusZoomIndex
+  const windowStart = preview?.windowStart ?? focusWindowStart
   const visibleMillis = RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[zoomIndex]! * 1_000
-  const [windowStart, setWindowStart] = useState(initialView.windowStart)
+  const focusVisibleMillis = RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[focusZoomIndex]! * 1_000
+  const setWindowStart = (value: number) => {
+    if (preview !== undefined) setPreview({ ...preview, windowStart: value })
+    else setFocusWindowStart(value)
+  }
   const [followPlayback, setFollowPlayback] = useState(true)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const detailId = useId()
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
+  const navigationRef = useRef<HTMLDivElement>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+  const suppressFocus = useRef(false)
+  const cancelClose = () => { clearTimeout(closeTimer.current); closeTimer.current = undefined }
+  const openDetail = () => { cancelClose(); if (hasRecording) setDetailOpen(true) }
+  const closeDetail = () => { cancelClose(); setDetailOpen(false); setPreview(undefined) }
+  const scheduleClose = () => {
+    cancelClose()
+    closeTimer.current = setTimeout(() => {
+      if (typeof document !== 'undefined' && detailRef.current?.contains(document.activeElement)) return
+      closeDetail()
+    }, 180)
+  }
+  useEffect(() => () => { clearTimeout(closeTimer.current) }, [])
+  useEffect(() => {
+    if (!detailOpen || typeof document === 'undefined') return
+    const closeOutside = (event: PointerEvent) => { if (!navigationRef.current?.contains(event.target as Node)) closeDetail() }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [detailOpen])
   const dragRef = useRef<{ x: number; start: number; moved: boolean; item?: ArkmeRecordingWorkbenchItem }>()
   const overviewDragRef = useRef(false)
+  const overviewTargetRef = useRef<number>()
   const wheelDeltaRef = useRef(0)
   const legendRef = useRef<HTMLDetailsElement>(null)
+  const legendSummaryRef = useRef<HTMLElement>(null)
   const [legendOpen, setLegendOpen] = useState(false)
+  const [speakerCapacity, setSpeakerCapacity] = useState<number>()
   const firstItemStart = items[0]?.startAtMillis
 
   useEffect(() => {
     const next = recordingTimelineInitialView(items, bounds.start, bounds.end)
-    setZoomIndex(next.zoomIndex)
-    setWindowStart(next.windowStart)
+    setFocusZoomIndex(next.zoomIndex)
+    setFocusWindowStart(next.windowStart)
+    setPreview(undefined)
+    setDetailOpen(false)
     setFollowPlayback(true)
   }, [bounds.end, bounds.start, firstItemStart])
 
   useEffect(() => {
     if (!followPlayback || playheadMillis === undefined) return
-    setWindowStart(current => recordingTimelineFollowStart(playheadMillis, current, visibleMillis, bounds.start, bounds.end))
-  }, [bounds.end, bounds.start, followPlayback, playheadMillis, visibleMillis])
+    setFocusWindowStart(current => recordingTimelineFollowStart(playheadMillis, current, focusVisibleMillis, bounds.start, bounds.end))
+  }, [bounds.end, bounds.start, followPlayback, playheadMillis, focusVisibleMillis])
+
+  // Explicit playback resumes following audio; subsequent transcript scrolling takes priority.
+  useEffect(() => { if (isPlaying) setFollowPlayback(true) }, [isPlaying])
+
+  // Reading moves the focus window without seeking or starting audio. Manual pan/zoom
+  // remains in place until the transcript advances to another row.
+  const readingAtMillis = readingRange?.startAtMillis
+  useEffect(() => {
+    if (readingAtMillis === undefined || readingAtMillis < bounds.start || readingAtMillis >= bounds.end) return
+    setFollowPlayback(false)
+    setFocusWindowStart(current => recordingTimelineFollowStart(readingAtMillis, current, focusVisibleMillis, bounds.start, bounds.end))
+  }, [readingAtMillis, bounds.start, bounds.end])
 
   const windowEnd = Math.min(bounds.end, windowStart + visibleMillis)
   const visibleItems = useMemo(
@@ -360,6 +427,42 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
   }, [items])
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
+  const consistency = useRecordingConsistency(loading ? [] : allDaySpeakers.map(speaker => speaker.items[0]!.itemRef))
+  const consistencyByRef = new Map(consistency.groups.map(group => [group.anchorRef, group]))
+  const reviewSpeaker = (event: React.MouseEvent<HTMLButtonElement>, item: ArkmeRecordingWorkbenchItem) => {
+    event.preventDefault(); event.stopPropagation()
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (legendRef.current) legendRef.current.open = false
+    setLegendOpen(false)
+    ;(onReviewSpeaker ?? onEditSpeaker)?.(item, { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom })
+  }
+  const speakerCount = allDaySpeakers.length
+  // Keep the badge width stable as its count changes, including across digit boundaries.
+  const moreChipWidth = Math.max(30, 14 + (String(speakerCount).length + 1) * 7)
+  const visibleSpeakerCount = Math.min(speakerCount, speakerCapacity ?? speakerCount)
+  const hiddenSpeakerCount = speakerCount - visibleSpeakerCount
+
+  useEffect(() => {
+    const summary = legendSummaryRef.current
+    if (summary === null || typeof window === 'undefined') return
+    const measure = () => {
+      const availableWidth = Math.max(0, summary.clientWidth - SPEAKER_LEGEND_PADDING * 2 - SPEAKER_LEGEND_CARET_WIDTH)
+      // Try fitting everyone before reserving the overflow badge, so it cannot keep
+      // the last speaker hidden when the row has enough room without the badge.
+      const capacity = availableWidth >= speakerCount * SPEAKER_ITEM_WIDTH
+        ? speakerCount
+        : Math.max(0, Math.floor((availableWidth - moreChipWidth) / SPEAKER_ITEM_WIDTH))
+      setSpeakerCapacity(capacity)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(summary)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [loading, showEmptyState, speakerCount, moreChipWidth])
 
   useEffect(() => {
     if (allDaySpeakers.length === 0) setLegendOpen(false)
@@ -368,8 +471,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   const zoomTo = (targetIndex: number, anchorRatio = .5, anchorMillis?: number) => {
     const nextIndex = Math.min(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1, Math.max(0, targetIndex))
     const targetVisibleMillis = RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[nextIndex]! * 1_000
-    const effectiveAnchor = anchorMillis ?? playheadMillis ?? windowStart + visibleMillis * anchorRatio
-    setWindowStart(recordingTimelineZoomStart({
+    const effectiveAnchor = anchorMillis ?? (preview !== undefined ? windowStart + visibleMillis * anchorRatio : readingAtMillis ?? playheadMillis ?? windowStart + visibleMillis * anchorRatio)
+    const nextStart = recordingTimelineZoomStart({
       currentStart: windowStart,
       currentVisibleMillis: visibleMillis,
       targetVisibleMillis,
@@ -377,8 +480,9 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       anchorRatio,
       dayStart: bounds.start,
       dayEnd: bounds.end,
-    }))
-    setZoomIndex(nextIndex)
+    })
+    if (preview !== undefined) setPreview({ windowStart: nextStart, zoomIndex: nextIndex })
+    else { setFocusWindowStart(nextStart); setFocusZoomIndex(nextIndex) }
   }
 
   const seekFromPointer = (clientX: number, element: HTMLDivElement, item?: ArkmeRecordingWorkbenchItem) => {
@@ -406,7 +510,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     const delta = event.clientX - drag.x
     if (Math.abs(delta) >= 3) drag.moved = true
     if (!drag.moved) return
-    setFollowPlayback(false)
+    if (preview === undefined) setFollowPlayback(false)
     setWindowStart(recordingTimelinePanStart(drag.start, delta, rect.width, visibleMillis, bounds.start, bounds.end))
   }
 
@@ -441,15 +545,21 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     const rect = element.getBoundingClientRect()
     const target = recordingTimelineSeekMillis((clientX - rect.left) / Math.max(1, rect.width), bounds.start, bounds.end)
     setFollowPlayback(false)
-    setWindowStart(clampWindowStart(target - visibleMillis / 2, visibleMillis, bounds.start, bounds.end))
+    setPreview(undefined)
+    setFocusZoomIndex(zoomIndex)
+    setFocusWindowStart(clampWindowStart(target - visibleMillis / 2, visibleMillis, bounds.start, bounds.end))
+    overviewTargetRef.current = target
+    openDetail()
   }
-  const editSpeaker = (event: { preventDefault(): void; stopPropagation(): void; currentTarget: HTMLElement }, item: ArkmeRecordingWorkbenchItem) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const previewOverview = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!hasRecording || event.pointerType === 'touch' || overviewDragRef.current) return
     const rect = event.currentTarget.getBoundingClientRect()
-    onEditSpeaker?.(item, { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })
+    const target = recordingTimelineSeekMillis((event.clientX - rect.left) / Math.max(1, rect.width), bounds.start, bounds.end)
+    const previewZoomIndex = preview?.zoomIndex ?? (focusZoomIndex === 0 ? DEFAULT_RECORDING_ZOOM_INDEX : focusZoomIndex)
+    const previewVisibleMillis = RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[previewZoomIndex]! * 1_000
+    setPreview({ windowStart: clampWindowStart(target - previewVisibleMillis / 2, previewVisibleMillis, bounds.start, bounds.end), zoomIndex: previewZoomIndex })
+    openDetail()
   }
-
   const renderCoverage = (from: number, to: number, overview: boolean) => coverage.filter(range => range.endAtMillis > from && range.startAtMillis < to).map((range, index) => {
     const layout = recordingSegmentLayout(range.startAtMillis, range.endAtMillis, from, to)
     const label = `${timeLabel(range.startAtMillis)}–${timeLabel(range.endAtMillis)} · ${range.sourceLabel} · ${coverageStatusLabel[range.status]}`
@@ -460,25 +570,59 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   })
 
   return <div style={styles.shell} aria-label={tr("真实录音时间轴")}>
-    <div style={styles.overviewRow} data-timeline-layer="overview">
+    <div ref={navigationRef} style={{ ...styles.overviewRow, ...(playheadMillis === undefined ? { gridTemplateColumns: 'minmax(0,1fr)', gap: 0 } : {}) }} data-timeline-layer="overview"
+      onPointerEnter={cancelClose} onPointerLeave={scheduleClose}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleClose() }}
+      onKeyDown={event => {
+        if (event.key !== 'Escape' || !detailOpen) return
+        event.preventDefault(); event.stopPropagation(); closeDetail()
+        suppressFocus.current = true; overviewRef.current?.focus({ preventScroll: true }); suppressFocus.current = false
+      }}>
+
       <div style={styles.overviewColumn} aria-label={tr("24 小时概览")}>
         <div
           style={{ ...styles.overview, ...(!hasRecording ? { cursor: 'default' } : {}) }}
+          ref={overviewRef}
+          tabIndex={hasRecording ? 0 : -1}
+          aria-controls={detailId}
+          aria-expanded={detailOpen && hasRecording}
+          onFocus={() => { if (!suppressFocus.current) { setPreview(undefined); openDetail() } }}
+          onKeyDown={event => {
+            if (!hasRecording) return
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setPreview(undefined); openDetail() }
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault(); openDetail(); setFollowPlayback(false)
+              const target = clampWindowStart(windowStart + (event.key === 'ArrowLeft' ? -1 : 1) * visibleMillis, visibleMillis, bounds.start, bounds.end)
+              setPreview(undefined); setFocusZoomIndex(zoomIndex); setFocusWindowStart(target); onNavigateAtMillis?.(target)
+            }
+          }}
           role="scrollbar"
           aria-label={tr("24 小时缩略导航")}
+          aria-orientation="horizontal"
           aria-valuemin={bounds.start}
           aria-valuemax={bounds.end}
-          aria-valuenow={windowStart}
+          aria-valuenow={focusWindowStart}
+          onPointerEnter={previewOverview}
+          onPointerLeave={scheduleClose}
           onPointerDown={event => {
             if (!hasRecording || event.button !== 0) return
             event.currentTarget.setPointerCapture(event.pointerId)
             overviewDragRef.current = true
             navigateOverview(event.clientX, event.currentTarget)
           }}
-          onPointerMove={event => { if (overviewDragRef.current) navigateOverview(event.clientX, event.currentTarget) }}
-          onPointerUp={() => { overviewDragRef.current = false }}
+          onPointerMove={event => {
+            if (overviewDragRef.current) { navigateOverview(event.clientX, event.currentTarget); return }
+            previewOverview(event)
+          }}
+          onPointerUp={() => {
+            if (overviewDragRef.current && overviewTargetRef.current !== undefined) onNavigateAtMillis?.(overviewTargetRef.current)
+            overviewDragRef.current = false
+          }}
           onPointerCancel={() => { overviewDragRef.current = false }}
         >
+          {Array.from({ length: 23 }, (_, index) => index + 1).map(hour => <span key={hour} aria-hidden data-recording-hour-tick={hour}
+            style={{ position: 'absolute', left: `${hour / 24 * 100}%`, bottom: 2, width: 1, height: hour % 6 === 0 ? 12 : 5,
+              background: desktop.tick, pointerEvents: 'none' }} />)}
           {renderCoverage(bounds.start, bounds.end, true)}
           {overviewItems.map(item => {
             const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, bounds.start, bounds.end)
@@ -489,6 +633,14 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
               background: desktop.timelineBlue,
             }} />
           })}
+          {readingRange !== undefined && readingRange.startAtMillis < bounds.end && readingRange.endAtMillis > bounds.start && <span
+            data-recording-reading-at={readingRange.startAtMillis} aria-label={`正在阅读 ${timeLabel(readingRange.startAtMillis)}`}
+            style={{ position: 'absolute', zIndex: 4, top: 1, bottom: 1, minWidth: 4, borderRadius: 3, background: desktop.text,
+              left: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, bounds.start, bounds.end).leftPercent}%`,
+              width: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, bounds.start, bounds.end).widthPercent}%` }} />}
+          {playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end && <span
+            data-recording-playhead-at={playheadMillis} aria-label={`播放位置 ${timeLabel(playheadMillis)}`}
+            style={{ ...styles.playhead, background: arkmeTheme.danger, left: `${(playheadMillis - bounds.start) / DAY_MILLIS * 100}%` }} />}
           {zoomIndex > 0 && <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />}
         </div>
         <span style={styles.overviewLabels} aria-hidden>
@@ -499,101 +651,116 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
           }}>{label}</span>)}
         </span>
       </div>
-      <span style={styles.zoomControls}>
-        {!followPlayback && <button data-arkme-feedback="neutral" type="button" style={styles.followButton} onClick={() => { setFollowPlayback(true) }}>{tr("跟随播放")}</button>}
+      {playheadMillis !== undefined && <span style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 20, fontSize: 11, color: desktop.secondary, whiteSpace: 'nowrap' }}>
+          <time>{timeLabel(playheadMillis)}</time>
+          <button data-arkme-feedback="neutral" type="button" disabled={!canPlayAtSelection && !isPlaying && !playbackLoading}
+            style={{ ...styles.playControl, ...(!canPlayAtSelection && !isPlaying && !playbackLoading ? { opacity: .5, cursor: 'default' } : {}) }}
+            onClick={onTogglePlayback} aria-label={playbackLoading ? '取消录音加载' : isPlaying ? '暂停录音' : '播放录音'}>
+            {isPlaying || playbackLoading ? <Pause size={10} weight="fill" aria-hidden /> : <Play size={10} weight="fill" aria-hidden />}
+          </button>
+      </span>}
+      <div ref={detailRef} id={detailId} role="region" aria-label={tr('录音片段详情')}
+        hidden={!detailOpen || !hasRecording} style={{ ...styles.detailPopover, left: `clamp(0px, calc(${overviewWindowLeft + overviewWindowWidth / 2}% - 280px), max(0px, calc(100% - 560px)))` }}
+        onPointerEnter={cancelClose} onFocusCapture={cancelClose}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span style={{ color: desktop.secondary, fontSize: 11 }}>{timeLabel(windowStart, false)}–{timeLabel(windowEnd, false)}</span>
+          <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span style={styles.zoomControls}>
+              {isPlaying && (!followPlayback || preview !== undefined) && <button data-arkme-feedback="neutral" type="button" style={styles.followButton} onClick={() => { setPreview(undefined); setFollowPlayback(true) }}>{tr("跟随播放")}</button>}
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.zoomButton, ...(!hasRecording || zoomIndex === 0 ? { opacity: .3, cursor: 'default' } : {}) }} aria-label={tr("缩小")} title={hasRecording ? tr("缩小") : undefined} disabled={!hasRecording || zoomIndex === 0} onClick={() => { zoomTo(zoomIndex - 1) }}><MagnifyingGlassMinus size={16} aria-hidden /></button>
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.zoomButton, ...(!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1 ? { opacity: .3, cursor: 'default' } : {}) }} aria-label={tr("放大")} title={hasRecording ? tr("放大") : undefined} disabled={!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1} onClick={() => { zoomTo(zoomIndex + 1) }}><MagnifyingGlassPlus size={16} aria-hidden /></button>
         <span style={{ ...styles.zoomHint, ...(!hasRecording ? { opacity: .3 } : {}) }}>{tr("滚轮缩放")}</span>
       </span>
-    </div>
+          <button type="button" aria-label={tr('关闭片段详情')} style={styles.zoomButton} onClick={() => {
+            closeDetail(); suppressFocus.current = true; overviewRef.current?.focus({ preventScroll: true }); suppressFocus.current = false
+          }}><X size={14} /></button>
+          </span>
+        </div>
+        <div style={styles.track} data-timeline-layer="detail">
+          {playheadVisible && <span style={{ ...styles.playTooltip, justifyContent: 'center', left: `clamp(0px, calc(${playheadPercent}% - 56px), calc(100% - 112px))` }}>{timeLabel(playheadMillis)}</span>}
+          <div
+            style={{ ...styles.detailRail, ...(!hasRecording ? { cursor: 'default' } : {}) }}
+            tabIndex={hasRecording ? 0 : -1}
+            role="slider"
+            aria-disabled={!hasRecording}
+            aria-label={tr("详细时间轴，可拖拽平移，滚轮缩放")}
+            aria-valuemin={bounds.start}
+            aria-valuemax={bounds.end}
+            aria-valuenow={preview !== undefined ? windowStart : playheadMillis ?? windowStart}
+            aria-valuetext={durationLabel(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[zoomIndex]!)}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => { dragRef.current = undefined }}
+            onWheel={handleWheel}
+            onKeyDown={event => {
+              if (!hasRecording || event.target !== event.currentTarget) return
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault()
+                if (preview === undefined) setFollowPlayback(false)
+                const direction = event.key === 'ArrowLeft' ? -1 : 1
+                setWindowStart(clampWindowStart(windowStart + direction * visibleMillis * .1, visibleMillis, bounds.start, bounds.end))
+              } else if (event.key === '+' || event.key === '=') {
+                event.preventDefault(); zoomTo(zoomIndex + 1)
+              } else if (event.key === '-') {
+                event.preventDefault(); zoomTo(zoomIndex - 1)
+              } else if (event.key === ' ') {
+                event.preventDefault()
+                if (canPlayAtSelection) onTogglePlayback()
+              }
+            }}
+          >
+            {renderCoverage(windowStart, windowEnd, false)}
+            {visibleItems.map((item, index) => {
+              const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, windowStart, windowEnd)
+              return <button data-arkme-feedback="neutral"
+                key={`${item.item.itemId}:${String(item.startAtMillis)}`}
+                data-recording-segment-index={index}
+                type="button"
+                style={{
+                  ...styles.segment, top: 4, bottom: 4,
+                  left: `${String(layout.leftPercent)}%`,
+                  width: `${String(layout.widthPercent)}%`,
+                  background: item.isMixedSpeakerAggregate
+                    ? desktop.secondary
+                    : item.item.isBackground ? desktop.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
+                }}
+                aria-label={item.isMixedSpeakerAggregate
+                  ? `多个说话人，选择聚合的 ${String(item.aggregatedCount)} 个片段中的第一段`
+                  : `${item.item.speakerLabel}，选择该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
+                title={item.isMixedSpeakerAggregate
+                  ? `多个说话人 · 聚合 ${String(item.aggregatedCount)} 个片段`
+                  : `${item.item.speakerLabel} · ${item.item.text.slice(0, 80)}`}
+                onClick={event => {
+                  event.stopPropagation()
+                  // Pointer selection/panning belongs to the rail; keyboard activation has no coordinate.
+                  if (event.detail === 0) onSelectAtMillis(item.item.startAtMillis)
+                }}
+              />
+            })}
+            {readingRange !== undefined && readingRange.startAtMillis < windowEnd && readingRange.endAtMillis > windowStart && <span
+              data-detail-reading-at={readingRange.startAtMillis} aria-hidden
+              style={{ position: 'absolute', zIndex: 3, top: 0, bottom: 0, minWidth: 3, boxSizing: 'border-box', border: `2px solid ${desktop.text}`, borderRadius: 3, pointerEvents: 'none',
+                left: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, windowStart, windowEnd).leftPercent}%`,
+                width: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, windowStart, windowEnd).widthPercent}%` }} />}
+            {playheadVisible && <span style={{ ...styles.playhead, left: `${String(playheadPercent)}%` }} aria-hidden><span style={styles.playheadCap} /></span>}
+          </div>
+          <span style={styles.tickLabels} data-timeline-ticks="detail" aria-hidden>
+            {detailTicks.map(tick => <span key={tick} style={{
+              ...styles.tickLabel,
+              left: `${String((tick - windowStart) / Math.max(1, windowEnd - windowStart) * 100)}%`,
+            }}>{timeLabel(tick, showTickSeconds)}</span>)}
+          </span>
+        </div>
 
-    <div style={styles.track} data-timeline-layer="detail">
-      {playheadVisible && <div style={{ ...styles.playTooltip, left: `clamp(0px, calc(${String(playheadPercent)}% - 56px), calc(100% - 112px))` }}>
-        <time style={{ color: canPlayAtSelection ? desktop.text : desktop.tertiary }}>{timeLabel(playheadMillis)}</time>
-        <button data-arkme-feedback="neutral" type="button" disabled={!canPlayAtSelection && !isPlaying && !playbackLoading}
-          style={{ ...styles.playControl, ...(!canPlayAtSelection && !isPlaying && !playbackLoading ? { opacity: .5, cursor: 'default' } : {}) }}
-          onClick={onTogglePlayback}
-          aria-label={playbackLoading ? '取消录音加载' : isPlaying ? '暂停录音' : '播放录音'}
-          title={playbackLoading ? '加载中，点击取消' : isPlaying ? '暂停' : tr("播放")}>
-          {isPlaying || playbackLoading ? <Pause size={10} weight="fill" aria-hidden /> : <Play size={10} weight="fill" aria-hidden />}
-        </button>
-      </div>}
-      <div
-        style={{ ...styles.detailRail, ...(!hasRecording ? { cursor: 'default' } : {}) }}
-        tabIndex={hasRecording ? 0 : -1}
-        role="slider"
-        aria-disabled={!hasRecording}
-        aria-label={tr("详细时间轴，可拖拽平移，滚轮缩放")}
-        aria-valuemin={bounds.start}
-        aria-valuemax={bounds.end}
-        aria-valuenow={playheadMillis ?? windowStart}
-        aria-valuetext={durationLabel(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[zoomIndex]!)}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={() => { dragRef.current = undefined }}
-        onWheel={handleWheel}
-        onKeyDown={event => {
-          if (!hasRecording || event.target !== event.currentTarget) return
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-            event.preventDefault()
-            setFollowPlayback(false)
-            const direction = event.key === 'ArrowLeft' ? -1 : 1
-            setWindowStart(current => clampWindowStart(current + direction * visibleMillis * .1, visibleMillis, bounds.start, bounds.end))
-          } else if (event.key === '+' || event.key === '=') {
-            event.preventDefault(); zoomTo(zoomIndex + 1)
-          } else if (event.key === '-') {
-            event.preventDefault(); zoomTo(zoomIndex - 1)
-          } else if (event.key === ' ') {
-            event.preventDefault()
-            if (canPlayAtSelection) onTogglePlayback()
-          }
-        }}
-      >
-        {renderCoverage(windowStart, windowEnd, false)}
-        {visibleItems.map((item, index) => {
-          const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, windowStart, windowEnd)
-          return <button data-arkme-feedback="neutral"
-            key={`${item.item.itemId}:${String(item.startAtMillis)}`}
-            data-recording-segment-index={index}
-            type="button"
-            style={{
-              ...styles.segment, top: 4, bottom: 4,
-              left: `${String(layout.leftPercent)}%`,
-              width: `${String(layout.widthPercent)}%`,
-              background: item.isMixedSpeakerAggregate
-                ? desktop.secondary
-                : item.item.isBackground ? desktop.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
-            }}
-            aria-label={item.isMixedSpeakerAggregate
-              ? `多个说话人，选择聚合的 ${String(item.aggregatedCount)} 个片段中的第一段`
-              : `${item.item.speakerLabel}，选择该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
-            title={item.isMixedSpeakerAggregate
-              ? `多个说话人 · 聚合 ${String(item.aggregatedCount)} 个片段`
-              : `${item.item.speakerLabel} · ${item.item.text.slice(0, 80)}`}
-            onClick={event => {
-              event.stopPropagation()
-              // Pointer selection/panning belongs to the rail; keyboard activation has no coordinate.
-              if (event.detail === 0) onSelectAtMillis(item.item.startAtMillis)
-            }}
-          />
-        })}
-        {playheadVisible && <span style={{ ...styles.playhead, left: `${String(playheadPercent)}%` }} aria-hidden><span style={styles.playheadCap} /></span>}
       </div>
-      <span style={styles.tickLabels} data-timeline-ticks="detail" aria-hidden>
-        {detailTicks.map(tick => <span key={tick} style={{
-          ...styles.tickLabel,
-          left: `${String((tick - windowStart) / Math.max(1, windowEnd - windowStart) * 100)}%`,
-        }}>{timeLabel(tick, showTickSeconds)}</span>)}
-      </span>
     </div>
 
-    <div aria-label={tr("录音覆盖图例")} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 16px', fontSize: 11, color: desktop.secondary, minHeight: 20 }}>
-      {[[desktop.surface, !loading && coverageState === 'ready' && (hasRecording || showEmptyState) ? '无录音' : '无已知录音'], [desktop.coverage, '有录音'], [desktop.timelineBlue, '已识别人声']].map(([color, label]) => <span key={label} style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}><i aria-hidden style={{ width: 14, height: 7, borderRadius: 3, background: color, border: `1px solid ${desktop.border}` }} />{label}</span>)}
+    {(coverageState !== 'ready' || coverage.some(range => range.status === 'processing' || range.status === 'submitted')) && <div aria-label={tr("录音状态")} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 16px', fontSize: 11, color: desktop.secondary }}>
       {coverageState !== 'ready' && <span role="status">{coverageState === 'error' ? '云端录音范围读取失败' : '部分录音范围待确认'}</span>}
       {coverage.some(range => range.status === 'processing' || range.status === 'submitted') && <span role="status">{tr("录音处理中，人声结果待更新")}</span>}
-    </div>
-    <RecordingDailyMetrics metrics={dailyMetrics} loading={loading} localPending={coverage.some(range=>range.status==='recording'||range.status==='submitted'||range.status==='local')} />
+    </div>}
+    <RecordingDailyMetrics metrics={dailyMetrics} loading={loading} localPending={coverage.some(range=>range.status==='recording'||range.status==='submitted'||range.status==='local')}>{arrangementEntry}</RecordingDailyMetrics>
     {loading ? <span style={styles.loadingControl} data-timeline-layer="loading" aria-label={tr("正在读取录音")} /> : showEmptyState ? <span style={styles.emptyControl} data-timeline-layer="empty">
       <span style={styles.emptyIndicator} aria-hidden />
       <span>{tr("无录音")}</span>
@@ -601,22 +768,24 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     </span> : allDaySpeakers.length > 0 ? <>
       {legendOpen && <button type="button" tabIndex={-1} aria-label={tr("关闭全天说话人统计")} style={styles.legendBackdrop} onClick={() => { if (legendRef.current !== null) legendRef.current.open = false; setLegendOpen(false) }} />}
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>
-      <summary style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
+      <summary ref={legendSummaryRef} style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
         <span style={styles.legendItems}>
-          {allDaySpeakers.slice(0, 3).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} aria-label={tr("编辑说话人 {v0}", { v0: speaker.label })} style={styles.legendItem} onClick={event => { editSpeaker(event, speaker.items[0]!) }}>
+          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={`${speaker.label} · ${tr('一致性')} ${tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}`} aria-label={tr("查看 {v0} 声音一致性", { v0: speaker.label })} style={styles.legendItem} onClick={event => { reviewSpeaker(event, speaker.items[0]!) }}>
             {speaker.avatarRef === undefined
               ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
               : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={tr("{v0}头像", { v0: speaker.label })} />}
             <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }) }}>{speaker.label}</span>
+            <span style={{ flex: 'none', color: desktop.tertiary, fontSize: 10 }}>{tr('一致性')} {tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}</span>
           </button>)}
         </span>
-        {allDaySpeakers.length > 3 && <span style={styles.moreChip}>+{allDaySpeakers.length - 3}</span>}
-        <CaretDown size={16} aria-hidden />
+        {hiddenSpeakerCount > 0 && <span style={{ ...styles.moreChip, width: moreChipWidth }}>+{hiddenSpeakerCount}</span>}
+        <CaretDown size={SPEAKER_LEGEND_CARET_WIDTH} style={{ flex: 'none' }} aria-hidden />
       </summary>
       <span style={styles.legendPanel}>
         <span style={styles.legendPanelList}>
           {allDaySpeakers.map(speaker => {
             const percentage = totalSpeakerDurationMillis <= 0 ? 0 : speaker.durationMillis / totalSpeakerDurationMillis * 100
+            const group = consistencyByRef.get(speaker.items[0]!.itemRef)
             return <span key={speaker.key} style={styles.legendPanelItem}>
               <span style={styles.legendPanelPrimary}>
               <span style={styles.legendPanelIdentity}>
@@ -634,6 +803,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
               <span style={styles.legendMetric}>{percentage.toFixed(1)}%</span>
               </span>
               <span style={styles.legendPanelMeta}>
+                <button type="button" aria-label={tr('查看 {v0} 声音一致性', { v0: speaker.label })} style={{ border: 0, padding: '2px 5px', marginRight: 8, borderRadius: 4, background: desktop.hover, color: desktop.text, cursor: 'pointer', font: 'inherit', fontSize: 11 }} onClick={event => reviewSpeaker(event, speaker.items[0]!)}>{tr('一致性')} {tr(recordingConsistencyLabel(group, consistency.error))}{group?.reviewCount != null && group.reviewCount > 0 ? ` · ${tr('{v0} 段待复核', { v0: group.reviewCount })}` : ''}</button>
+                {group && <span style={{ ...styles.legendMetric, marginRight: 8 }}>{tr('已分析 {v0}/{v1}', { v0: group.analyzedCount, v1: group.totalCount })}</span>}
                 <span style={styles.legendMetric}>{tr("占比")} {percentage.toFixed(1)}%</span>
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
                 <span style={styles.legendMetric}>{speaker.mergedSegments.length}{tr("个片段")}</span>

@@ -1,3 +1,4 @@
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeArrangementItem } from '../src/types.js'
@@ -39,7 +40,7 @@ it('reads back a confirmed mutation without a returned item', async () => {
   await moveArrangement(item('identified'), 'following', new AbortController().signal)
   expect(mocks.call.mock.calls[1]?.[0]).toBe('arrangements.detail')
 })
-async function mount() { await act(async () => { view = create(<ArkmeArrangementBoard accountScope="a" onBack={() => {}} />) }) }
+async function mount() { await act(async () => { view = create(<ArkmeArrangementBoard accountScope="a" />) }) }
 const column = (status: string) => view!.root.findByProps({ 'data-arrangement-column': status })
 const dnd = () => view!.root.find(node => typeof node.props.onDragEnd === 'function' && !!node.props.sensors)
 const dragEvent = (status: string) => ({ active: { id: 'one', rect: { current: { translated: { top: 0, height: 0 } } } }, over: { id: `column:${status}`, data: { current: { status } }, rect: { top: 0, height: 0 } } })
@@ -70,7 +71,7 @@ it('clears old account data and ignores late responses on account changes', asyn
   mocks.call.mockResolvedValue({ items: [item('identified')], total: 1, board: { supported: true, version: 'v1' }, hasMore: false })
   await mount()
   mocks.call.mockImplementation(() => new Promise(() => {}))
-  await act(async () => view!.update(<ArkmeArrangementBoard accountScope="b" onBack={() => {}} />))
+  await act(async () => view!.update(<ArkmeArrangementBoard accountScope="b" />))
   expect(view!.root.findAllByProps({ 'data-arrangement-ref': 'one' })).toHaveLength(0)
 })
 it('blocks duplicate drags while saving and refreshes actual following state after a partial failure', async () => {
@@ -125,7 +126,7 @@ it('discards an old page response after an account switch', async () => {
   await mount()
   const finishOld = resolveOld
   mocks.call.mockResolvedValue({ items: [], total: 0, board: { supported: true, version: 'v1' }, hasMore: false })
-  await act(async () => view!.update(<ArkmeArrangementBoard accountScope="b" onBack={() => {}} />))
+  await act(async () => view!.update(<ArkmeArrangementBoard accountScope="b" />))
   await act(async () => finishOld({ items: [item('identified')], total: 1, board: { supported: true, version: 'v1' }, hasMore: false }))
   expect(view!.root.findAllByProps({ 'data-arrangement-ref': 'one' })).toHaveLength(0)
 })
@@ -237,7 +238,7 @@ it('cancels pending detail on collapse and isolates content after switching acco
   await act(async () => { resolveDetail({ ...item('identified'), description: 'stale private content' }) })
   expect(JSON.stringify(view!.toJSON())).not.toContain('stale private content')
   await act(async () => { toggle().props.onClick({ stopPropagation() {} }) })
-  await act(async () => { view!.update(<ArkmeArrangementBoard accountScope="b" onBack={() => {}} />) })
+  await act(async () => { view!.update(<ArkmeArrangementBoard accountScope="b" />) })
   expect(detailSignal.aborted).toBe(true)
   expect(toggle().props['aria-expanded']).toBe(false)
 })
@@ -384,7 +385,7 @@ it('finishes saving without rereading lists and preserves cards, counts and expa
  })
  vi.stubGlobal('CSS', { escape: (value: string) => value })
  const scrollTo = vi.fn()
- await act(async () => { view = create(<ArkmeArrangementBoard accountScope="a" onBack={() => {}} />, { createNodeMock: node => node.props['data-arrangement-list'] ? { scrollTo, querySelector: () => null } : null }) })
+ await act(async () => { view = create(<ArkmeArrangementBoard accountScope="a" />, { createNodeMock: node => node.props['data-arrangement-list'] ? { scrollTo, querySelector: () => null } : null }) })
  scrollTo.mockClear()
  act(() => view!.root.findByProps({'data-arrangement-ref':'two'}).props.onClick({}))
  drag()
@@ -536,7 +537,7 @@ it('ignores a late cached account and never shows skeletons while saving', async
  cacheMocks.load.mockImplementationOnce(()=>new Promise(done=>{disk=done}))
  mocks.call.mockResolvedValue({items:[],total:0,hasMore:false})
  await mount()
- await act(async()=>view!.update(<ArkmeArrangementBoard accountScope="b" onBack={()=>{}} />))
+ await act(async()=>view!.update(<ArkmeArrangementBoard accountScope="b" />))
  await act(async()=>disk({identified:{items:[item('identified','account-a')],total:1,hasMore:false}}))
  expect(view!.root.findAllByProps({'data-arrangement-ref':'account-a'})).toHaveLength(0)
  expect(view!.root.findAllByProps({'data-arrangement-skeleton':true})).toHaveLength(0)
@@ -565,9 +566,24 @@ it('does not let a late first load overwrite a newer creation refresh or its cac
   return {items:p.status==='identified'?[item('identified','new')]:[],total:p.status==='identified'?1:0,hasMore:false,board:{supported:true,version:'v2'}}
  })
  await mount()
- await act(async()=>view!.update(<ArkmeArrangementBoard accountScope="a" onBack={()=>{}} createdItems={[item('identified','new')]} />))
+ await act(async()=>view!.update(<ArkmeArrangementBoard accountScope="a" createdItems={[item('identified','new')]} />))
  await act(async()=>first({items:[item('identified','old')],total:1,hasMore:false,board:{supported:true,version:'v1'}}))
  expect(column('identified').findAllByType('article').map(n=>n.props['data-arrangement-ref'])).toEqual(['new'])
  const pages=cacheMocks.save.mock.calls.flatMap(call=>Object.values(call[1] as object))
  expect(pages.some((p:any)=>p.items.some((row:any)=>row.arrangementRef==='old'))).toBe(false)
+})
+
+it('opens automatic analysis settings without a capability write', async () => {
+  const opened = vi.fn()
+  const unbind = arkmeUi.bindSettingsOpener(opened)
+  mocks.call.mockResolvedValue({ items: [], total: 0 })
+  try {
+    await act(async () => { view = create(<ArkmeArrangementBoard accountScope="prod:guide" />) })
+    const before = mocks.call.mock.calls.length
+    const link = view!.root.findAllByType('button').find(button => button.children.includes('自动识别设置'))
+    expect(link).toBeDefined()
+    await act(async () => { link!.props.onClick() })
+    expect(opened).toHaveBeenCalledWith('arkme-usage')
+    expect(mocks.call.mock.calls.length).toBe(before)
+  } finally { unbind() }
 })

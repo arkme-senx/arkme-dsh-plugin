@@ -24,6 +24,8 @@ it('forwards timeline cancellation without accepting caller-owned user identity'
   const service = { readSource: vi.fn() }
   await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'topic-ref', limit: 40, userId: 999 }, undefined, undefined, undefined, undefined, signal)
   expect(service.readSource).toHaveBeenCalledWith('topic-ref', { limit: 40, signal })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', limit: 40, background: true }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { limit: 40, signal, background: true })
 })
 
 it('passes contact detail request cancellation to each existing business owner', async () => {
@@ -228,6 +230,14 @@ describe('account settings Host API dispatch', () => {
 })
 
 describe('user-ban Host API dispatch', () => {
+  it('shares and withdraws only through signed recording and conversation references', async () => {
+    const service = { shareRelatedRecording: vi.fn(), withdrawRelatedRecording: vi.fn() }
+    const params = { sourceRef: 'current-chat', actionRef: 'signed-recording', counterpartUserId: 999, transcript: 'forged', rel_uid: 'other-relation' }
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.share', params)
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.withdraw', params)
+    expect(service.shareRelatedRecording).toHaveBeenCalledWith('current-chat', 'signed-recording')
+    expect(service.withdrawRelatedRecording).toHaveBeenCalledWith('current-chat', 'signed-recording')
+  })
   it('preserves cancellation through both related-recording routes', async () => {
     const controller = new AbortController()
     const service = { relatedRecordingEligibility: vi.fn(), relatedRecordings: vi.fn() }
@@ -1391,6 +1401,8 @@ describe('outgoing call Host API dispatch', () => {
       chat_session_uid: 'must-not-forward', user_id: 999,
     })
     expect(service.calendarChatStatistics).toHaveBeenCalledWith({ sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000 })
+    await dispatchArkmeHostOperation(service as never, 'calendar.chat-statistics', { sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000, background: true })
+    expect(service.calendarChatStatistics).toHaveBeenLastCalledWith({ sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000, background: true })
   })
 
   it('rejects missing or oversized interwoven references', async () => {
@@ -1837,4 +1849,30 @@ it('forwards cache-only image probes without changing ordinary reads or trusting
  expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar',{cacheOnly:true})
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
  expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
+})
+
+
+describe('correction selection request budget', () => {
+  it('accepts 100 signed references while keeping the ordinary request limit', async () => {
+    const apply = vi.fn(async () => ({ state: 'applied', affectedCount: 100 }))
+    const service = { ...fakeService(), applyRecordingSpeakerCorrection: apply }
+    const options = { expectedPort: 0, allowNonLoopback: false }
+    const server = createServer(createArkmeHostApi(service as never, options))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('no address')
+    options.expectedPort = address.port
+    const call = (operation: string, params: unknown) => fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${address.port}` }, body: JSON.stringify({ operation, params }),
+    })
+    const refs = Array.from({ length: 100 }, (_, i) => `signed-${i}-${'x'.repeat(2000)}`)
+    try {
+      const response = await call('recordings.speaker.correction.apply', { itemRef: refs[0], itemRefs: refs, detach: false, soundSource: 'playback', expectedVersion: 'v1', idempotencyKey: 'correction-budget-0001' })
+      expect(response.status).toBe(200)
+      expect(apply).toHaveBeenCalledOnce()
+      expect((await call('billing.quota', { padding: 'x'.repeat(130 * 1024) })).status).toBe(413)
+      expect((await call('recordings.speaker.correction.apply', { padding: 'x'.repeat(1024 * 1024) })).status).toBe(413)
+    } finally { server.close(); await once(server, 'close') }
+  })
 })

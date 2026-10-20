@@ -6,6 +6,14 @@ const target = { id: 'message', sourceRef: 'opaque-source', messageActionRef: 'o
 const wire = { chat_session_uid: 'internal-chat', rel_uid: 'internal-message' }
 const key = 'a'.repeat(64)
 describe('reaction Host, SDK and Tool contracts', () => {
+ it('keeps passive preview reads behind foreground bodies and explicit reaction reads', async () => {
+  const post = vi.fn(async () => ({ items: [] }))
+  const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, async () => wire)
+  await service.request({ action: 'query', accountKey: 'test:7', targets: [target], actorPresentation: 'deferred' })
+  expect(post.mock.calls[0]?.[4]).toEqual({ lane: 'background-read' })
+  await service.request({ action: 'query', accountKey: 'test:7', targets: [target] })
+  expect(post.mock.calls[1]?.[4]).toBeUndefined()
+ })
  it('hydrates only readable history in one batch and strips internal target and sender IDs', async () => {
   const row={event_uid:key,target:wire,expression:{text:'收到'},active:true,at:10,restricted:false,source_kind:'group_chat',sender_user_id:9,text:'[图片]'}
   const context=vi.fn(async()=>[{sourceName:'项目群',authorName:'张三'}])
@@ -85,4 +93,14 @@ it('canonicalizes equivalent query batches without leaking caller target aliases
  await service.request({ action: 'query', accountKey: 'test:7', targets: [{ ...a, id: 'other-a' }, b] })
  expect(post.mock.calls[0]).toEqual(post.mock.calls[1])
  expect(JSON.stringify(post.mock.calls)).not.toContain('alias-')
+})
+
+it('notification history opts in and preserves authoritative unread across the Host contract', async () => {
+ const post = vi.fn(async () => ({ items: [{ id: key, revision: 2, actor_user_id: 8, target: wire, record_uid: 'message', record_owner_user_id: 7, attach_at: 10, text: 'body', unread: false, selections: [{ key, expression: { text: '赞' }, at: 20 }] }], after_id: '', has_more: false }))
+ const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, async () => wire, undefined, async () => 'chat-key')
+ const result = await service.request({ action: 'notifications', accountKey: 'test:7', limit: 50, include_read: true })
+ expect(post.mock.calls[0]?.[1]).toEqual({ after_id: '', limit: 50, include_read: true })
+ expect(result).toMatchObject({ items: [{ unread: false, sourceKey: 'chat-key', itemUid: 'message' }] })
+ await service.request({ action: 'notifications', accountKey: 'test:7', limit: 50 })
+ expect(post.mock.calls[1]?.[1]).toEqual({ after_id: '', limit: 50 })
 })

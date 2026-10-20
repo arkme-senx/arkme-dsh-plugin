@@ -56,7 +56,8 @@ async function fixture() {
   })
   const createQueue = () => {
     const queue = new TeamSendQueue({currentUser:async()=>user,files:()=>files,
-      identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},execute})
+      identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},
+      identifyReply:async(ref,message,actor)=>{if(!message.startsWith(`${ref}:reply:`)||!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-invalid_request','wrong conversation',false,409);return message.split('#')[0]!},execute})
     queues.push(queue);return queue
   }
   let queue = createQueue()
@@ -391,4 +392,23 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     expect(f.execute).toHaveBeenCalledTimes(1)
     vi.setSystemTime(Date.now()+2001);await f.queue.recover();expect(f.execute).toHaveBeenCalledTimes(2)
   })
+})
+
+it('persists reply identity through restart and retries without dropping or changing the parent', async () => {
+  const f = await fixture(); f.setOnline(false)
+  const request = input({replyToRef:'42:conversation:reply:parent#old'})
+  await f.queue.enqueue(request)
+  f.restart()
+  const restored = (await f.queue.list(request.conversationRef))[0]!
+  expect(restored.replyToRef).toBe(request.replyToRef)
+  expect(restored.replyToKey).toBe('42:conversation:reply:parent')
+  await f.queue.enqueue({...request,replyToRef:'42:conversation:reply:parent#rotated'})
+  await expect(f.queue.enqueue({...request,replyToRef:'42:conversation:reply:other'})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+  await expect(f.queue.enqueue({...request,clientUid:randomUUID(),replyToRef:'42:another:reply:parent'})).rejects.toMatchObject({code:'team-invalid_request'})
+  f.setOnline(true); f.loseAck(); await f.queue.recover()
+  await vi.advanceTimersByTimeAsync(60_000); await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends = f.execute.mock.calls.filter(([op])=>op==='team.app.send')
+  expect(sends.length).toBeGreaterThan(0)
+  for (const [,command] of sends) expect(command).toMatchObject({clientUid:request.clientUid,replyToRef:request.replyToRef})
 })

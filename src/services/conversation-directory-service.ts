@@ -48,6 +48,16 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
   return retainNewerArkmeChatPolicy(previous, merged)
 }
 
+function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }): ArkmeSourceItem {
+  if ((source.readSequence ?? 0) > ack.effectiveReadSequence) return source
+  const latestSequence = Math.max(ack.effectiveReadSequence, ack.latestSequence ?? 0)
+  return { ...source, readSequence: Math.max(source.readSequence ?? 0, ack.effectiveReadSequence),
+    ...((source.latestSequence ?? 0) <= latestSequence ? {
+      ...(ack.latestSequence === undefined ? {} : { latestSequence }), unreadCount: ack.unreadCount,
+      badgeUnreadCount: source.isMuted ? 0 : ack.unreadCount, ...(ack.unreadCount === 0 ? { hasUnreadMention: false } : {}),
+    } : {}) }
+}
+
 /** One account lifecycle owns cache restoration, a twenty-row scan, and directory deltas. */
 export class ConversationDirectoryService {
   private userId: number | undefined
@@ -56,7 +66,7 @@ export class ConversationDirectoryService {
   private revision = 0
   private cachedAtMillis = 0
   private sourceRemovals = new Map<string, number>()
-  private pendingReadAcks = new Map<string, { effectiveReadSequence: number; unreadCount: number }>()
+  private pendingReadAcks = new Map<string, { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }>()
   private visibilityMutations = new Map<string, number>()
   private sources = new Map<string, ArkmeSourceItem>()
   private mutations = new Map<string, number>()
@@ -236,7 +246,7 @@ export class ConversationDirectoryService {
         signal.throwIfAborted()
         if (visited.size >= MAX_ROWS / PAGE_SIZE) throw new Error("Directory page budget exceeded; synchronization incomplete")
         const atRevision = this.revision
-        const page = await this.source.listSources('root', { limit: PAGE_SIZE, refresh: true, firstPaint: true, ...(cursor === undefined ? {} : { cursor }), signal })
+        const page = await this.source.listSources('root', { limit: PAGE_SIZE, refresh: true, firstPaint: true, background: !first, ...(cursor === undefined ? {} : { cursor }), signal })
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== userId) throw new DOMException('Account changed', 'AbortError')
         if (page.hasMore && (page.nextCursor === undefined || visited.has(page.nextCursor))) throw new ArkmePluginError('directory-cursor-invalid', '会话目录分页未完成：游标无效', true, 502)
         for (const item of page.items) rawSources.set(keyOf(item), item)
@@ -309,8 +319,7 @@ export class ConversationDirectoryService {
       this.sourceRemovals.delete(key)
       const previous = this.sources.get(key)
       const ack = this.pendingReadAcks.get(key) ?? this.pendingReadAcks.get(item.sourceRef)
-      const incoming = ack === undefined ? item : { ...item, readSequence: Math.max(item.readSequence ?? 0, ack.effectiveReadSequence),
-        ...((item.latestSequence ?? 0) <= ack.effectiveReadSequence ? { unreadCount: ack.unreadCount } : {}) }
+      const incoming = ack === undefined ? item : projectReadAck(item, ack)
       const merged = mergeDirectorySource(previous, incoming, (this.mutations.get(key) ?? 0) > atRevision)
       if (authoritativeAvatars) {
         merged.avatarRef = item.avatarRef ?? ''
@@ -334,7 +343,13 @@ export class ConversationDirectoryService {
     const currentRefs = new Set(items.flatMap(item => { const source = this.sources.get(keyOf(item)); return source === undefined ? [] : [source.sourceRef] }))
     const acceptedVisibility = visibility.filter(entry => {
       if (items.length > 0 && entry.entryKind === 'source' && !currentRefs.has(entry.entryRef)) {
-        this.recoveryScan = true
+        const incoming = items.find(item => item.sourceRef === entry.entryRef)
+        const current = incoming === undefined ? undefined : this.sources.get(keyOf(incoming))
+        const currentKey = current === undefined ? undefined : `source:${current.sourceRef}`
+        // Activity rotates signed refs while a page's preference read is in flight.
+        // An older agreeing result cannot invalidate the newer confirmed visibility.
+        if (currentKey === undefined || (this.visibilityMutations.get(currentKey) ?? 0) <= atRevision
+          || this.visibility.get(currentKey)?.hidden !== entry.hidden) this.recoveryScan = true
         return false
       }
       const key = `${entry.entryKind}:${entry.entryRef}`
@@ -709,9 +724,23 @@ export class ConversationDirectoryService {
       }
       const sources = event.updates.filter(item => !this.sourceRemovals.has(keyOf(item.source))).map(item => mergeDirectorySource(this.sources.get(keyOf(item.source)), item.source))
       try {
-        const visibility = await this.preferences.query(sources.map(item => item.sourceRef), [], this.controller.signal)
+        // New activity cannot hide an already visible row. Preference hints and
+        // reconnect scans own that change; hidden/unknown or unsettled rows must
+        // still query so dismissal recovery and concurrent preference CAS win.
+        const unsettled = this.recoveryScan || this.pendingChanges.size > 0
+        const retained: ArkmeConversationDirectoryVisibilityItem[] = []
+        const refs = sources.filter(item => {
+          const previous = this.sources.get(keyOf(item))
+          if (unsettled || previous === undefined || !this.visibilityMutations.has(`source:${previous.sourceRef}`)
+            || this.visibility.get(`source:${previous.sourceRef}`)?.hidden !== false) return true
+          // Fence a slow directory page's dismissal against this newer activity,
+          // including ref rotation. A conflicting response still forces recovery.
+          retained.push({ entryKind: 'source', entryRef: item.sourceRef, hidden: false })
+          return false
+        }).map(item => item.sourceRef)
+        const visibility = refs.length === 0 ? { items: [] } : await this.preferences.query(refs, [], this.controller.signal)
         if (generation !== this.generation) return
-        this.apply(sources, visibility.items, atRevision)
+        this.apply(sources, [...retained, ...visibility.items], atRevision)
       } catch (error) {
         if (generation !== this.generation || this.controller.signal.aborted) return
         // Keep confirmed row facts and visibility; the existing attention retry resumes the failed directory scan.
@@ -721,8 +750,7 @@ export class ConversationDirectoryService {
       }
     } else if (event.type === 'read-ack') {
       const source = [...this.sources.values()].find(item => item.sourceKey === event.sourceKey || item.sourceRef === event.sourceRef)
-      if (source !== undefined) this.apply([{ ...source, readSequence: Math.max(source.readSequence ?? 0, event.effectiveReadSequence),
-        ...((source.latestSequence ?? 0) <= event.effectiveReadSequence ? { unreadCount: event.unreadCount, badgeUnreadCount: source.isMuted ? 0 : event.unreadCount, ...(event.unreadCount === 0 ? { hasUnreadMention: false } : {}) } : {}) }])
+      if (source !== undefined) this.apply([projectReadAck(source, event)])
       else {
         const key = event.sourceKey ?? event.sourceRef
         const previous = this.pendingReadAcks.get(key)

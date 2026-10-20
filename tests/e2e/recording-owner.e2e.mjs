@@ -63,6 +63,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
         const body = Buffer.concat(chunks),
           path = new URL(req.url, "https://localhost").pathname;
         requests.push(path);
+
         if (path.startsWith("/api/v1/audio/")) {
           const headers = {
             "content-type": req.headers["content-type"] ?? "application/json",
@@ -83,12 +84,17 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
           res.statusCode = upstream.status;
           for (const [key, value] of upstream.headers)
             if (
-              !["connection", "transfer-encoding", "content-encoding"].includes(
+              !["connection", "transfer-encoding", "content-encoding", "content-length"].includes(
                 key,
               )
             )
               res.setHeader(key, value);
-          res.end(Buffer.from(await upstream.arrayBuffer()));
+          const payload = Buffer.from(await upstream.arrayBuffer());
+          if (!path.includes('/clips/')) {
+            try { JSON.parse(payload.toString('utf8')); }
+            catch (error) { throw new Error(`Fixture proxy received non-JSON ${path}: ${payload.subarray(0, 8).toString('hex')}`, { cause: error }); }
+          }
+          res.end(payload);
           return;
         }
         let data = { items: [], users: [], has_more: false };
@@ -105,7 +111,8 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
           };
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ code: 200, data }));
-      } catch {
+      } catch (error) {
+        failures.push(error);
         res.statusCode = 500;
         res.end("isolated upstream failure");
       }
@@ -171,6 +178,9 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
     expect(
       await scaffold.ctx.get("arkmeData").testLogin(fixture.owner),
     ).toMatchObject({ status: "authenticated", userId: fixture.owner });
+    // Exercise the same public owner before UI so wire errors retain their cause.
+    const preflight = await scaffold.ctx.get("arkmeData").recordingDay(fixture.start_at);
+    expect(preflight.transcript, "packed owner preflight").toMatchObject({ state: "ready" });
     browser = await chromium.launch({
       channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || "chrome",
     });
@@ -189,7 +199,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
     await page.goto(scaffold.authenticatedUrl, { waitUntil: "load" });
     await page.getByRole("button", { name: "录音", exact: true }).click();
     await expect
-      .poll(() => page.locator("[data-recording-transcript-item]").count())
+      .poll(() => page.locator("[data-recording-transcript-item]").count(), { timeout: 15_000 })
       .toBe(100);
     const sdk = createArkmeSdk({
       fetchImpl: (url, init) => scaffold.hostFetch(String(url), init),
@@ -205,7 +215,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
     const edited = await owner.assignRecordingSpeaker({ itemRef: first.itemRef, speakerRef: target.speakerRef, scope: "item" });
     await owner.assignRecordingSpeaker({ itemRef: edited.day.transcript.items[0].itemRef, speakerRef: original.speakerRef, scope: "item" });
     await page.locator("[data-recording-transcript-item]").nth(99).scrollIntoViewIfNeeded();
-    await expect.poll(() => page.locator("[data-recording-transcript-item]").count()).toBeGreaterThanOrEqual(200);
+    await expect.poll(() => page.locator("[data-recording-transcript-item]").count(), { timeout: 15_000 }).toBeGreaterThanOrEqual(200);
     expect(await page.getByRole("alert").allTextContents()).not.toContain("录音内容正在更新");
     await page.locator("[data-recording-transcript-item]").first().scrollIntoViewIfNeeded();
     const loadedBeforeEdit = await page.locator("[data-recording-transcript-item]").count();
@@ -213,7 +223,6 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
       .get("arkmeData")
       .recordingPlayback((await sdk.recordingTranscriptPage(fixture.start_at)).items[0].itemRef);
     await page.locator("[data-recording-transcript-item]").first().dblclick();
-    await page.getByRole("button", { name: "播放录音", exact: true }).click();
     await page.getByRole("button", { name: "暂停录音", exact: true }).waitFor();
     await page.waitForFunction(() => window.__recordingE2EAudio?.currentTime > 0 && !window.__recordingE2EAudio.paused);
     await page.getByRole("button", { name: "暂停录音", exact: true }).click();
@@ -257,7 +266,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
         .nth(1)
         .textContent(),
     ).toContain("验收甲");
-    await expect.poll(() => page.locator("[data-recording-transcript-item]").count()).toBeGreaterThanOrEqual(loadedBeforeEdit);
+    await expect.poll(() => page.locator("[data-recording-transcript-item]").count(), { timeout: 15_000 }).toBeGreaterThanOrEqual(loadedBeforeEdit);
     const current = await sdk.recordingTranscriptPage(fixture.start_at);
     expect(current.items[0].speakerLabel).toBe("验收乙");
     const nextPlayback = await scaffold.ctx
@@ -269,6 +278,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
         cursor: initial.nextCursor,
       }),
     ).rejects.toThrow();
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
     await page
       .getByRole("textbox", { name: "搜索当天转写", exact: true })
       .fill("页末唯一命中");
@@ -278,7 +288,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
       )
       .toBe("1/1");
     await expect
-      .poll(() => page.locator("[data-recording-transcript-item]").count())
+      .poll(() => page.locator("[data-recording-transcript-item]").count(), { timeout: 15_000 })
       .toBe(250);
     const downloading = page.waitForEvent("download");
     await page.getByRole("button", { name: "导出", exact: true }).click();

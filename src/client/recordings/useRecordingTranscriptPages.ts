@@ -58,7 +58,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
     const fetchPage = async (cursor?: string) => {
       ensureCurrent()
       const value = await callArkme<ArkmeRecordingTranscriptPage>('recordings.transcript.page', {
-        dateStamp: start.dateStamp, source: start.transcriptSource, ...(cursor ? { cursor } : {}),
+        dateStamp: start.dateStamp, source: start.transcriptSource, ...(start.window ? { window: start.window } : {}), ...(cursor ? { cursor } : {}),
       }, controller.signal)
       ensureCurrent()
       return value

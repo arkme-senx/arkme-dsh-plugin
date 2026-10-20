@@ -62,6 +62,7 @@ describe('full-content workbench actions', () => {
     const click = vi.fn()
     vi.stubGlobal('document', { createElement: () => ({ click }), addEventListener() {}, removeEventListener() {} })
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '搜索')!.props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onChange({ target: { value: '尾部' } }); await vi.advanceTimersByTimeAsync(251) })
     expect(JSON.stringify(renderer.root.findByProps({ 'aria-label': '搜索命中数' }).children)).toContain('1/1')
     await act(async () => { renderer.unmount() })

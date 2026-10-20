@@ -19,7 +19,7 @@ let pageHeight: number
 let restoreIntent: { current: boolean | undefined }
 let pending: { current: ArkmeConversationViewportRestore | undefined }
 const rowCount: Record<string, number> = { A: 30, B: 12 }
-function Harness({ selected = 'A', active = true, hold = false }: { selected?: string; active?: boolean; hold?: boolean }) {
+function Harness({ selected = 'A', active = true, hold = false, first = 0 }: { selected?: string; active?: boolean; hold?: boolean; first?: number }) {
   const [rendered, setRendered] = useState(selected)
   const bodyRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -31,8 +31,8 @@ function Harness({ selected = 'A', active = true, hold = false }: { selected?: s
   const remember = useConversationViewport({ active, sourceKey: selected, renderedSourceKey: rendered,
     bodyRef, store, pendingRestore: pending, restoreIntent })
   return <div ref={bodyRef} data-viewport={rendered} onScroll={remember}>
-    {Array.from({ length: rowCount[rendered]! }, (_, index) => <div key={`${rendered}-${index}`}
-      data-arkme-conversation-row={`message:${rendered}-${index}`} data-row-index={index}>{rendered}:{index}</div>)}
+    {Array.from({ length: rowCount[rendered]! }, (_, index) => <div key={`${rendered}-${first + index}`}
+      data-arkme-conversation-row={`message:${rendered}-${first + index}`} data-row-index={index}>{rendered}:{first + index}</div>)}
   </div>
 }
 function render(props: Parameters<typeof Harness>[0] = {}) { act(() => root.render(<Harness {...props} />)) }
@@ -68,6 +68,52 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('conversation viewport ownership', () => {
+  it('captures the visible durable message identity without copying its body or cursor', () => {
+    render(); scroll(730)
+    const body = host.firstElementChild as HTMLDivElement
+    const row = body.querySelector<HTMLElement>('[data-arkme-conversation-row="message:A-7"]')!
+    row.dataset.arkmeMessageItemUid = 'old-history'
+    row.dataset.arkmeMessageOwnerId = '9223372036854775806'
+    expect(arkmeConversationViewport(body)).toEqual({ scrollTop: 730, stickToBottom: false,
+      anchorId: 'message:A-7', anchorOffset: -30, messageAnchor: { itemUid: 'old-history', recordOwnerUserId: '9223372036854775806' } })
+    row.dataset.arkmeMessageOwnerId = '0'
+    expect(arkmeConversationViewport(body).messageAnchor).toBeUndefined()
+  })
+
+  it('keeps the latest edge fixed in the commit that slides the message window', () => {
+    render(); scroll(maximum())
+    const schedule = vi.spyOn(window, 'requestAnimationFrame')
+    const body = host.firstElementChild as HTMLDivElement
+    const writes = vi.spyOn(body, 'scrollTop', 'set')
+    writes.mockClear()
+    for (let first = 1; first <= 100; first++) {
+      pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+      render({ first })
+      expect(body.scrollTop).toBe(maximum())
+      expect(body.lastElementChild?.getBoundingClientRect().bottom).toBe(viewportHeight)
+    }
+    // Equal-height tail replacement needs neither a backward compensation nor
+    // a later scroll. Surviving message rows keep their existing React identity.
+    expect(writes).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
+    expect(store.getViewport('A')?.stickToBottom).toBe(true)
+  })
+
+  it('preserves the visible row before animating a same-height sliding window', () => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const captured = arkmeConversationViewport(body, false, true)
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callbacks.push(callback); return callbacks.length })
+    pending.current = { sourceKey: 'A', viewport: captured, followLatest: true }
+    render({ first: 1 })
+    const retained = body.querySelector(`[data-arkme-conversation-row="${captured.anchorId}"]`)!
+    expect(retained.getBoundingClientRect().top).toBe(captured.anchorOffset)
+    expect(body.scrollTop).toBe(maximum() - 100)
+    expect(callbacks).toHaveLength(1)
+    expect(store.getViewport('A')?.stickToBottom).toBe(true)
+  })
+
   it.each([0, 12, 40])('preserves history through ten cold/warm switches to %s rows', count => {
     rowCount.B = count
     render(); scroll(730)

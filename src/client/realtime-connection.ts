@@ -3,7 +3,7 @@ export function connectArkmeRealtime(callbacks: {
   onOpen: () => void
   onMessage: (event: MessageEvent<string>) => void
   onDisconnect: () => void
-}): { close(): void } {
+}, route = '/arkme-self/api/events'): { close(): void } {
   let stopped = false
   let socket: WebSocket | undefined
   let retry: ReturnType<typeof setTimeout> | undefined
@@ -17,7 +17,7 @@ export function connectArkmeRealtime(callbacks: {
   const connect = () => {
     if (stopped) return
     let next: WebSocket
-    try { next = new WebSocket('/arkme-self/api/events') }
+    try { next = new WebSocket(route) }
     catch { reconnect(); return }
     socket = next
     next.onopen = () => { if (!stopped && socket === next) { delay = 1000; callbacks.onOpen() } }

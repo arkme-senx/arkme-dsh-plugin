@@ -72,6 +72,17 @@ describe('recording presentation', () => {
     expect(parseRecordingTimeline('{invalid')).toEqual([])
   })
 
+  it.each(['summary', 'timeline'] as const)('preserves safe provider failure codes and legacy errors for %s', kind => {
+    const versions = projectRecordingVersions({ audio_summary_ls: [
+      { id: 'provider', kind: kind === 'summary' ? 2 : 1, status: 3, model_display_name: 'DeepSeek V4 Flash', llm_error: 'llm_request_failed', error: '' },
+      { id: 'legacy', kind: kind === 'summary' ? 2 : 1, status: 3, llm_error: '', error: '', error_message: 'legacy error' },
+    ] }, kind)
+    expect(versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'provider', status: 'failed', selectable: false, modelDisplayName: 'DeepSeek V4 Flash', error: 'llm_request_failed' }),
+      expect.objectContaining({ id: 'legacy', error: 'legacy error' }),
+    ]))
+  })
+
   it('sorts history newest-first and withholds invalid successful answers from selection', () => {
     const versions = projectRecordingVersions({ audio_summary_ls: [
       { id: 'old', kind: 1, status: 2, update_at: 100, answer: '09:00-10:00 旧版本' },

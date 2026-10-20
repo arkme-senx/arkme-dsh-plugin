@@ -1,3 +1,6 @@
+import { arkmeMessageSync } from './message-sync-store.js'
+import { callArkme } from './api.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 import { officialNotifications } from './official-notification-store.js'
 import { invalidateTeamMessages } from './team-messaging-events.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
@@ -77,6 +80,7 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       resetSelfTopicDirectories()
+      arkmeMessageSync.activateAccount(undefined)
       arkmeCalendarMonths.activateAccount(undefined)
       privateChatActions.activateAccount(undefined)
       arkmeConversationMembers.activateAccount(undefined)
@@ -92,6 +96,7 @@ export function useArkmeRealtimeClientEvents(
     const authenticatedUserId = auth.userId
     const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
     activateSelfTopicDirectoryAccount(authenticatedAccountScope)
+    arkmeMessageSync.activateAccount(authenticatedAccountScope)
     arkmeCalendarMonths.activateAccount(authenticatedAccountScope)
     privateChatActions.activateAccount(authenticatedAccountScope)
     arkmeConversationMembers.activateAccount(authenticatedAccountScope)
@@ -214,6 +219,7 @@ export function useArkmeRealtimeClientEvents(
               }
               observedRevision = undefined
               arkmeAttentionSummary.clear()
+              arkmeMessageSync.activateAccount(authenticatedAccountScope, true)
             }
             providerInstanceId = update.providerInstanceId
             awaitingBaseline = false
@@ -222,6 +228,13 @@ export function useArkmeRealtimeClientEvents(
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
         diagnoseAttention('accepted', update)
+        if (update.type === 'message-sync-progress') {
+          arkmeMessageSync.apply(update.progress)
+          if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
+            arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
+          }
+          return
+        }
         if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
@@ -250,6 +263,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
           officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
@@ -279,6 +293,7 @@ export function useArkmeRealtimeClientEvents(
             update.sourceKey,
             update.effectiveReadSequence,
             update.unreadCount,
+            update.latestSequence,
           )
           return
         }
@@ -292,6 +307,11 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'offline_context') {
+            const active = arkmeUi.getSnapshot().selectedSource
+            arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])
+            return
+          }
           if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection === 'topic-directory') {
@@ -311,6 +331,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'read-receipts-invalidated') {
           arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
+          return
+        }
+        if (update.type === 'timeline-items') {
+          arkmeChatTimelineDelta.publish([{ source: update.source, items: update.items }])
           return
         }
         if (update.type === 'timeline-changed') {

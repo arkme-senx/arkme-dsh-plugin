@@ -1,5 +1,5 @@
-import { arkmeChatDirectory } from './chat-directory-store.js'
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import type { ArkmeSourceItem } from '../types.js'
 import type { ReactionExpression, ReactionOriginalMessage, ReactionNotification } from '../reaction-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -8,6 +8,9 @@ import { arkmeUi } from './ui-controller.js'
 import { arkmeTheme as c } from './arkme-theme.js'
 import { expressionIdentity, expressionLabel } from './reaction-expression.js'
 import { ReactionLabel, reactionLabelText } from './ReactionLabel.js'
+import { tr } from './locale.js'
+import { conversationTimeLabel } from './conversation-directory-presentation.js'
+import { formatConversationDate } from './conversation-date-format.js'
 
 function useNotifications(source?: ArkmeSourceItem) {
  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -24,32 +27,99 @@ export function openReactionHistory(message: ReactionOriginalMessage, expression
  if (auth?.status === 'authenticated' && expression) reactionNotifications.beginHistoryViewing(`${auth.environment}:${auth.userId}`, message.source.sourceKey, message.itemUid, expressionIdentity(expression))
  arkmeUi.showConversationTarget(message.source, message.itemUid, message.sendAtMillis, message.recordOwnerUserId, undefined, true)
 }
-/** Ordinary unread messages take precedence; preview selection never acknowledges reactions. */
-export function latestReactionPreview(items: readonly ReactionNotification[], unreadCount: number, readPending = false) {
- if (unreadCount > 0 || readPending) return undefined
- return items.reduce<ReactionNotification | undefined>((latest, row) => {
-  const at = row.selections.at(-1)?.at ?? 0
-  return at > (latest?.selections.at(-1)?.at ?? 0) ? row : latest
- }, undefined)
+function reactionAt(item: ReactionNotification) {
+ return Math.max(0, ...item.selections.map(selection => selection.at))
 }
+
+/** Reading ordinary messages must never reveal an older reaction as their preview. */
 export function ArkmeReactionNotificationPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
- const { items } = useNotifications(source)
- const item = latestReactionPreview(items, source.unreadCount, arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0))
- if (!item) return null
- const value = item.selections.at(-1)!.expression
- const expression = expressionLabel(value)
- const imageLabel = value.emoji ? expressionLabel({ ...value, text: '' }) : ''
- const label = reactionLabelText(expression)
- return <button type="button" disabled={disabled} data-arkme-reaction-notice onDoubleClick={event => event.stopPropagation()} title="查看收到表态的消息" aria-label={`新表态：${label}，${item.text || '查看原消息'}`} onClick={event => { event.stopPropagation(); if (!disabled) openReactionNotification(source, item) }}
- style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 0, padding: 0, color: c.text, font: 'inherit', fontSize: 12, width: '100%', maxWidth: '100%', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left', cursor: 'pointer' }}>
- <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, minWidth: 0, maxWidth: '55%', color: '#ff8700' }}>
- <span style={{ flexShrink: 0 }}>[</span>
- {imageLabel && <span style={{ display: 'inline-flex', flexShrink: 0 }}><ReactionLabel label={imageLabel} size={18} /></span>}
- <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value.text || '表态'}</span>
- <span style={{ flexShrink: 0 }}>]</span>
- </span>
- <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', color: c.secondary }}>{item.text || '查看原消息'}</span>
- </button>
+ const { items, scope } = useNotifications(source)
+ const notices = items.filter(item => item.unread !== false && item.selections.length > 0)
+ if (!notices.length) return null
+ return <ConversationReactionNotice key={`${scope}:${source.sourceKey ?? source.sourceRef}`} source={source} items={notices} disabled={disabled} />
+}
+
+function ConversationReactionNotice({ source, items, disabled }: { source: ArkmeSourceItem; items: ReactionNotification[]; disabled: boolean }) {
+ const anchor = useRef<HTMLButtonElement>(null)
+ const panel = useRef<HTMLDivElement>(null)
+ const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+ const id = useId()
+ const [open, setOpen] = useState(false)
+ const [position, setPosition] = useState({ left: 0, top: 0 })
+ const focusFirst = useRef(false)
+ const sorted = [...items].sort((a, b) => reactionAt(b) - reactionAt(a) || a.id.localeCompare(b.id))
+ const messageCount = new Set(items.map(item => `${item.recordOwnerUserId}:${item.itemUid}`)).size
+ const summary = tr('{count} 条消息收到新表态', { count: messageCount })
+ const cancelClose = () => clearTimeout(closeTimer.current)
+ const show = () => { cancelClose(); if (!disabled) setOpen(true) }
+ const close = () => { cancelClose(); setOpen(false) }
+ const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 180) }
+ const inside = (target: EventTarget | null) => target instanceof Node && (anchor.current?.contains(target) || panel.current?.contains(target))
+ useEffect(() => () => clearTimeout(closeTimer.current), [])
+ useEffect(() => { if (disabled) setOpen(false) }, [disabled])
+ useLayoutEffect(() => {
+  if (!open || !anchor.current || !panel.current) return
+  const bounds = anchor.current.getBoundingClientRect()
+  const size = panel.current.getBoundingClientRect()
+  setPosition({
+   left: Math.max(8, Math.min(bounds.right - size.width, window.innerWidth - size.width - 8)),
+   top: Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - size.height - 8)),
+  })
+  if (focusFirst.current) { focusFirst.current = false; panel.current.querySelector('button')?.focus() }
+ }, [open, items])
+ useEffect(() => {
+  if (!open || typeof document === 'undefined') return
+  const outside = (event: PointerEvent) => { if (!inside(event.target)) close() }
+  const scroll = (event: Event) => { if (!(event.target instanceof Node) || !panel.current?.contains(event.target)) close() }
+  const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close() } }
+  document.addEventListener('pointerdown', outside)
+  document.addEventListener('scroll', scroll, true)
+  document.addEventListener('keydown', escape)
+  window.addEventListener('resize', close)
+  window.addEventListener('blur', close)
+  return () => {
+   document.removeEventListener('pointerdown', outside)
+   document.removeEventListener('scroll', scroll, true)
+   document.removeEventListener('keydown', escape)
+   window.removeEventListener('resize', close)
+   window.removeEventListener('blur', close)
+  }
+ }, [open])
+ const overlay = open && !disabled ? <div ref={panel} id={id} role="dialog" aria-label={tr('收到的表态')} data-arkme-reaction-notice-popover
+  onMouseEnter={cancelClose} onMouseLeave={scheduleClose}
+  onFocus={cancelClose} onBlur={event => { if (!inside(event.relatedTarget)) close() }}
+  onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}
+  onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}
+  onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') { anchor.current?.focus(); close() } }}
+  style={{ position: 'fixed', ...position, width: 320, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(360px, calc(100vh - 16px))', overflowY: 'auto', zIndex: 10000,
+   boxSizing: 'border-box', padding: 6, border: `1px solid ${c.border}`, borderRadius: 10, background: c.menu, color: c.text, boxShadow: c.shadow, fontSize: 12, lineHeight: '18px', cursor: 'default' }}>
+  <div style={{ padding: '4px 6px 6px', color: c.secondary, fontSize: 11 }}>{summary}</div>
+  {sorted.map(item => {
+   const at = reactionAt(item)
+   const actor = source.kind === 'private_chat' && source.peerUserId === item.actorUserId ? source.displayName : item.actorName || tr('对方')
+   const expressions = item.selections.map(selection => reactionLabelText(expressionLabel(selection.expression))).join(' · ')
+   return <button key={item.id} type="button" className="arkme-conversation-reaction-item" aria-label={tr('查看{actor}的表态：{expression}，{text}', { actor, expression: expressions, text: item.text || tr('查看原消息') })}
+    onClick={() => { close(); openReactionNotification(source, item) }}
+    style={{ display: 'block', width: '100%', padding: '7px 6px', border: 0, borderRadius: 6, background: 'transparent', color: c.text, font: 'inherit', textAlign: 'left', cursor: 'pointer' }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{actor}</span>
+     <time dateTime={at > 0 ? new Date(at).toISOString() : undefined} title={at > 0 ? formatConversationDate(new Date(at), 'full') : undefined} style={{ flex: 'none', color: c.caption, fontSize: 10 }}>{conversationTimeLabel(at)}</time>
+    </span>
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 5, color: c.warning, margin: '2px 0' }}>{item.selections.map(selection => <ReactionLabel key={selection.key} label={expressionLabel(selection.expression)} size={16} />)}</span>
+    <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', color: c.secondary }}>{item.text || tr('查看原消息')}</span>
+   </button>
+  })}
+ </div> : null
+ return <>
+  <button ref={anchor} type="button" disabled={disabled} data-arkme-reaction-notice aria-label={summary} aria-haspopup="dialog" aria-expanded={open && !disabled} aria-controls={open ? id : undefined}
+   onMouseEnter={show} onMouseLeave={scheduleClose} onFocus={show} onBlur={event => { if (!inside(event.relatedTarget)) close() }}
+   onClick={event => { event.stopPropagation(); show() }} onDoubleClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
+   onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') close(); else if (event.key === 'ArrowDown') { event.preventDefault(); if (open) panel.current?.querySelector('button')?.focus(); else { focusFirst.current = true; show() } } }}
+   style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 4px', border: 0, borderRadius: 4, background: c.warningSoft, color: c.warning, font: 'inherit', fontSize: 10, lineHeight: '16px', whiteSpace: 'nowrap', cursor: disabled ? 'default' : 'pointer' }}>
+   {tr('表态')}{messageCount > 1 && <span>{messageCount}</span>}
+  </button>
+  {overlay && (typeof document === 'undefined' ? overlay : createPortal(overlay, document.body))}
+ </>
 }
 /** Only explicitly opened, rendered reactions acknowledge their exact clicked revision. */
 export function useVisibleReactionNotification(scope: string, sourceKey: string | undefined, itemUid: string | undefined, renderedKeys: readonly string[]) {

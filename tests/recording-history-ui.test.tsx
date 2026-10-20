@@ -57,12 +57,20 @@ it('closes through Escape cancellation or close button and aborts late requests 
   expect(document.querySelector('dialog')).toBeNull()
 })
 
-it('opens from the title action and closes immediately on account change', async () => {
+it('keeps opened history available after the last remote capture stops, but closes on account change', async () => {
+  let recording = true
+  const now = Date.now()
+  const activeItem = { ...item, recordingId: 'remote', deviceId: 'phone', deviceName: '我的手机', clientType: 'mobile', state: 'recording', durationAnchorAt: now, expiresAt: now + 30000, visibleUntil: now + 90000 }
   call.mockImplementation(async (operation: string) => operation === 'recordings.presence'
-    ? { items: [], serverNow: Date.now(), pollIntervalMillis: 10000 }
+    ? { items: recording ? [activeItem] : [], serverNow: now, pollIntervalMillis: 10000 }
     : { items: [item], nextCursor: '', hasMore: false, serverNow: 100000 })
   await act(async () => root.render(<ArkmeRecordingPresence accountKey="test:42" active />))
   await act(async () => button('录音记录').click())
+  expect(document.body.textContent).toContain('MacBook Pro')
+  recording = false
+  await act(async () => { window.dispatchEvent(new Event('focus')) })
+  expect(host.querySelector('[aria-label="设备录音状态"]')).toBeNull()
+  expect(document.querySelector('dialog[open]')).not.toBeNull()
   expect(document.body.textContent).toContain('MacBook Pro')
   await act(async () => root.render(<ArkmeRecordingPresence accountKey="test:43" active />))
   expect(document.querySelector('dialog')).toBeNull()

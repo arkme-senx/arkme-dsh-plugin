@@ -1,3 +1,6 @@
+import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
+import { messageSyncToolModules } from './conversation/message-sync.js'
+import {teamProfileTools} from './contacts/team-profile.js'
 import { officialNotificationToolModules } from './account/official-notifications.js'
 import { selfRoleToolModules } from './records/self-roles.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
@@ -21,6 +24,7 @@ import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conver
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
+import { sharedRecordingDetailToolModule } from './conversation/shared-recording-detail.js'
 import { userBanToolModules } from './conversation/user-ban.js'
 import { directMessageAdmissionToolModule, directMessageRefusalToolModule } from './conversation/direct-message-refusal.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -56,9 +60,11 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  ...messageSyncToolModules,
   ...selfRoleToolModules,
   ...officialNotificationToolModules,
   directoryReadToolModule,
+  ...teamProfileTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,
@@ -66,6 +72,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...arkoToolModules,
   searchRecordsToolModule,
   ...recordCalendarToolModules,
+  dayReviewReadTool, dayReviewWriteTool,
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
@@ -99,6 +106,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reportMessageToolModule,
   withdrawMessageToolModule,
   relatedRecordingsToolModule,
+  sharedRecordingDetailToolModule,
   ...userBanToolModules,
   directMessageAdmissionToolModule,
   directMessageRefusalToolModule,

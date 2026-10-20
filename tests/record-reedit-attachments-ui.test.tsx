@@ -1,7 +1,23 @@
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => undefined }),
+}))
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { memberPageFixture } from './helpers/member-page-fixture.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), renderedItems: [] as ArkmeTimelineItem[] }))
@@ -553,7 +569,7 @@ describe('record re-edit attachment UI', () => {
     })
     expect(refreshReads).toHaveLength(0)
     await act(async () => { rejectAround(new Error('未找到要定位的快记')); await flush() })
-    expect(refreshReads).toEqual([{ sourceRef: source.sourceRef, limit: 100 }])
+    expect(refreshReads).toEqual([{ sourceRef: source.sourceRef, limit: 100, background: true }])
     expect(mocks.renderedItems.filter(value => value.itemUid === item.itemUid).at(-1))
       .toMatchObject({ version: 4, textContent: '定位失败后补刷的新正文' })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'missing-target' })).toHaveLength(0)
@@ -758,7 +774,7 @@ describe('record re-edit attachment UI', () => {
         changeKind: 'reedited', changeVersion: 8, relationTerminal: false, throughSequence: 1 })
       await flush()
     })
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', { sourceRef: source.sourceRef, limit: 100 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', { sourceRef: source.sourceRef, limit: 100, background: true }, expect.any(AbortSignal))
     await act(async () => { arkmeChatTimelineDelta.publish([{ source, items: [partial] }]); await flush() })
     mocks.renderedItems.length = 0
     await act(async () => {
@@ -918,6 +934,7 @@ describe('record re-edit attachment UI', () => {
     arkmeUi.selectSource(source)
     mocks.callArkme.mockReset()
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'user.profile.refresh') return { profile: { userId: 42, contact: { phoneMasked: '138****0000' } } }
       if (operation === 'source.record-reedit.detail') return { ...snapshot, itemUid: params?.itemUid }
       if (operation === 'source.record-reedit.draft.put') return { saved: true, draftRevision: Number(params?.expectedDraftRevision ?? 0) + 1 }
       if (operation === 'source.record-reedit.submit') return { submissionId: 'submission', state: 'pending', itemUid: params?.itemUid, title: '', textContent: params?.newText, attachments: [] }

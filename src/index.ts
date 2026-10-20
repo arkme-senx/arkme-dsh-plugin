@@ -1,3 +1,7 @@
+import { resolveHostPolicy } from './host-policy.js'
+import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
+import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
+import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
 import { DshNativeSocket } from './dsh-remote/native-socket.js'
 import { registerManagedTurnFunding } from './managed-ai/operation.js'
 import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
@@ -112,6 +116,7 @@ export interface Config {
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  memoryCoreBaseUrl?: string
   audioBaseUrl: string
   openApiBaseUrl: string
   openApiMcpEnabled: boolean
@@ -126,6 +131,8 @@ export interface Config {
   toolProfile: ArkmeToolProfile
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
+  /** Public browser AK; enable JavaScript API and restrict allowed web origins in Baidu. */
+  baiduMapBrowserAk?: string
   interwovenMomentsEnabled: boolean
   selfCalendarViewsEnabled: boolean
   recordingWorkbenchEnabled: boolean
@@ -168,6 +175,7 @@ export const Config: Schema<Config> = Schema.object({
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
+  memoryCoreBaseUrl: Schema.string().default(''),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   openApiBaseUrl: Schema.string().default(''),
   openApiMcpEnabled: Schema.boolean().default(true),
@@ -181,6 +189,7 @@ export const Config: Schema<Config> = Schema.object({
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
   toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
   relatedRecordingsEnabled: Schema.boolean().default(true),
+  baiduMapBrowserAk: Schema.string().default(''),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
   selfCalendarViewsEnabled: Schema.boolean().default(true),
@@ -249,7 +258,7 @@ export function resolvePluginUpdateEnabled(
   configured: boolean,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  return configured && environment.ARKME_RUNTIME_MANAGED !== '1'
+  return configured && resolveHostPolicy(environment).capabilities.runtimeSelfUpdate && environment.ARKME_RUNTIME_MANAGED !== '1'
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -288,7 +297,9 @@ export function resolveDshRemoteProfileRef(
 }
 
 export function apply(ctx: Context, config: Config): void {
+  const hostPolicy = resolveHostPolicy()
   config = resolveArkmeConfig(ctx, config)
+  if (hostPolicy.credentialServicePrefix !== undefined) config = {...config, keychainServicePrefix:hostPolicy.credentialServicePrefix}
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -364,6 +375,14 @@ export function apply(ctx: Context, config: Config): void {
   const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const clientModules = (ctx as Context & { clientModules: DshClientModulesLike }).clientModules
+  const migrationManager = new AppMigrationManager({
+    enabled: process.env.ARKME_DESKTOP_MANAGED_RESTART === '1' && arkmeDesktopBridgeConfigFromEnv(process.env) !== undefined,
+    currentVersion: process.env.ARKME_APP_VERSION ?? '',
+    platform: process.platform, architecture: process.arch,
+    stateDirectory: migrationStateRoot(dshHome, config.environment),
+    serviceOrigin: config.updateServiceBaseUrl,
+    artifactOrigin: config.updateArtifactBaseUrl.trim() || 'https://d.jiwo.cc',
+  })
   const updateManager = new ArkmePluginUpdateManager({
     enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
@@ -591,15 +610,24 @@ export function apply(ctx: Context, config: Config): void {
     const controlPlane = new DshRemoteHttpControlPlane({
       post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
     })
+    const sessionOwnership = new DshRemoteSessionOwnershipStore(stateDirectory, profileRef)
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      sessionOwnership,
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
+      readRecoveryProof: async (sessionId, through, signal) => {
+          signal.throwIfAborted()
+          const account = await service.accountScope.scopedSession()
+          if (!account || !(await sessionOwnership.listOwned(String(account.userId), [sessionId])).has(sessionId)) throw new Error('当前账号没有本地会话')
+          const proof = await readLocalContentProof(apiCtx.get('sessionPersistence'), sessionId, through, signal)
+          signal.throwIfAborted()
+          return proof
+        },
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
       readSession: async () => {
@@ -643,6 +671,18 @@ export function apply(ctx: Context, config: Config): void {
         const session = await service.accountScope.scopedSession()
         if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
         return String(session.userId)
+      },
+      localAliasReader: {
+        summaries: async (refs, signal) => {
+          const account = await service.accountScope.scopedSession()
+          if (!account || !service.accountScope.ready()) return new Map()
+          const owned = await sessionOwnership.listOwned(String(account.userId), refs)
+          signal.throwIfAborted()
+          // Native transport already owns live list metadata. Directory folding
+          // needs only account ownership, never a second all-session scan.
+          return new Map(refs.filter(ref => owned.has(ref)).map(ref => [ref, { updatedAt: 0, projectionAsOfSeq: -1, running: false }]))
+        },
+
       },
       localStatus: () => host.getStatus(),
       createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
@@ -701,6 +741,7 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
+    migrationManager,
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
@@ -885,6 +926,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.resumeRecordingImports().catch(() => undefined)
     return () => undefined
   }, 'dsh-arkme: recording import recovery')
+  ctx.effect(() => () => migrationManager.dispose(), 'dsh-arkme: installer download lifecycle')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()
@@ -993,6 +1035,7 @@ export function resolveArkmeConfig(ctx: Context, config: Config): Config {
     teamBaseUrl: config.teamBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
       : config.teamBaseUrl,
+    memoryCoreBaseUrl: config.memoryCoreBaseUrl?.trim() || (config.environment === 'prod' ? 'https://memory-core.jotmo.cc' : 'https://jotmo-memory-core.senguo.me'),
     dataBaseUrl: config.dataBaseUrl.trim() === ''
       ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
       : config.dataBaseUrl,
@@ -1022,6 +1065,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.worldBaseUrl,
       config.relationBaseUrl,
       config.intelligentBaseUrl,
+      ...(config.memoryCoreBaseUrl ? [config.memoryCoreBaseUrl] : []),
       config.audioBaseUrl,
       config.openApiBaseUrl,
       ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
@@ -1060,6 +1104,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['worldBaseUrl', config.worldBaseUrl],
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
+    ...(config.memoryCoreBaseUrl ? [['memoryCoreBaseUrl', config.memoryCoreBaseUrl] as const] : []),
     ['audioBaseUrl', config.audioBaseUrl],
     ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],

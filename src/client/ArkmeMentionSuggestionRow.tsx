@@ -79,9 +79,10 @@ function ArkmeMentionSuggestionAvatar({ candidate, styles }: {
   return <ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={28} label={candidate.displayName} />
 }
 
-export function ArkmeMentionSuggestionRow({ candidate, active, styles, onActive, onSelect }: {
+export function ArkmeMentionSuggestionRow({ candidate, active, disabled = false, styles, onActive, onSelect }: {
   candidate: ArkmeMentionCandidate
   active: boolean
+  disabled?: boolean
   styles: ArkmeMentionSuggestionRowStyles
   onActive: () => void
   onSelect: () => void
@@ -93,9 +94,11 @@ export function ArkmeMentionSuggestionRow({ candidate, active, styles, onActive,
     type="button"
     role="option"
     aria-selected={active}
+    disabled={disabled}
     style={{
       ...styles.row,
       ...(active ? styles.rowActive : {}),
+      ...(disabled ? { opacity: .45, cursor: 'default' } : {}),
     }}
     onMouseEnter={onActive}
     onMouseDown={event => {
@@ -108,6 +111,7 @@ export function ArkmeMentionSuggestionRow({ candidate, active, styles, onActive,
     </span>
     <span style={styles.text}>
       <span style={styles.name}>{primary}</span>
+      {disabled && <span style={styles.secondary}>{tr('已不可选')}</span>}
       {secondary !== '' && secondary !== candidate.displayName
         ? <span style={styles.secondary}>{secondary}</span>
         : null}

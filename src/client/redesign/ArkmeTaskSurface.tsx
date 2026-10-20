@@ -9,7 +9,7 @@ import { Plus } from '@phosphor-icons/react/Plus'
 import { SquaresFour } from '@phosphor-icons/react/SquaresFour'
 import { Waveform } from '@phosphor-icons/react/Waveform'
 import type { SessionId, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
-import { ARKME_WORDMARK_DATA_URL } from '../arkme-wordmark.js'
+import { ArkmeJiwoBrandMark } from '../ArkmeJiwoBrandMark.js'
 
 function taskTime(updatedAt: number): string {
   const delta = Date.now() - updatedAt
@@ -86,7 +86,7 @@ export function ArkmeTaskStart({ busy, error, onChooseWorkspace, onBrowsePlugins
   ] as const
   return <section className="arkme-redesign-task-start" aria-label={tr("开始 Arkme 任务")}>
     <div className="arkme-redesign-task-start-inner">
-      <div className="arkme-redesign-task-greeting"><img src={ARKME_WORDMARK_DATA_URL} alt="Arkme" /><h1>{tr("想先从什么开始？")}</h1></div>
+      <div className="arkme-redesign-task-greeting"><ArkmeJiwoBrandMark wordmarkHeight={16} /><h1>{tr("想先从什么开始？")}</h1></div>
       <form className="arkme-redesign-hero-input" onSubmit={submit}>
         <textarea
           ref={inputRef}

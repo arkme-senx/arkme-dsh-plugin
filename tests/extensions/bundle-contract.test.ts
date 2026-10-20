@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { verifyBundleResolutionSignature, verifyNativeBundleResolutionSignature } from '../../src/extensions/signature.js'
+import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
 
 describe('Bundle v2 cross-language signature contract', () => {
-  it('verifies the fixed Go Ed25519 vector and rejects execution tampering', () => {
+  it('verifies the fixed Go Ed25519 vector after status projection and rejects execution tampering', async () => {
     const resolution = {
       artifact_contract_version: 2 as const,
       artifact_kind: 'dsh-bundle-tgz' as const,
@@ -20,13 +21,17 @@ describe('Bundle v2 cross-language signature contract', () => {
     const keys = new Map([['test-key-v2', 'MYjXfeWcnqgSrWCgDzGLJiiMYz1RGuA/dbkm+TK027c=']])
 
     expect(() => verifyBundleResolutionSignature(resolution, keys)).not.toThrow()
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...resolution, status: 'published', upload_url: 'SECRET' }) as T)
+    const projected = await client.publishStatus('pub_vector')
+    expect(projected).toEqual({ ...resolution, status: 'published', publish_session_id: 'pub_vector' })
+    expect(() => verifyBundleResolutionSignature(projected as typeof resolution, keys)).not.toThrow()
     expect(() => verifyBundleResolutionSignature({ ...resolution, execution_model: 'dsh-native' }, keys))
       .toThrow('签名验证失败')
   })
 })
 
 describe('Native Bundle v3 cross-language signature contract', () => {
-  it('verifies the fixed Go Ed25519 vector and rejects capability tampering', () => {
+  it('verifies the fixed Go Ed25519 vector after status projection and rejects capability tampering', async () => {
     const resolution = {
       artifact_contract_version: 3 as const,
       artifact_kind: 'dsh-native-package-tgz' as const,
@@ -43,6 +48,10 @@ describe('Native Bundle v3 cross-language signature contract', () => {
       signature: 'wIFX8W1mgSAua6J9Hv+XGp5etUn/jLQG1iKcLLgjVDrAE+5OQvLf2WMHd/VjtU2as2sQnvpT1u+FpIwl7RfYCg==',
     }
     const keys = new Map([['test-key-v3', 'MYjXfeWcnqgSrWCgDzGLJiiMYz1RGuA/dbkm+TK027c=']])
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...resolution, status: 'published', audit_evidence: ['PRIVATE'] }) as T)
+    const projected = await client.publishStatus('pub_native_vector')
+    expect(projected).toEqual({ ...resolution, status: 'published', publish_session_id: 'pub_native_vector' })
+    expect(() => verifyNativeBundleResolutionSignature(projected as Parameters<typeof verifyNativeBundleResolutionSignature>[0], keys)).not.toThrow()
 
     expect(() => verifyNativeBundleResolutionSignature({
       ...resolution, native_capabilities: [...resolution.native_capabilities],
@@ -52,7 +61,7 @@ describe('Native Bundle v3 cross-language signature contract', () => {
     }, keys)).toThrow('签名验证失败')
   })
 
-  it('verifies the Go empty-capability vector with the canonical field omitted', () => {
+  it('verifies the Go empty-capability vector after status projection with the canonical field omitted', async () => {
     const resolution = {
       artifact_contract_version: 3 as const,
       artifact_kind: 'dsh-native-package-tgz' as const,
@@ -71,5 +80,9 @@ describe('Native Bundle v3 cross-language signature contract', () => {
     const keys = new Map([['test-key-v3-empty', 'MYjXfeWcnqgSrWCgDzGLJiiMYz1RGuA/dbkm+TK027c=']])
 
     expect(() => verifyNativeBundleResolutionSignature(resolution, keys)).not.toThrow()
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...resolution, status: 'published' }) as T)
+    const projected = await client.publishStatus('pub_native_empty')
+    expect(projected).toEqual({ ...resolution, status: 'published', publish_session_id: 'pub_native_empty' })
+    expect(() => verifyNativeBundleResolutionSignature(projected as typeof resolution, keys)).not.toThrow()
   })
 })

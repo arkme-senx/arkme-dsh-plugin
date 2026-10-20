@@ -1,4 +1,4 @@
-import { subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { subscribeTeamMessageChanges, invalidateTeamMessages } from '../../team-messaging-events.js'
 import { TeamDirectoryActions } from './TeamDirectoryActions.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
@@ -53,7 +53,6 @@ export interface ContactDirectorySurfaceProps {
   initialState?: ContactDirectoryState
   cacheFresh?: boolean
   selection?: ArkmeDirectorySelection
-  refreshRevision?: number
   contactsAddedRevision?: number
   expandedSections?: Readonly<Record<ArkmeDirectorySectionKind, boolean>>
   onSelectionChange(selection: ArkmeDirectorySelection): void
@@ -186,7 +185,6 @@ export function ContactDirectorySurface({
   contactProfiles,
   cacheFresh,
   selection,
-  refreshRevision = 0,
   contactsAddedRevision = 0,
   expandedSections,
   onSelectionChange,
@@ -220,7 +218,6 @@ export function ContactDirectorySurface({
   const stateRef = useRef(state)
   const controllersRef = useRef<Partial<Record<ArkmeDirectorySectionKind, AbortController>>>({})
   const generationsRef = useRef<Partial<Record<ArkmeDirectorySectionKind, number>>>({})
-  const refreshRevisionRef = useRef(refreshRevision)
   const contactsAddedRevisionRef = useRef(contactsAddedRevision)
   const wasActiveRef = useRef(active)
   const preserveContactsSelectionRef = useRef(false)
@@ -239,7 +236,10 @@ export function ContactDirectorySurface({
     stateRef.current = next
     dispatch(action)
     const refreshed = action.type === 'load-success' && action.mode !== 'count'
-      && Object.values(next.sections).every(section => (section.status === 'ready' || section.status === 'empty') && section.warning === undefined)
+      && CONTACT_DIRECTORY_SECTION_ORDER.every(kind => {
+        const section = next.sections[kind]
+        return (section.status === 'ready' || section.status === 'empty') && section.warning === undefined
+      })
     onStateChangeRef.current?.(next, refreshed, acknowledgedProfiles)
     return next
   }, [])
@@ -340,8 +340,6 @@ export function ContactDirectorySurface({
         && !section.items.some(item => item.kind === 'contact' && item.contactRef === selected.contactRef))
         || (kind === 'teams' && selected.kind === 'team'
           && !section.items.some(item => item.kind === 'team' && item.teamRef === selected.teamRef))
-        || (kind === 'unmarked-speakers' && selected.kind === 'unmarked-speaker'
-          && !section.items.some(item => item.kind === 'unmarked-speaker' && item.candidateRef === selected.candidateRef))
       if ((query === '' && !resolvingSelection) || section.accountKey !== accountKey
         || (section.status !== 'ready' && section.status !== 'empty')
         || !section.hasMore || section.nextCursor === undefined) continue
@@ -367,12 +365,6 @@ export function ContactDirectorySurface({
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', recover)
     }
   }, [active, load])
-
-  useEffect(() => {
-    if (!active || refreshRevisionRef.current === refreshRevision) return
-    refreshRevisionRef.current = refreshRevision
-    load('unmarked-speakers', 'replace', true)
-  }, [active, load, refreshRevision])
 
   useEffect(() => {
     const resumingStaleDirectory = active && !wasActiveRef.current && cacheFresh === false
@@ -470,7 +462,7 @@ export function ContactDirectorySurface({
       onToggle={handleToggle}
       onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
-      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { load('teams', 'replace', true) }} onSelect={handleSelect} />}
+      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { invalidateTeamMessages(accountKey) }} onSelect={handleSelect} />}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}
       onOpenBot={onOpenBot}

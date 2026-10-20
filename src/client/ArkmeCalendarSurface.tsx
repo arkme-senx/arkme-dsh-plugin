@@ -1,3 +1,4 @@
+import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
@@ -81,22 +82,17 @@ const styles: Record<string, CSSProperties> = {
     transform: 'rotate(45deg)', background: arkmeTheme.menu,
     borderBottom: `1px solid ${colors.border}`, borderLeft: `1px solid ${colors.border}`,
   },
-  header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: {
     width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary,
     cursor: 'pointer', font: 'inherit', lineHeight: 1,
   },
-  navDisabled: { opacity: .32, cursor: 'default' },
-  caretLeft: { transform: 'rotate(180deg)' },
   monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
     width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
     borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer',
     font: 'inherit', fontSize: 11, fontWeight: 400,
   },
-  todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
   week: {
     height: 32, marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
     alignItems: 'center',
@@ -226,7 +222,7 @@ function sameMonth(left: Date, right: Date): boolean {
 }
 
 export function ArkmeCalendarMonthView({
-  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates,
+  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates, allowFuture = false,
 }: {
   visibleMonth: Date
   selectedDate: Date
@@ -237,11 +233,10 @@ export function ArkmeCalendarMonthView({
   onVisibleMonthChange(month: Date): void
   onSelectDate(date: Date): void
   recordingDates?: ReadonlySet<string>
+  allowFuture?: boolean
 }) {
   useArkmeLocale()
   const calendarByDay = useMemo(() => new Map(days.map(day => [day.bucketDate, day])), [days])
-  const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
-  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
   const chooseDate = (date: Date) => {
     const normalized = startOfLocalDay(date)
     onSelectDate(normalized)
@@ -249,29 +244,14 @@ export function ArkmeCalendarMonthView({
   }
 
   return <>
-    <header style={styles.header}>
-      <div style={styles.navCluster}>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("上个月")} title={tr("上个月")} style={styles.iconButton}
-          onClick={() => onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>
-          <CaretRight size={16} style={styles.caretLeft} aria-hidden />
-        </button>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("下个月")} title={tr("下个月")} disabled={!canGoNext}
-          style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }}
-          onClick={() => { if (canGoNext) onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1)) }}>
-          <CaretRight size={16} aria-hidden />
-        </button>
-      </div>
-      <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-      <button data-arkme-feedback="neutral" type="button" disabled={!canJumpToday}
-        style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }}
-        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>{tr("回到今日")}</button>
-    </header>
+    <ArkmeCalendarMonthHeader visibleMonth={visibleMonth} selectedDate={selectedDate} today={today} allowFuture={allowFuture}
+      onVisibleMonthChange={onVisibleMonthChange} onToday={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }} />
     <div style={styles.week}>{calendarWeekdays().map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
     <div style={{ ...styles.days, opacity: loading && days.length === 0 ? .55 : 1 }}>
       {calendarCells(visibleMonth).map((date, index) => {
         if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
         const key = dateKey(date)
-        const disabled = date > today
+        const disabled = !allowFuture && date > today
         const meta = calendarByDay.get(key)
         return <ArkmeCalendarCell
           key={key}
@@ -303,7 +283,7 @@ interface ScopedResource<T> {
   value?: T
 }
 
-type CalendarIndex = CalendarMonthSnapshot & { retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
 
 /** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
 function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
@@ -506,7 +486,7 @@ function ConversationCalendarMonths({ getReadingDate, ...props }: Omit<Parameter
 }
 
 export function ArkmeSelfCalendarPopover({
-  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, index, getReadingDate,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, onSelectIndexedDay, index, getReadingDate,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
@@ -516,6 +496,8 @@ export function ArkmeSelfCalendarPopover({
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
   onSelectDate?(selection: SelfCalendarDateSelection): void
+  /** Locally indexed non-record conversations retain their own message identity. */
+  onSelectIndexedDay?(bucketDate: string): void
   index?: CalendarIndex
   getReadingDate?: (() => string | undefined) | undefined
 }) {
@@ -547,9 +529,10 @@ export function ArkmeSelfCalendarPopover({
     const key = dateKey(normalized)
     selectionControllerRef.current?.abort()
     if ((day?.count ?? 0) <= 0) {
-      setSelectionStatus('这一天没有发给自己的记录')
+      setSelectionStatus(index ? '这一天没有已加载的对话记录' : '这一天没有发给自己的记录')
       return
     }
+    if (onSelectIndexedDay !== undefined) { onSelectIndexedDay(key); onClose(); return }
     if (index && !day?.anchor && !day?.momentAnchor) { setSelectionStatus('当天定位信息暂不可用，请刷新日历后重试'); return }
     if (onSelectDate !== undefined) {
       onSelectDate({ bucketDate: key, timezone, ...(day?.anchor ? { anchor: day.anchor } : {}),

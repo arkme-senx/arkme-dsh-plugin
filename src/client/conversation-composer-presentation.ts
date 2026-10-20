@@ -15,11 +15,19 @@ export function arkmeConversationComposerBorder(color: string, hasTarget: boolea
   }
 }
 
+export function arkmeConversationComposerFocusStyle(focused: boolean): CSSProperties {
+  return {
+    background: focused ? 'var(--arkme-primary-composer-focused, #ffffff)' : 'var(--arkme-primary-composer-idle, #f6f6f6)',
+    boxShadow: 'none',
+  }
+}
+
 /** Shared size and layout contract for Arkme chat composers. Interaction stays with each surface. */
 export const arkmeConversationComposerLayout = {
   composer: {
     flex: 'none', display: 'flex', justifyContent: 'stretch', padding: '0 24px 20px',
   },
+  composerStack: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', containerType: 'inline-size', containerName: 'arkme-composer' },
   composerInner: {
     position: 'relative', width: '100%', overflow: 'visible', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 13px 9px', borderRadius: 15,
@@ -33,7 +41,7 @@ export const arkmeConversationComposerLayout = {
   tools: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, minWidth: 0, padding: 0,
   },
-} satisfies Record<'composer' | 'composerInner' | 'textarea' | 'tools', CSSProperties>
+} satisfies Record<'composer' | 'composerStack' | 'composerInner' | 'textarea' | 'tools', CSSProperties>
 
 export function arkmeConversationComposerHeight(scrollHeight: number): number {
   return Math.min(scrollHeight, arkmeConversationComposerMaxHeight)

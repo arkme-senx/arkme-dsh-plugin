@@ -3,8 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeRecordEditHistoryPage, ArkmeRecordEditHistoryReader } from '../record-edit-history.js'
 import type { ArkmeTimelineItem } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import { ArkmeRichText } from './ArkmeRichText.js'
-import { ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeRecordRevisionDiff, historyRevisionKindLabel } from './ArkmeRecordRevisionDiff.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -31,6 +30,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
   const busyRef = useRef(false)
   const cursorRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const boundaryRef = useRef<HTMLDivElement>(null)
   const cancel = useCallback(() => {
     controllerRef.current?.abort()
     clearTimeout(timerRef.current)
@@ -78,23 +78,28 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
     load(0)
     return cancel
   }, [load, cancel])
+  useEffect(() => {
+    if (!page.hasMore || loading || error || !boundaryRef.current || typeof IntersectionObserver === 'undefined') return
+    // Read the older baseline before its last visible card needs comparison.
+    // This is viewport-driven, not an unbounded download of every revision.
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) load(cursorRef.current)
+    }, { rootMargin: '160px' })
+    observer.observe(boundaryRef.current)
+    return () => observer.disconnect()
+  }, [page, loading, error, load])
   const mine = author?.isMe === true
   return <div aria-busy={loading} data-arkme-edit-history="true" style={{ margin: '-24px -10px 0', paddingBottom: 16 }}>
       {page.items.map((revision, index) => <section key={revision.revisionUid} style={{ marginBottom: 15 }}>
         <div data-arkme-history-time style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginTop: 20, marginBottom: 15, color: arkmeTheme.caption, fontSize: 12, lineHeight: '18px' }}>
           <span />
-          <time style={{ padding: '4px 6px' }} dateTime={new Date(revision.editAtMillis).toISOString()}>{historyTimeLabel(revision.editAtMillis)}</time>
+          <time style={{ padding: '4px 6px' }} dateTime={new Date(revision.editAtMillis).toISOString()}>{historyTimeLabel(revision.editAtMillis)}{revision.kind !== 'manual' && revision.kind !== 'original' ? ` · ${historyRevisionKindLabel(revision.kind)}` : ''}</time>
           <div>{index === 0 && <span data-arkme-history-latest style={{ display: 'inline-block', marginLeft: 10, padding: '1px 4px', borderRadius: 4, border: `0.5px solid color-mix(in srgb, ${arkmeTheme.recordHistoryLatest} 30%, transparent)`, color: arkmeTheme.recordHistoryLatest, fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{tr("最新")}</span>}</div>
         </div>
         <div data-arkme-history-row style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 10 }}>
           <ArkmeUserAvatar {...(author?.avatarRef === undefined ? {} : { avatarRef: author.avatarRef })} {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={author?.senderName || tr("作者头像")} />
-          <div data-arkme-history-bubble style={{ minWidth: 0, maxWidth: 'calc(100% - 84px)', minHeight: 42, boxSizing: 'border-box', padding: 10, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
-            {revision.content.title && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={revision.content.title} presentation="preview" /></h3>}
-            {(revision.content.textContent || revision.content.contentBlocks.length > 0 || (!revision.content.title && !revision.content.mediaUnavailable)) && <ArkmeMessageContent presentation="detail" item={{
-              ...revision.content, mediaUnavailable: false, itemUid: revision.revisionUid, senderName: author?.senderName ?? '', isMe: mine,
-              sendAtMillis: revision.editAtMillis, status: 1,
-            }} />}
-            {revision.content.mediaUnavailable === true && <p style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr("部分历史附件暂不可用")}</p>}
+          <div data-arkme-history-bubble style={{ minWidth: 0, width: 'calc(100% - 42px)', minHeight: 42, boxSizing: 'border-box', padding: 12, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
+            <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={author?.senderName ?? ''} mine={mine} />
           </div>
         </div>
       </section>)}
@@ -102,6 +107,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
       {error !== '' && <div role="alert"><p>{error}</p><button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>{tr("重试")}</button></div>}
       {!loading && error === '' && page.items.length === 0 && !page.hasMore && <p style={{ color: arkmeTheme.tertiary }}>{tr("暂无编辑记录")}</p>}
       {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(0) }}>{tr("重新加载历史附件")}</button>}
+      {page.hasMore && <div ref={boundaryRef} data-arkme-history-baseline />}
       {!loading && error === '' && page.hasMore && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>{tr("加载更多")}</button>}
     </div>
 }

@@ -68,3 +68,23 @@ it('retains the default confirmation footer and its independent confirm action',
     expect(onClose).not.toHaveBeenCalled()
   } finally { await act(async () => root.unmount()); host.remove() }
 })
+
+it('lets the focused confirmation own Escape without closing the underlying settings', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host), onClose = vi.fn(), closeSettings = vi.fn()
+  document.addEventListener('keydown', closeSettings)
+  try {
+    for (const busy of [false, true]) {
+      await act(async () => root.render(<ArkmeConfirmDialog titleId="nested-confirm" title="授权"
+        description="确认费用" busy={busy} confirmLabel="同意" busyLabel="保存中" onClose={onClose} onConfirm={() => {}} />))
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+      if (busy) expect(document.activeElement).toBe(dialog)
+      act(() => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+      expect(closeSettings).not.toHaveBeenCalled()
+    }
+    expect(onClose).toHaveBeenCalledOnce()
+  } finally {
+    document.removeEventListener('keydown', closeSettings)
+    await act(async () => root.unmount()); host.remove()
+  }
+})

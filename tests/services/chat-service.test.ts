@@ -1425,6 +1425,11 @@ describe('ChatService', () => {
       record: { status: 1, user_id: 999, payload: { record_uid: 'record-realtime-1', text_content: '实时消息' } },
     }] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, 'chat-1')
 
+    expect(item).toMatchObject({
+      timelineEventId: `chat-event:${createHmac('sha256', 'snapshot-test-signing-key')
+        .update(JSON.stringify([42, undefined, 'chat-1', 'message:chat-1:rel-realtime-1'])).digest('base64url')}`,
+      timelineOrderTie: 'rel-realtime-1', recordOwnerUserId: 42,
+    })
     expect(item?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
     await expect(chat.messageSnapshotDetail('opaque-source', item?.messageActionRef ?? '')).resolves.toMatchObject({
       itemUid: 'record-realtime-1', startAtMillis: 1_786_000_000_000,
@@ -2315,7 +2320,7 @@ describe('ChatService', () => {
       extension: { textContent: '附件延展', templateKind: 2 },
     })
     expect(record.createExtensionForConversation).toHaveBeenCalledWith(
-      'record-snapshot-1', childRecordUid, '附件延展', assets, undefined,
+      'record-snapshot-1', childRecordUid, '附件延展', assets, undefined, undefined,
     )
     expect(record.createTextForConversation).not.toHaveBeenCalled()
     expect(record.createFileAssetsForConversation).not.toHaveBeenCalled()

@@ -80,6 +80,34 @@ function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Respons
 }
 
 describe('Arkme managed model adapter', () => {
+  it('refreshes the discovered name for an unchanged model ID without re-registering the provider', async () => {
+    let now = 10_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    let name = 'DeepSeek-V4.1-Flash'
+    const fetchCatalog = vi.fn(async () => managedCatalogResponse([{ ...MANAGED_CATALOG_ITEMS[0], display_name: name }]))
+    const ctx = new Context()
+    const llm = await ctx.plugin(LlmRuntime)
+    try {
+      registerManagedAiProvider(ctx, {
+        intelligentBaseUrl: 'https://intelligent.test',
+        credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+        fetchImpl: fetchCatalog,
+      })
+      const first = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
+      expect(first.map(model => [model.id, model.name])).toEqual([['deepseek-v4-flash', name]])
+      name = 'DeepSeek-V-next-Flash'
+      now += 60_001
+      const after = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
+      expect(after.map(model => [model.id, model.name])).toEqual([['deepseek-v4-flash', name]])
+      expect(after[0]?.description).toBe(first[0]?.description)
+      expect(after[0]?.contextWindow).toBe(first[0]?.contextWindow)
+      const selected = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, 'deepseek-v4-flash')
+      expect(selected.id).toBe('deepseek-v4-flash')
+      expect(selected.name).toBe(name)
+      expect(fetchCatalog).toHaveBeenCalledTimes(2)
+    } finally { await llm.dispose(); nowSpy.mockRestore() }
+  })
+
   it('discovers V4.1 through the existing catalog while preserving historical IDs and the authoritative points quote', async () => {
     const official = {
       ...MANAGED_CATALOG_ITEMS[0], display_name: 'DeepSeek V4.1 Flash（官方）',

@@ -1,4 +1,6 @@
+import { LocalMessageMarkStore } from './local-message-marks.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
+import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
 import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from './emoji-recent.js'
 import { randomUUID } from 'node:crypto'
@@ -126,6 +128,7 @@ function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly messageMarks: LocalMessageMarkStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
@@ -148,6 +151,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversation_viewports (
+        account_key TEXT NOT NULL, surface TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, surface)
       );
       CREATE TABLE IF NOT EXISTS conversation_directory (
         user_id INTEGER NOT NULL, identity TEXT NOT NULL, payload TEXT NOT NULL,
@@ -261,6 +268,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         this.database.exec('UPDATE conversation_member_cache SET payload_bytes = LENGTH(CAST(snapshot_json AS BLOB))')
       }
     })
+    this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
     this.selfRoleSync = new SelfRoleSyncStore(this.database, action => this.transaction(action))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
@@ -297,6 +305,16 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async readCancellationCompletion() { return await this.operationalState.readCancellationCompletion() }
   async writeCancellationCompletion(completion: import('./state-store.js').ArkmeCancellationCompletion | undefined) {
     await this.operationalState.writeCancellationCompletion(completion)
+  }
+
+  async readOfflineContextJournal(scope: string) {
+    return await this.operationalState.readOfflineContextJournal(scope)
+  }
+  async putOfflineContextJournal(scope: string, id: string, entry: import('./offline-context-contract.js').OfflineContextJournalEntry): Promise<void> {
+    await this.operationalState.putOfflineContextJournal(scope, id, entry)
+  }
+  async deleteOfflineContextJournal(scope: string, id: string, fingerprint: string): Promise<void> {
+    await this.operationalState.deleteOfflineContextJournal(scope, id, fingerprint)
   }
 
   async uniqueCode(): Promise<string> {
@@ -913,6 +931,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
 
+  async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }
+
   async listRecordReeditSubmissions(userId: number) {
     return await this.operationalState.listRecordReeditSubmissions(userId)
   }
@@ -960,10 +982,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
-    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit, signal)
+    return await this.operationalState.admitRecordingImportJob(userId, job, signal)
   }
 
   async replaceRecordingImportJob(
@@ -1143,6 +1164,26 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async recentEmojiIds(accountKey: string): Promise<string[]> {
     return this.readRecentEmojiIds(accountKey)
+  }
+
+  async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {
+    const row = this.database.prepare('SELECT payload FROM conversation_viewports WHERE account_key=? AND surface=?')
+      .get(accountKey, surface) as { payload: string } | undefined
+    try { return normalizeConversationViewports(row ? JSON.parse(row.payload) : []) } catch { return [] }
+  }
+
+  async writeConversationViewports(accountKey: string, surface: string, entries: ConversationViewportEntries): Promise<void> {
+    if (accountKey.length > 100 || surface.length > 2048) throw new Error('Invalid viewport scope')
+    this.transaction(() => {
+      // Reinsert to make rowid a recency order, independent of wall-clock ties.
+      this.database.prepare('DELETE FROM conversation_viewports WHERE account_key=? AND surface=?').run(accountKey, surface)
+      this.database.prepare('INSERT INTO conversation_viewports(account_key,surface,payload) VALUES (?,?,?)')
+        .run(accountKey, surface, JSON.stringify(normalizeConversationViewports(entries)))
+      this.database.prepare(`DELETE FROM conversation_viewports WHERE account_key=? AND rowid NOT IN
+        (SELECT rowid FROM conversation_viewports WHERE account_key=? ORDER BY rowid DESC LIMIT 40)`).run(accountKey, accountKey)
+      // Geometry is disposable; cap retained account/window payloads at 5 MiB.
+      this.database.exec('DELETE FROM conversation_viewports WHERE rowid NOT IN (SELECT rowid FROM conversation_viewports ORDER BY rowid DESC LIMIT 80)')
+    })
   }
 
   async recordRecentEmoji(accountKey: string, emojiId: string): Promise<string[]> {

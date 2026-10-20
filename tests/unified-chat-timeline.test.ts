@@ -5,14 +5,38 @@ import { ChatService } from '../src/services/chat-service.js'
 import { ArkmeUpstreamResponseError } from '../src/services/service.js'
 
 const statuses = () => CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready' as const, itemCount: 0 }))
-function response() { return { protocol_version: 1, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
+function response() { return { protocol_version: 2, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
 function event(eventId: string, source: ArkmeUnifiedTimelineEvent['source'] = 'messages', occurredAtMillis = 10): ArkmeUnifiedTimelineEvent {
   return { eventId, source, occurredAtMillis, orderTie: eventId, contentStatus: 'available', kind: 'notice', text: eventId }
 }
 function window(events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineWindow {
-  return { protocolVersion: 1, events, sources: statuses(), complete: true, windowTokens: ['window'], olderCursor: 'older', newerCursor: 'newer', olderHasMore: true, newerHasMore: false, hasMore: false }
+  return { protocolVersion: 2, events, sources: statuses(), complete: true, windowTokens: ['window'], olderCursor: 'older', newerCursor: 'newer', olderHasMore: true, newerHasMore: false, hasMore: false }
 }
 describe('unified timeline owner contract', () => {
+  it('does not queue a local cache lookup behind a network owner', async () => {
+    const owner = vi.fn(async () => { throw new Error('network admission reached') })
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, runCompositeOwnerRead: owner } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      {} as never, {} as never)
+    try {
+      await expect(service.read('ref', { cacheOnly: true })).rejects.toMatchObject({ code: 'chat-timeline-cache-miss' })
+      expect(owner).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('revalidates an existing window behind interactive opening and history reads', async () => {
+    const post = vi.fn().mockResolvedValue(response())
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { projectChatTimelineItems: async () => [] } as never, {} as never)
+    const initial = await service.read('ref')
+    await service.read('ref', { mode: 'refresh', windowTokens: initial.unified!.windowTokens })
+    await service.read('ref', {}, undefined, true)
+    expect(post.mock.calls.map(call => call[4].lane)).toEqual(['interactive-read', 'background-read', 'background-read'])
+    expect(post.mock.calls[0]?.[1]).toEqual(post.mock.calls[2]?.[1])
+    service.dispose()
+  })
   it('retains the reverse server total order including same-time source priority and World ties', () => {
     const events = [event('b', 'world_public'), event('a', 'world_public'), event('a'), event('b')].sort(compareUnifiedTimelineEvents)
     expect(events.map(e => `${e.source}:${e.eventId}`)).toEqual(['world_public:b', 'world_public:a', 'messages:a', 'messages:b'])
@@ -31,9 +55,26 @@ describe('unified timeline owner contract', () => {
   })
   it('rejects missing completeness, wrong scope and missing continuation rather than presenting empty history', () => {
     expect(parseUnifiedTimelineResponse(response(), 'chat').events).toEqual([])
-    for (const patch of [{ sources: [] }, { chat_session_uid: 'other' }, { has_more: true }, { protocol_version: 2 }]) {
+    for (const patch of [{ sources: [] }, { chat_session_uid: 'other' }, { has_more: true }, { protocol_version: 1 }]) {
       expect(() => parseUnifiedTimelineResponse({ ...response(), ...patch }, 'chat')).toThrow()
     }
+  })
+  it('retains the realtime message identity when the authoritative page replaces its provisional row', async () => {
+    const { chatTimelineEventId } = await import('../src/services/timeline-event-id.js')
+    const id = chatTimelineEventId('key', 1, 'test', 'chat', 'message:chat:relation')
+    const item = { itemUid: 'record', timelineItemKey: 'opaque-relation', timelineEventId: id,
+      senderName: '同事', isMe: false, sendAtMillis: 10, title: '', textContent: '正文', status: 1, sequence: 9 }
+    const raw = { ...response(), timeline_items: [{ event_id: 'message:chat:relation', kind: 'message', source: 'messages',
+      occurred_at: 10, order_tie: 'relation', content_status: 'available', payload: { relation: { rel_uid: 'relation', record_owner_user_id: 2 } } }] }
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => raw } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }),
+        chatTimelineItemKey: async () => 'opaque-relation' } as never,
+      { projectChatTimelineItems: async () => [item] } as never, {} as never)
+    const result = await service.read('ref')
+    expect(result.unified?.events[0]).toMatchObject({ eventId: id, orderTie: 'relation', item: { timelineEventId: id } })
+    expect(chatTimelineEventId('key', 1, 'prod', 'chat', 'message:chat:relation')).not.toBe(id)
+    expect(chatTimelineEventId('key', 2, 'test', 'chat', 'message:chat:relation')).not.toBe(id)
   })
   it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
@@ -42,7 +83,7 @@ describe('unified timeline owner contract', () => {
       { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
       { projectChatTimelineItems: async () => [] } as never, {} as never)
     const result = await service.read('ref')
-    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified')
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v2')
     expect(result.items).toEqual([])
     expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable' })])
     expect(JSON.stringify(result)).not.toContain('do not expose')
@@ -60,11 +101,11 @@ describe('unified timeline owner contract', () => {
   it('classifies only the precise owner recovery reason and never invokes legacy reads', async () => {
     const post = vi.fn().mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'chat_timeline_window_invalid' }))
     const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
-      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }) } as never, {} as never, {} as never)
+      { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never, {} as never, {} as never)
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'chat-timeline-window-invalid' })
     post.mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'other' }))
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'arkme-code-2002' })
-    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified')).toBe(true)
+    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified/v2')).toBe(true)
   })
 })
 
@@ -93,7 +134,7 @@ describe('unified member join names', () => {
     const signal = new AbortController().signal
     const page = await service.read('ref', {}, signal)
     expect(page.unified?.events.map(event => event.kind === 'member-join' ? event.item.invitees[0]?.displayName : event.kind)).toEqual(['小明', '小红', '群内昵称'])
-    expect(lookup).toHaveBeenCalledExactlyOnceWith([7, 8], expect.objectContaining({ userId: 1 }), signal)
+    expect(lookup).toHaveBeenCalledExactlyOnceWith([7, 8], expect.objectContaining({ userId: 1 }), expect.any(AbortSignal))
     expect(post).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(page)).not.toContain('user_id')
   })
@@ -111,7 +152,7 @@ describe('unified member join names', () => {
     expect(page.unified?.events[0]).toMatchObject({ kind: 'member-join', item: { action,
       inviter: { displayName: '小明', memberRef: expect.any(String), isSelf: false },
       invitees: [{ displayName: '小红', memberRef: expect.any(String), isSelf: false }] } })
-    expect(lookup).toHaveBeenCalledExactlyOnceWith([8, 7], expect.any(Object), undefined)
+    expect(lookup).toHaveBeenCalledExactlyOnceWith([8, 7], expect.any(Object), expect.any(AbortSignal))
   })
   it('uses an inviter group nickname available in the same page without extra reads', async () => {
     const { service, lookup } = setup([

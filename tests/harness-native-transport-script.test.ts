@@ -185,3 +185,131 @@ it('reopens only current local streams after carrier loss and keeps local RPC pa
   expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body)).payload.args.request.content).toEqual([{ text: 'arkme:windows:same' }])
   await next.return()
 })
+
+it('redirects a selected retired address after a complete canonical directory refresh', () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  f.directory.publish([f.row('retired')]); f.directory.select('arkme:retired:same')
+  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
+  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'arkme:native-session-open', init: { detail: { runtimeRef: 'canonical', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
+  f.directory.publish([f.row('canonical', { presence: 'offline', previousRuntimeRefs: ['retired'] })])
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+})
+
+it('keeps a single cloud entry while local and cloud metadata advance', async () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  const local = { sessionId: 'same', updatedAt: 42, running: false, blank: false, projections: { asOfSeq: 3, values: { title: 'same' } } }
+  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [local] } } }))
+  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } })
+  await f.rpc('session/list', {})
+  f.directory.publish([row], 'local-runtime')
+  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
+  expect(dispatchEvent).not.toHaveBeenCalled()
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
+  local.updatedAt = 43
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
+  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
+})
+it('never folds unverified, ambiguous, wrong-runtime or running local sources', async () => {
+  const f = fixture()
+  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
+  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'] })
+  f.directory.publish([row], 'local-runtime')
+  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
+  const proved = { ...row, coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } }
+  f.directory.publish([proved], 'different-runtime')
+  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
+  f.directory.publish([proved, { ...proved, runtimeRef: 'other' }], 'local-runtime')
+  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(3)
+})
+it('keeps one native local entry when content proof selects local history and redirects old cloud selection', async () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
+  await f.rpc('session/list', {})
+  f.directory.select('arkme:canonical:same')
+  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
+  f.directory.publish([row], 'local-runtime')
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['same'])
+  expect(f.directory.preferredSession('arkme:canonical:same')).toBe('same')
+  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
+  f.directory.publish([f.row('canonical', { previousRuntimeRefs: ['local-runtime'] })], 'local-runtime')
+  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
+})
+it('does not resurrect a proven hidden cloud row on metadata refresh and restores it once evidence expires', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: -1 } }] } } }))
+  await f.rpc('session/list', {})
+  const stream = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  await stream.next()
+  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: -1, source: 'local' } })
+  f.directory.publish([row], 'local-runtime')
+  expect((await stream.next()).value.event).toBe('api-session/added')
+  expect((await stream.next()).value).toMatchObject({ event: 'api-session/removed', args: ['arkme:canonical:same'] })
+  f.directory.publish([{ ...row, title: 'new title' }], 'local-runtime')
+  f.directory.publish([f.row('canonical', { title: 'new title', previousRuntimeRefs: ['local-runtime'] })], 'local-runtime')
+  // The next event must be the one restoration, not a hidden metadata update.
+  expect((await stream.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:same', projections: { values: { title: 'new title' } } }] })
+  expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
+  await stream.return()
+})
+it('does not re-add a hidden cloud source through another remote session subscription', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
+  await f.rpc('session/list', {})
+  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
+  f.directory.publish([row], 'local-runtime')
+  const wire = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async params => params.body.endpoint === '$events' ? { ok: true, value: { items: [
+    { type: 'ready', clientId: 'cloud' },
+    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'same' }] },
+    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'other' }] },
+  ], done: true } } : wire(params))
+  const events = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  await events.next()
+  const follow = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:canonical:other' } } } }, abort.signal)[Symbol.asyncIterator]()
+  await follow.next()
+  expect((await events.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:other' }] })
+  await follow.return(); await events.return(); abort.abort()
+})
+
+it('keeps an ongoing native selection through completion and hides an archived alias', async()=>{
+ const f=fixture(),dispatchEvent=vi.fn()
+ f.window.frameElement.parentElement.ownerDocument={dispatchEvent,defaultView:{CustomEvent:class{constructor(public type:string,public init:unknown){}}}}
+ const local={sessionId:'same',updatedAt:1,running:true,projections:{asOfSeq:9999}}
+ f.fetch.mockImplementation(async()=>Response.json({result:{ok:true,value:{items:[local]}}}))
+ await f.rpc('session/list',{});f.directory.select('same')
+ const row=f.row('canonical',{previousRuntimeRefs:['local-runtime'],coveredLocalHistory:{runtimeRef:'local-runtime',updatedAt:1,projectionAsOfSeq:9999,source:'cloud'}})
+ for(let i=0;i<100;i++){local.updatedAt++;local.projections.asOfSeq++;f.directory.publish([{...row,contentRevision:String(i)}],'local-runtime');expect((await f.rpc('session/list',{})).result.value.items.map((r:any)=>r.sessionId)).toEqual(['same'])}
+ local.running=false;f.directory.publish([row],'local-runtime')
+ expect(dispatchEvent).not.toHaveBeenCalled()
+ f.directory.publish([{...row,archived:true}],'local-runtime')
+ expect((await f.rpc('session/list',{})).result.value.items).toEqual([])
+})
+
+it('keeps one account-owned entry while cold-start Host registration has no Runtime yet', async () => {
+  for (const [running, selected] of [[false, false], [true, false], [false, true]]) {
+    const f = fixture()
+    if (selected) f.directory.select('same')
+    f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', running, updatedAt: 1 }] } } }))
+    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })])
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+    // Registration enriches the identity; it must not insert a second row.
+    f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { runtimeRef: 'restored', updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })], 'restored')
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+  }
+})
+
+it('returns a cold-start cloud selection to its native owner when registration identifies the same Runtime', () => {
+  const f = fixture(), dispatchEvent = vi.fn()
+  f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true })])
+  f.directory.select('arkme:cloud:same')
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+  expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
+  f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
+  expect(dispatchEvent).toHaveBeenCalledOnce()
+})

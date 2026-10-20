@@ -39,9 +39,9 @@ it('keeps silence, unknown and processing distinct',()=>{
 })
 it('shows compact confirmed totals and separates partial and pending statuses',()=>{
   const complete=renderToStaticMarkup(<RecordingDailyMetrics metrics={metrics([child])}/>)
-  expect(complete).toContain('人声存储 120.6 KB');expect(complete).toContain('转写 3 字')
-  const partial=renderToStaticMarkup(<RecordingDailyMetrics metrics={metrics([child,{...child,id:'old',archive_size:0}])} localPending/>)
-  expect(partial).toContain('（已确认）');expect(partial).toContain('部分大小暂不可确认');expect(partial).toContain('处理中，统计待更新')
+  expect(complete).toContain('云端录音存储 988.6 KiB（已记录）');expect(complete).toContain('转写 3 字')
+  const partial=renderToStaticMarkup(<RecordingDailyMetrics metrics={metrics([child,{...child,id:'old',archive_size:undefined}])} localPending/>)
+  expect(partial).toContain('（部分已记录）');expect(partial).toContain('部分大小暂不可确认');expect(partial).toContain('处理中，统计待更新')
   const legacy=renderToStaticMarkup(<RecordingDailyMetrics/>)
   expect(legacy).toContain('暂不可用');expect(legacy).not.toContain('0 B')
   const loading=renderToStaticMarkup(<RecordingDailyMetrics metrics={metrics([child])} loading/>)
@@ -56,5 +56,5 @@ it('shows per-person characters in the existing speaker panel without attributin
 it('localizes the new compact statistics',()=>{
   setLocale('en')
   const html=renderToStaticMarkup(<RecordingDailyMetrics metrics={metrics([{...child,has_asr:false}])}/>)
-  expect(html).toContain('Speech storage Unavailable');expect(html).toContain('Processing; metrics will update');expect(html).not.toContain('处理中')
+  expect(html).toContain('Cloud audio storage Calculating');expect(html).toContain('Processing; metrics will update');expect(html).not.toContain('处理中')
 })

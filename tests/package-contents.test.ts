@@ -3,8 +3,13 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+// These launch the real bundler/package manager; assertions cover artifact contents,
+// not a wall-clock SLA. Bound the child below the test deadline on loaded CI hosts.
+const packageCommandTimeout = 90_000
+const packageTestTimeout = 120_000
 
 function runPnpm(args: string[]) {
   const pnpmCli = process.env.npm_execpath
@@ -16,6 +21,7 @@ function runPnpm(args: string[]) {
   ], {
     cwd: projectRoot,
     encoding: 'utf8',
+    timeout: packageCommandTimeout,
   })
 }
 
@@ -34,7 +40,7 @@ describe('published package contents', () => {
 
     expect(paths).toContain('docs/consumer-plugin-contract.md')
     expect(paths.some(path => path.startsWith('docs/superpowers/'))).toBe(false)
-  })
+  }, packageTestTimeout)
 
   it('builds a Release Set plugin without an external pinyin-pro runtime dependency', () => {
     runPnpm(['run', 'bundle'])
@@ -46,7 +52,7 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])pinyin-pro\1/)
-  }, 30_000)
+  }, packageTestTimeout)
 
   it('builds a Release Set plugin without an external mediabunny runtime dependency', () => {
     runPnpm(['run', 'bundle'])
@@ -58,6 +64,29 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
+  }, packageTestTimeout)
+
+  it('ships browser factories without unresolved local chunk requires', () => {
+    runPnpm(['run', 'bundle'])
+    const libDirectory = join(projectRoot, 'lib')
+    const factories = readdirSync(libDirectory)
+      .filter(path => path === 'client.js' || /^harness-.*-client\.js$/.test(path))
+    expect(factories.length).toBeGreaterThanOrEqual(7)
+    for (const file of factories) {
+      const source = readFileSync(join(libDirectory, file), 'utf8')
+      expect(source, file).toContain('window.__ModuleLoader__.load(')
+      const localModules: string[] = []
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node)
+          && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+            || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+          && node.arguments[0] && ts.isStringLiteral(node.arguments[0])
+          && /^\.\.?\//.test(node.arguments[0].text)) localModules.push(node.arguments[0].text)
+        ts.forEachChild(node, visit)
+      }
+      visit(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS))
+      expect(localModules, file).toEqual([])
+    }
   }, 30_000)
 
   it('loads cloud history validators from the consuming Harness instead of bundling the development DSH', () => {
@@ -68,5 +97,5 @@ describe('published package contents', () => {
     expect(javascript).not.toContain('node_modules/@deepseek-ai/dsh-session/')
     const manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'))
     expect(manifest.peerDependencies).toHaveProperty('@deepseek-ai/dsh-session')
-  }, 30_000)
+  }, packageTestTimeout)
 })

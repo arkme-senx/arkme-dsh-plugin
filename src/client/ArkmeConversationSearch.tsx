@@ -14,6 +14,7 @@ import { arkmeContentMediaUrl, ArkmeMediaPreview, ArkmeMessageContent } from './
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import { useConversationSearch, useConversationSearchDetail } from './use-conversation-search.js'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
+import { useSelectedMessageSearch } from './message-selection-search.js'
 
 const scenes: Array<{ key: ArkmeSearchSceneKind; label: string }> = [
   { key: 'image_video', label: '图片/视频' }, { key: 'audio', get label() { return tr("语音") } },
@@ -29,10 +30,20 @@ function searchMonth(millis: number): string {
 }
 const status: CSSProperties = { padding: 24, textAlign: 'center', color: arkmeTheme.secondary, fontSize: 13 }
 
-export function ArkmeConversationSearch({ source, host, accountKey }: { source: ArkmeSourceItem; host: RefObject<HTMLElement>; accountKey: string }) {
+export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger = false }: { source: ArkmeSourceItem; host: RefObject<HTMLElement>; accountKey: string; hideTrigger?: boolean }) {
   useArkmeLocale()
   const [open, setOpen] = useState(false)
+  const [selectionQuery, setSelectionQuery] = useState<{ text: string }>()
+  useSelectedMessageSearch(source.sourceRef, text => {
+    setPreferences(value => ({ ...value, global: false }))
+    setSelectionQuery({ text }); setOpen(true)
+  })
   const trigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const closeForWords = () => setOpen(false)
+    window.addEventListener('arkme:conversation-analysis-open', closeForWords)
+    return () => window.removeEventListener('arkme:conversation-analysis-open', closeForWords)
+  }, [])
   const preferenceKey = source.sourceKey === undefined ? undefined : `arkme:chat-search:${accountKey}:${source.sourceKey}`
   const [preferences, setPreferences] = useState<{ scene: ArkmeSearchSceneKind; global: boolean }>(() => {
     try {
@@ -46,21 +57,24 @@ export function ArkmeConversationSearch({ source, host, accountKey }: { source: 
   }, [preferenceKey, preferences])
   const close = () => { setOpen(false); trigger.current?.focus() }
   return <>
-    <ArkmeConversationHeaderIconButton buttonRef={trigger} label={tr("搜索聊天记录")} expanded={open} onClick={() => setOpen(value => !value)}><MagnifyingGlass size={22} /></ArkmeConversationHeaderIconButton>
+    {!hideTrigger && <ArkmeConversationHeaderIconButton buttonRef={trigger} label={tr("搜索聊天记录")} expanded={open} onClick={() => { setSelectionQuery(undefined); setOpen(value => !value) }}><MagnifyingGlass size={22} /></ArkmeConversationHeaderIconButton>}
     {open && host.current !== null && createPortal(<ArkmeConversationSearchPanel source={source} scene={preferences.scene} global={preferences.global}
+      selectionQuery={selectionQuery}
       onScene={scene => setPreferences(value => ({ ...value, scene }))} onGlobal={global => setPreferences(value => ({ ...value, global }))} onClose={close} />, host.current)}
   </>
 }
 
-export function ArkmeConversationSearchPanel({ source, scene, global, onScene, onGlobal, onClose }: {
+export function ArkmeConversationSearchPanel({ source, scene, global, onScene, onGlobal, onClose, selectionQuery }: {
   source: ArkmeSourceItem; scene: ArkmeSearchSceneKind; global: boolean
   onScene(scene: ArkmeSearchSceneKind): void; onGlobal(global: boolean): void; onClose(): void
+  selectionQuery?: { text: string } | undefined
 }) {
   useArkmeLocale()
   const panel = useRef<HTMLElement>(null)
   const queryInput = useRef<HTMLInputElement>(null)
   const resize = useResizableNoteDetail(panel, 'arkme-conversation-search-width', '调整聊天搜索宽度')
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(selectionQuery?.text ?? '')
+  useEffect(() => { if (selectionQuery) { setQuery(selectionQuery.text); queryInput.current?.focus() } }, [selectionQuery])
   const [composing, setComposing] = useState(false)
   const [selected, setSelected] = useState<ArkmeSearchRecordItem>()
   const [selectedAssetUid, setSelectedAssetUid] = useState<string>()

@@ -25,7 +25,7 @@ export function startTeamAttention(key: string, onNew: (value: TeamAttention) =>
       do {
         again = false
         try {
-          const value = await callArkme<TeamAttention>('team.app.attention', {}, controller.signal)
+          const value = await callArkme<TeamAttention>('team.app.attention', {}, controller.signal, { priority: 'background' })
           if (controller.signal.aborted || account !== key) return
           const fresh = initialized && ((!snapshot.external && value.external) || (!snapshot.team && value.team) || (!snapshot.applications && value.applications))
           snapshot = value; initialized = true; emit()

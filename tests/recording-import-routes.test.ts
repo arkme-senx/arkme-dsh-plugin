@@ -1,3 +1,5 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
+const testBatchID = recordingImportBatchID()
 import { createServer, request, type Server } from 'node:http'
 import { mkdtemp, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -35,6 +37,31 @@ function routeService(acceptRecordingImport: (...args: never[]) => unknown) {
 }
 
 describe('recording import route', () => {
+  it('checks an account-scoped receipt without reading the source or creating an upload file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-receipt-'))
+    const taskId = recordingImportBatchID()
+    const acceptRecordingImport = vi.fn()
+    const recordingImportReceipt = vi.fn(async () => ({ importRef: 'already-accepted', phase: 'accepted' }))
+    const options: ArkmeRecordingImportRouteOptions = { expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root }
+    const handler = createArkmeRecordingImportHandler({ ...routeService(acceptRecordingImport), recordingImportReceipt } as never, options)
+    const server = createServer((req, res) => { void handler(req, res) })
+    servers.push(server)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('missing port')
+    options.expectedPort = address.port
+    const headers = { origin: `http://127.0.0.1:${address.port}`, 'x-arkme-import-task': taskId, 'x-arkme-import-lookup': '1' }
+    const response = await rawRequest(address.port, { headers })
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toMatchObject({ ok: true, value: { importRef: 'already-accepted' } })
+    expect(recordingImportReceipt).toHaveBeenCalledWith(taskId, 42)
+    await expect(rawRequest(address.port, { headers: { ...headers, 'x-arkme-import-task': 'invalid' } })).resolves.toMatchObject({ status: 409 })
+    await expect(rawRequest(address.port, { headers: { ...headers, origin: 'https://other.example' } })).resolves.toMatchObject({ status: 403 })
+    expect(recordingImportReceipt).toHaveBeenCalledTimes(1)
+    expect(acceptRecordingImport).not.toHaveBeenCalled()
+    expect(await readdir(root)).toEqual([])
+  })
+
   it('streams an account-scoped temporary file into the recording service', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-route-'))
     const acceptRecordingImport = vi.fn(async (path: string) => {
@@ -61,12 +88,14 @@ describe('recording import route', () => {
         'x-arkme-start-at': '1725000000000',
         'x-arkme-belong-user': '42',
         'x-arkme-recording-kind': '1',
+        'x-arkme-import-batch': encodeURIComponent(JSON.stringify({ batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' })),
       },
       body: Buffer.from('recording-bytes'),
     })
     expect(response.status).toBe(202)
     await expect(response.json()).resolves.toMatchObject({ ok: true, value: { importRef: 'opaque' } })
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.stringMatching(/\.upload$/), expect.objectContaining({
+      batch: { batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' },
       fileName: '会议.wav', mimeType: 'audio/wav', fileSize: 15,
       startAtMillis: 1_725_000_000_000, recordingKind: 1, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), 42)

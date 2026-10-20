@@ -94,7 +94,21 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [closeDisabled, props.onClose])
 
+  useEffect(() => {
+    // Disabling both footer buttons can move browser focus to the document body.
+    // Retain keyboard ownership while an in-flight write cannot be dismissed.
+    if (closeDisabled) dialogRef.current?.focus({ preventScroll: true })
+  }, [closeDisabled])
+
   const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    // The focused modal owns Escape, including while saving. Do not let the
+    // same event dismiss a containing settings panel through its document listener.
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!closeDisabled) props.onClose()
+      return
+    }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',

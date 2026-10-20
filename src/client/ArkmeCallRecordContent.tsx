@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { PlayIcon } from '@phosphor-icons/react/dist/csr/Play'
 import type { ArkmeCallVideoPerspective, ArkmeTimelineItem } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -13,32 +13,61 @@ export function arkmeCallRecordBubbleStyle(isMe: boolean): CSSProperties {
     minHeight: 42,
     padding: 10,
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    columnGap: 8,
   }
 }
 
-function CallPreviewImage({ clip, label }: { clip: ArkmeCallVideoPerspective; label: string }) {
+function CallPreviewAsset({ clip, label, onReady, onUnavailable }: { clip: ArkmeCallVideoPerspective; label: string; onReady: () => void; onUnavailable: () => void }) {
   useArkmeLocale()
   const [posterFailed, setPosterFailed] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
   const style: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }
+  return clip.posterUrl && !posterFailed ? <img src={clip.posterUrl} alt={label} loading="lazy" style={style} onLoad={onReady} onError={() => { setPosterFailed(true); if (!clip.videoUrl) onUnavailable() }} />
+    : clip.videoUrl && !videoFailed ? <video src={clip.videoUrl} muted playsInline preload="metadata" aria-label={label} style={style} onLoadedData={onReady} onError={() => { setVideoFailed(true); onUnavailable() }} />
+      : null
+}
+
+function clipIdentity(clip: ArkmeCallVideoPerspective): string { return `${clip.videoUrl ?? ''}\0${clip.posterUrl ?? ''}` }
+
+/** Renewed media URLs load behind the last decoded frame, rather than blanking it. */
+function CallPreviewImage({ clip, label, onUnavailable }: { clip: ArkmeCallVideoPerspective; label: string; onUnavailable: () => void }) {
+  const [displayed, setDisplayed] = useState<ArkmeCallVideoPerspective>()
+  const [failedIdentity, setFailedIdentity] = useState<string>()
+  const identity = clipIdentity(clip)
+  const layers = displayed && clipIdentity(displayed) !== identity ? [displayed, clip] : [clip]
+  const unavailable = failedIdentity === identity && !displayed
   return <>
-    {clip.posterUrl && !posterFailed ? <img src={clip.posterUrl} alt={label} loading="lazy" style={style} onError={() => { setPosterFailed(true) }} />
-      : clip.videoUrl && !videoFailed ? <video src={clip.videoUrl} muted playsInline preload="metadata" aria-label={label} style={style} onError={() => { setVideoFailed(true) }} />
-        : <span style={{ display: 'grid', placeItems: 'center', height: '100%', fontSize: 11 }}>{tr("预览暂不可用")}</span>}
-    <span aria-hidden style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.3))' }}><PlayIcon size={24} weight="fill" /></span>
+    {layers.map(layer => {
+      const key = clipIdentity(layer)
+      const hidden = Boolean(displayed && clipIdentity(displayed) !== key)
+      return <span key={key} aria-hidden={hidden || undefined} style={{ position: 'absolute', inset: 0, opacity: hidden ? 0 : 1 }}>
+        <CallPreviewAsset clip={layer} label={label} onReady={() => { if (key === identity) { setDisplayed(layer); setFailedIdentity(undefined) } }} onUnavailable={() => { if (key === identity) { setFailedIdentity(key); if (displayed && clipIdentity(displayed) === key) setDisplayed(undefined); onUnavailable() } }} />
+      </span>
+    })}
+    <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: displayed ? '#fff' : arkmeTheme.tertiary, background: displayed ? 'linear-gradient(transparent,rgba(0,0,0,.3))' : undefined }}>
+      {displayed ? <PlayIcon aria-hidden size={24} weight="fill" /> : <span role="status" style={{ fontSize: 10 }}>{tr(unavailable ? '预览暂不可用' : '加载中…')}</span>}
+    </span>
   </>
 }
 
 export function ArkmeCallRecordContent({ call, revision, onOpenDetail }: { call: NonNullable<ArkmeTimelineItem['callRecord']>; revision?: number | string | undefined; onOpenDetail?: ((videoUrl?: string) => void) | undefined }) {
   useArkmeLocale()
-  const { element, detail, failed } = useCallRecordPreview(call.callRef, revision)
+  const { element, detail, failed, loading, retry, retryVersion } = useCallRecordPreview(call.callRef, revision, call.stableId)
+  const [mediaFailed, setMediaFailed] = useState(false)
   const summary = detail?.summaryText?.trim() || call.summaryText?.trim()
   const status = detail?.summaryStatus ?? call.summaryStatus
   const video = call.mediaType === 'video' && detail?.videoRecord?.available ? detail.videoRecord : undefined
   const perspectives = video?.perspectives?.filter(clip => clip.videoUrl || clip.posterUrl) ?? []
   const clips: ArkmeCallVideoPerspective[] = perspectives.length ? perspectives : video?.videoUrl || video?.posterUrl ? [{ perspective: 'main', ...(video.videoUrl ? { videoUrl: video.videoUrl } : {}), ...(video.posterUrl ? { posterUrl: video.posterUrl } : {}) }] : []
-  return <div ref={element} data-arkme-call-record={call.mediaType} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, maxWidth: 300, textAlign: 'left', color: arkmeTheme.secondary }}>
+  // Reserve the same region before details/first frames arrive. Unanswered calls stay compact.
+  const showPreview = call.mediaType === 'video' && (clips.length > 0 || (call.durationSeconds ?? detail?.durationSeconds ?? 0) > 0
+    || /\d+:\d{2}/.test(call.text))
+  const previewState = clips.length ? 'ready' : failed ? 'failed' : detail?.videoRecord?.available === false || !call.callRef ? 'unavailable' : 'loading'
+  const mediaIdentity = clips.map(clip => `${clip.videoUrl}:${clip.posterUrl}`).join('|')
+  useEffect(() => { setMediaFailed(false) }, [mediaIdentity, retryVersion])
+  return <div ref={element} data-arkme-call-record={call.mediaType} data-arkme-call-has-video={clips.length > 0 || undefined} data-arkme-call-preview-state={showPreview ? previewState : undefined} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 12, minWidth: 0, width: showPreview ? 460 : undefined, maxWidth: showPreview ? '100%' : 300, textAlign: 'left', color: arkmeTheme.secondary }}>
+    <div data-arkme-call-copy style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 200px', minWidth: 0 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 14, fontWeight: 400, lineHeight: '20px' }}>
     {call.mediaType === 'video'
       // Original Flutter MaterialIcons videocam_outlined (U+F48C), without substituting a different video icon.
@@ -53,13 +82,19 @@ export function ArkmeCallRecordContent({ call, revision, onOpenDetail }: { call:
     {summary && <p data-arkme-call-summary="preview" style={{ margin: 0, fontSize: 12, lineHeight: '18px', color: arkmeTheme.tertiary, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{tr("AI 摘要：")}{summary}</p>}
     {status === 'pending' && <span role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("摘要生成中…")}</span>}
     {status === 'failed' && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("摘要生成失败，查看详情")}</span>}
-    {failed && !summary && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("预览加载失败，查看详情")}</span>}
-    {clips.length > 0 && <div aria-label={tr("通话视频预览")} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    {(failed || mediaFailed) && <button type="button" disabled={loading} onClick={event => { event.stopPropagation(); retry() }} style={{ alignSelf: 'flex-start', padding: 0, border: 0, background: 'transparent', color: arkmeTheme.tertiary, fontSize: 11, cursor: 'pointer' }}>{tr(loading ? '正在重试…' : '预览未加载 · 重试')}</button>}
+    </div>
+    {showPreview && <div aria-label={tr("通话视频预览")} style={{ position: 'relative', display: 'flex', gap: 8, width: 136, height: 114, flex: '0 1 auto', maxWidth: '100%' }}>
+      {clips.length === 0 && <>
+        {[0, 1].map(index => <span key={index} aria-hidden style={{ flex: '1 1 0', minWidth: 0, borderRadius: 8, background: arkmeTheme.layer1 }} />)}
+        <span role="status" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 11, color: arkmeTheme.tertiary }}>{tr(previewState === 'loading' ? '预览加载中…' : '预览暂不可用')}</span>
+      </>}
       {clips.map((clip, index) => {
         const label = clip.label || (clip.perspective === 'self' ? '我的视角' : clip.perspective === 'peer' ? '对方视角' : '通话视频')
-        const preview = <span style={{ display: 'block', position: 'relative', width: '100%', aspectRatio: '9 / 16', borderRadius: 8, overflow: 'hidden', background: arkmeTheme.layer1 }}><CallPreviewImage clip={clip} label={label} /></span>
-        return <span key={`${clip.videoUrl}:${clip.posterUrl}:${index}`} style={{ display: 'block', width: 88, maxWidth: '100%' }}>
-          {onOpenDetail ? <button type="button" aria-label={tr("查看{v0}通话详情", { v0: label })} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
+        const preview = <span style={{ display: 'block', position: 'relative', width: '100%', height: '100%', aspectRatio: '9 / 16', borderRadius: 8, overflow: 'hidden', background: arkmeTheme.layer1 }}><CallPreviewImage clip={clip} label={label} onUnavailable={() => { setMediaFailed(true) }} /></span>
+        const slot = `${clip.perspective}:${clip.userId ?? clips.slice(0, index).filter(previous => previous.perspective === clip.perspective).length}`
+        return <span key={`${call.stableId ?? ''}:${slot}:${retryVersion}`} style={{ display: 'block', width: 64, minWidth: 0, height: '100%', flex: '0 1 64px', maxWidth: '100%' }}>
+          {onOpenDetail ? <button type="button" aria-label={tr("查看{v0}通话详情", { v0: label })} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ display: 'block', width: '100%', height: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
         </span>
       })}
     </div>}

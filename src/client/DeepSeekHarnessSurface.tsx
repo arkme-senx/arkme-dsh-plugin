@@ -5,6 +5,7 @@ import { HARNESS_NATIVE_OPEN, type NativeSessionRequest } from './harness-native
 import { conversationMenuLayer } from './conversation-menu-layer.js'
 import { watchHarnessSurfaceViewport } from './harness-surface-viewport.js'
 import { watchHarnessWindowDrag } from './harness-window-drag.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 export const DEEPSEEK_HARNESS_EMBED_QUERY = 'arkme-harness-embed'
 export const DEEPSEEK_HARNESS_NATIVE_SETTINGS_QUERY = 'arkme-harness-native-settings'
@@ -12,10 +13,10 @@ export const DEEPSEEK_HARNESS_NATIVE_SETTINGS_QUERY = 'arkme-harness-native-sett
 const styles: Record<string, CSSProperties> = {
   root: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    overflow: 'hidden', background: '#fff', position: 'absolute', inset: 0,
+    overflow: 'hidden', background: arkmeTheme.base, position: 'absolute', inset: 0,
   },
   frame: {
-    width: '100%', height: '100%', border: 0, display: 'block', background: '#fff',
+    width: '100%', height: '100%', border: 0, display: 'block', background: 'transparent', colorScheme: 'inherit',
   },
 }
 
@@ -63,6 +64,7 @@ function NativeAccountSurface(props: SurfaceProps) {
 /** One document per account. Selection never changes the page URL or boot graph. */
 function NativeSurface({ visible = true, nativeSettings = false, accountId, accountScope, followSession = true, source }: SurfaceProps & { source: NativeSessionRequest }) {
   const [url] = useState(() => deepSeekHarnessEmbedUrl(nativeSettings))
+  const [loaded, setLoaded] = useState(false)
   const seatRef = useRef<HTMLSpanElement>(null)
   const surfaceRef = useRef<HTMLElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
@@ -102,7 +104,8 @@ function NativeSurface({ visible = true, nativeSettings = false, accountId, acco
       ref={frameRef}
       title="DeepSeek Harness"
       src={url}
-      style={{ ...styles.frame, ...(floating ? { background: 'transparent' } : {}) }}
+      style={{ ...styles.frame, visibility: loaded ? 'inherit' : 'hidden' }}
+      onLoad={() => setLoaded(true)}
       loading="eager"
       allow="clipboard-read; clipboard-write; microphone"
     />

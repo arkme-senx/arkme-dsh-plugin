@@ -9,6 +9,10 @@ import { createArkmeFileTransfers } from '../src/file-transfer-owner.js'
 import { ArkmePluginError } from '../src/services/service.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 
+// These integration cases stage 256+ real files serially (hash/copy/atomic state writes).
+// Allow shared CI disk contention without relaxing the default timeout for other tests.
+const bulkFileLifecycleTimeout = 30_000
+
 const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 async function fixture() {
@@ -72,7 +76,7 @@ describe('account-bound file lifecycle', () => {
       const next = await f.stage('next.pdf')
       expect(await f.owner.files()).toEqual([next])
     } finally { clock.mockRestore() }
-  })
+  }, bulkFileLifecycleTimeout)
 
   it('stages images and files beyond 256 after restart while retaining the byte quota', async () => {
     const f = await fixture()
@@ -92,7 +96,7 @@ describe('account-bound file lifecycle', () => {
     await expect(full.stageBytes('YQ==', { fileName: 'over.txt', mimeType: 'text/plain' }))
       .rejects.toMatchObject({ code: 'file-cache-full' })
     expect(await full.files()).toHaveLength(258)
-  })
+  }, bulkFileLifecycleTimeout)
 
   it('persists cleanup even when the subsequent import fails', async () => {
     const f = await fixture()
@@ -943,7 +947,7 @@ it('keeps long article and ordinary staging independent after restart', async ()
   const restarted = new FileTransfers(f.directory, f.ports, 1000)
   expect(await restarted.files()).toHaveLength(257)
   await expect(f.stage('ordinary.pdf')).resolves.toMatchObject({fileName:'ordinary.pdf'})
-})
+}, bulkFileLifecycleTimeout)
 
 it('identifies the exact long article image when upload or fixed-limit validation fails', async () => {
   const f=await fixture(); const path=join(f.directory,'failed.png'); await writeFile(path,'image bytes')

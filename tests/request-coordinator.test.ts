@@ -26,6 +26,149 @@ describe('ArkmeRequestCoordinator', () => {
     expect(secondOpen).toHaveBeenCalledTimes(1)
     coordinator.dispose()
   })
+  it('accounts an already admitted transport to its original lane when a foreground reader joins', async () => {
+    const coordinator = new ArkmeRequestCoordinator()
+    const gate = deferred<number>()
+    const operation = vi.fn(() => gate.promise)
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', operation }
+    const background = coordinator.run({ ...read, lane: 'background-read' })
+    const foreground = coordinator.run({ ...read, lane: 'interactive-read' })
+    try {
+      await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce())
+      expect(coordinator.snapshotStats()['background-read:auth']?.started).toBe(1)
+      expect(coordinator.snapshotStats()['interactive-read:auth']?.started ?? 0).toBe(0)
+    } finally { gate.resolve(7); await Promise.all([background, foreground]); coordinator.dispose() }
+  })
+
+  it('retains foreground priority until the last foreground subscriber leaves', async () => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator({ laneLimits: {
+      'background-read': { maxConcurrent: 1 }, 'interactive-read': { maxConcurrent: 1 },
+    } })
+    const bgGate = deferred<void>(), fgGate = deferred<void>()
+    const bgBlocker = coordinator.run({ scope: 'user:1', lane: 'background-read', service: 'audio', operation: () => bgGate.promise })
+    const fgBlocker = coordinator.run({ scope: 'user:1', lane: 'interactive-read', service: 'audio', operation: () => fgGate.promise })
+    const operation = vi.fn(async () => 7)
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', cancelWhenUnobserved: true, operation }
+    const background = coordinator.run({ ...read, lane: 'background-read' })
+    const controller = new AbortController()
+    const first = coordinator.run({ ...read, lane: 'interactive-read', signal: controller.signal })
+    const second = coordinator.run({ ...read, lane: 'interactive-read' })
+    const cancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    try {
+      controller.abort(); await cancelled
+      fgGate.resolve(); await fgBlocker
+      await expect(Promise.all([second, background])).resolves.toEqual([7, 7])
+      expect(operation).toHaveBeenCalledOnce()
+    } finally {
+      bgGate.resolve(); fgGate.resolve(); coordinator.dispose()
+      await Promise.allSettled([bgBlocker, fgBlocker, first, second, background])
+    }
+  })
+
+  it.each([false, true])('uses the remaining subscribers priority for recovery without resetting its deadline (cancel=%s)', async cancelForeground => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator({ laneLimits: { 'background-read': { maxConcurrent: 1 } } })
+    const failure = new Error('temporary'), timeout = new Error('deadline')
+    const firstAttempt = deferred<number>(), busy = deferred<void>()
+    const operation = vi.fn().mockImplementationOnce(() => firstAttempt.promise).mockResolvedValue(7)
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', cancelWhenUnobserved: true, operation,
+      recovery: { maxAttempts: 2, deadlineMs: 100, delay: (error: unknown) => error === failure ? 20 : undefined,
+        exhausted: (error: unknown) => error as Error, timeout: () => timeout } }
+    const background = coordinator.run({ ...read, lane: 'background-read' })
+    const backgroundCheck = cancelForeground ? expect(background).rejects.toBe(failure) : expect(background).resolves.toBe(7)
+    await vi.advanceTimersByTimeAsync(10)
+    const blocker = coordinator.run({ scope: 'user:1', lane: 'background-read', service: 'audio', operation: () => busy.promise })
+    const controller = new AbortController()
+    const foreground = coordinator.run({ ...read, lane: 'interactive-read', signal: controller.signal })
+    const foregroundCheck = cancelForeground ? expect(foreground).rejects.toMatchObject({ name: 'AbortError' }) : expect(foreground).resolves.toBe(7)
+    try {
+      if (cancelForeground) controller.abort()
+      firstAttempt.reject(failure)
+      await vi.advanceTimersByTimeAsync(21)
+      expect(operation).toHaveBeenCalledTimes(cancelForeground ? 1 : 2)
+      // The first attempt retains its original background slot until release.
+      // Its retry can pass the background blocker only with a live foreground subscriber.
+      await vi.advanceTimersByTimeAsync(70)
+      await Promise.all([backgroundCheck, foregroundCheck])
+    } finally {
+      busy.resolve(); coordinator.dispose()
+      await Promise.allSettled([background, foreground, blocker])
+    }
+  })
+
+  it('returns a queued shared read to the background budget when its foreground subscriber cancels', async () => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator({ laneLimits: {
+      'background-read': { maxConcurrent: 1 }, 'interactive-read': { maxConcurrent: 1 },
+    } })
+    const bgGate = deferred<void>(), fgGate = deferred<void>()
+    const bgBlocker = coordinator.run({ scope: 'user:1', lane: 'background-read', service: 'audio', operation: () => bgGate.promise })
+    const fgBlocker = coordinator.run({ scope: 'user:1', lane: 'interactive-read', service: 'audio', operation: () => fgGate.promise })
+    const operation = vi.fn(async () => 7)
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', cancelWhenUnobserved: true, operation }
+    const background = coordinator.run({ ...read, lane: 'background-read' })
+    const controller = new AbortController()
+    const foreground = coordinator.run({ ...read, lane: 'interactive-read', signal: controller.signal })
+    const cancelled = expect(foreground).rejects.toMatchObject({ name: 'AbortError' })
+    try {
+      controller.abort(); await cancelled
+      fgGate.resolve(); await fgBlocker
+      await vi.advanceTimersByTimeAsync(10)
+      expect(operation).not.toHaveBeenCalled()
+      bgGate.resolve(); await bgBlocker
+      await expect(background).resolves.toBe(7)
+      expect(operation).toHaveBeenCalledOnce()
+    } finally {
+      bgGate.resolve(); fgGate.resolve(); coordinator.dispose()
+      await Promise.allSettled([bgBlocker, fgBlocker, background, foreground])
+    }
+  })
+
+  it('promotes a queued shared background read when a foreground consumer joins, without duplicating it', async () => {
+    const coordinator = new ArkmeRequestCoordinator({ laneLimits: { 'background-read': { maxConcurrent: 1 } } })
+    const busy = deferred<void>(), result = deferred<number>()
+    const blocker = coordinator.run({ scope: 'user:1', lane: 'background-read', service: 'audio', operation: () => busy.promise })
+    const operation = vi.fn(() => result.promise)
+    const backgroundController = new AbortController()
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', route: 'profiles', cancelWhenUnobserved: true, operation }
+    const background = coordinator.run({ ...read, lane: 'background-read', signal: backgroundController.signal })
+    const cancelled = expect(background).rejects.toMatchObject({ name: 'AbortError' })
+    const foreground = coordinator.run({ ...read, lane: 'interactive-read' })
+    try {
+      await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce())
+      backgroundController.abort()
+      await cancelled
+      result.resolve(7)
+      await expect(foreground).resolves.toBe(7)
+      expect(operation).toHaveBeenCalledOnce()
+    } finally {
+      backgroundController.abort(); result.resolve(7); busy.resolve()
+      await Promise.allSettled([background, foreground, blocker]); coordinator.dispose()
+    }
+  })
+
+  it('keeps route admission and account isolation when promoting a shared read', async () => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator({ laneLimits: { 'background-read': { maxConcurrent: 1 } } })
+    const busy = deferred<void>()
+    const blocker = coordinator.run({ scope: 'user:1', lane: 'background-read', service: 'auth', route: 'profiles', operation: () => busy.promise })
+    const operation = vi.fn(async () => 7)
+    const read = { scope: 'user:1', service: 'auth' as const, key: 'profiles', route: 'profiles', operation }
+    const background = coordinator.run({ ...read, lane: 'background-read' })
+    const foreground = coordinator.run({ ...read, lane: 'interactive-read' })
+    try {
+      await vi.advanceTimersByTimeAsync(250)
+      expect(operation).not.toHaveBeenCalled()
+      await expect(coordinator.run({ ...read, scope: 'user:2', lane: 'interactive-read', operation: async () => 8 })).resolves.toBe(8)
+      const checks = [expect(background).rejects.toBeInstanceOf(ArkmeStaleRequestError), expect(foreground).rejects.toBeInstanceOf(ArkmeStaleRequestError)]
+      coordinator.invalidateScope('user:1')
+      await Promise.all(checks)
+      expect(operation).not.toHaveBeenCalled()
+    } finally {
+      busy.resolve(); await Promise.allSettled([blocker, background, foreground]); coordinator.dispose()
+    }
+  })
 
   it.each([false, true])('applies the final failure cooldown only when route-scoped (%s)', async coolsRoute => {
     vi.useFakeTimers()
@@ -354,4 +497,23 @@ it('reports bounded admission reasons and cancellation without exposing request 
   expect(onQueue.mock.calls[1]?.[1]).toMatchObject({ queueWaitMs: 1000, blockedBy: 'lane-concurrency,lane-rate,service-concurrency,service-rate' })
   expect(JSON.stringify(onQueue.mock.calls)).not.toContain('secret-account')
   coordinator.dispose()
+})
+
+
+it('bounds the aggregate queue across services and frees cancelled admission without starting it', async () => {
+  const coordinator = new ArkmeRequestCoordinator({ maxConcurrent: 1, maxQueued: 1 })
+  const held = deferred<string>()
+  const base = { scope: 'u', lane: 'interactive-read' as const, service: 'chat' as const }
+  const first = coordinator.run({ ...base, operation: () => held.promise })
+  const controller = new AbortController(), queuedOperation = vi.fn(async () => 'queued')
+  const queued = coordinator.run({ ...base, service: 'auth', signal: controller.signal, operation: queuedOperation })
+  const cancelled = expect(queued).rejects.toMatchObject({ name: 'AbortError' })
+  try {
+    await expect(coordinator.run({ ...base, service: 'team', operation: async () => 'overflow' })).rejects.toMatchObject({ name: 'ArkmeRequestQueueOverflowError' })
+    controller.abort(); await cancelled
+    const next = coordinator.run({ ...base, service: 'record', operation: async () => 'admitted' })
+    held.resolve('first')
+    await expect(next).resolves.toBe('admitted')
+    expect(queuedOperation).not.toHaveBeenCalled()
+  } finally { held.resolve('first'); await first; coordinator.dispose() }
 })

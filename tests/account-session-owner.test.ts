@@ -27,6 +27,33 @@ function fixture(initial?: ArkmeSessionCredentials, commitStatus: 'ready' | 'rel
 }
 
 describe('Arkme account session owner', () => {
+  test('recovers a lost commit acknowledgement without repeating credential writes', async () => {
+    const {owner, store, bridge} = fixture()
+    vi.mocked(bridge.commit).mockRejectedValueOnce(new Error('commit timeout'))
+    await owner.write(credentials(42))
+    expect(await owner.scopedSession()).toEqual(credentials(42))
+    expect(store.write).toHaveBeenCalledTimes(1)
+    expect(bridge.attest).toHaveBeenLastCalledWith({kind:'account', userId:42})
+    expect(bridge.abort).not.toHaveBeenCalled()
+  })
+  test('does not expose credentials when recovery requires relaunch', async () => {
+    const {owner, bridge} = fixture()
+    await owner.start()
+    vi.mocked(bridge.commit).mockRejectedValueOnce(new Error('commit timeout'))
+    vi.mocked(bridge.attest).mockResolvedValueOnce({status:'relaunch'})
+    await owner.write(credentials(42))
+    expect(await owner.scopedSession()).toBeUndefined()
+  })
+  test('preserves the original error and blocks access when recovery fails', async () => {
+    const {owner, store, bridge} = fixture()
+    await owner.start()
+    vi.mocked(bridge.commit).mockRejectedValueOnce(new Error('commit timeout'))
+    vi.mocked(bridge.attest).mockRejectedValueOnce(new Error('bridge unavailable'))
+    await expect(owner.write(credentials(42))).rejects.toThrow('commit timeout')
+    expect(await owner.scopedSession()).toBeUndefined()
+    expect(store.write).toHaveBeenCalledTimes(1)
+  })
+
   test('skips an already resolved conditional login without preparing a scope transition', async () => {
     const { owner, store, bridge } = fixture(credentials(42))
     await owner.write(credentials(42, 'stale-access'), async () => false)

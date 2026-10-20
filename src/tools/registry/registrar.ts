@@ -14,6 +14,10 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_day_review_generate',
+  'arkme_message_sync_retry',
+  'arkme_recording_speaker_correct',
+  'arkme_team_profile_update',
   'arkme_reactions_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -21,6 +25,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_archive_set',
   'arkme_official_notifications_read',
   'arkme_background_sound_disable',
+  'arkme_disable_automatic_ai',
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
@@ -36,6 +41,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_join_restriction_set',
   'arkme_message_withdraw',
   'arkme_contact_add',
+  'arkme_team_join',
   'arkme_contact_private_chat_open',
   'arkme_group_create',
   'arkme_group_rename',
@@ -81,6 +87,11 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
+  if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
+  if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
+  if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
+  if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
@@ -103,6 +114,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
     ? '是否确认将这个主题的快记展示在首页？'
     : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'
+  if (name === 'arkme_disable_automatic_ai') return `是否关闭自动 AI 功能“${cleanArgument(args.key, 40)}”？关闭后不再开始新的模型调用，已经发出的调用可能完成并产生费用。`
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'

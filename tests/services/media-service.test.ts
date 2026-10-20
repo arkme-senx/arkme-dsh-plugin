@@ -106,6 +106,41 @@ describe('MediaService', () => {
     await expect(media.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
+  it.each(['audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/wav'])('proxies authorized context playback for %s with account and range boundaries', async mimeType => {
+    let userId = 42
+    const url = 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/audio_output/clip?Signature=fixture'
+    const fetchImpl = vi.fn(async () => new Response('audio', { status: 206, headers: {
+      'content-type': mimeType, 'content-range': 'bytes 0-4/100', 'accept-ranges': 'bytes',
+    } }))
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const read = vi.spyOn(runtime, 'authenticatedAudioPost').mockResolvedValue({ clips: [{ url, mime_type: mimeType, start_offset_ms: 100, end_offset_ms: 900 }] })
+    const request = { session_id: 'session', child_id: 'child', evidence_id: 'evidence', version: 'version', ordinal: 0, from: 1, to: 8 }
+    const { clips } = await media.issueContextPlayback(request)
+    expect(read).toHaveBeenCalledWith('/api/v1/audio/context/playback', request, expect.objectContaining({ userId: 42 }), undefined, expect.objectContaining({ bypassCache: true }))
+    expect(clips[0]).toMatchObject({ mimeType, startOffsetMillis: 100, endOffsetMillis: 900 })
+    expect(JSON.stringify(clips)).not.toContain(url)
+    const response = await media.fetchMedia(clips[0]!.playbackRef, 'bytes=0-4')
+    expect(response.response.status).toBe(206)
+    expect(response.descriptor.mimeType).toBe(mimeType)
+    await expect(response.response.text()).resolves.toBe('audio')
+    expect(fetchImpl).toHaveBeenCalledWith(new URL(url), expect.objectContaining({ headers: { Range: 'bytes=0-4' }, redirect: 'error' }))
+    userId = 99
+    await expect(media.fetchMedia(clips[0]!.playbackRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { mime_type: 'video/mp4' }, { mime_type: 'application/octet-stream' },
+    { url: 'https://evil.test/clip?Signature=fixture' },
+    { url: 'https://jotmo-useraudio-prod.oss-cn-hangzhou.aliyuncs.com/clip?Signature=fixture' },
+    { start_offset_ms: -1 }, { end_offset_ms: 0 },
+  ])('rejects invalid context playback before issuing a media reference: %j', async invalidClip => {
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, vi.fn())
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    vi.spyOn(runtime, 'authenticatedAudioPost').mockResolvedValue({ clips: [{ url: 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/clip?Signature=fixture', mime_type: 'audio/mp4', start_offset_ms: 0, end_offset_ms: 1000, ...invalidClip }] })
+    await expect(media.issueContextPlayback({})).rejects.toMatchObject({ code: 'offline-context-audio-invalid' })
+  })
 
   it.each([true, false])('loads the recorded asset rather than the current avatar (asset available: %s)', async available => {
     const fetchImpl = vi.fn(async () => new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64'), { headers: { 'Content-Type': 'image/png' } }))

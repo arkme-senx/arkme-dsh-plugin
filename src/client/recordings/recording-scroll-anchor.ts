@@ -1,15 +1,18 @@
-export interface RecordingScrollAnchor { item: string; time: number; offset: number }
+export interface RecordingScrollAnchor { item: string; time: number; offset: number; pane: HTMLElement; restore(): void }
 
-/** Keep the sentence at the top of the pane stationary when preceding text
- * changes height. A removed sentence falls forward to its recording time. */
-export function captureRecordingScrollAnchor(pane: HTMLElement | null): RecordingScrollAnchor | undefined {
+export function captureRecordingScrollAnchor(pane: HTMLElement | null, preferredItemId?: string): RecordingScrollAnchor | undefined {
   if (pane === null) return undefined
-  const top = pane.getBoundingClientRect().top
-  const row = [...pane.querySelectorAll<HTMLElement>('[data-recording-transcript-item]')]
-    .find(element => element.getBoundingClientRect().bottom > top)
-  return row === undefined ? undefined : { item: row.dataset.recordingTranscriptItem!, time: Number(row.dataset.recordingStart), offset: row.getBoundingClientRect().top - top }
+  const bounds = pane.getBoundingClientRect()
+  const rows = [...pane.querySelectorAll<HTMLElement>('[data-recording-transcript-item]')]
+  const visible = (row: HTMLElement) => row.getBoundingClientRect().bottom > bounds.top && row.getBoundingClientRect().top < bounds.bottom
+  const preferred = rows.find(row => row.dataset.recordingTranscriptItem === preferredItemId)
+  const row = preferred && visible(preferred) ? preferred : rows.find(visible)
+  if (row === undefined) return undefined
+  const anchor: RecordingScrollAnchor = { item: row.dataset.recordingTranscriptItem!, time: Number(row.dataset.recordingStart), offset: row.getBoundingClientRect().top - bounds.top, pane, restore: () => { restoreRecordingScrollAnchor(pane, anchor) } }
+  return anchor
 }
 
+/** Stable identity first; a replaced page falls forward to the source time. */
 export function restoreRecordingScrollAnchor(pane: HTMLElement | null, anchor: RecordingScrollAnchor | undefined): void {
   if (pane === null || anchor === undefined) return
   const rows = [...pane.querySelectorAll<HTMLElement>('[data-recording-transcript-item]')]

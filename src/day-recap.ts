@@ -1,6 +1,7 @@
 /** Small, explicit, text-only generation contract. No source handles, coordinates or attachments. */
 export const DAY_RECAP_MAX_ITEMS = 24
 export const DAY_RECAP_MAX_CHARS = 6000
+export const DAY_RECAP_MAX_EXCERPT_CHARS = 1200
 export interface DayRecapInput {
   accountScope: string
   bucketDate: string
@@ -43,7 +44,7 @@ export function parseDayRecapInput(value: unknown): DayRecapInput {
       return dayRecapText(row[key], limit)
     }
     return { id: row.id, time: field('time', 30), kind: field('kind', 20), title: field('title', 80),
-      excerpt: field('excerpt', 240), scope: field('scope', 100) }
+      excerpt: field('excerpt', DAY_RECAP_MAX_EXCERPT_CHARS), scope: field('scope', 100) }
   })
   if (JSON.stringify(items).length > DAY_RECAP_MAX_CHARS) throw new Error('小结素材超出本次长度上限')
   return { accountScope: source.accountScope, bucketDate: source.bucketDate, timezone: source.timezone, consent: true, items }

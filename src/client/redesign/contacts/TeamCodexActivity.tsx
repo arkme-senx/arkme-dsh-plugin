@@ -8,6 +8,7 @@ import { TeamCodexConversation, codexReadingKey, newCodexReadingState, type Code
 import type { CodexConversationTarget } from './codex-conversation-target.js'
 import { codexTaskViewKey, readPersonalCodexState, type CodexTeamScope, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
 import { CodexDispatchEntry } from './CodexDispatchEntry.js'
+import { CodexSyncStatus, codexCollectorUnavailable, codexSyncLabel } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
 
 const taskGroupKey = (task: CodexViewTask): string => {
@@ -23,6 +24,8 @@ function status(task: TeamCodexTask): string {
   if (task.status === 'expired') return tr('接入指令已过期')
   if (task.status === 'paused') return tr('已暂停')
   if (task.status === 'disconnected') return tr('已断开')
+  if (task.state === 'working' && codexCollectorUnavailable(task)) return codexSyncLabel(task)
+  if (task.state === 'working' && task.cloud?.remote) return tr('等待结束状态')
   return tr(task.state === 'working' ? '处理中' : task.state === 'interrupted' ? '已中断' : task.state === 'finished' ? '本轮结束' : '已连接')
 }
 
@@ -273,7 +276,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       <strong className="arkme-codex-identity">Codex</strong>
       <div className="arkme-codex-centered-selector" ref={picker}>
         <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => setPickerOpen(!pickerOpen)}>
-          {selected && <span className="arkme-codex-state-dot" data-working={liveTask(selected)&&selected.state==='working'} aria-hidden/>}
+          {selected && <span className="arkme-codex-state-dot" data-working={liveTask(selected)&&selected.state==='working'&&!selected.cloud?.remote&&!codexCollectorUnavailable(selected)} aria-hidden/>}
           <strong title={selected?.title}>{selected?.title ?? tr('选择任务')}</strong>
           {selected && <span className="arkme-team-codex-status" data-state={selected.state}>{status(selected)}</span>}<span aria-hidden>⌄</span>
         </button>
@@ -284,6 +287,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         {!isPersonal && <ArkmeUserAvatar {...(selected.member.avatarRef?{avatarRef:selected.member.avatarRef}:{})} {...(selected.member.avatarFallback?{fallback:selected.member.avatarFallback}:{})} size={20} label={selected.member.displayName}/>}
         <span title={`${selected.member.displayName} · ${selected.projectName || tr('未归属项目')}`}>{!isPersonal && `${selected.member.displayName} · `}{selected.projectName || tr('未归属项目')}{isPersonal && ` · ${selected.cloud?.sourceName || tr('本机 Codex')}`}</span>
       </>}</div>
+      {selected && <CodexSyncStatus key={selected.id} task={selected}/>}
     </header>}
     {!conversation && <><div className="arkme-codex-toolbar">
     <div className="arkme-team-codex-owner">

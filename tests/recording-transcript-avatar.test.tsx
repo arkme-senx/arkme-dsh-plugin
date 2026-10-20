@@ -40,7 +40,7 @@ describe('recording transcript avatar lifecycle', () => {
       />)}</>)
     })
     expect(mocks.call).toHaveBeenCalledTimes(1)
-    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' })
+    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' }, undefined, { priority: 'background' })
     expect(renderer!.root.findAllByType('img')).toHaveLength(0)
     const stopPropagation = vi.fn()
     act(() => {
@@ -50,6 +50,10 @@ describe('recording transcript avatar lifecycle', () => {
     expect(stopPropagation).toHaveBeenCalledOnce()
     expect(edit).toHaveBeenCalledOnce()
     expect(play).toHaveBeenCalledOnce()
+    const stopDoubleClick = vi.fn()
+    act(() => { renderer!.root.findAllByType('button')[0]!.props.onDoubleClick({ stopPropagation: stopDoubleClick }) })
+    expect(stopDoubleClick).toHaveBeenCalledOnce()
+    expect(play).toHaveBeenCalledOnce()
     await act(async () => { resolve({ mediaType: 'image/png', dataBase64: 'YXZhdGFy' }) })
     expect(renderer!.root.findAllByType('img')).toHaveLength(88)
     expect(mocks.call).toHaveBeenCalledTimes(1)
@@ -58,7 +62,7 @@ describe('recording transcript avatar lifecycle', () => {
   it.each([0, 1, 17])('matches the real timeline color for avatar and unlinked speakers at index %s', async colorIndex => {
     mocks.call.mockResolvedValue({ mediaType: 'image/png', dataBase64: 'YXZhdGFy' })
     for (const avatarRef of ['avatar-self', undefined]) {
-      const speaker = { ...item, speakerColorIndex: colorIndex, speakerAvatarRef: avatarRef }
+      const speaker = { ...item, isSelf: false, speakerColorIndex: colorIndex, speakerAvatarRef: avatarRef }
       await act(async () => {
         renderer = create(<>
           <ArkmeRecordingTranscriptRow item={speaker} selected={false} onEditSpeaker={() => {}} onSelect={() => {}} />

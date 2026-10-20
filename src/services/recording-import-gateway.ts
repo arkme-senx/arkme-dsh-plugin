@@ -1,4 +1,7 @@
 import { abortRecordingFileUpload, uploadRecordingFile } from './recording-file-upload.js'
+import { assertRecordingImportBatchActive } from '../recording-import-contract.js'
+import { RECORDING_IMPORT_CONTRACT_VERSION } from '../recording-workflow-contract.js'
+import { recordingBatchOffset } from '../recording-import-identity.js'
 import {
   RecordingImportContractError,
   type RecordingImportJob,
@@ -37,6 +40,13 @@ const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
 const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
 const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
 const AUDIO_DIRECTORY_IMPORT_SCAN_LIMIT = 10_000
+const OWNER_SCAN_TTL = 5 * 60_000
+interface OwnerScan {
+  tasks: RecordingImportOwnerTaskSnapshot[]
+  remoteOffset: number
+  exhausted: boolean
+  touchedAt: number
+}
 
 const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'upload',
@@ -175,6 +185,14 @@ function remoteFileName(job: RecordingImportJob): string {
 }
 
 export class AudioRecordingImportGateway implements RecordingImportGateway, RecordingImportOwnerGateway {
+  private readonly ownerScans = new Map<string, OwnerScan>()
+  private ownerScanRevision = 0
+
+  private invalidateOwnerScans() {
+    this.ownerScanRevision++
+    this.ownerScans.clear()
+  }
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly uploadFile: typeof uploadRecordingFile = uploadRecordingFile,
@@ -293,11 +311,22 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     const offset = Math.max(0, Math.trunc(input.offset))
     const limit = Math.max(0, Math.trunc(input.limit))
     if (limit === 0) return { tasks: [], hasMore: false }
-    const scoped: RecordingImportOwnerTaskSnapshot[] = []
+    input.signal?.throwIfAborted()
+    await this.requireViewerSession(input.viewerUserId)
+    const now = Date.now()
+    for (const [key, scan] of this.ownerScans) {
+      if (now - scan.touchedAt > OWNER_SCAN_TTL) this.ownerScans.delete(key)
+    }
+    const key = `${input.viewerUserId}:${input.scope}:${input.toMillis}`
+    // Offset zero is an explicit refresh. Continuations reuse the raw-server
+    // cursor, including rows filtered out of the uploaded-file projection.
+    const cached = offset > 0 ? this.ownerScans.get(key) : undefined
+    const revision = this.ownerScanRevision
+    const scoped = cached ? [...cached.tasks] : []
     const targetCount = offset + limit + 1
-    let remoteOffset = 0
-    let exhausted = false
-    while (scoped.length < targetCount) {
+    let remoteOffset = cached?.remoteOffset ?? 0
+    let exhausted = cached?.exhausted ?? false
+    while (!exhausted && scoped.length < targetCount) {
       const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
         input.viewerUserId,
         '/api/v1/audio/get-session-ls',
@@ -359,6 +388,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         exhausted = true
         break
       }
+    }
+    input.signal?.throwIfAborted()
+    await this.requireViewerSession(input.viewerUserId)
+    if (revision === this.ownerScanRevision) {
+      this.ownerScans.set(key, { tasks: scoped, remoteOffset, exhausted, touchedAt: Date.now() })
+      // Keep only a few live scans; these are transient, account-scoped reads.
+      while (this.ownerScans.size > 8) this.ownerScans.delete(this.ownerScans.keys().next().value!)
     }
     return {
       tasks: scoped.slice(offset, offset + limit),
@@ -484,21 +520,24 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
   }
 
   async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
-    const recovered = await this.recoverSession(job, signal)
+    assertRecordingImportBatchActive(job.batch)
+    const recovered = job.createRequestUID && !job.sessionId ? undefined : await this.recoverSession(job, signal)
     if (recovered !== undefined) return recovered.sessionId
 
-    const existingNames = await this.findExistingFileNames({
+    const existingNames = job.createRequestUID ? [] : await this.findExistingFileNames({
       viewerUserId: job.userId, fileNames: [job.fileName], ...(signal === undefined ? {} : { signal }),
     })
     if (existingNames.length > 0) {
       throw new RecordingImportContractError('recording-import-duplicate', '已存在同名录音，请更名后重试')
     }
-    const timezoneOffsetMillis = -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
+    const timezoneOffsetMillis = job.batch ? recordingBatchOffset(job.startAtMillis, job.batch.timeZone) : -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
     const session = await this.requireJobSession(job)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/new-session',
+      job.batch ? '/api/v1/audio/import-batches/new-session' : '/api/v1/audio/new-session',
       {
         source: 2,
+        ...(job.createRequestUID ? { create_request_uid: job.createRequestUID } : {}),
+        ...(job.batch ? { import_batch: { contract_version: RECORDING_IMPORT_CONTRACT_VERSION, batch_id: job.batch.batchId, item_index: job.batch.itemIndex, item_count: job.batch.itemCount, time_zone: job.batch.timeZone, file_sha256: job.sha256, file_size: job.fileSize, ownership: job.belongUserId === job.userId ? 'self' : 'other' } } : {}),
         recording_kind: job.recordingKind,
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,
@@ -653,13 +692,16 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     signal?: AbortSignal,
     options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
-    return await this.runtime.authenticatedAudioPost<T>(
+    if (options.lane === 'write') this.invalidateOwnerScans()
+    try { return await this.runtime.authenticatedAudioPost<T>(
       path,
       body,
       await this.requireViewerSession(viewerUserId),
       signal,
       options,
-    )
+    ) } finally {
+      if (options.lane === 'write') this.invalidateOwnerScans()
+    }
   }
 
   private isAccountMismatch(error: unknown): boolean {

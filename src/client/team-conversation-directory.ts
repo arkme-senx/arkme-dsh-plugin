@@ -1,6 +1,7 @@
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
-import type { TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
+import type { TeamChannel, TeamConversation, TeamPage, TeamSide } from '../team-app-contract.js'
+import { teamDirectoryPreferences, teamEntryHidden, teamEntryPinned, type TeamDirectoryPreferences } from './team-directory-preferences.js'
 
 type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
 const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
@@ -33,7 +34,9 @@ export function startTeamDirectory(key: string): () => void {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
       try {
+        if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
         let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
+        if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
         const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items].map(c => [c.key, c]))
         const seen = new Set<string>()
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
@@ -52,6 +55,10 @@ export function startTeamDirectory(key: string): () => void {
     if (controller.signal.aborted || account !== key) return
     const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
     snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
+    void teamDirectoryPreferences.reconcile(key, items, async c => {
+      const page = await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: c.ref, expectedAccountKey: key, limit: 1 }, controller.signal)
+      return Math.max(0, ...page.messages.map(message => message.createdAt))
+    }, controller.signal).catch(() => { /* Keep hidden entries hidden until new-message evidence can be verified. */ })
     if (again) { again = false; await refresh() }
   }
   request = refresh
@@ -73,13 +80,35 @@ export function startTeamDirectory(key: string): () => void {
   }
 }
 
-/** Merges independent UI rows; preserves ordinary pinned order and object identity. */
-export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[]): (T | { kind: 'team'; conversation: TeamConversation; activeAtMillis: number; pinned: false })[] {
-  const result: (T | { kind: 'team'; conversation: TeamConversation; activeAtMillis: number; pinned: false })[] = [...ordinary]
-  for (const conversation of teams) {
-    const row = { kind: 'team' as const, conversation, activeAtMillis: conversation.updatedAt, pinned: false as const }
-    const index = result.findIndex(item => !item.pinned && item.activeAtMillis < row.activeAtMillis)
-    result.splice(index < 0 ? result.length : index, 0, row)
+export interface TeamConversationGroup {
+  key: string; channel: TeamChannel; conversations: TeamConversation[]; latest: TeamConversation
+  unread: number; unreadExact: boolean
+}
+export function groupTeamConversations(conversations: readonly TeamConversation[], complete = true): TeamConversationGroup[] {
+  const groups = new Map<string, Map<string, TeamConversation>>()
+  for (const c of conversations) {
+    if (c.side !== 'team') continue
+    const group = groups.get(c.channel.jotmoId) ?? new Map<string, TeamConversation>()
+    group.set(c.key, c); groups.set(c.channel.jotmoId, group)
+  }
+  return [...groups].map(([key, group]) => {
+    const rows = [...group.values()].sort((a,b)=>b.updatedAt-a.updatedAt || a.key.localeCompare(b.key)), latest = rows[0]!
+    return {key,channel:latest.channel,conversations:rows,latest,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),unreadExact:complete}
+  }).sort((a,b)=>b.latest.updatedAt-a.latest.updatedAt || a.key.localeCompare(b.key))
+}
+
+type TeamDirectoryRow = { kind:'team'; conversation:TeamConversation; activeAtMillis:number; pinned:boolean }
+  | { kind:'team-folder'; group:TeamConversationGroup; activeAtMillis:number; pinned:boolean }
+/** Internal visitors share one team entry; external-facing conversations retain their direct entry. */
+export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true, preferences: TeamDirectoryPreferences = {}): (T | TeamDirectoryRow)[] {
+  const result: (T | TeamDirectoryRow)[] = [...ordinary]
+  const teamRows: TeamDirectoryRow[] = [
+    ...groupTeamConversations(teams,complete).filter(group=>!teamEntryHidden(preferences,{kind:'folder',group})).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.latest.updatedAt,pinned:teamEntryPinned(preferences,{kind:'folder',group})})),
+    ...teams.filter(c=>c.side==='external' && !teamEntryHidden(preferences,{kind:'conversation',conversation:c})).map(conversation=>({kind:'team' as const,conversation,activeAtMillis:conversation.updatedAt,pinned:teamEntryPinned(preferences,{kind:'conversation',conversation})})),
+  ]
+  for (const row of teamRows.sort((a,b)=>b.activeAtMillis-a.activeAtMillis)) {
+    const index=result.findIndex(item=>Number(row.pinned)>Number(item.pinned) || row.pinned===item.pinned && item.activeAtMillis<row.activeAtMillis)
+    result.splice(index<0?result.length:index,0,row)
   }
   return result
 }

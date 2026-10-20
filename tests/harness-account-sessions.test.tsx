@@ -2,17 +2,51 @@
 import { act, createElement, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AccountSessionBrowser, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
+import { AccountSessionBrowser, reconcileAccountSessions, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
 import type { DshAccountSession } from '../src/dsh-remote/account-session-types.js'
 import { openNativeAccountSession } from '../src/client/harness-native-navigation.js'
 import { callArkme } from '../src/sdk/index.js'
 import { HARNESS_MENU_OPEN } from '../src/client/harness-session-menu-bridge.js'
+import type { HarnessNativeWindow } from '../src/harness-native-transport-script.js'
 vi.mock('../src/sdk/index.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/harness-native-navigation.js', () => ({ openNativeAccountSession: vi.fn() }))
 const row = (overrides: Partial<DshAccountSession> = {}): DshAccountSession => ({ runtimeRef: 'windows', sessionRef: 'same', workspaceRef: 'workspace', workspaceName: 'repo', title: 'Windows 对话', updatedAt: 20, capabilities: [], running: false, blank: false, archived: false, origin: '', desktopName: 'Windows', sameDesktop: false, runtimeName: 'web', presence: 'online', local: false, ...overrides })
 const local = { current: 'same', ids: ['same'], byId: { same: { id: 'same', displayTitle: '本机', title: '本机', blank: false, running: true, updatedAt: 10 } }, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined }
 const ws = { items: [{ workspaceId: 'workspace', path: '/repo', title: 'repo', sessionIds: ['same'], createdAt: 1 }], archivedSessionIds: [], phase: 'ready', state: 'idle', error: null }
 const cleanups: Array<() => void> = []
+it('publishes one source per container only after complete pagination, without deleting another device session', async () => {
+  const nativeWindow = window as HarnessNativeWindow
+  const original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
+  const publish = vi.fn()
+  nativeWindow.__ARKME_NATIVE_DIRECTORY__ = { publish, writable: () => true, select: () => {} }
+  cleanups.push(() => { nativeWindow.__ARKME_NATIVE_DIRECTORY__ = original })
+  const surface = document.createElement('section'); document.body.append(surface)
+  const current = row({ runtimeRef: 'mac', local: true, runtimeName: 'web:scope_home', projectionAsOfSeq: 30 })
+  const old = { ...current, runtimeRef: 'old', local: false, presence: 'offline' as const }
+  const other = row({ runtimeRef: 'other', runtimeName: 'web:scope_other', projectionAsOfSeq: 30 })
+  let finish!: (page: unknown) => void
+  vi.mocked(callArkme)
+    .mockResolvedValueOnce({ contractVersion: 1, items: [old, other, { ...current }], localRuntimeRef: 'mac', nextCursor: { updated_at: 20, session_ref: 'same', runtime_ref: 'old' } })
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
+  cleanups.push(stop)
+  await Promise.resolve(); await Promise.resolve()
+  expect(publish).not.toHaveBeenCalled()
+  finish({ contractVersion: 1, items: [current], localRuntimeRef: 'mac' })
+  await Promise.resolve(); await Promise.resolve()
+  expect(publish).toHaveBeenLastCalledWith([other, current], 'mac')
+  expect(projectAccountWorkspaces(ws, publish.mock.lastCall![0]).items.flatMap(item => item.sessionIds)).not.toContain(accountSessionKey(old))
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [{ ...old }, { ...other }, { ...current }], localRuntimeRef: 'mac' })
+  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  await Promise.resolve(); await Promise.resolve()
+  expect(publish).toHaveBeenCalledTimes(1)
+  // A failed/incomplete refresh must not briefly republish the old duplicates.
+  vi.mocked(callArkme).mockRejectedValue(new Error('network unavailable'))
+  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  await Promise.resolve(); await Promise.resolve()
+  expect(publish).toHaveBeenCalledTimes(1)
+})
+
 it('refreshes the surface catalog without a mounted menu, single-flights pulls, and stops when hidden or disposed', async () => {
   vi.useFakeTimers()
   const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'; document.body.append(surface)
@@ -197,4 +231,22 @@ it('preloads the account catalog before the native menu mounts and retains it ac
   act(() => root.render(null))
   act(() => root.render(element))
   expect(container.textContent).toContain('Windows 对话')
+})
+
+it('uses the same single entry for workspace memberships and a retained selected source', () => {
+ const nativeWindow = window as HarnessNativeWindow, original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
+ nativeWindow.__ARKME_NATIVE_DIRECTORY__ = { publish: () => {}, writable: () => true, select: () => {}, preferredSession: id => id === accountSessionKey(row()) ? 'same' : undefined }
+ cleanups.push(() => { nativeWindow.__ARKME_NATIVE_DIRECTORY__ = original })
+ expect(projectAccountWorkspaces(ws, [row()]).items.flatMap(item => item.sessionIds)).toEqual(['same'])
+ expect(projectAccountSessions(local as never, [row()], row()).current).toBe('same')
+ expect(projectAccountSessions(local as never, [row()], row()).ids).toEqual(['same'])
+})
+
+it('removes expired proof and removed optional revision fields instead of retaining the old cached object', () => {
+ const original = row({ historyRevision: 'h', contentRevision: 'c', coveredLocalHistory: { runtimeRef: 'local', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
+ const withoutProof = row({ historyRevision: 'h', contentRevision: 'c' })
+ const updated = reconcileAccountSessions([original], [withoutProof])
+ expect(updated[0]).toBe(withoutProof); expect(updated[0]?.coveredLocalHistory).toBeUndefined()
+ const legacy = row()
+ expect(reconcileAccountSessions(updated, [legacy])[0]).toBe(legacy)
 })

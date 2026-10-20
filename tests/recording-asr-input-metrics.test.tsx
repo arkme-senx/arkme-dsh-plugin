@@ -30,7 +30,7 @@ it('renders precise duration, localized states and no stale values during loadin
   const value = daily(6000)
   const ready = { ...value, asrInputDurationMillis: 8316000 }
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('转写输入时长 2小时18分36秒')
-  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('缺少可靠记录的历史输入时长暂不可用')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('历史计量缺失表示转写可能已完成')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={{ ...ready, asrInputDurationMillis: 500 }}/>)).toContain('不足1秒')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).toContain('转写输入时长 —')
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready} loading/>)).not.toContain('2小时')
@@ -41,7 +41,7 @@ it('renders precise duration, localized states and no stale values during loadin
   expect(partial).toContain('部分转写输入时长暂不可确认')
   connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
   expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('ASR input 2h 18m 36s')
-  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical input without reliable records is unavailable')
+  expect(renderToStaticMarkup(<RecordingDailyMetrics metrics={ready}/>)).toContain('Historical measurement missing means transcription may be complete')
 })
 
 it('preserves partial attempt totals and clearly labels historical estimates', () => {

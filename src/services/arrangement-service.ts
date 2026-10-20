@@ -1,5 +1,9 @@
+import { arrangementEvidence, projectEvidence, type ArrangementEvidenceData } from '../arrangement-provenance.js'
+import { ArrangementSourceRecovery } from './arrangement-source-recovery.js'
 import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
 import { createHmac } from 'node:crypto'
+import { projectArrangementRecordingSource, validRecordingSourceDay } from '../arrangement-recording-source.js'
+import { validArrangementDateContext } from '../arrangement-creation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeArrangementReorderInput,
@@ -17,6 +21,9 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
+  ArkmeArrangementCreateInput,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -54,7 +61,7 @@ function arrangementCreationSource(item: Record<string, unknown>): ArkmeArrangem
   const records = listValue(item.related_records).map(objectValue)
   const recordCount = listValue(item.record_uids).filter(value => stringValue(value).trim()).length
   const project = (text: string, at: unknown) => ({ text, ...(numberValue(at) > 0 ? { createdAtMillis: Math.trunc(numberValue(at)) } : {}) })
-  if (records.length || recordCount) {
+  if ((records.length || recordCount) && !listValue(item.source_items).length && !stringValue(item.source_text)) {
     const items = records.filter(record => stringValue(record.text_content).trim()).map(record => project(stringValue(record.text_content), record.create_at))
     return { kind: 'quick-note', items, unavailableCount: Math.max(recordCount, records.length) - items.length }
   }
@@ -116,7 +123,8 @@ export class ArrangementService {
   private readonly arrangementReminderRefs = new Map<string, ArkmeArrangementReminderRefEntry>()
   private readonly arrangementWrites = new Set<string>()
 
-  constructor(private readonly runtime: ServiceRuntime) {}
+  private readonly recovery: ArrangementSourceRecovery
+  constructor(private readonly runtime: ServiceRuntime) { this.recovery = new ArrangementSourceRecovery(runtime) }
 
   async arrangementBoardCache(accountScope: string, rawPages?: unknown): Promise<ArkmeArrangementBoardCache> {
     const session = await this.runtime.requireSession()
@@ -143,16 +151,36 @@ export class ArrangementService {
     this.arrangementWrites.clear()
   }
 
-  async createArrangement(input: { requestId: string; texts: string[] }, signal?: AbortSignal): Promise<{ items: ArkmeArrangementItem[] }> {
+  async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal): Promise<{ items: ArkmeArrangementItem[] }> {
     const texts = input.texts.map(text => text.trim())
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(input.requestId) || texts.length < 1 || texts.length > 10 || texts.some(text => !text || [...text].length > 500) || texts.reduce((n,text) => n + [...text].length,0) > 2000) {
       throw new ArkmePluginError('arrangement-create-invalid', '最多输入10条，每条500字，总计2000字', false, 400)
     }
+    if ('dueAtMillis' in input || (input.dateContext !== undefined && !validArrangementDateContext(input.dateContext))) {
+      throw new ArkmePluginError('arrangement-create-invalid', '安排默认日期或时区无效，请刷新后重试', false, 400)
+    }
+    const dateContext = input.dateContext ? { default_date: input.dateContext.defaultDate, timezone: input.dateContext.timezone } : undefined
     const session = await this.runtime.requireSession()
     return this.withArrangementWrite(`create:${input.requestId}`, session.userId, async () => {
+      if (dateContext) {
+        // Old servers ignore unknown JSON fields. Verify support before any write.
+        const unsupported = () => new ArkmePluginError('arrangement-date-context-unavailable', '当前服务暂不支持日历默认日期，尚未提交安排；输入已保留。', false, 409)
+        let capabilities: Record<string, unknown>
+        try {
+          capabilities = objectValue(await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/creation-options', {}, session, signal, { lane: 'interactive-read', bypassCache: true }))
+        } catch (error) {
+          if (error instanceof ArkmePluginError && ([404, 405, 501].includes(error.upstreamStatus ?? 0) || error.code === 'arkme-response-invalid')) throw unsupported()
+          throw error
+        }
+        if (capabilities.contract_version !== 1 || capabilities.date_context !== true) throw unsupported()
+      }
       const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/fast-create-async', {
         uid: input.requestId, scene_type: 'private', topic_uid: '', sent_messages: texts.map(text => ({ type: 'text', text })),
+        ...(dateContext ? { required_contract_version: 1, date_context: dateContext } : {}),
       }, session, signal)
+      if (dateContext && (data.contract_version !== 1 || objectValue(data.date_context).default_date !== dateContext.default_date || objectValue(data.date_context).timezone !== dateContext.timezone)) {
+        throw new ArkmePluginError('arrangement-create-uncertain', '未能确认默认日期已保存，输入已保留；请使用原请求重试核对。', true, 502)
+      }
       const items = await Promise.all(listValue(data.items).map(raw => this.arrangementItem(raw, session.userId)))
       if (!items.length) throw new ArkmePluginError('arrangement-create-uncertain', '未能确认创建结果，请重试核对', true, 502)
       return { items }
@@ -175,16 +203,21 @@ export class ArrangementService {
   }
 
   async listArrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; dueStartAtMillis?: number; dueEndAtMillis?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     const session = await this.runtime.requireSession()
     const status = options.status ?? 'all'
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
     const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const hasRange = options.dueStartAtMillis !== undefined || options.dueEndAtMillis !== undefined
+    if (hasRange && (!Number.isSafeInteger(options.dueStartAtMillis) || !Number.isSafeInteger(options.dueEndAtMillis)
+      || options.dueStartAtMillis! <= 0 || options.dueEndAtMillis! < options.dueStartAtMillis! || options.order === 'board')) {
+      throw new ArkmePluginError('arrangement-read-invalid', '安排日期范围无效', false, 400)
+    }
     let data: Record<string, unknown>
     try { data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
       '/api/v1/arrangements/list',
-      { status: arrangementStatusCode(status), limit, offset, ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { board_version: options.boardVersion } : {}) } : {}) },
+      { status: arrangementStatusCode(status), limit, offset, ...(hasRange ? { due_start_at: options.dueStartAtMillis, due_end_at: options.dueEndAtMillis } : {}), ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { board_version: options.boardVersion } : {}) } : {}) },
       session,
       options.signal,
       { lane: 'interactive-read' },
@@ -201,12 +234,57 @@ export class ArrangementService {
     }
     const rawItems = listValue(data.list)
     const items = await Promise.all(rawItems.map(async raw => await this.arrangementItem(raw, session.userId)))
+    if (hasRange && items.some(item => item.dueAtMillis === undefined || item.dueAtMillis < options.dueStartAtMillis! || item.dueAtMillis > options.dueEndAtMillis!)) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '未能确认当天安排，请稍后重试', true, 502)
+    }
     const total = Math.max(0, Math.trunc(numberValue(data.total)))
     const nextOffset = offset + rawItems.length
     const hasMore = rawItems.length > 0 && nextOffset < total
     const board = objectValue(data.board)
     if (board.supported === true && !stringValue(board.version).trim()) throw new ArkmePluginError('arrangement-contract-invalid', '安排排序版本缺失', true, 502)
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}), ...(typeof board.supported === 'boolean' ? { board: { supported: board.supported, version: stringValue(board.version) } } : options.order === 'board' ? { board: { supported: false, version: '' } } : {}) }
+  }
+
+  /** Dedicated endpoint: old list servers may silently ignore an unknown source-date filter. */
+  async recordingDayArrangements(options: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    const { dateStamp, tzOffsetMillis } = options
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    if (!validRecordingSourceDay(dateStamp, tzOffsetMillis) || !Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)
+      || (offset > 0 && !options.snapshotVersion?.trim()) || (options.snapshotVersion?.length ?? 0) > 512) {
+      throw new ArkmePluginError('arrangement-read-invalid', '录音来源日期或分页参数无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const unavailable = { state: 'unavailable', items: [], total: null, hasMore: false } as const
+    let data: Record<string, unknown>
+    try {
+      data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/recording-day', {
+        date_stamp: dateStamp, tz_offset: tzOffsetMillis, limit, offset,
+        ...(options.snapshotVersion ? { snapshot_version: options.snapshotVersion } : {}),
+      }, session, signal, { lane: 'interactive-read', bypassCache: true })
+    } catch (error) {
+      if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? 0)) return { ...unavailable, items: [] }
+      throw error
+    }
+    if (data.contract_version !== 1 || data.date_stamp !== dateStamp || data.tz_offset !== tzOffsetMillis) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '未能确认录音来源安排，请稍后重试', true, 502)
+    }
+    if (data.state === 'unavailable') return { ...unavailable, items: [] }
+    const version = stringValue(data.snapshot_version)
+    if (!['ready', 'processing', 'partial'].includes(stringValue(data.state)) || !Number.isSafeInteger(data.total) || numberValue(data.total) < 0
+      || !Array.isArray(data.list) || data.list.length > limit || !version.trim() || version.length > 512
+      || (options.snapshotVersion !== undefined && version !== options.snapshotVersion)) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '录音来源安排响应不完整，请刷新', true, 502)
+    }
+    const total = data.total as number
+    const items = await Promise.all(data.list.map(raw => this.arrangementItem(raw, session.userId)))
+    const nextOffset = offset + items.length
+    if (nextOffset > total || (nextOffset < total && items.length === 0) || new Set(items.map(item => item.arrangementRef)).size !== items.length
+      || items.some(item => item.recordingSource?.state !== 'ready' || item.recordingSource.dateStamp !== dateStamp || item.recordingSource.tzOffsetMillis !== tzOffsetMillis)) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '录音来源安排与当天不匹配，请刷新', true, 502)
+    }
+    return { state: data.state as 'ready' | 'processing' | 'partial', items, total, hasMore: nextOffset < total,
+      ...(nextOffset < total ? { nextOffset } : {}), snapshotVersion: version }
   }
 
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
@@ -476,7 +554,40 @@ export class ArrangementService {
     if (stringValue(data.uid).trim() !== arrangementUid) {
       throw new ArkmePluginError('arrangement-contract-invalid', '安排详情响应身份不一致', true, 502)
     }
-    return await this.arrangementItem(data, session.userId)
+    const recovered = objectValue(data.source_provenance).version !== 1 && [5,6].includes(Number(data.source_type))
+      ? await this.recovery.recover(data, session, signal).catch(() => undefined) : undefined
+    return await this.arrangementItem(data, session.userId, recovered)
+  }
+
+  async sourceEvidence(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArrangementEvidenceData> {
+    const session = await this.runtime.requireSession()
+    const ref = this.openArrangementRef(arrangementRef, session.userId)
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail', { uid: ref.arrangementUid }, session, signal, { lane: 'interactive-read', bypassCache: true })
+    if (data.uid !== ref.arrangementUid || ![1,2,3].includes(Number(data.status))) throw new ArkmePluginError('arrangement-source-mismatch', '安排已删除或来源已变化，请刷新', false, 409)
+    const recovered = objectValue(data.source_provenance).version !== 1 ? await this.recovery.cached(data, session) : undefined
+    const evidence = arrangementEvidence(data, recovered).find(e => e.id === evidenceId)
+    if (!evidence) throw new ArkmePluginError('arrangement-source-missing', '来源信息已变化，请刷新', false, 404)
+    if (evidence.persisted) {
+      const result = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/source/read', {
+        uid: ref.arrangementUid, evidence_id: evidenceId,
+      }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      if (result.state === 'unavailable') throw new ArkmePluginError('arrangement-source-unavailable', stringValue(result.reason) || '来源已删除或当前无权查看', false, 404)
+      const source = objectValue(result.source)
+      // IDs locate evidence; never let a response replace its saved identity or destination.
+      const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref',
+        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref',
+        'input_id', 'request_uid', 'voice_file_id', 'agent_session_id', 'agent_message_id', 'occurred_at']
+      if (result.state !== 'ready' || fields.some(key => source[key] !== evidence[key])
+        || (source.text !== undefined && typeof source.text !== 'string')
+        || (result.content !== undefined && typeof result.content !== 'string')) {
+        throw new ArkmePluginError('arrangement-source-contract-invalid', '来源响应与当前安排不一致，请重试', true, 502)
+      }
+      evidence.text = evidence.kind === 'agent' ? stringValue(result.content) : stringValue(source.text)
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-source-account-changed', '账号已变化，请重新打开', false, 409)
+    return evidence
   }
 
   private async reconcileArrangementDelete(
@@ -508,7 +619,7 @@ export class ArrangementService {
     }
   }
 
-  private async arrangementItem(raw: unknown, viewerUserId: number): Promise<ArkmeArrangementItem> {
+  private async arrangementItem(raw: unknown, viewerUserId: number, recovered?: ArrangementEvidenceData): Promise<ArkmeArrangementItem> {
     const item = objectValue(raw)
     const arrangementUid = stringValue(item.uid).trim()
     if (arrangementUid === '') {
@@ -516,11 +627,21 @@ export class ArrangementService {
     }
     const dueAtMillis = Math.trunc(numberValue(item.due_at))
     const remindAtMillis = Math.trunc(numberValue(item.remind_at))
+    if (!recovered && [5,6].includes(Number(item.source_type)) && objectValue(item.source_provenance).version !== 1) {
+      const session = await this.runtime.requireSession()
+      if (session.userId === viewerUserId) recovered = await this.recovery.cached(item, session)
+    }
+    const evidence = arrangementEvidence(item, recovered)
+    const summary = evidence.find(e => e.kind === 'audio_summary' && e.summary_id)
+    const recordingSource = projectArrangementRecordingSource(summary ? { ...item, recording_source: { kind: 'daily-summary', date_stamp: summary.date_stamp, tz_offset: summary.tz_offset, summary_id: summary.summary_id } } : item)
     return {
       arrangementRef: await this.arrangementRef(viewerUserId, arrangementUid),
       title: stringValue(item.title),
       description: stringValue(item.description),
       creationSource: arrangementCreationSource(item),
+      provenance: evidence.map(projectEvidence),
+      sourceType: numberValue(item.source_type),
+      ...(recordingSource ? { recordingSource } : {}),
       recognitionState: stringValue(item.recognition_state),
       status: arrangementStatus(item.status),
       reminderEnabled: booleanValue(item.reminder_enabled),

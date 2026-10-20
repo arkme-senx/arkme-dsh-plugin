@@ -36,6 +36,31 @@ function fixture(cloud?:TeamCodexCloudPort){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('buffers a final reply during a short runtime restart, then ingests it exactly once',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    f.service.close()
+    expect(f.record('Stop').status).toBe(0)
+    const reopened=new TeamCodexService(f.options);services.push(reopened)
+    await reopened.tick();await reopened.tick()
+    expect((await reopened.events(teamRef,task.id)).items.map(e=>e.kind)).toEqual(['UserPromptSubmit','Stop'])
+    expect((await reopened.state(teamRef)).tasks[0]?.state).toBe('finished')
+  })
+  it('never uses an expired lease or a lease revoked by logout to capture offline text',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    f.service.close()
+    writeFileSync(join(f.directory,'capture-lease.json'),JSON.stringify({userId:11,at:Date.now()-601000,expiresAt:Date.now()-1000}))
+    f.record('Stop',{last_assistant_message:'expired secret'})
+    const reopened=new TeamCodexService(f.options);services.push(reopened);await reopened.tick()
+    reopened.fence();f.record('Stop',{last_assistant_message:'logout secret'})
+    await reopened.tick()
+    expect((await reopened.events(teamRef,task.id)).items.map(e=>e.text)).toEqual(['请修复页面'])
+  })
+  it('does not use the previous account lease when a different account is active',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    writeFileSync(join(f.directory,'active.json'),JSON.stringify({userId:22,at:Date.now()}))
+    f.record('Stop',{last_assistant_message:'another account'})
+    expect((await f.service.events(teamRef,task.id)).items).toHaveLength(1)
+  })
   it.each(['consent-first','hook-first'])('registers metadata only after consent AND a real isolated Hook, in either order: %s',async order=>{
     const post=vi.fn(async(_owner:number,path:string,body:Record<string,unknown>)=>{
       if(path.endsWith('list-mine')) return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}

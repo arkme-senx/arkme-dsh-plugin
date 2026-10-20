@@ -15,6 +15,16 @@ import type {
 import { ProfileService } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, joinUrl, objectValue, stringValue } from './service.js'
 import { MessageActionService } from './message-action-service.js'
+import { arkoImageInputFromWire, arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
+import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
+import type { ArkmeLocalFile } from '../file-transfer-contract.js'
+import { ArkoLocalMarks } from './arko-local-marks.js'
+
+export interface ArkoImagePorts {
+  read(fileRef: string): Promise<{ file: ArkmeLocalFile }>
+  upload(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]>
+  project(raw: unknown, userId: number): ArkmeContentBlock[]
+}
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
 
@@ -96,6 +106,7 @@ function arkoModelOptionFromData(value: unknown): ArkmeArkoModelOption {
     || description.trim() !== description || routeKey.split('/', 1)[0] !== provider) {
     throw new ArkmePluginError('arko-model-contract-invalid', 'Arko 模型目录响应无效', true, 502)
   }
+  const imageInput = arkoImageInputFromWire(data.image_input)
   return {
     routeKey,
     displayName,
@@ -104,6 +115,7 @@ function arkoModelOptionFromData(value: unknown): ArkmeArkoModelOption {
     costDescription: stringValue(data.cost_description),
     recommended: booleanValue(data.recommended),
     selected: booleanValue(data.selected),
+    ...(imageInput === undefined ? {} : { imageInput }),
   }
 }
 
@@ -211,13 +223,15 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ArkoService {
+  readonly localMarks: ArkoLocalMarks
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
     private readonly messageActions?: MessageActionService,
-  ) {}
+    private readonly images?: ArkoImagePorts,
+  ) { this.localMarks = new ArkoLocalMarks(runtime) }
 
   dispose(): void {
     this.arkoProfileDisplayNameCache.clear()
@@ -312,7 +326,23 @@ export class ArkoService {
     )
     const rawItems = listValue(data.message_ls)
     const projectedItems = rawItems
-      .map(arkoHistoryItemFromData)
+      .map(raw => {
+        const item = arkoHistoryItemFromData(raw)
+        if (item === undefined) return undefined
+        const attachments = listValue(objectValue(raw).attachments).map(objectValue).filter(attachment =>
+          stringValue(attachment.file_asset_uid) !== ''
+          && ARKO_IMAGE_MIME_TYPES.some(mime => mime === attachment.mime_type))
+        if (attachments.length === 0) return item
+        const blocks = this.images?.project({ media_display_items: attachments.map(attachment => ({ ...attachment, file_kind: 1 })) }, session.userId) ?? []
+        // Keep an explicit placeholder if the original is deleted or cannot be resolved.
+        const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock =>
+          blocks.find(block => block.fileAssetUid === attachment.file_asset_uid) ?? {
+            kind: 'image', mediaRef: '', fileAssetUid: stringValue(attachment.file_asset_uid),
+            fileName: stringValue(attachment.file_name) || '图片', mimeType: stringValue(attachment.mime_type),
+            size: numberValue(attachment.size), sortOrder,
+          })
+        return { ...item, contentBlocks }
+      })
       .filter((item): item is ArkmeArkoHistoryItem => item !== undefined)
     const conversationRefs = new Map<number, Promise<string>>()
     const items = this.messageActions === undefined
@@ -329,7 +359,10 @@ export class ArkoService {
         }))
     const hasMore = rawItems.length === normalizedLimit
     return {
-      items,
+      items: await Promise.all(items.map(async item => {
+        const localMarkRef = await this.localMarks.project(item, session.userId)
+        return localMarkRef ? { ...item, localMarkRef } : item
+      })),
       hasMore,
       ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
     }
@@ -344,10 +377,15 @@ export class ArkoService {
       modelRouteKey?: string
       replyToRunUid?: string
       replyToAssistantMsgId?: number
+      imageFileRefs?: readonly string[]
+      expectedUserId?: number
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {
     const session = await this.runtime.requireSession()
+    if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
+      throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
+    }
     const sessionId = options.sessionId ?? (await this.arkoEnsureSession(options.signal)).sessionId
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const replyToRunUid = options.replyToRunUid?.trim() ?? ''
@@ -373,6 +411,27 @@ export class ArkoService {
     if (modelRouteKey !== '' && (modelRouteKey.length > 128 || !ARKO_MODEL_ROUTE_PATTERN.test(modelRouteKey))) {
       throw new ArkmePluginError('arko-model-route-invalid', '请选择有效的 Arko 模型', false)
     }
+    const imageFileRefs = options.imageFileRefs ?? []
+    let attachments: ArkmeUploadedAsset[] = []
+    if (imageFileRefs.length > 0) {
+      if (hasContinuationRun) throw new ArkmePluginError('arko-image-continuation-unavailable', '当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留', false)
+      if (imageFileRefs.length > 9 || new Set(imageFileRefs).size !== imageFileRefs.length
+        || imageFileRefs.some(ref => !/^arkme-file-v1\.[0-9a-f-]{36}$/.test(ref))) {
+        throw new ArkmePluginError('arko-image-invalid', '请选择有效的图片附件', false)
+      }
+      // A cached UI capability must not allow an obsolete backend to accept text only.
+      const catalog = await this.arkoModelCatalog(options.signal)
+      const capability = catalog.options.find(option => option.routeKey === modelRouteKey)?.imageInput
+      if (capability === undefined || this.images === undefined) {
+        throw new ArkmePluginError('arko-images-unavailable', arkoImageInputError(undefined, [{ mimeType: '', size: 0, fileName: '' }])!, false)
+      }
+      const files = await Promise.all(imageFileRefs.map(async ref => (await this.images!.read(ref)).file))
+      const invalid = arkoImageInputError(capability, files)
+      if (invalid !== undefined) throw new ArkmePluginError('arko-image-invalid', invalid, false)
+      attachments = await this.images.upload(imageFileRefs, options.signal)
+      if (attachments.length !== imageFileRefs.length) throw new ArkmePluginError('arko-image-upload-incomplete', '图片上传未完成，请重试', true)
+      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
+    }
     const body: Record<string, unknown> = {
       model: 2,
       session_id: sessionId,
@@ -386,7 +445,12 @@ export class ArkoService {
         reply_to_run_uid: replyToRunUid,
         reply_to_assistant_msg_id: replyToAssistantMsgId,
       } : {}),
-      client_capabilities: ['dsh.arko.v1'],
+      client_capabilities: ['dsh.arko.v1', ...(attachments.length ? ['dsh.arko.images.v1'] : [])],
+      ...(attachments.length === 0 ? {} : {
+        attachments_protocol_version: 1,
+        attachments: attachments.map(asset => ({ type: 'image', file_asset_uid: asset.fileAssetUid,
+          file_name: asset.fileName, mime_type: asset.mimeType, size: asset.size })),
+      }),
     }
     if (modelRouteKey !== '') body.model_route_key = modelRouteKey
     const accepted = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(

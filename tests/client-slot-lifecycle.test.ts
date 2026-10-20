@@ -62,7 +62,7 @@ afterEach(() => {
 describe('desktop harness startup lifecycle', () => {
   it('signals readiness after local plugin services register without waiting for account auth', () => {
     const notifyHarnessReady = vi.fn()
-    vi.stubGlobal('window', { arkmeDesktop: { notifyHarnessReady } })
+    vi.stubGlobal('window', { location: { hostname: 'localhost', search: '' }, arkmeDesktop: { notifyHarnessReady } })
     const registrations: string[] = []
     let readinessSurface: (() => null) | undefined
 
@@ -139,6 +139,7 @@ describe('Arkme directory slot lifecycle', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
+        location: { hostname: 'localhost', search: '' },
         setInterval: (...args: Parameters<typeof setInterval>) => globalThis.setInterval(...args),
         clearInterval: (timer: ReturnType<typeof setInterval>) => globalThis.clearInterval(timer),
       },

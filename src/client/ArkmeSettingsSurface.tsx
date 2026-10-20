@@ -1,3 +1,5 @@
+import { migrationDownloadProgress } from '../app-migration-shared.js'
+import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
@@ -32,6 +34,7 @@ import type {
 import { callArkme } from './api.js'
 import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
 import { publishProfileChange } from './profile-change-store.js'
+import { confirmPhoneBinding } from './social-access-store.js'
 import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -629,6 +632,7 @@ export function PhoneBindDialog({
       const auth = await callArkme<ArkmeAuthSnapshot>(unbind ? 'auth.phone.unbind' : 'auth.phone.verify', unbind ? { code } : { phone, code })
       if (!mountedRef.current) return
       arkmeAuthStore.setAuth(auth)
+      confirmPhoneBinding(auth, !unbind)
       if (unbind && auth.status === 'binding-required') {
         onClose()
         return
@@ -779,9 +783,12 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
   useArkmeLocale()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const migrationView = useSyncExternalStore(appMigrationStore.subscribe, appMigrationStore.getSnapshot, appMigrationStore.getSnapshot)
+  const migrationEnabled = localMigrationDesktop() && migrationView.status?.phase !== 'disabled'
   const appUpdateState = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const [clientConfig, setClientConfig] = useState<ArkmeClientConfig>()
+  const showAppUpdate = (clientConfig ?? authState.config)?.hostPolicy?.capabilities.clientSelfUpdate !== false
   const [logoutBusy, setLogoutBusy] = useState(false)
   const [cancellationBusy, setCancellationBusy] = useState(false)
   const [notificationBusy, setNotificationBusy] = useState(false)
@@ -1163,9 +1170,11 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         <VersionSettingsRow
           title={tr("ArkME 客户端")}
           version={aboutArkmeVersion(appUpdateState.status?.currentVersion)}
-          feedback={`${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${tr(appUpdateRow.feedback ?? '正在读取更新状态…')}`}
-          actionLabel={tr("打开 APP 更新")}
-          onAction={() => { void arkmeAppUpdateStore.open() }}
+          {...(showAppUpdate ? {
+            feedback: migrationEnabled ? (migrationView.error || migrationView.status?.error || ({ downloading: `正在下载 · ${migrationDownloadProgress(migrationView.status)}`, completed: '下载完成，请手动运行安装包', available: `即我 ${migrationView.status?.target?.version ?? '3.0'} 已发布`, checking: '正在检查更新…', idle: '暂无可下载的新版本', failed: '下载失败，请重试', disabled: '迁移下载不可用' }[migrationView.status?.phase ?? 'idle'])) : `${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${tr(appUpdateRow.feedback ?? '正在读取更新状态…')}`,
+            actionLabel: tr("打开 APP 更新"),
+            onAction: () => { if (migrationEnabled) void appMigrationStore.open(); else void arkmeAppUpdateStore.open() },
+          } : {})}
         />
         <VersionSettingsRow title={tr("ArkME 插件")} version={`v${pluginManifest.version}`} />
         <VersionSettingsRow title="DeepSeek Harness" version={aboutHarnessVersion()} />

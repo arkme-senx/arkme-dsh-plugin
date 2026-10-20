@@ -49,16 +49,17 @@ export function ReactionAddIcon() {
   </svg>
 }
 
-export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean }) {
+export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
   const latestTarget = useRef(target)
   latestTarget.current = target
   // A conversation reference also carries its latest message sequence. Updating it
   // must not dispose the subscription (and erase reactions) for this message.
-  useEffect(() => watchVisibleReactionTarget(message.current, () => reactionPreview.watch(scope, latestTarget.current)), [activeScope, scope, target.id])
-  useEffect(() => { reactionPreview.updateTarget(scope, target) }, [activeScope, scope, target])
+  useEffect(() => enabled ? watchVisibleReactionTarget(message.current, () => reactionPreview.watch(scope, latestTarget.current)) : undefined, [enabled, activeScope, scope, target.id])
+  useEffect(() => { if (enabled) reactionPreview.updateTarget(scope, target) }, [enabled, activeScope, scope, target])
   const [open, setOpen] = useState(false)
+  useEffect(() => { if (!enabled) setOpen(false) }, [enabled])
   const [status, setStatus] = useState('')
   const [notice, setNotice] = useState<{ text: string; sequence: number }>()
   useEffect(() => { setNotice(undefined) }, [scope, target.id])
@@ -88,11 +89,11 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     return () => observer.disconnect()
   }, [positionToolbar])
   useLayoutEffect(() => {
-    if (!openRequested) return
+    if (!enabled || !openRequested) return
     positionToolbar()
     setOpen(current => toggleRequested ? !current : true)
     onOpenHandled?.()
-  }, [openRequested])
+  }, [enabled, openRequested])
   const panel = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<CSSProperties>({ left: 8, top: 8 })
   useLayoutEffect(() => {
@@ -129,7 +130,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     return accepted
   }
   const readOnly = reactionPreview.snapshot(target.id)?.private === true
-  const overlay = open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); anchor.current?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
+  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); anchor.current?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div role="group" aria-label="全部表情" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, height: 206, minHeight: 38, flexShrink: 1, alignContent: 'start', scrollSnapType: 'y mandatory', overflowY: 'auto' }}>
         {arkmeDefaultEmojis.map(emoji => <button type="button" key={emoji.id} aria-label={emoji.label} title={emoji.label}
           disabled={reactionPreview.busy(target.id)} aria-pressed={selected.includes(emoji.token)} onClick={() => toggle(emoji.token)}
@@ -144,9 +145,9 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     </section>
   return <div ref={message} data-arkme-reaction-preview data-arkme-reaction-ready={reactionPreview.snapshot(target.id) !== undefined || reactionPreview.error(target.id) !== undefined ? 'true' : 'false'} data-open={open} onMouseEnter={positionToolbar} onFocus={positionToolbar} style={{ position: 'relative', maxWidth: '100%', fontSize: 12 }}>
     {children}
-    <div className={standalone ? undefined : 'arkme-reaction-hover-toolbar'} style={standalone ? {} : { position: 'absolute', ...toolbar, zIndex: 5 }}>
+    {enabled && <div className={standalone ? undefined : 'arkme-reaction-hover-toolbar'} style={standalone ? {} : { position: 'absolute', ...toolbar, zIndex: 5 }}>
       <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, padding: 3, borderRadius: 6, color: c.secondary }}><ReactionAddIcon /></button>
-    </div>
+    </div>}
     {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutline16 />} onDone={() => setNotice(undefined)} />)}
     {overlay && (typeof document === 'undefined' ? overlay : createPortal(overlay, document.body))}
   </div>

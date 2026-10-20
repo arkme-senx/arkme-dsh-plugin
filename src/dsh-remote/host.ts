@@ -1,3 +1,5 @@
+import type { ContentProof } from './history-content-proof.js'
+import { ProjectionUpload } from './projection-upload.js'
 import type { DshNativeTransport } from './native-transport.js'
 import { DshLiveEventBatcher, LIVE_BATCH_ITEMS, type LiveEventBatch } from './live-event-batcher.js'
 import { DesktopSessionPresence } from './desktop-session-presence.js'
@@ -147,6 +149,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
     maxObjectBytes: number,
     callbacks: { onError: (error: unknown, sessionRef?: string) => void; onFinalized: (sessionRef: string) => void },
   ) => DshRemoteTurnUploadOutbox
+  readRecoveryProof?: (session: string, through: number, signal: AbortSignal) => Promise<ContentProof>
   sessionPersistence?: DshRemoteSessionPersistenceLike
   now?: () => number
   yieldToEventLoop?: () => Promise<void>
@@ -280,6 +283,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private liveEventBatcher: { key: string; value: DshLiveEventBatcher } | undefined
   private liveDeliveryStats: Record<string, number> = {}
   private lastDeliveryReportAt = performance.now()
+  private readonly projectionUpload = new ProjectionUpload()
   private projectionSyncTail: Promise<void> = Promise.resolve()
   private backgroundProjectionFlight: Promise<void> | undefined
   private projectionSnapshotPending = false
@@ -695,13 +699,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
 
   private scheduleHistoryObjectBackfill(delayMillis: number): void {
     if (!this.started || this.accountId === undefined || this.runtime === undefined ||
-      this.turnUpload === undefined || this.options.sessionPersistence === undefined ||
+      this.turnUpload === undefined || this.turnUpload.isReconcilingSourceBindings() || this.options.sessionPersistence === undefined ||
       this.historyObjectBackfillTimer !== undefined || this.historyObjectBackfillFlight !== undefined) return
     const accountId = this.accountId
     const runtime = this.runtime
     this.historyObjectBackfillTimer = setTimeout(() => {
       this.historyObjectBackfillTimer = undefined
-      if (!this.historyOwnerMatches(accountId, runtime) || this.turnUpload === undefined) return
+      if (!this.historyOwnerMatches(accountId, runtime) || this.turnUpload === undefined || this.turnUpload.isReconcilingSourceBindings()) return
       const controller = new AbortController()
       this.historyObjectBackfillController = controller
       const flight = this.backfillOneHistorySession(accountId, runtime, controller.signal)
@@ -954,6 +958,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.backgroundProjectionFlight = undefined
     this.projectionSnapshotPending = false
     this.projectionSyncTail = Promise.resolve()
+    this.projectionUpload.clear()
     this.stopApiProxyEvents()
     this.options.nativeTransport?.close()
     this.connectionController?.abort()
@@ -1623,11 +1628,29 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     await next
   }
 
+  private async reconcileSourceBindings(bindings: Record<string, string> | undefined, accountId: string, runtime: DshRemoteRuntimeProjection): Promise<void> {
+    const outbox = this.turnUpload
+    if (outbox !== undefined && bindings !== undefined) {
+      await outbox.reconcileSourceBindings(bindings, async () => {
+        if (!this.historyOwnerMatches(accountId, runtime)) return
+        this.historyObjectBackfillController?.abort()
+        if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
+        this.historyObjectBackfillTimer = undefined
+        await this.historyObjectBackfillFlight?.catch(() => undefined)
+      }).then(changed => {
+        if (changed && this.historyOwnerMatches(accountId, runtime)) this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS)
+      }).catch(error => {
+        if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() }
+      })
+    }
+  }
+
   private async performProjectionSnapshot(force = false, generation = this.accountGeneration): Promise<void> {
     const runtime = this.runtime
     const accountId = this.accountId
     if (runtime === undefined || accountId === undefined) return
-    const signal = AbortSignal.any([this.projectionController.signal, AbortSignal.timeout(30_000)])
+    const ownerSignal = this.projectionController.signal
+    const signal = AbortSignal.any([ownerSignal, AbortSignal.timeout(30_000)])
     const check = () => {
       signal.throwIfAborted()
       if (generation !== this.accountGeneration) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '账号作用域已切换')
@@ -1706,6 +1729,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       progress('read_sessions')
       const sessions = [] as Awaited<ReturnType<DshApiProxyAdapter['sessions']>>['items']
       if (capabilities.has('session.list')) {
+        const sessionInventory = await this.options.apiProxy.sessionInventory(workspaceInventory)
+        check()
         let cursor: string | undefined
         const seenCursors = new Set<string>()
         for (let pageCount = 0; pageCount < 200; pageCount += 1) {
@@ -1715,6 +1740,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           const page = await this.accountSessionPage(accountId, {
             limit: 50,
             workspaceInventory,
+            sessionInventory,
             includeUngrouped: true,
             ...(cursor === undefined ? {} : { cursor }),
           })
@@ -1766,21 +1792,31 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
             deleted: true,
           })),
       ]
+      let rejectedSessions = 0
       for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
         check()
         diagnostic.page_index = offset / 100
         diagnostic.item_count = Math.min(100, sessionItems.length - offset)
         progress('upload_sessions')
-        await this.options.controlPlane.syncSessions({
+        const uploaded = await this.projectionUpload.page(sessionItems.slice(offset, offset + 100), async (items, requestSignal) => this.options.controlPlane.syncSessions({
+          report_conflicts: true,
           runtime_ref: runtime.runtimeRef,
           host_generation: runtime.hostGeneration,
           snapshot_ref: snapshotRef,
-          items: sessionItems.slice(offset, offset + 100),
-        }, signal)
-        diagnostic.session_items_acked += diagnostic.item_count
+          items,
+        }, requestSignal), signal, this.options.readRecoveryProof ? {
+          signal: ownerSignal,
+          read: (item, scoped) => this.options.readRecoveryProof!(item.session_ref, 'projection_as_of_seq' in item ? Number(item.projection_as_of_seq ?? -1) : -1, scoped),
+          recovered: bindings => this.reconcileSourceBindings(bindings, accountId, runtime),
+          failed: error => { if (this.historyOwnerMatches(accountId, runtime)) { this.historySyncError = asDshRemoteError(error); this.bump() } },
+        } : undefined)
+        void this.reconcileSourceBindings(uploaded.sourceBindings, accountId, runtime)
+        rejectedSessions += uploaded.rejected
+        diagnostic.session_items_acked += uploaded.accepted
         if (sessionItems.length === 0) break
       }
       check()
+      if (rejectedSessions) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', `有 ${rejectedSessions} 个旧来源未获写入许可；其他会话已同步`)
       progress('complete_snapshot')
       await this.options.controlPlane.completeProjectionSnapshot({
         runtime_ref: runtime.runtimeRef,

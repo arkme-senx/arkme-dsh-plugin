@@ -99,7 +99,7 @@ describe('coverage and speech timeline presentation', () => {
   it('distinguishes unknown data from an empty day and still shows local audio during cloud errors', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingTimeline {...props} coverageState="error" coverage={[{ ...project().intervals[0]!, status: 'local' }]} />)
     expect(markup).toContain('云端录音范围读取失败')
-    expect(markup).toContain('无已知录音')
+    expect(markup).not.toContain('录音覆盖图例')
     expect(markup).not.toContain('data-timeline-layer="empty"')
   })
   it('keeps a silent rail zoomable, stops its pulse after capture ends', () => {

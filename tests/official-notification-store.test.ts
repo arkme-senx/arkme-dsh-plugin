@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn(), scope: 'test:42' }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/auth-store.js', () => ({
   arkmeAuthStore: {
+    subscribe: () => () => {},
     getSnapshot: () => ({
       auth: {
         status: 'authenticated',

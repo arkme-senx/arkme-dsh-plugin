@@ -1,14 +1,22 @@
 import type { ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeTimelineItem } from './types.js'
 
-export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import'] as const
+export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import', 'offline_context'] as const
 export type ArkmeTimelineSource = typeof CHAT_TIMELINE_SOURCES[number]
 export type ArkmeTimelineMode = 'initial' | 'older' | 'newer' | 'around' | 'refresh'
 export interface ArkmeUnifiedTimelineQuery {
   cacheOnly?: boolean
+  /** Read a committed window containing this opaque event/row identity; cacheOnly only. */
+  anchorId?: string
+  /** Host completes all refresh pages before committing. Bounded by 2000 events / 4 MiB. */
+  reconcile?: boolean
+  /** Optional tail catch-up in the same reconcile transaction; never used for history reading. */
+  newerCursor?: string
   mode?: ArkmeTimelineMode
   cursor?: string
   windowTokens?: string[]
   limit?: number
+  messageRef?: string
+  contextRef?: string
   itemUid?: string
   recordOwnerUserId?: number | string
 }
@@ -41,9 +49,10 @@ export type ArkmeUnifiedTimelineEvent = ArkmeTimelineEventOrder & (
   | { kind: 'notice'; text: string }
   | { kind: 'external'; title: string; text: string }
   | { kind: 'world-public'; recordRef: string; authorName: string }
+  | { kind: 'offline-context'; entryRef: string; revision: string; title: string; summary: string }
 )
 export interface ArkmeUnifiedTimelineWindow {
-  protocolVersion: 1
+  protocolVersion: 2
   events: ArkmeUnifiedTimelineEvent[]
   sources: ArkmeTimelineSourceStatus[]
   complete: boolean

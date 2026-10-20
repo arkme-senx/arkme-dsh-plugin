@@ -1,3 +1,6 @@
+import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
+import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
+import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
 import type { ArkmeArrangementBoardCachePages } from './arrangement-board-cache.js'
 import { randomUUID } from 'node:crypto'
@@ -28,6 +31,8 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  dayReviewPending?: unknown
+ offlineContextJournal?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
 
   version: 2
@@ -39,6 +44,22 @@ interface PersistedState {
   recordReeditSubmissionsByUser: unknown
   recordReeditDraftRevision: unknown
   recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>>
+}
+
+function offlineContextJournalScope(state:PersistedState,scope:string):Record<string,OfflineContextJournalEntry> {
+ const fail=()=>new Error('本地上下文操作记录损坏，已保留恢复信息')
+ if(!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw fail()
+ if(state.offlineContextJournal===undefined)state.offlineContextJournal={}
+ const journal=state.offlineContextJournal
+ if(!journal || typeof journal!=='object' || Array.isArray(journal))throw fail()
+ const scoped=journal as Record<string,unknown>
+ if(scoped[scope]===undefined)scoped[scope]={}
+ const entries=scoped[scope]
+ if(!entries || typeof entries!=='object' || Array.isArray(entries))throw fail()
+ for(const value of Object.values(entries)) {
+  if(!value || typeof value!=='object' || typeof value.fingerprint!=='string' || typeof value.sealed!=='string' || value.expiresAtMillis!==undefined && !Number.isSafeInteger(value.expiresAtMillis))throw fail()
+ }
+ return entries as Record<string,OfflineContextJournalEntry>
 }
 
 function emptyState(): PersistedState {
@@ -65,7 +86,7 @@ function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
 
 function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
   const expiredTerminalJobs = Object.values(jobs)
-    .filter(candidate => !isUnresolvedRecordingImportJob(candidate))
+    .filter(candidate => !isUnresolvedRecordingImportJob(candidate) && (!candidate.clientTaskId || candidate.createdAtMillis < Date.now() - 30 * 24 * 60 * 60_000))
     .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
     .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
   for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
@@ -86,6 +107,9 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
   return {
     jobId: source.jobId as string,
+    ...(typeof source.clientTaskId === 'string' ? { clientTaskId: source.clientTaskId } : {}),
+    ...(validRecordingImportBatch(source.batch) ? { batch: { ...source.batch } } : {}),
+    ...(validRecordingCreateRequestUID(source.createRequestUID) ? { createRequestUID: source.createRequestUID } : {}),
     userId: source.userId as number,
     revision: source.revision as number,
     phase: source.phase as RecordingImportPhase,
@@ -115,6 +139,10 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     ...(source.uploadCheckpoint !== null && typeof source.uploadCheckpoint === 'object'
       && !Array.isArray(source.uploadCheckpoint)
       ? { uploadCheckpoint: source.uploadCheckpoint as Record<string, unknown> }
+      : {}),
+    // Invalid persisted batch metadata must never silently become an ordinary upload.
+    ...(source.batch !== undefined && !validRecordingImportBatch(source.batch) && !['accepted', 'cancelled'].includes(source.phase)
+      ? { phase: 'failed' as const, retryable: false, errorCode: 'recording-import-batch-invalid', errorMessage: '导入批次数据无效，请重新选择未上传的文件', failedFromPhase: undefined }
       : {}),
   }
 }
@@ -335,6 +363,7 @@ function parseState(raw: string): PersistedState {
       ? source.uniqueCode
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
+    offlineContextJournal:source.offlineContextJournal,
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -345,6 +374,7 @@ function parseState(raw: string): PersistedState {
         ? Math.max(source.recordReeditDraftRevision as number, legacyRecordReeditRevision(recordReeditDraftsByUser, recordReeditSubmissionsByUser))
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
+    dayReviewPending: source.dayReviewPending ?? {},
   }
 }
 
@@ -430,6 +460,29 @@ export class ArkmeStateStore {
     this.boardCache = new ArrangementBoardCacheStore(directory)
   }
 
+  private reviewPending(state: PersistedState): Record<string, unknown> {
+    const value = state.dayReviewPending ?? {}
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('日回顾提交恢复记录损坏，未创建新任务')
+    state.dayReviewPending = value
+    return value as Record<string, unknown>
+  }
+  async readDayReviewPending(scope: string, day: string): Promise<unknown> {
+    return this.read(state => structuredClone(this.reviewPending(state)[JSON.stringify([scope, day])]))
+  }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old !== undefined && JSON.stringify(old) !== JSON.stringify(request)) throw new Error('当天仍有提交结果待核对，请先核对原请求')
+      values[key] = structuredClone(request)
+    })
+  }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string): Promise<void> {
+    await this.update(state => {
+      const values = this.reviewPending(state), key = JSON.stringify([scope, day]), old = values[key]
+      if (old && typeof old === 'object' && !Array.isArray(old) && (old as Record<string, unknown>).requestId === requestId) delete values[key]
+    })
+  }
+
   async arrangementBoardCache(environment: string, userId: number, pages?: ArkmeArrangementBoardCachePages): Promise<ArkmeArrangementBoardCachePages> {
     return this.boardCache.access(environment, userId, pages)
   }
@@ -450,6 +503,23 @@ export class ArkmeStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
+  async readOfflineContextJournal(scope: string): Promise<Record<string, OfflineContextJournalEntry>> {
+    return this.read(state => structuredClone(offlineContextJournalScope(state,scope)))
+  }
+  async putOfflineContextJournal(scope:string,id:string,entry:OfflineContextJournalEntry):Promise<void> {
+    await this.update(state=>{
+      const entries=offlineContextJournalScope(state,scope)
+      const prior=entries[id]
+      if(prior && prior.fingerprint!==entry.fingerprint) throw new Error('操作编号已用于其他内容')
+      if(prior) return
+      for(const [key,value] of Object.entries(entries)) if(value.expiresAtMillis!==undefined && value.expiresAtMillis<Date.now()) delete entries[key]
+      if(Object.keys(entries).length>=64) throw new Error('请先核对尚未完成的操作')
+      entries[id]=structuredClone(entry)
+    })
+  }
+  async deleteOfflineContextJournal(scope:string,id:string,fingerprint:string):Promise<void> {
+    await this.update(state=>{const entries=offlineContextJournalScope(state,scope);if(entries[id]?.fingerprint===fingerprint)delete entries[id]})
+  }
   async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     return await this.read(state => [...(state.pendingByUser[String(userId)] ?? [])])
   }
@@ -637,19 +707,17 @@ export class ArkmeStateStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): Promise<RecordingImportAdmission> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
-    if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
-      throw new Error('Recording import unresolved limit must be a positive integer')
-    }
     let admission: RecordingImportAdmission | undefined
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
         .filter(isUnresolvedRecordingImportJob)
-      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
+      const receipt = job.clientTaskId ? Object.values(jobs).find(candidate => candidate.clientTaskId === job.clientTaskId) : undefined
+      if (receipt && (!sameRecordingImportIdentity(receipt, job) || receipt.recordingKind !== job.recordingKind || !sameRecordingImportBatch(receipt.batch, job.batch))) throw new Error('Recording import task identity conflict')
+      const existing = receipt ?? unresolved.find(candidate => sameRecordingImportIdentity(candidate, job) && candidate.recordingKind === job.recordingKind && sameRecordingImportBatch(candidate.batch, job.batch))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return
@@ -657,10 +725,6 @@ export class ArkmeStateStore {
       const fileNameKey = recordingImportFileNameKey(job.fileName)
       if (unresolved.some(candidate => recordingImportFileNameKey(candidate.fileName) === fileNameKey)) {
         admission = { kind: 'duplicate-file-name' }
-        return
-      }
-      if (unresolved.length >= unresolvedLimit) {
-        admission = { kind: 'limit' }
         return
       }
       jobs[job.jobId] = cloneRecordingImportJob(job)

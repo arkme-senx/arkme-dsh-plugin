@@ -75,7 +75,12 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     const panelTop = Math.min(rect.bottom, Math.max(rect.top, headerBottom))
     set(viewport, '--arkme-harness-panel-top', `${panelTop}px`)
     set(viewport, '--arkme-harness-panel-height', `${Math.max(0, rect.bottom - panelTop)}px`)
-    const ready = contentFrame !== undefined
+    // about:blank and an empty mount are not a painted native client. Keep the
+    // host's theme visible; still expose native loading/error content promptly.
+    const ready = contentFrame !== undefined && (contentFrame !== native.body || [...native.body.childNodes].some(node =>
+      node.nodeType === 3 ? Boolean(node.textContent?.trim())
+        : node.nodeType === 1 && !['SCRIPT', 'STYLE', 'LINK', 'META'].includes((node as Element).tagName)
+          && (Boolean(node.textContent?.trim()) || (node as Element).children.length > 0)))
     const layers = ready ? harnessMenuLayers(native) : []
     let menuRect: PaintRect | undefined
     const painted: PaintRect[] = visible && ready ? [rect] : []

@@ -28,7 +28,7 @@ function text(node: ReactTestInstance): string {
 }
 
 function button(renderer: ReactTestRenderer, label: string): ReactTestInstance {
-  const result = renderer.root.findAllByType('button').find(node => text(node).includes(label))
+  const result = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label || text(node).includes(label))
   if (result === undefined) throw new Error(`button not found: ${label}`)
   return result
 }
@@ -127,7 +127,7 @@ describe('production sibling Contacts tab', () => {
     await act(async () => { contacts.props.onClick(); await Promise.resolve() })
     expect(contacts.props['aria-current']).toBe('page')
     expect(renderer.root.findByProps({ 'aria-label': '联系人目录' })).toBeDefined()
-    const brandImages = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).findAllByProps({ alt: 'Arkme' })
+    const brandImages = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).findAllByProps({ alt: '即我' })
     expect(brandImages).toHaveLength(2)
     expect(brandImages.map(image => image.props['data-arkme-theme-image'])).toEqual(['light', 'dark'])
     const hiddenConversationSurface = renderer.root.findByProps({ 'data-test-conversation-surface': true })
@@ -199,13 +199,13 @@ describe('production sibling Contacts tab', () => {
       const request = params as { section?: string; countOnly?: boolean } | undefined
       return (operation === 'directory.list' || operation === 'team.app.directory') && request?.countOnly !== true
     }).map(([, params]) => (params as { section: string }).section)
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
 
     await act(async () => { button(renderer, '对话').props.onClick() })
     await act(async () => { button(renderer, '联系人').props.onClick() })
 
     expect(button(renderer, '选择联系人')).toBeDefined()
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
   })
 
 })

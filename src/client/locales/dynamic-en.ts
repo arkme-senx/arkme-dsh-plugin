@@ -48,6 +48,7 @@ export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 个月前|{v0} months ago
 {v0} 年前|{v0} years ago
 今天 {v0}|Today {v0}
+今年 {v0}|This year, {v0}
 昨天 {v0}|Yesterday {v0}
 前天 {v0}|Two days ago {v0}
 {v0}月{v1}日|{v0}/{v1}
@@ -281,6 +282,7 @@ AI 额度|AI allowance
 充值 {v0}|Purchased {v0}
 查看赠送额度说明|View gift allowance details
 DSH 对话|DSH chat
+录音实体识别|Recording entity recognition
 AI 调用|AI usage
 （赠送）| (Gift)
 （充值）| (Purchased)

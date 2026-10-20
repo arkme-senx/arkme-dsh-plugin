@@ -189,22 +189,33 @@ export class RelatedQuickNoteService {
   ): Promise<ArkmeRelatedQuickNoteList> {
     const session = await this.runtime.requireSession()
     const source = this.validLocator(locator, session.userId)
+    const body = {
+      record_uid: source.recordUid,
+      record_owner_user_id: source.recordOwnerUserId,
+      context_type: source.contextType,
+      ...(source.contextType === 'chat' ? { chat_session_uid: source.chatSessionUid } : {}),
+      limit: RELATED_QUICK_NOTE_LIMIT,
+    }
     const response = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/related/query',
-      {
-        record_uid: source.recordUid,
-        record_owner_user_id: source.recordOwnerUserId,
-        context_type: source.contextType,
-        ...(source.contextType === 'chat' ? { chat_session_uid: source.chatSessionUid } : {}),
-        limit: RELATED_QUICK_NOTE_LIMIT,
-      },
-      session,
-      signal,
-    )
-    const excluded = new Set([source.recordUid])
-    const lockedRecordUids = await this.privacy.lockedRecordUids(session, signal)
+      '/api/v1/records/related/query', body, session, signal,
+      { lane: 'interactive-read', key: `owner-read:related:${source.sourceRef}:${source.sourceOwnerRef}:${JSON.stringify(body)}`,
+        cacheMs: 0, failureCooldownMs: 1_000, cancelWhenUnobserved: true },
+    ).catch((error: unknown) => {
+      // Record's business codes are not HTTP statuses. Only ServerBusy is
+      // transient; keep generic transport recovery in the existing runtime.
+      if (error instanceof ArkmePluginError && /^arkme-code-\d+$/u.test(error.code)) {
+        throw new ArkmePluginError(error.code, error.message, error.code === 'arkme-code-50001', error.httpStatus)
+      }
+      throw error
+    })
+    const recallMode = response.recall_mode
+    if (!['embedding', 'search_fallback', 'unavailable'].includes(String(recallMode))) {
+      throw new ArkmePluginError('related-invalid-response', '相关快记响应无效', false, 502)
+    }
+    const excluded = new Set([`${source.recordOwnerUserId}:${source.recordUid}`])
+    const lockedRecordUids = new Set([...(await this.privacy.lockedRecordUids(session, signal))].map(uid => `${session.userId}:${uid}`))
     const directItems = listValue(response.items ?? response.records)
-    const candidates = this.relatedCandidates(response, directItems, excluded, lockedRecordUids)
+    const candidates = this.relatedCandidates(response, directItems, excluded, lockedRecordUids, session.userId)
     const missingUids = candidates
       .filter(candidate => descriptorFromRaw(candidate.raw) === undefined)
       .map(candidate => candidate.uid)
@@ -216,6 +227,9 @@ export class RelatedQuickNoteService {
         session,
         signal,
       )
+      if (listValue(batch.items).length === 0) {
+        throw new ArkmePluginError('related-invalid-response', '相关快记详情暂时不可用', false, 502)
+      }
       for (const raw of listValue(batch.items)) {
         const uid = recordUid(raw)
         if (uid !== '' && !hydratedByUid.has(uid)) hydratedByUid.set(uid, raw)
@@ -228,11 +242,11 @@ export class RelatedQuickNoteService {
       excluded,
       lockedRecordUids,
     )
-    const profiles = await this.profile.publicProfileSummariesByUserIds(
-      descriptors.map(item => item.authorUserId).filter(id => id > 0),
-      session,
+    const profiles = await this.displayProfiles(
+      descriptors.map(item => item.authorUserId).filter(id => id > 0), session,
       signal,
-    ).catch(() => new Map())
+    )
+    signal?.throwIfAborted()
     const items: ArkmeRelatedQuickNoteItem[] = []
     for (const descriptor of descriptors) {
       const profile = profiles.get(descriptor.authorUserId)
@@ -260,7 +274,33 @@ export class RelatedQuickNoteService {
         ...(descriptor.sourceLabel === undefined ? {} : { sourceLabel: descriptor.sourceLabel }),
       })
     }
-    return { items, total: items.length }
+    return { items, total: items.length,
+      recallMode: recallMode as ArkmeRelatedQuickNoteList['recallMode'],
+      retryable: response.retryable === true,
+      retryAfterMillis: Math.min(30_000, Math.max(1_000, numberValue(response.retry_after_ms) || 1_500)),
+    }
+  }
+
+  private async displayProfiles(
+    userIds: number[], session: ArkmeSessionCredentials, signal?: AbortSignal,
+  ): Promise<Awaited<ReturnType<ProfileService['publicProfileSummariesByUserIds']>>> {
+    signal?.throwIfAborted()
+    const profiles = this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+      .catch(() => new Map())
+    if (signal === undefined) return profiles
+    let abort: (() => void) | undefined
+    try {
+      const stopped = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason)
+        signal.addEventListener('abort', abort, { once: true })
+        if (signal.aborted) abort()
+      })
+      // Keep the profile service's existing timeout. A shared reader must not
+      // keep this subscriber waiting after the page has been closed.
+      return await Promise.race([profiles, stopped])
+    } finally {
+      if (abort !== undefined) signal.removeEventListener('abort', abort)
+    }
   }
 
   async detail(
@@ -284,8 +324,8 @@ export class RelatedQuickNoteService {
         502,
       )
     }
-    const lockedRecordUids = await this.privacy.lockedRecordUids(session, signal)
-    if (arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(reference.recordUid)) {
+    const lockedRecordUids = new Set([...(await this.privacy.lockedRecordUids(session, signal))].map(uid => `${session.userId}:${uid}`))
+    if (arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(`${reference.recordOwnerUserId}:${reference.recordUid}`)) {
       throw new ArkmePluginError('related-quick-note-private', '该相关快记不可查看', false, 403)
     }
     const hydrated = await this.media.hydrateRecordMediaPage([raw], session, signal)
@@ -359,9 +399,10 @@ export class RelatedQuickNoteService {
     for (const raw of rawItems) {
       if (result.length >= RELATED_QUICK_NOTE_LIMIT || arkmePrivacyLockedRecord(raw)) continue
       const descriptor = descriptorFromRaw(raw)
-      if (descriptor === undefined || excluded.has(descriptor.recordUid)
-        || lockedRecordUids.has(descriptor.recordUid) || seen.has(descriptor.recordUid)) continue
-      seen.add(descriptor.recordUid)
+      if (descriptor === undefined) continue
+      const identity = `${descriptor.recordOwnerUserId}:${descriptor.recordUid}`
+      if (excluded.has(identity) || lockedRecordUids.has(identity) || seen.has(identity)) continue
+      seen.add(identity)
       result.push(descriptor)
     }
     return result
@@ -372,6 +413,7 @@ export class RelatedQuickNoteService {
     directItems: unknown[],
     excluded: ReadonlySet<string>,
     lockedRecordUids: ReadonlySet<string>,
+    viewerUserId: number,
   ): RelatedQuickNoteCandidate[] {
     const rawItems = [
       ...directItems,
@@ -381,15 +423,18 @@ export class RelatedQuickNoteService {
     for (const raw of rawItems) {
       if (!arkmePrivacyLockedRecord(raw)) continue
       const uid = typeof raw === 'string' ? raw.trim() : recordUid(raw)
-      if (uid !== '') blocked.add(uid)
+      if (uid !== '') blocked.add(`${recordOwnerUserId(raw) || viewerUserId}:${uid}`)
     }
     const result: RelatedQuickNoteCandidate[] = []
     const seen = new Set<string>()
     for (const raw of rawItems) {
       const uid = typeof raw === 'string' ? raw.trim() : recordUid(raw)
-      if (uid === '' || excluded.has(uid) || blocked.has(uid)
-        || seen.has(uid) || arkmePrivacyLockedRecord(raw)) continue
-      seen.add(uid)
+      const owner = recordOwnerUserId(raw)
+      const identity = `${owner || viewerUserId}:${uid}`
+      const source = excluded.has(identity) || (owner === 0 && [...excluded].some(key => key.endsWith(`:${uid}`)))
+      if (uid === '' || source || blocked.has(identity)
+        || seen.has(identity) || arkmePrivacyLockedRecord(raw)) continue
+      seen.add(identity)
       result.push({ uid, raw })
       if (result.length >= RELATED_QUICK_NOTE_LIMIT) break
     }
