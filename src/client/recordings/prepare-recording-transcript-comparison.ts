@@ -21,7 +21,7 @@ export async function prepareRecordingTranscriptComparison(dateStamp: number, si
     const result = await callArkme<{ queuedCount: number; inFlightCount: number; missingAudioCount: number }>('recordings.compare.start', { dateStamp }, signal)
     signal.throwIfAborted()
     const started = pending || result.queuedCount + result.inFlightCount > 0
-    const notice = result.missingAudioCount > 0 ? '历史音频留存已过期，无法发起豆包转写' : ''
+    const notice = result.missingAudioCount > 0 ? '部分录音没有可用于豆包转写的音频' : ''
     if (!started) throw new Error(notice || '豆包转写暂无结果')
     return { data, pending: started, notice }
   } catch (reason) {

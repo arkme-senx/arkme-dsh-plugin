@@ -87,7 +87,7 @@ describe('transcript comparison lifecycle', () => {
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 1, inFlightCount: 0, missingAudioCount: 1 }).mockResolvedValueOnce(pending).mockResolvedValue(complete)
     const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
-    expect(JSON.stringify(renderer.toJSON())).toContain('历史音频留存已过期')
+    expect(JSON.stringify(renderer.toJSON())).toContain('部分录音没有可用于豆包转写的音频')
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
     expect(mocks.call).toHaveBeenCalledTimes(4)
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
@@ -105,10 +105,10 @@ describe('transcript comparison lifecycle', () => {
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.playback.open', { itemRef: 'ref-doubao' }, expect.any(AbortSignal))
   })
 
-  it('does not open an empty comparison when audio has expired', async () => {
+  it('reports unavailable material without assuming that retention expired', async () => {
     const initial = comparison(); initial.candidateCount = 1
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 0, inFlightCount: 0, missingAudioCount: 1 })
-    await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).rejects.toThrow('历史音频留存已过期')
+    await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).rejects.toThrow('部分录音没有可用于豆包转写的音频')
     expect(mocks.call).toHaveBeenCalledTimes(2)
   })
 
