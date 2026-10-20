@@ -9,7 +9,7 @@ function message(error: unknown) { return error instanceof Error ? error.message
 interface Resource<T> { key: string; value?: T; loading: boolean; error: string }
 
 /** Query-scoped, cancellable, explicitly paged reads. No history fan-out or writes. */
-export function useDayActivities(query: DayActivityQuery, reader: DayActivityReader | undefined, refreshVersion = 0) {
+export function useDayActivities(query: DayActivityQuery, reader: DayActivityReader | undefined, refreshVersion = 0, enabled = true) {
   const key = dayActivityQueryKey(query)
   const [revision, setRevision] = useState(0)
   const [resource, setResource] = useState<Resource<DayActivityPage>>({ key, loading: !!reader, error: '' })
@@ -19,29 +19,42 @@ export function useDayActivities(query: DayActivityQuery, reader: DayActivityRea
   const loadedPages = useRef(1)
   const reading = useRef<AbortController>()
   const more = useRef<AbortController>()
+  const refreshPending = useRef(false)
+  const lastRefresh = useRef(refreshVersion)
   const active = useRef<{ key: string; reader: DayActivityReader | undefined }>({ key, reader })
   active.current = { key, reader }
   const cursors = useRef(new Set<string>())
   const [paging, setPaging] = useState(false)
-  const value = resource.key === key ? resource.value : undefined
-  const current = resource.key === key ? resource : { key, loading: !!reader, error: '' }
+  const value = enabled && resource.key === key && loadedReader.current === reader ? resource.value : undefined
+  const current = enabled && resource.key === key && (!resource.value || loadedReader.current === reader)
+    ? resource : { key, loading: enabled && !!reader, error: '' }
 
   useEffect(() => {
     const controller = new AbortController()
     reading.current = controller
+    refreshPending.current = false
+    lastRefresh.current = refreshVersion
     const previous = currentResource.current
-    const retained = previous.key === key && loadedReader.current === reader ? previous.value : undefined
+    const retained = enabled && previous.key === key && loadedReader.current === reader ? previous.value : undefined
     const wantedPages = retained ? loadedPages.current : 1
     more.current?.abort(); more.current = undefined; cursors.current.clear(); setPaging(false)
-    setResource({ key, ...(retained ? { value: retained } : {}), loading: !!reader && !retained, error: '' })
+    setResource({ key, ...(retained ? { value: retained } : {}), loading: enabled && !!reader && !retained, error: '' })
+    if (!enabled) { reading.current = undefined; return () => controller.abort() }
     if (reader && !query.accountScope.trim()) {
       setResource({ key, loading: false, error: '账号范围尚未确认，暂不读取活动' })
+      reading.current = undefined
       return () => controller.abort()
     }
     if (reader) {
+      let succeeded = false
       const read = async () => {
         if (controller.signal.aborted) return
-        let page = await reader.loadDay(query, { signal: controller.signal })
+        let page = await reader.loadDay(query, { signal: controller.signal, ...(!retained ? { onProgress: (page: DayActivityPage) => {
+          if (controller.signal.aborted) return
+          validatePage(page, query)
+          loadedReader.current = reader
+          setResource({ key, value: page, loading: true, error: '' })
+        } } : {}) })
         if (controller.signal.aborted) return
         validatePage(page, query)
         let count = 1
@@ -67,21 +80,36 @@ export function useDayActivities(query: DayActivityQuery, reader: DayActivityRea
         .then(page => {
           if (controller.signal.aborted || !page) return
           validatePage(page, query)
+          succeeded = true
           setResource({ key, value: { ...page, items: mergeDayActivityItems([], page.items, page.order) }, loading: false, error: '' })
         }).catch(error => {
           if (!controller.signal.aborted) setResource({ key, loading: false, error: message(error) })
         }).finally(() => {
-          if (reading.current === controller) reading.current = undefined
+          if (reading.current === controller) {
+            reading.current = undefined
+            if (succeeded && refreshPending.current && !controller.signal.aborted) setRevision(value => value + 1)
+            refreshPending.current = false
+          }
         })
-    }
+    } else reading.current = undefined
     return () => { controller.abort(); if (reading.current === controller) reading.current = undefined; more.current?.abort(); more.current = undefined }
     // key encodes all query fields; no reload for a referentially new query object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, reader, revision, refreshVersion])
+  }, [key, reader, revision, enabled])
+
+  // Soft realtime hints do not restart an in-flight read or extend its deadline.
+  // Keep one trailing refresh. Account/date/privacy changes use the effect above.
+  useEffect(() => {
+    if (lastRefresh.current === refreshVersion) return
+    lastRefresh.current = refreshVersion
+    if (reading.current || more.current) refreshPending.current = true
+    else if (enabled) setRevision(value => value + 1)
+  }, [refreshVersion, enabled])
 
   const loadMore = useCallback(async () => {
     if (!reader || !value?.hasMore || !value.nextCursor || current.loading || more.current || reading.current) return
     const controller = new AbortController(); more.current = controller; setPaging(true)
+    let succeeded = false
     setResource(resource => ({ ...resource, error: '' }))
     try {
       const page = await reader.loadDay(query, { signal: controller.signal, cursor: value.nextCursor, snapshotId: value.snapshotId })
@@ -93,13 +121,20 @@ export function useDayActivities(query: DayActivityQuery, reader: DayActivityRea
       cursors.current.add(value.nextCursor)
       if (page.order !== value.order) throw new Error('活动排序已变化，请刷新当天内容')
       loadedPages.current += 1
+      succeeded = true
       setResource({ key, loading: false, error: '', value: { ...page, items: mergeDayActivityItems(page.replaceItems ? [] : value.items, page.items, page.order) } })
     } catch (error) {
       if (!controller.signal.aborted && active.current.key === key && active.current.reader === reader) {
         // Fail closed: an invalidated snapshot must not retain possibly revoked content.
         setResource({ key, loading: false, error: message(error) })
       }
-    } finally { if (more.current === controller) { more.current = undefined; setPaging(false) } }
+    } finally {
+      if (more.current === controller) {
+        more.current = undefined; setPaging(false)
+        if (succeeded && refreshPending.current && !controller.signal.aborted) setRevision(value => value + 1)
+        refreshPending.current = false
+      }
+    }
   }, [reader, value, current.loading, query, key])
 
   return { page: value, loading: current.loading, error: current.error, loadingMore: paging && resource.key === key,
@@ -118,40 +153,57 @@ function validatePage(page: DayActivityPage, query: DayActivityQuery, snapshotId
 }
 
 export function useDayActivityDetail(query: DayActivityQuery, activityId: string | undefined, snapshotId: string | undefined,
-  reader: DayActivityReader | undefined) {
+  reader: DayActivityReader | undefined, contentRevision?: string) {
   const scope = dayActivityQueryKey(query)
-  const key = JSON.stringify([scope, activityId, snapshotId])
+  const identity = JSON.stringify([scope, activityId, snapshotId])
+  const key = JSON.stringify([identity, contentRevision])
   const [resource, setResource] = useState<Resource<DayActivityDetailPage>>({ key, loading: false, error: '' })
   const [revision, setRevision] = useState(0)
   const controllerRef = useRef<AbortController>()
   const seen = useRef(new Set<string>())
+  const loaded = useRef<{ identity: string; reader: DayActivityReader; pages: number }>()
   const keyRef = useRef(key); keyRef.current = key
   const current = resource.key === key ? resource : { key, loading: !!activityId, error: '' }
 
-  const read = useCallback(async (cursor?: string, previous?: DayActivityDetailPage) => {
+  const read = useCallback(async (cursor?: string, previous?: DayActivityDetailPage, wantedPages = 1) => {
     if (!activityId || !snapshotId || !reader || controllerRef.current) return
     const controller = new AbortController(); controllerRef.current = controller
     setResource({ key, ...(previous ? { value: previous } : {}), loading: true, error: '' })
     try {
-      const page = await reader.loadDetail(query, activityId, { signal: controller.signal, snapshotId, ...(cursor ? { cursor } : {}) })
-      if (controller.signal.aborted || keyRef.current !== key) return
-      if (dayActivityQueryKey(page.query) !== scope || page.activityId !== activityId || page.snapshotId !== snapshotId
-        || page.items.some(item => !item.id.trim() || !Number.isFinite(item.occurredAtMillis))
-        || page.hasMore && (!page.nextCursor?.trim() || page.nextCursor === cursor || seen.current.has(page.nextCursor))) {
-        throw new Error('活动详情已变化，请刷新后重试')
+      const cursors = cursor ? new Set(seen.current) : new Set<string>()
+      const fetchPage = async (nextCursor?: string, prior?: DayActivityDetailPage) => {
+        const page = await reader.loadDetail(query, activityId, { signal: controller.signal, snapshotId, ...(nextCursor ? { cursor: nextCursor } : {}) })
+        controller.signal.throwIfAborted()
+        if (dayActivityQueryKey(page.query) !== scope || page.activityId !== activityId || page.snapshotId !== snapshotId
+          || page.items.some(item => !item.id.trim() || !Number.isFinite(item.occurredAtMillis))
+          || page.hasMore && (!page.nextCursor?.trim() || page.nextCursor === nextCursor || cursors.has(page.nextCursor))) {
+          throw new Error('活动详情已变化，请刷新后重试')
+        }
+        if (nextCursor) cursors.add(nextCursor)
+        const items = page.access === 'restricted' ? [] : [...new Map([...(prior?.items ?? []), ...page.items].map(item => [item.id, item])).values()]
+          .sort((a, b) => a.occurredAtMillis - b.occurredAtMillis || a.id.localeCompare(b.id))
+        return { ...page, items }
       }
-      if (cursor) seen.current.add(cursor)
-      const items = page.access === 'restricted' ? [] : [...new Map([...(previous?.items ?? []), ...page.items].map(item => [item.id, item])).values()]
-        .sort((a, b) => a.occurredAtMillis - b.occurredAtMillis || a.id.localeCompare(b.id))
-      setResource({ key, value: { ...page, items }, loading: false, error: '' })
+      let page = await fetchPage(cursor, previous)
+      let count = cursor ? (loaded.current?.pages ?? 1) + 1 : 1
+      // A changed group invalidates offset cursors. Rebuild just the opened prefix.
+      while (count < wantedPages && page.access === 'available' && page.hasMore) {
+        page = await fetchPage(page.nextCursor, page)
+        count += 1
+      }
+      if (controller.signal.aborted || keyRef.current !== key) return
+      seen.current = cursors
+      loaded.current = { identity, reader, pages: count }
+      setResource({ key, value: page, loading: false, error: '' })
     } catch (error) {
       if (!controller.signal.aborted && keyRef.current === key) setResource({ key, loading: false, error: message(error) })
     } finally { if (controllerRef.current === controller) controllerRef.current = undefined }
-  }, [activityId, snapshotId, reader, key, scope, query])
+  }, [activityId, snapshotId, reader, key, identity, scope, query])
 
   useEffect(() => {
     controllerRef.current?.abort(); controllerRef.current = undefined; seen.current.clear()
-    setResource({ key, loading: !!activityId, error: '' }); void read()
+    const wantedPages = loaded.current?.identity === identity && loaded.current.reader === reader ? loaded.current.pages : 1
+    setResource({ key, loading: !!activityId, error: '' }); void read(undefined, undefined, wantedPages)
     return () => { controllerRef.current?.abort(); controllerRef.current = undefined }
     // Query identity is encoded in key; avoid a request on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps

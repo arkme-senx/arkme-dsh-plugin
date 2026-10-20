@@ -10,6 +10,56 @@ const query: DayActivityQuery = {
 const options = () => ({ signal: new AbortController().signal })
 
 describe('documented multi-source day activity reader', () => {
+  it('publishes available sources before a slow source without consuming pagination cursors', async () => {
+    let finishChat!: (value: unknown) => void
+    const read = vi.fn<typeof callArkme>(async (_op, params) => {
+      if ((params as any).source === 'chat') return new Promise(resolve => { finishChat = resolve })
+      return { items: (params as any).source === 'record'
+        ? [{ record_core: { record_uid: 'ready', text_content: 'already available' }, occurred_at: start }] : [], has_more: false }
+    })
+    const progress = vi.fn()
+    const reader = createDocumentedDayActivityReader(query.accountScope, read)
+    const pending = reader.loadDay(query, { ...options(), onProgress: progress })
+    await vi.waitFor(() => expect(progress).toHaveBeenCalledTimes(5))
+    const partial = progress.mock.calls.at(-1)![0]
+    expect(partial.items.map((x: any) => x.id)).toEqual(['note:ready'])
+    expect(partial.completeness).toBe('partial')
+    expect(partial.missingKinds).toContain('group_chat')
+    finishChat({ items: [], has_more: true, next_cursor: 'next' })
+    const first = await pending
+    expect(first.nextCursor).toBe(`${first.snapshotId}:1`)
+    read.mockResolvedValue({ items: [], has_more: false } as never)
+    const next = await reader.loadDay(query, { ...options(), snapshotId: first.snapshotId, cursor: first.nextCursor })
+    expect(next.items.map(x => x.id)).toEqual(['note:ready'])
+    expect(next.hasMore).toBe(false)
+  })
+  it('bounds a stalled source while retaining successful sources as explicitly partial', async () => {
+    vi.useFakeTimers()
+    try {
+      const read = vi.fn<typeof callArkme>(async (_op, params) => {
+        if ((params as any).source === 'chat') return new Promise(() => {})
+        return { items: [], has_more: false }
+      })
+      const pending = createDocumentedDayActivityReader(query.accountScope, read).loadDay(query, options())
+      await vi.advanceTimersByTimeAsync(30_000)
+      const result = await pending
+      expect(result.completeness).toBe('partial')
+      expect(result.warnings).toEqual(['对话加载失败，请重试。'])
+      expect(result.hasMore).toBe(false)
+      expect(read.mock.calls.find(([, p]) => (p as any).source === 'chat')![2]!.aborted).toBe(true)
+    } finally { vi.useRealTimers() }
+  })
+  it('does not publish late progress after cancellation', async () => {
+    let resolve!: (value: unknown) => void
+    const read = vi.fn<typeof callArkme>(() => new Promise(done => { resolve = done }) as never)
+    const controller = new AbortController(), progress = vi.fn()
+    const pending = createDocumentedDayActivityReader(query.accountScope, read).loadDay({ ...query, kind: 'note' }, { signal: controller.signal, onProgress: progress })
+    const rejected = expect(pending).rejects.toThrow()
+    controller.abort()
+    resolve({ items: [], has_more: false })
+    await rejected
+    expect(progress).not.toHaveBeenCalled()
+  })
   it('projects existing avatars and speaker labels, selects meaningful text and preserves all expanded messages', async () => {
     const row = (id: string, text: string, offset: number, sent: boolean) => ({ entry_id: id, occurred_at: start + offset,
       source_kind: 'group_chat', source_ref: { chat_session_uid: 'group:1' },

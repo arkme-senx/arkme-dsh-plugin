@@ -685,7 +685,10 @@ export function ArkmeCalendarCell({
   const markers = meta?.activityMarkers
   const tooltip = breakdown ? [breakdown.messages > 0 ? tr("私聊 {v0} 条", { v0: breakdown.messages }) : '',
     breakdown.interactions > 0 ? tr("群聊互动 {v0} 条", { v0: breakdown.interactions }) : ''].filter(Boolean).join(' · ') : ''
-  const tooltipText = tooltip || (markers ? tr('多来源活动') : '')
+  const activityLabels = [hasRecordingIndex || markers?.recording ? tr('录音') : '', markers?.chat ? tr('对话') : '',
+    markers?.call ? tr('通话') : '', markers?.arko ? 'Arko' : '', markers?.bot ? 'Bot' : ''].filter(Boolean)
+  const activityHint = activityLabels.length ? tr('有{v0}', { v0: activityLabels.join('、') }) : ''
+  const tooltipText = [tooltip || (!breakdown && count > 0 ? tr('{v0} 条记录', { v0: count }) : ''), activityHint].filter(Boolean).join(' · ')
   const buttonRef = useRef<HTMLButtonElement>(null)
   const tooltipId = useId()
   const cellKey = dateKey(date)
@@ -694,7 +697,7 @@ export function ArkmeCalendarCell({
   const showHint = !disabled && !unknown && hintDate === cellKey && tooltipText !== ''
   return <><button ref={buttonRef} data-arkme-feedback={selected ? 'primary' : 'neutral'}
     type="button"
-    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : tr("暂无记录")}${hasRecordingIndex ? ' · 录音索引有内容' : ''}`}
+    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : activityHint ? '' : tr("暂无记录")}${activityHint ? ` · ${activityHint}` : ''}`}
     aria-describedby={showHint ? tooltipId : undefined}
     data-selected={selected ? 'true' : 'false'}
     data-arkme-hover="button"

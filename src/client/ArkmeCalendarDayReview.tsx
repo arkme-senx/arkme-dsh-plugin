@@ -221,12 +221,12 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       </fieldset>
       <div className="day-review-actions">
         <button type="button" className="arkme-day-source" aria-expanded={prompts.open} onClick={prompts.toggle}>{tr('提示词')}{prompts.draft.editing ? ' · ' + tr('未保存') : prompts.draft.saved ? ' · ' + tr('自定义') : ''}</button>
-        <button type="button" className="arkme-day-source" disabled={loading || submitting} onClick={() => void read(true)}>{tr('检查更新')}</button>
+        <button type="button" className="arkme-day-source" title={tr('刷新生成进度和资料状态，不会重新生成或扣费')} disabled={loading || submitting} onClick={() => void read(true)}>{tr('刷新')}</button>
         <button type="button" className="day-review-generate" disabled={modelLoading || !state?.supported || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void chooseModel()}>
           {tr(modelLoading ? '正在读取模型…' : submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
       </div>
     </div>
-    <p className="day-review-hint">{tr('按所选来源整理当天可用内容，同时生成日总结和时间轴。')}</p>
+    {!active && !result && <p className="day-review-hint">{tr('选择要包含的内容，生成当天的日总结和时间轴。')}</p>}
     {modelOptions && <AnalysisModelDialog ariaLabel={tr('选择日回顾生成模型')} initialValue={modelCode ?? modelOptions.defaultCode}
       options={modelOptions.models.map(model => ({ value: model.code, label: model.displayName }))}
       onClose={() => setModelOptions(undefined)} onConfirm={code => {
@@ -246,7 +246,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       <p>{tr('接通后，可将当天的对话、位置、个人记录、通话和录音整理在一起。')}</p><p>{tr('目前仍可在“活动”中查看原始内容。')}</p></div>}
     {state?.job && <div className="day-review-progress" role="status" data-failed={state.job.status === 'failed'}>
       <strong>{tr(stages[state.job.status])}</strong>
-      {active && <span>{tr('收集资料 → 整理内容 → 生成回顾')}</span>}
+      {active && !result && <span>{view === 'summary' ? tr('生成完成后，这里会自动显示日总结。') : tr('生成完成后，这里会自动显示时间轴。')}</span>}
       {state.job.message && <span>{state.job.message}</span>}
       {state.job.resumable && <button type="button" className="arkme-day-source" disabled={submitting || loading || uncertain} onClick={() => void resume()}>{tr('继续生成')}</button>}
       {state.result && <span>{tr('下方保留上一次生成的结果')}</span>}
@@ -258,10 +258,10 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     {versionLoading && <p role="status">{tr('正在读取历史版本…')}</p>}
     {result && <>
       <div className="day-review-result-meta">{tr('生成于')} {stamp(result.generatedAtMillis)} · {result.modelName}</div>
-      {result.promptSnapshot ? <DayReviewPromptSnapshot snapshot={result.promptSnapshot} view={view} /> : <p className="day-review-hint">{tr('此版本未提供提示词快照')}</p>}
+      {result.promptSnapshot && <DayReviewPromptSnapshot snapshot={result.promptSnapshot} view={view} />}
       {result.promptSnapshot && !prompts.block && (prompts.draft.saved || prompts.support?.defaults) && !sameReviewPrompts(prompts.draft.saved ?? prompts.support?.defaults, result.promptSnapshot) && <p className="day-review-status">{tr('提示词已修改，重新生成后生效')}</p>}
-      <details className="day-review-coverage"><summary>{tr('资料覆盖')} · {result.sourceKinds.map(kind => tr(DAY_REVIEW_LABELS[kind])).join('、')}
-        {result.coverage.some(x => x.status === 'partial' || x.status === 'unavailable') && <span> · {tr('部分资料未覆盖')}</span>}</summary>
+      <details className="day-review-coverage"><summary>{tr('使用的资料')} · {result.sourceKinds.map(kind => tr(DAY_REVIEW_LABELS[kind])).join('、')}
+        {result.coverage.some(x => x.status === 'partial' || x.status === 'unavailable') && <span> · {tr('未包含全部资料')}</span>}</summary>
         {result.coverage.map(item => <p key={item.kind}>{tr(DAY_REVIEW_LABELS[item.kind])} · {tr(coverageLabels[item.status])} · {item.count} {tr('条')}{item.note ? ` · ${item.note}` : ''}</p>)}
       </details>
       {sourceError && <p role="alert" className="day-review-error">{sourceError}</p>}

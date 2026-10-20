@@ -56,6 +56,7 @@ export function ArkmeDayLocationMap({ query, initialLocation, onClose }: {
         }
       }}>
       <header className="arkme-day-map-heading"><h2>{tr('位置')}</h2><button type="button" aria-label={tr('关闭当天位置')} onClick={onClose}>×</button></header>
+      <p className="arkme-day-scope">{tr('仅显示记录中保存的地点。')}</p>
       <ArkmeLocationQuickView initialDate={{ bucketDate: query.bucketDate, timezone: query.timezone }}
         {...(initialLocation ? { initialLocation } : {})} onOpenRecord={item => { void openRecord(item) }} />
       {detail && <div className="arkme-day-map-detail" style={{ background: arkmeTheme.base }}>
