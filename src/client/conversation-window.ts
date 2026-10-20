@@ -18,6 +18,8 @@ export interface ConversationWindowBridge {
  consumed(key: string, account: string, token: string): Promise<void>
  release(key: string, account: string, token: string): Promise<void>
  onEvent(listener: (event: ConversationWindowEvent) => void): () => void
+ /** Desktop shutdown/restart waits for coalesced edits and durable publish acknowledgements. */
+ onFlush?(listener: () => Promise<void>): () => void
 }
 export function conversationWindowBridge(): ConversationWindowBridge | undefined {
  const bridge = (globalThis as typeof globalThis & {arkmeConversation?: ConversationWindowBridge}).arkmeConversation

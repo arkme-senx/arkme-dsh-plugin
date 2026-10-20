@@ -193,3 +193,45 @@ it.each([['acquire', false], ['snapshot', false], ['acquire', true], ['snapshot'
   expect(bridge.release).toHaveBeenCalledOnce()
  } finally {release();stop();store.clearAccount(42);vi.useRealTimers()}
 })
+
+it('flushes the last coalesced edit and waits for its durable acknowledgement before closing', async () => {
+ const {flushConversationDrafts}=await import('../src/client/conversation-window-sync.js')
+ const store=new ArkmeComposerDraftStore(), key='arkme-composer:7:source:private_chat:close'
+ let acknowledge!:()=>void
+ const publish=vi.fn(()=>new Promise<boolean>(resolve=>{acknowledge=()=>resolve(true)}))
+ const stop=await connectConversationDrafts({snapshot:async()=>[],onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
+ try {
+  store.setText(key,'最后一笔编辑')
+  let closed=false; const closing=flushConversationDrafts().then(()=>{closed=true})
+  await vi.waitFor(()=>expect(publish).toHaveBeenCalledTimes(1)); expect(closed).toBe(false)
+  acknowledge(); await closing; expect(closed).toBe(true)
+ } finally {stop()}
+})
+it('fails the close barrier on a failed save and retries only on an explicit flush', async () => {
+ const {flushConversationDrafts}=await import('../src/client/conversation-window-sync.js')
+ const store=new ArkmeComposerDraftStore(), key='arkme-composer:7:source:private_chat:failed-close'
+ const publish=vi.fn(async()=>false)
+ const stop=await connectConversationDrafts({snapshot:async()=>[],onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
+ try {
+  store.setText(key,'不能丢')
+  await expect(flushConversationDrafts()).rejects.toThrow('尚未保存')
+  expect(store.get(key).text).toBe('不能丢'); expect(publish).toHaveBeenCalledTimes(1)
+  publish.mockResolvedValue(true); await flushConversationDrafts(); expect(publish).toHaveBeenCalledTimes(2)
+ } finally {stop()}
+})
+it.each(['edit','clear'])('keeps a local %s that happens while the cold-start snapshot is loading', async mode => {
+ const store=new ArkmeComposerDraftStore(), key='arkme-composer:7:source:private_chat:boot'
+ store.setText(key,'previous browser state')
+ let resolve!:(value:any)=>void
+ const publish=vi.fn(async()=>true)
+ const connecting=connectConversationDrafts({snapshot:()=>new Promise(done=>{resolve=done}),onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
+ if(mode==='edit')store.setText(key,'new local text');else store.clear(key)
+ resolve([{kind:'draft',key,value:{text:'old disk text',attachments:[],mentions:[],emojis:[]}}])
+ const stop=await connecting
+ try {expect(store.get(key).text).toBe(mode==='edit'?'new local text':'');expect(publish).toHaveBeenCalledWith(expect.objectContaining({key,value:mode==='edit'?expect.objectContaining({text:'new local text'}):null}),'prod:7')}finally{stop()}
+})
+it('restores Arko drafts through the same native snapshot without republishing them', async()=>{
+ const store=new ArkmeComposerDraftStore(),key='arkme-composer:7:arko',publish=vi.fn(async()=>true)
+ const stop=await connectConversationDrafts({snapshot:async()=>[{kind:'draft',key,value:{text:'Arko草稿',attachments:[],mentions:[],emojis:[]}}],onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
+ try{expect(store.get(key).text).toBe('Arko草稿');expect(publish).not.toHaveBeenCalled()}finally{stop()}
+})

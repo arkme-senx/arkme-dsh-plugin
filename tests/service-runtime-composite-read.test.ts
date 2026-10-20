@@ -242,7 +242,7 @@ describe('isolated message synchronization admission', () => {
     expect(Object.keys(f.runtime.requestStats())).toEqual(['interactive-read:chat'])
   })
 
-  it('admits timeline transport and its required profile projection while unrelated background reads are held', async () => {
+  it.each(['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2'])('admits %s and its required profile projection while unrelated background reads are held', async route => {
     vi.useFakeTimers()
     const held = gate(), starts: string[] = []
     const f = fixture(async (input, init) => {
@@ -256,13 +256,13 @@ describe('isolated message synchronization admission', () => {
     await vi.advanceTimersByTimeAsync(0)
     let complete = false
     const read = f.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef: 'first' }, async signal => {
-      await f.runtime.authenticatedChatPost('/api/v1/chat/timeline/unified', {}, undefined, signal, { lane: 'background-read' })
+      await f.runtime.authenticatedChatPost(route, {}, undefined, signal, { lane: 'background-read' })
       await f.runtime.authenticatedAuthPost('/api/v1/auth/get-public-users-by-ids', { user_ids: [3] }, undefined, signal, { lane: 'background-read' })
       complete = true
     })
     try {
       await vi.advanceTimersByTimeAsync(1)
-      expect(starts).toContain('/api/v1/chat/timeline/unified')
+      expect(starts).toContain(route)
       expect(starts).toContain('/api/v1/auth/get-public-users-by-ids')
       expect(complete).toBe(true)
     } finally { held.resolve(); await vi.advanceTimersByTimeAsync(1000); await Promise.all([read, background]) }

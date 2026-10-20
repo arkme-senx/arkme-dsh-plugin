@@ -7,12 +7,27 @@ import { ArkmeStateStore } from '../src/state-store.js'
 import { OfflineContextService } from '../src/services/offline-context-service.js'
 import type { ServiceRuntime, StateStore } from '../src/services/service.js'
 import type { OfflineContextList, OfflineContextPreview } from '../src/offline-context-contract.js'
+import { parseOwnerJson } from '../src/record-owner-id.js'
 
 const databases: ArkmeLocalDatabase[] = []
 const directories: string[] = []
 afterEach(async () => { for (const db of databases.splice(0)) db.close(); await Promise.all(directories.splice(0).map(p => rm(p, { recursive: true, force: true }))) })
 const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat' as const, ownerRef: 'private-chat-id', displayName: '项目群' })), sealSourceRef: vi.fn(async () => 'source-ref') }
 const association = { id: 'private-association', revision: 2, chat_session_uid: 'private-chat-id', state: 'linked', occurred_start: 1000, occurred_end: 2000, title: '测算讨论', summary: '尚未确认', reason: '回复测算问题', evidence: [{ id: 'private-evidence', version: 'asr-version', occurred_start: 1000, occurred_end: 2000, text: ' A🙂尚未确认 ', from: 2, to: 7, sound_source: 'unknown', contains_playback: false }], messages: [{ chat_session_uid: 'private-chat-id', relation_uid: 'private-relation', record_uid: 'private-record', record_owner: 8, occurred_at: 900, quote: '测算完成了吗？' }] }
+it('keeps a Bot owner exact across timeline references, association reads and message anchors', async () => {
+  const f = await fixture()
+  const owner = '6690025278483443577'
+  const ref = await f.service.messageReference('private-chat-id', 'private-relation', 'private-record', owner)
+  expect(await f.service.messageAnchor(ref, 'private-chat-id')).toEqual({ record_uid: 'private-record', record_owner_user_id: owner })
+  await expect(f.service.messageAnchor(ref, 'another-chat')).rejects.toThrow()
+  const raw = parseOwnerJson(JSON.stringify(association).replace('"record_owner":8', `"record_owner":${owner}`))
+  f.post.mockImplementation(async path => path.endsWith('/capability')
+    ? { supported: true, version: 1, timeline_version: 2 } : { items: [raw], has_more: false })
+  const page = await f.service.offlineContext({ operation: 'list', sourceRef: 'source-ref' }) as OfflineContextList
+  expect(page.entries[0]?.messages[0]?.messageRef).toBe(ref)
+  await expect(f.service.messageReference('private-chat-id', 'private-relation', 'private-record', Number(owner))).rejects.toThrow()
+  f.service.dispose()
+})
 async function fixture(invalidateProjection?: (userId: number) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'offline context scope ')); directories.push(directory)
   const store = new ArkmeStateStore(directory)

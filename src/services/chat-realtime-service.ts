@@ -78,6 +78,8 @@ export interface PendingChatProjection {
   refreshSource?: boolean | undefined
   /** A read-cursor change updates directory facts without changing message bodies. */
   refreshTimeline?: boolean | undefined
+  /** Same-sequence content changes need the authoritative preview, not a forward-only tail. */
+  refreshPreview?: boolean | undefined
   accountUserId?: number | undefined
   accountOwnerGeneration?: number | undefined
 }
@@ -504,7 +506,7 @@ export class ChatRealtimeService {
           eventAtMillis: hint.eventAtMillis,
         })
       } else {
-        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.latestSequence)
+        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.latestSequence, undefined, false, true)
       }
       void this.refreshAttentionSummary()
     } catch (error) {
@@ -932,6 +934,7 @@ export class ChatRealtimeService {
     latestSequence: number,
     notificationHint?: PendingChatNotificationHint,
     refreshTimeline = true,
+    refreshPreview = false,
   ): void {
     const uid = chatSessionUid.trim()
     if (uid === '') return
@@ -951,6 +954,7 @@ export class ChatRealtimeService {
       notificationHints,
       refreshSource: true,
       refreshTimeline: refreshTimeline || current !== undefined && current.refreshTimeline !== false,
+      refreshPreview: refreshPreview || current?.refreshPreview === true,
       accountUserId: notificationHint?.accountUserId ?? current?.accountUserId,
       accountOwnerGeneration: notificationHint?.accountOwnerGeneration ?? current?.accountOwnerGeneration,
     })
@@ -1126,6 +1130,7 @@ export class ChatRealtimeService {
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
+        refreshPreview: incoming.refreshPreview,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -1138,6 +1143,7 @@ export class ChatRealtimeService {
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
+        refreshPreview: incoming.refreshPreview,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -1162,6 +1168,7 @@ export class ChatRealtimeService {
       notificationHints: [...byEventUid.values()].slice(-256),
       refreshSource: current.refreshSource !== false || incoming.refreshSource !== false,
       refreshTimeline: current.refreshTimeline !== false || incoming.refreshTimeline !== false,
+      refreshPreview: current.refreshPreview === true || incoming.refreshPreview === true,
       accountUserId: current.accountUserId ?? incoming.accountUserId,
       accountOwnerGeneration: current.accountOwnerGeneration ?? incoming.accountOwnerGeneration,
     })
@@ -1194,7 +1201,7 @@ export class ChatRealtimeService {
         projection.refreshSource = true
       }
     }
-    const sourcePending = pending.filter(([, projection]) => projection.refreshSource !== false)
+    const sourcePending = pending.filter(([, projection]) => projection.refreshSource !== false && !projection.refreshPreview)
     const preferredUid = this.preferredProjectionUid()
     const interactive = (uid: string, projection: PendingChatProjection) => projection.notificationHints.length > 0
       && (preferredUid === undefined || uid === preferredUid)
@@ -1235,6 +1242,15 @@ export class ChatRealtimeService {
         items: ArkmeTimelineItem[]
         notificationIdentities: ArkmeTimelineNotificationIdentity[]
       } | undefined
+      const previewBundle = projection.refreshSource !== false && projection.refreshPreview
+        ? await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/detail', { chat_session_uid: uid }, session, undefined,
+          { lane: uid === preferredUid ? 'interactive-read' : 'background-read', key: `projection:preview:${uid}`, traffic: 'message-sync', bypassCache: true },
+        ) : undefined
+      if (previewBundle !== undefined && stringValue(objectValue(previewBundle.session).chat_session_uid) !== uid) {
+        throw new Error('Chat preview snapshot identity is invalid')
+      }
+      if (ownerGeneration !== this.attentionOwnerGeneration) return []
       const cached = this.source.cachedChatSourceByKey(`${String(session.userId)}:${uid}`)
       const earlySource = uid === preferredUid && cached?.kind === 'private_chat'
         && cached.directMessageAdmissionApplicable === true ? cached : undefined
@@ -1330,8 +1346,8 @@ export class ChatRealtimeService {
         }
         const bundles = await displayReady
         const projectStartedAt = Date.now()
-        if (bundles === undefined && projection.refreshSource !== false) throw new Error('Chat display projection failed')
-        const bundle = bundles?.get(uid)
+        if (bundles === undefined && previewBundle === undefined && projection.refreshSource !== false) throw new Error('Chat display projection failed')
+        const bundle = previewBundle ?? bundles?.get(uid)
         const sessionKind = numberValue(objectValue(bundle).session_kind
           ?? objectValue(objectValue(bundle).session).session_kind)
         const sourceKind = sessionKind === 2 ? 'group_chat'
@@ -1361,7 +1377,7 @@ export class ChatRealtimeService {
         uid: string
         latestSequence: number
       }> = []
-        const bundle = bundles?.get(uid)
+        const bundle = previewBundle ?? bundles?.get(uid)
         if (projection.refreshSource !== false && bundle === undefined) return [[uid, projection] as [string, PendingChatProjection]]
         const cacheKey = `${String(session.userId)}:${uid}`
         const timelineItems = timelineProjection?.items ?? []
@@ -1369,7 +1385,7 @@ export class ChatRealtimeService {
           const cachedSource = this.source.cachedChatSourceByKey(cacheKey)
           const source = projection.refreshSource === false
             ? cachedSource
-            : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems)
+            : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems, { previewSnapshot: previewBundle !== undefined })
           if (source === undefined) {
             this.mergePendingChatProjection(uid, { ...projection, refreshSource: true })
             return [[uid, projection] as [string, PendingChatProjection]]
