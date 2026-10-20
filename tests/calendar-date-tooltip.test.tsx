@@ -118,3 +118,23 @@ it('removes its portal and event listeners when the calendar closes', () => {
   expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function), true)
   expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function))
 })
+
+
+it('explains actual activity markers without calling a recording-only day empty', () => {
+  render({ meta: { ...meta, count: 0, conversationCounts: undefined, activityMarkers: { recording: true, chat: true, call: true, arko: true, bot: true } } })
+  hover()
+  expect(tip()?.textContent).toBe('有录音、对话、通话、Arko、Bot')
+  expect(day().getAttribute('aria-label')).not.toContain('暂无记录')
+  expect(day().getAttribute('aria-label')).toContain('有录音、对话、通话、Arko、Bot')
+  leave()
+  render({ meta: undefined, hasRecordingIndex: true })
+  hover()
+  expect(tip()?.textContent).toBe('有录音')
+  expect(day().getAttribute('aria-label')).not.toContain('暂无记录')
+})
+
+it('preserves conversation breakdown alongside activity markers', () => {
+  render({ meta: { ...meta, activityMarkers: { chat: true } } })
+  hover()
+  expect(tip()?.textContent).toBe('私聊 2 条 · 群聊互动 1 条 · 有对话')
+})

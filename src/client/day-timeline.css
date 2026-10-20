@@ -74,7 +74,6 @@
 .arkme-day-message > div { color: var(--day-muted); font-size: 11px; margin-bottom: 5px; overflow-wrap: anywhere; }
 .arkme-day-message p { border-radius: 9px; padding: 10px 12px; background: var(--day-layer); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .arkme-day-source { background: transparent; border: 0; padding: 6px 0; text-decoration: underline; text-underline-offset: 3px; }
-.arkme-day-timeline .arkme-day-footnote { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--day-border); color: var(--day-muted); font-size: 11px; }
 .arkme-day-coverage { margin-top: 14px; }
 .arkme-day-track { height: 10px; border-radius: 4px; position: relative; overflow: hidden; background: color-mix(in srgb, var(--day-text) 8%, var(--day-base)); }
 .arkme-day-track span { position: absolute; height: 100%; }

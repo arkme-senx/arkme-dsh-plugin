@@ -39,7 +39,7 @@ describe('day location presentation', () => {
     expect(button('查看地点：办公室')).toBeDefined()
     await click('查看地点：办公室')
     expect(text()).toContain('办公室')
-    expect(text()).toContain('已显示记录返回的位置摘要')
+    expect(text()).toContain('采集时间')
     expect(loadLocation).not.toHaveBeenCalled()
     expect(view.root.findAllByType('dl')).toHaveLength(0)
   })
@@ -53,7 +53,7 @@ describe('day location presentation', () => {
     expect(button('查看地点：办公区附近')).toBeDefined()
     await click('地点')
     expect(view.root.findAllByProps({ 'data-activity-id': 'b' })).toHaveLength(0)
-    expect(text()).toContain('没有地点标签不代表当时没有位置')
+    expect(text()).toContain('显示带有地点信息的活动')
   })
   it('does not fan out on day load or activity selection; enriches the tag after explicit detail read', async () => {
     const { reader, loadLocation } = setup()
@@ -64,7 +64,7 @@ describe('day location presentation', () => {
     expect(button('查看地点：办公区附近')).toBeDefined()
     expect(text()).toContain('采集时间未知')
     expect(text()).toContain('电脑')
-    expect(text()).toContain('不是全天完整轨迹')
+    expect(text()).toContain('这是记录关联的位置信息')
     expect(text()).not.toContain('停留了')
   })
   it('opens a known location with one click and leaves locations on other events untouched', async () => {
@@ -89,7 +89,7 @@ describe('day location presentation', () => {
     const { reader, loadLocation } = setup([entry('a', point)])
     loadLocation.mockResolvedValue({ query, activityId: 'a', snapshotId: 's', access: 'available' })
     await mount(reader); await click('查看地点：办公区附近')
-    expect(text()).toContain('没有可确认的设备采集位置')
+    expect(text()).toContain('这条记录没有保存位置信息')
     expect(text()).not.toContain('办公区附近')
   })
   it('removes both text and coordinates when live access is revoked', async () => {
