@@ -3213,6 +3213,8 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** Available only for complete projections; paged reads obtain counts when editing. */
+  sameSpeakerItemCount?: number
   /** User-confirmed source, independent of the speaker identity. */
   soundSource?: ArkmeRecordingSoundSource
   /** Includes a confirmed playback subrange after provider resegmentation. */
@@ -3284,6 +3286,7 @@ export interface ArkmeRecordingSpeakerMembers {
 }
 
 export interface ArkmeRecordingSpeakerRecommendation {
+  groupItemCount?: number
   optionKey?: string
 }
 

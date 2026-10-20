@@ -52,10 +52,10 @@ describe('arrangement source access boundary', () => {
     host.runtime.requireSession.mockResolvedValueOnce({userId:11,refreshToken:'account-session'}).mockResolvedValueOnce({userId:22,refreshToken:'another-account'})
     await expect(open()).rejects.toMatchObject({code:'arrangement-source-account-changed'})
   })
-  it('opens the owned agent document without reading recording media', async () => {
+  it('opens the freshly authorized agent evidence without a second document read', async () => {
     const { host, open } = fixture({ kind: 'agent', text: 'preview' })
-    expect(await open()).toEqual({ kind: 'document', title: '来源指令', text: 'original agent instruction' })
-    expect(host.arrangement.sourceDocument).toHaveBeenCalledWith('opaque-arrangement', 'evidence-id', undefined)
+    expect(await open()).toEqual({ kind: 'document', title: '来源指令', text: 'preview' })
+    expect(host.arrangement.sourceDocument).not.toHaveBeenCalled()
     expect(host.runtime.authenticatedAudioPost).not.toHaveBeenCalled()
   })
   it('delegates an accessible personal record to its owner', async () => {

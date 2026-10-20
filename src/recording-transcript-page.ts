@@ -32,6 +32,7 @@ function sameUtterance(a: ArkmeRecordingWorkbenchItem, b: ArkmeRecordingWorkbenc
   return a.itemId === b.itemId && a.sessionKey === b.sessionKey && a.transcriptSource === b.transcriptSource
     && a.startAtMillis === b.startAtMillis && a.endAtMillis === b.endAtMillis
     && a.speakerKey === b.speakerKey && a.speakerLabel === b.speakerLabel && a.isBackground === b.isBackground
+    && a.soundSource === b.soundSource && a.containsPlayback === b.containsPlayback
     && a.textTotalLength === b.textTotalLength
 }
 

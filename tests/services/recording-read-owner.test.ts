@@ -189,3 +189,35 @@ describe('RecordingReadOwner', () => {
     await expect(f.owner.dayPage({ ...window, endAt: window.endAt + 1 }, 'primary', session, first.next)).rejects.toMatchObject({ code: 'recording-view-changed' })
   })
 })
+
+it('counts whole recordings only on their start day using bounded background reads and uploader ownership', async () => {
+  const calls: Array<{ path: string; body: Record<string, unknown>; lane?: string }> = []
+  const runtime = {
+    requireSession: async () => session,
+    authenticatedAudioPost: async (path: string, body: Record<string, unknown>, _session: unknown, _signal: unknown, options: { lane?: string }) => {
+      calls.push({ path, body, lane: options.lane })
+      if (path.endsWith('/recordings/query')) return { items: [
+        { recording_uid: objectId(1), start_at: start, end_at: window.endAt + 10000, uploader_user_id: 42, memory_owner_user_id: 0, owner_version: 1, status: 'available' },
+        { recording_uid: objectId(2), start_at: start, end_at: start + 10000, uploader_user_id: 7, memory_owner_user_id: 42, owner_version: 1, status: 'available' },
+        { recording_uid: objectId(3), start_at: start - 10000, end_at: start + 10000, uploader_user_id: 42, owner_version: 1, status: 'available' },
+      ], has_more: false }
+      expect(body).toMatchObject({ recording_uid: objectId(1), start_at: 0, end_at: Number.MAX_SAFE_INTEGER, limit: 1 })
+      return { status: 'available', recording_uid: objectId(1), revision: 'a'.repeat(64), start_at: start, coverage, speakers: [], utterances: [], has_more: false,
+        storage: { bytes: 421, archive_bytes: 321, clip_bytes: 100, confirmed_count: 1, pending_count: 0, unknown_count: 0 },
+        asr_input: { duration_ms: 3000, confirmed_count: 1, pending_count: 0, unknown_count: 0, estimated_count: 0 } }
+    },
+  } as unknown as Pick<ServiceRuntime, 'requireSession' | 'authenticatedAudioPost'>
+  const result = await new RecordingReadOwner(runtime, 'background-read').startDayMetrics(window, session)
+  expect(result).toMatchObject({ sessionCount: 1, storage: { bytes: 421 }, asrInput: { duration_ms: 3000 } })
+  expect(calls).toHaveLength(2)
+  expect(calls.every(call => call.lane === 'background-read')).toBe(true)
+  expect(calls.some(call => call.path.includes('one-day-trans'))).toBe(false)
+})
+
+it('retains selected recording continuation after midnight for entity evidence using bounded owner pages', async () => {
+  const f = fixture([[{ body: 'before midnight', offset: 86_399_000, child: 100, ordinal: 0 }, { body: 'after midnight', offset: 86_401_000, child: 100, ordinal: 1 }]])
+  const result = await f.owner.completeSelectedRecordings(window, 'primary', session)
+  expect(result.items.map(row => row.text)).toEqual(['before midnight', 'after midnight'])
+  expect(f.requests.filter(row => row.path.endsWith('/recordings/query'))).toHaveLength(1)
+  expect(f.requests.filter(row => row.path.endsWith('/transcript/query')).every(row => row.body.limit as number <= 100)).toBe(true)
+})

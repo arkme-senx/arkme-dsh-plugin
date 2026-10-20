@@ -9,21 +9,17 @@ const bucket = (bytes = 100, durationMillis = 1000): RecordingTotalsBucket => ({
   storage: { state: 'ready', bytes, archiveBytes: bytes, clipBytes: 0 }, asrInput: { state: 'ready', durationMillis, estimated: false } } })
 const controller = () => new AbortController()
 
-it('counts the full midnight-spanning child once, including observed ASR retries, excluding other ownership', () => {
-  const session = { id: 's', user_id: 42, belong_usr: 42, start_at: next - 1000, end_at: next + 1000, duration: 2000 }
-  const child = { id: 'c', session_id: 's', start_at: 0, duration: 2000, upload_at: 3, archive_size: 321, size: 100, has_asr: true,
-    asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 3000, spans: [[0, 2000], [0, 1000]] } }
-  const response = { session_ls: [session, { ...session, id: 'other', user_id: 7, belong_usr: 42 }],
-    child_ls: [child, child, { ...child, id: 'otherchild', session_id: 'other', archive_size: 999 }] }
-  expect(projectRecordingTotalsBucket(response, 42, day, next).metrics).toMatchObject({ storage: { state: 'ready', bytes: 421 }, asrInput: { durationMillis: 3000 } })
-  expect(projectRecordingTotalsBucket(response, 42, next, next + 86_400_000)).toMatchObject({ sessionCount: 0, metrics: { storage: { bytes: 0 }, asrInput: { durationMillis: 0 } } })
+it('projects authoritative owner totals without reconstructing transcript/storage internals', () => {
+  const result = projectRecordingTotalsBucket({ sessionCount: 1,
+    storage: { bytes: 421, archive_bytes: 321, clip_bytes: 100, confirmed_count: 1, pending_count: 0, unknown_count: 0 },
+    asrInput: { duration_ms: 3000, confirmed_count: 1, pending_count: 0, unknown_count: 0, estimated_count: 0 } })
+  expect(result).toMatchObject({ sessionCount: 1, metrics: { storage: { state: 'ready', bytes: 421 }, asrInput: { durationMillis: 3000 } } })
 })
 
-it('keeps unavailable/pending metrics distinct from zero; rejects malformed reads', () => {
-  expect(() => projectRecordingTotalsBucket({}, 42, day, next)).toThrow()
-  const s = { id: 's', user_id: 42, belong_usr: 42, start_at: day, end_at: day + 1000 }
-  const result = projectRecordingTotalsBucket({ session_ls: [s], child_ls: [{ id: 'c', session_id: 's', start_at: 0, duration: 1000, has_asr: false,
-    asr_input_metrics: { state: 'processing' } }] }, 42, day, next)
+it('keeps unavailable/pending metrics distinct from zero', () => {
+  const result = projectRecordingTotalsBucket({ sessionCount: 1,
+    storage: { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 1, unknown_count: 0 },
+    asrInput: { duration_ms: 0, confirmed_count: 0, pending_count: 1, unknown_count: 0, estimated_count: 0 } })
   expect(result.metrics).toMatchObject({ storage: { state: 'processing', bytes: null }, asrInput: { state: 'processing', durationMillis: null } })
 })
 

@@ -198,6 +198,7 @@ describe('RecordingService', () => {
       scope: 'test:42', lane: 'background-read', service: 'audio', operation: () => gate,
     }))
     f.state.rows = [{ speaker_id: 'speaker', nick_name: '甲', ref_usr_id: 7 }]
+    f.state.ownerRecordings = [{startAt: new Date(2026, 9, 12).getTime(), items: [{text: '内容', speaker: {user_id: 7}}]}]
     const session = await f.runtime.requireSession()
     const background = profile.publicProfileSummariesByUserIds([7], session)
     let completed = false
@@ -283,13 +284,8 @@ describe('RecordingService', () => {
   it('opens Explore evidence on the original ASR source and rejects mismatched anchors', async () => {
     const fixture = await speakerCacheFixture()
     const date = new Date(2026, 7, 12).getTime(), start = date + 9 * 3600000
-    fixture.state.transcripts = { [date]: {
-      session_ls: [{ id: 's', belong_usr: 42, start_at: start, end_at: start + 3000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
-        asr: [{ s: 1000, e: 2000, n: 1, t: '系统原文' }],
-        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '生日是十月二十八日' }] }],
-    } }
-    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
+    fixture.state.ownerRecordings = [{startAt: start, items: [{text: '系统原文', start: 1000, end: 2000}], enhanced: [{text:'生日是十月二十八日', start:1000, end:2000}]}]
+    const owner = { container_id: recordingId, child_id: childId, item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
     try {
       const source = await fixture.service.exploreRecordingEvidence(owner, '十月二十八日')
       expect(source.dateStamp).toBe(date)
@@ -500,6 +496,7 @@ describe('RecordingService', () => {
         { speaker_id: 'b', reference: 'speaker:cccccccccccccccc', nick_name: '甲' },
         { speaker_id: 'a', reference: speakerReference, nick_name: '甲' },
       ]
+      fixture.state.ownerRecordings = [{startAt:3600000, items:[{text:'内容', start:1000, end:2000, edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}}]}]
       const first = await fixture.service.recordingSpeakerOptions()
       expect(first).toHaveLength(2)
       expect(first[0]!.optionKey).not.toBe(first[1]!.optionKey)
@@ -869,11 +866,11 @@ describe('RecordingService', () => {
       vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init)=>{
         const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
         const data=recordingOwnerResponse(path,JSON.parse(String(init?.body ?? '{}')),[{startAt:dayStart,items:[{text:'你好 🙂'}],
-          storage:{bytes:123456,confirmed_count:1,pending_count:0,unknown_count:0}, asrInput:{duration_ms:5000,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}}]) ?? {spk_ls:[]}
+          storage:{bytes:124456,archive_bytes:123456,clip_bytes:1000,confirmed_count:1,pending_count:0,unknown_count:0}, asrInput:{duration_ms:5000,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}}]) ?? {spk_ls:[]}
         return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day=await fixture.service.recordingDay(dayStart)
-      expect(day.transcript.dailyMetrics).toMatchObject({storage:{bytes:124456,archiveBytes:123456,clipBytes:1000,state:'ready'},archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
+      expect(day.transcript.dailyMetrics).toMatchObject({storage:{bytes:124456,archiveBytes:123456,clipBytes:1000,state:'ready'},archiveBytes:124456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
       expect(JSON.stringify(day.transcript.dailyMetrics)).not.toContain('secret')
       expect(fixture.fetchImpl.mock.calls.some(([input])=>String(input).includes('/one-day-trans'))).toBe(false)
     }finally{await fixture.close()}
@@ -2052,9 +2049,9 @@ describe('RecordingService', () => {
       let data: Record<string, unknown> = {}
       data = recordingOwnerResponse(url.pathname, body, [{ startAt: recordingDate + 3_600_000,
         items: [
-          { text: '项目复盘', start: 1000, end: 2000, speaker: { label: '小林', user_id: 88 } },
-          { text: '继续讨论', start: 3000, end: 4000, speaker: { label: '小林', user_id: 88 } },
-          { text: '单片段标记', start: 5000, end: 6000, speaker: { label: '小林', user_id: 88 } },
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000, speaker: { label: '小林', user_id: 88 } },
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '继续讨论', start: 3000, end: 4000, speaker: { label: '小林', user_id: 88 } },
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '单片段标记', start: 5000, end: 6000, speaker: { label: '小林', user_id: 88 } },
         ],
       }]) ?? data
       if (url.pathname.endsWith('/get-speaker-ls')) data = {
@@ -2108,7 +2105,7 @@ describe('RecordingService', () => {
     expect(options[0]).not.toHaveProperty('currentAssignment')
     expect(options[0]).not.toHaveProperty('recommended')
     expect(calls.some(call => call.path.endsWith('/similar-session-speaker'))).toBe(false)
-    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey })
+    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey, groupItemCount: 3 })
     const renewedOptions = await service.recordingSpeakerOptions()
     expect(renewedOptions.map(option => option.label)).toEqual(['小林', '小林'])
     candidateLabel = '小王'
@@ -2198,7 +2195,7 @@ describe('RecordingService', () => {
       data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{
         startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
         revision: transcriptReads <= 1 ? recordingRevision : 'b'.repeat(64),
-        items: [{ text: '项目复盘', start: 1000, end: 2000 }],
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
       }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [] }
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
@@ -2233,7 +2230,7 @@ describe('RecordingService', () => {
       calls.push(path)
       let data: Record<string, unknown> = {}
       data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
-        items: [{ text: '项目复盘', start: 1000, end: 2000 }],
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
       }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
       if (path.endsWith('/create-speaker')) data = { speaker_id: 'speaker-created' }
@@ -2310,7 +2307,7 @@ describe('RecordingService', () => {
       calls.push(path)
       let data: Record<string, unknown> = {}
       data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, userId === 42 ? 29 : 30).setHours(1, 0, 0, 0),
-        items: [{ text: '项目复盘', start: 1000, end: 2000 }],
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
       }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'shared-speaker-id', reference: speakerReference, nick_name: `用户${String(userId)}` }] }
 

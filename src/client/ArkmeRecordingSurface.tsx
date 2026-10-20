@@ -54,7 +54,6 @@ import { ArkmeRecordingMobileGuideDialog } from './recordings/ArkmeRecordingMobi
 import { ArkmeDirectRecordingButton, ArkmeDirectRecordingStatus } from './recordings/ArkmeDirectRecording.js'
 import { useLocalRecordingCoverage } from './recordings/recording-coverage.js'
 import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor, type RecordingSpeakerUpdateFeedback } from './recordings/ArkmeRecordingSpeakerEditor.js'
-import { captureRecordingScrollAnchor } from './recordings/recording-scroll-anchor.js'
 import { recordingDayIsEmpty } from './recordings/recording-day-empty.js'
 import { RecordingTranscriptTimeline } from './recordings/RecordingTranscriptTimeline.js'
 import { RecordingDayArrangements } from './recordings/RecordingDayArrangements.js'
@@ -812,17 +811,23 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }, [day])
   const applySpeakerUpdate = (next: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback) => {
     if (next.dateStamp !== (notificationWindow?.dateStamp ?? selectedDateRef.current)) return
-    speakerMutationRevision.current += 1
+    const mutation = ++speakerMutationRevision.current, scope = dayScopeRef.current
     setSpeechRevision(value => value + 1)
-    speakerScrollAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current, removal?.itemId ?? editingSpeaker?.item.itemId)
-    setDay(next)
     setSpeakerFeedback(undefined)
-    if (removal && !removal.warning) {
-      const item = next.transcript.items.find(candidate => candidate.itemId === removal.itemId)
-      if (item && !item.assignedSpeakerOptionKey) setSpeakerFeedback({ itemId: item.itemId, visible: true,
-        message: removal.scope === 'speaker' ? tr('已取消 {v0} 处标记', { v0: removal.count })
-          : tr('已取消标记，恢复为「{v0}」', { v0: item.speakerLabel }) })
-    }
+    const anchor = captureRecordingScrollAnchor(transcriptRootRef.current, removal?.itemId ?? editingSpeaker?.item.itemId)
+    // A correction response contains the first page. Restore the loaded prefix
+    // atomically before publishing it; never collapse a long recording to page 1.
+    void pages.refresh(next.transcript).then(transcript => {
+      if (!transcript || dayScopeRef.current !== scope || speakerMutationRevision.current !== mutation) return
+      speakerScrollAnchor.current = anchor
+      setDay({ ...next, transcript })
+      if (removal && !removal.warning) {
+        const item = transcript.items.find(candidate => candidate.itemId === removal.itemId)
+        if (item && !item.assignedSpeakerOptionKey) setSpeakerFeedback({ itemId: item.itemId, visible: true,
+          message: removal.scope === 'speaker' ? tr('已取消 {v0} 处标记', { v0: removal.count })
+            : tr('已取消标记，恢复为「{v0}」', { v0: item.speakerLabel }) })
+      }
+    }).catch(() => { /* The paging owner retains the valid prefix and retry UI. */ })
   }
   const [comparison, setComparison] = useState<PreparedRecordingComparison>()
   const [comparisonLoading, setComparisonLoading] = useState(false)
@@ -831,8 +836,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [forwardAttempt, setForwardAttempt] = useState(() => createRecordingForwardAttempt([]))
   const selectedForwardItems = forwardAttempt.items
   const [forwardOpen, setForwardOpen] = useState(false)
-  const notificationWindow = ui.recordingTarget?.window && dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) === dateKey(selectedDate) ? ui.recordingTarget.window : undefined
-  const dayScope = `${String(auth.auth?.userId)}:${String(auth.auth?.environment)}:${String(selectedDate.getTime())}:${notificationWindow ? JSON.stringify(notificationWindow) : "local"}`
   const loadedDayScope = useRef('')
   const dailyMetrics = useRecordingDailyMetrics(loadedDayScope.current === dayScope && day?.dateStamp === selectedDate.getTime() && !dayError ? day.transcript : undefined, dayScope, active && workbenchEnabled)
   const dayScopeRef = useRef(dayScope)

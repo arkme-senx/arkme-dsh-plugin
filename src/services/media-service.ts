@@ -620,21 +620,20 @@ export class MediaService {
     }, undefined, 110_000)
   }
 
-  /** Audio has already resolved current source/version to real immutable clips.
-   * Keep signed storage URLs behind the existing account-scoped media proxy. */
+  /** Context selection authorizes immutable clips; the normal playback owner
+   * rechecks access when streaming historical files or current packed media. */
   async issueContextPlayback(body: Record<string, unknown>, signal?: AbortSignal): Promise<import('../offline-context-contract.js').OfflineContextPlayback> {
     const session = await this.runtime.requireSession()
     const data = objectValue(await this.runtime.authenticatedAudioPost('/api/v1/audio/context/playback', body, session, signal, { lane: 'interactive-read', bypassCache: true }))
     if (!Array.isArray(data.clips) || !data.clips.length || data.clips.length > 32) throw new ArkmePluginError('offline-context-audio-invalid', '音频来源暂不可用', false, 502)
     const clips: import('../types.js').ArkmeRecordingPlayback[] = []
     for (const raw of data.clips) {
-      const clip = objectValue(raw), url = new URL(stringValue(clip.url))
-      if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
-        || !(url.searchParams.get('Signature') || url.searchParams.get('x-oss-signature'))
-        || !['audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/wav'].includes(String(clip.mime_type))
+      const clip = objectValue(raw), ref = recordingPlaybackRef(clip.clip_ref)
+      if (ref === undefined || ref.child_id !== body.child_id || ref.source !== 'primary'
+        || !['audio/ogg', 'audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/wav'].includes(String(clip.mime_type))
         || !Number.isSafeInteger(clip.start_offset_ms) || !Number.isSafeInteger(clip.end_offset_ms) || Number(clip.start_offset_ms) < 0 || Number(clip.end_offset_ms) <= Number(clip.start_offset_ms)) throw new ArkmePluginError('offline-context-audio-invalid', '音频来源暂不可用', false, 502)
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('offline-context-account-changed', '账号已变化', false, 409)
-      clips.push({ playbackRef: await this.issueMediaRef(session.userId, { remoteUrl: url.toString(), mimeType: String(clip.mime_type), fileName: 'recording', size: 0 }, undefined, 110000), mimeType: String(clip.mime_type), startOffsetMillis: Number(clip.start_offset_ms), endOffsetMillis: Number(clip.end_offset_ms) })
+      clips.push({ playbackRef: this.issueRecordingClip(session.userId, ref.child_id, ref), mimeType: String(clip.mime_type), startOffsetMillis: Number(clip.start_offset_ms), endOffsetMillis: Number(clip.end_offset_ms) })
     }
     return { clips }
   }
@@ -660,7 +659,7 @@ export class MediaService {
     const current = recordingPlaybackRef(resolved.clip_ref)
     if (current === undefined || !sameRecordingPlaybackLocation(current, locator)
       || resolved.content_path !== recordingPlaybackPath(current)
-      || !['audio/ogg', 'audio/flac', 'audio/mp4'].includes(stringValue(resolved.content_type))
+      || !['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'].includes(stringValue(resolved.content_type))
       || !Number.isSafeInteger(resolved.duration_ms) || numberValue(resolved.duration_ms) <= 0) {
       throw new ArkmePluginError('recording-media-invalid', '录音媒体解析结果不匹配', false, 502)
     }

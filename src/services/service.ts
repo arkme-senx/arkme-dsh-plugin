@@ -1338,7 +1338,7 @@ export class ServiceRuntime {
       const mime = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
       if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
         || (options.maxBytes !== undefined && length > options.maxBytes)
-        || !['audio/ogg', 'audio/flac', 'audio/mp4'].includes(mime)
+        || !['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'].includes(mime)
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
         const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')

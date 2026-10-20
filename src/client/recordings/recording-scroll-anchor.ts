@@ -13,10 +13,10 @@ export function captureRecordingScrollAnchor(pane: HTMLElement | null, preferred
 }
 
 /** Stable identity first; a replaced page falls forward to the source time. */
-export function restoreRecordingScrollAnchor(pane: HTMLElement | null, anchor: RecordingScrollAnchor | undefined): void {
+export function restoreRecordingScrollAnchor(pane: HTMLElement | null, anchor: Pick<RecordingScrollAnchor, 'item' | 'time' | 'offset'> | undefined): void {
   if (pane === null || anchor === undefined) return
   const rows = [...pane.querySelectorAll<HTMLElement>('[data-recording-transcript-item]')]
   const row = rows.find(element => element.dataset.recordingTranscriptItem === anchor.item)
     ?? rows.find(element => Number(element.dataset.recordingStart) >= anchor.time) ?? rows.at(-1)
-  if (row !== undefined) pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - anchor.offset
+  if (row !== undefined && pane.contains(row)) pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - anchor.offset
 }

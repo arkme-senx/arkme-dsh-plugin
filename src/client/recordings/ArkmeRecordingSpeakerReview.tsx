@@ -150,7 +150,7 @@ export function ArkmeRecordingSpeakerReview({ item, items, options, onPlay, onUp
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={button} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr('当天同组')}</button>
         <button type="button" style={button} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
-        <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: Math.max(item.sameSpeakerItemCount, candidates.length) })}</span>
+        <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : group ? tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: group.totalCount }) : tr('已加载 {v0} 段', { v0: candidates.length })}</span>
       </div>
       <div style={{ color: color.secondary }}>{tr('下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>

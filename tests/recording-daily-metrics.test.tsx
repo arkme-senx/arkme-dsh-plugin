@@ -9,12 +9,14 @@ import { connectArkmeLocale, type ArkmeLocale } from '../src/client/locale.js'
 const setLocale = (active: ArkmeLocale) => connectArkmeLocale({getLocale:()=>({active}),subscribe:()=>()=>{}})()
 
 const start = new Date(2026,8,30).getTime()
-const child = { id: 'child', archive_size: 123456, has_asr: true }
+const child = { clip_size: 888888, id: 'child', archive_size: 123456, has_asr: true }
 const metrics = (children: Array<typeof child>) => projectRecordingDailyMetrics({
-  bytes: children.reduce((sum,c)=>sum+(c.has_asr && c.archive_size > 0 ? c.archive_size : 0),0),
+  bytes: children.reduce((sum,c)=>sum+(c.has_asr && c.archive_size > 0 ? c.archive_size + c.clip_size : 0),0),
+  archive_bytes: children.reduce((sum,c)=>sum+(c.has_asr && c.archive_size > 0 ? c.archive_size : 0),0),
+  clip_bytes: children.reduce((sum,c)=>sum+(c.has_asr && c.archive_size > 0 ? c.clip_size : 0),0),
   confirmed_count: children.filter(c=>c.has_asr && c.archive_size > 0).length,
   pending_count: children.filter(c=>!c.has_asr).length,
-  unknown_count: children.filter(c=>c.has_asr && c.archive_size === 0).length,
+  unknown_count: children.filter(c=>c.has_asr && !Number.isSafeInteger(c.archive_size) || c.archive_size === 0).length,
 }, [{text:'你好 🙂'}])
 afterEach(()=>setLocale('zh'))
 

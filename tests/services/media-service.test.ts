@@ -106,25 +106,27 @@ describe('MediaService', () => {
     await expect(media.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
-  it.each(['audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/wav'])('proxies authorized context playback for %s with account and range boundaries', async mimeType => {
+  it.each(['audio/ogg', 'audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/wav'])('proxies authorized context playback for %s with account and range boundaries', async mimeType => {
     let userId = 42
     const url = 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/audio_output/clip?Signature=fixture'
     const fetchImpl = vi.fn(async () => new Response('audio', { status: 206, headers: {
-      'content-type': mimeType, 'content-range': 'bytes 0-4/100', 'accept-ranges': 'bytes',
+      'content-length': '5', 'content-type': mimeType, 'content-range': 'bytes 0-4/100', 'accept-ranges': 'bytes',
     } }))
     const runtime = new ServiceRuntime(config, { read: async () => ({ userId, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
     const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
-    const read = vi.spyOn(runtime, 'authenticatedAudioPost').mockResolvedValue({ clips: [{ url, mime_type: mimeType, start_offset_ms: 100, end_offset_ms: 900 }] })
-    const request = { session_id: 'session', child_id: 'child', evidence_id: 'evidence', version: 'version', ordinal: 0, from: 1, to: 8 }
+    const clipRef = { child_id: '123456789012345678901234', source: 'primary', ordinal: 2, audio_revision: 'a'.repeat(64) }
+    const read = vi.spyOn(runtime, 'authenticatedAudioPost').mockResolvedValue({ clips: [{ clip_ref: clipRef, mime_type: mimeType, start_offset_ms: 100, end_offset_ms: 900 }] })
+    const request = { session_id: 'session', child_id: clipRef.child_id, evidence_id: 'evidence', version: 'version', ordinal: 0, from: 1, to: 8 }
     const { clips } = await media.issueContextPlayback(request)
     expect(read).toHaveBeenCalledWith('/api/v1/audio/context/playback', request, expect.objectContaining({ userId: 42 }), undefined, expect.objectContaining({ bypassCache: true }))
     expect(clips[0]).toMatchObject({ mimeType, startOffsetMillis: 100, endOffsetMillis: 900 })
     expect(JSON.stringify(clips)).not.toContain(url)
     const response = await media.fetchMedia(clips[0]!.playbackRef, 'bytes=0-4')
     expect(response.response.status).toBe(206)
-    expect(response.descriptor.mimeType).toBe(mimeType)
+    expect(response.response.headers.get('content-type')).toBe(mimeType)
     await expect(response.response.text()).resolves.toBe('audio')
-    expect(fetchImpl).toHaveBeenCalledWith(new URL(url), expect.objectContaining({ headers: { Range: 'bytes=0-4' }, redirect: 'error' }))
+    expect(new URL(String(fetchImpl.mock.calls[0]![0])).pathname).toBe(`/api/v1/audio/clips/${clipRef.child_id}/primary/2/${clipRef.audio_revision}`)
+    expect(new Headers(fetchImpl.mock.calls[0]![1]?.headers).get('range')).toBe('bytes=0-4')
     userId = 99
     await expect(media.fetchMedia(clips[0]!.playbackRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
     expect(fetchImpl).toHaveBeenCalledTimes(1)

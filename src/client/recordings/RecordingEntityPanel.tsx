@@ -43,6 +43,12 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
   const [feedbackKey, setFeedbackKey] = useState('')
   const feedback = useRecordingEntityFeedback(onRefresh)
   const [locateError, setLocateError] = useState(false)
+  const [locating, setLocating] = useState(false)
+  const locateScope = `${data?.version ?? ''}:${expanded}:${open}`
+  const currentLocateScope = useRef(locateScope)
+  currentLocateScope.current = locateScope
+  useEffect(() => { setLocating(false) }, [locateScope])
+  useEffect(() => () => { currentLocateScope.current = '' }, [])
   const [sourceKey, setSourceKey] = useState('')
   const body = useRef<HTMLDivElement>(null), sentinel = useRef<HTMLDivElement>(null)
   const scroll = useRef(0), expandedTitle = useRef<HTMLButtonElement>(null)
@@ -147,11 +153,18 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
           {expanded === item.key && <div className="arkme-entity-occurrences">
             <ArkmeDirectoryWindow active={open} scrollRootRef={body}>
               {(mentions.detail?.items ?? []).map(occurrence => <div key={occurrence.key} className="arkme-entity-mention">
-                <button className="arkme-entity-occurrence" type="button" disabled={!occurrence.target}
+                <button className="arkme-entity-occurrence" type="button" disabled={!occurrence.target || locating}
                   {...(occurrence.target?.sourceText !== undefined ? { 'aria-expanded': sourceKey === occurrence.key } : {})}
                   onClick={() => {
                     if (occurrence.target?.sourceText !== undefined) { setSourceKey(sourceKey === occurrence.key ? '' : occurrence.key); setLocateError(false); return }
-                    const located = onLocate(occurrence, item.key); setLocateError(!located); if (located && compact) onClose()
+                    const scope = currentLocateScope.current
+                    setLocating(true); setLocateError(false)
+                    void Promise.resolve().then(() => onLocate(occurrence, item.key)).then(located => {
+                      if (currentLocateScope.current !== scope) return
+                      setLocateError(!located)
+                      if (located && compact) onClose()
+                    }).catch(() => { if (currentLocateScope.current === scope) setLocateError(true) })
+                      .finally(() => { if (currentLocateScope.current === scope) setLocating(false) })
                   }}>
                   <time>{occurrence.target?.sourceText !== undefined
                     ? new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hour12: false })

@@ -12,12 +12,19 @@ export interface RecordingOwnerCoverage {
   ready_count: number; processing_count: number; failed_count: number; silent_count: number; candidate_count: number
 }
 export interface RecordingOwnerFact {
+  uploaderUserId?: number
   memoryOwnerUserId?: number
   recording_uid: string; start_at: number; end_at: number; duration_ms: number; owner_version: number
   capture_state: '' | 'receiving' | 'complete' | 'interrupted'
 }
 export interface RecordingOwnerSpeaker { reference: string; userId?: number; label: string; kind: string }
+export interface RecordingSpeakerEdit {
+  start: number; end: number; revision: string; formalSpeakerId: string; sourceNumber: number; assignmentNumber: number; partitionId: string
+}
 export interface RecordingOwnerFragment {
+  speakerEdit?: RecordingSpeakerEdit
+  soundSource?: 'unknown' | 'in_person' | 'playback'
+  containsPlayback?: boolean
   searchVersion?: string
   recordingBelongsToViewer?: boolean
   recordingId: string
@@ -105,6 +112,11 @@ function speaker(value: unknown): RecordingOwnerSpeaker {
   if (reference !== '' && !speakerID.test(reference) || !['unknown', 'named', 'anonymous', 'user'].includes(kind)) return invalid()
   return { reference, kind, label: text(row.label), ...(row.user_id === undefined || row.user_id === 0 ? {} : { userId: integer(row.user_id, 1) }) }
 }
+function speakerEdit(value: unknown): RecordingSpeakerEdit | undefined {
+  if (value === undefined) return undefined
+  const row = record(value), start = integer(row.s), end = integer(row.e, start)
+  return { start, end, revision: revision(row.revision), formalSpeakerId: row.formal_speaker_uid === undefined ? '' : id(row.formal_speaker_uid), sourceNumber: integer(row.source_number, -2_147_483_648), assignmentNumber: integer(row.assignment_number, -2_147_483_648), partitionId: row.partition_id === undefined ? '' : text(row.partition_id) }
+}
 function sameLocation(a: RecordingOwnerFragment['locator'], b: RecordingOwnerFragment['locator']): boolean {
   return a.child_id === b.child_id && a.source === b.source && a.ordinal === b.ordinal
 }
@@ -113,6 +125,7 @@ function follows(previous: Omit<RecordingOwnerFragment, 'text'>, next: Recording
   if (previous.textEnd < previous.textTotal) {
     if (previous.index !== next.index || previous.textEnd !== next.textStart || previous.textTotal !== next.textTotal
       || previous.startAt !== next.startAt || previous.endAt !== next.endAt || !sameLocation(previous.locator, next.locator)
+      || JSON.stringify(previous.speakerEdit) !== JSON.stringify(next.speakerEdit) || previous.soundSource !== next.soundSource || previous.containsPlayback !== next.containsPlayback
       || previous.event !== next.event || previous.isBackground !== next.isBackground
       || previous.speaker.reference !== next.speaker.reference || previous.speaker.kind !== next.speaker.kind
       || previous.speaker.userId !== next.speaker.userId || previous.speaker.label !== next.speaker.label) return invalid()
@@ -129,13 +142,13 @@ function validateWindow(window: RecordingReadWindow): void {
 /** Authenticated, cancellable consumption of Audio's semantic read contract.
  * No OSS path, speaker-number inference, or full-day fallback belongs here. */
 export class RecordingReadOwner {
-  constructor(private readonly runtime: Pick<ServiceRuntime, 'authenticatedAudioPost' | 'requireSession'>) {}
+  constructor(private readonly runtime: Pick<ServiceRuntime, 'authenticatedAudioPost' | 'requireSession'>, private readonly lane: 'interactive-read' | 'background-read' = 'interactive-read') {}
 
   private async read(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId) return stale()
     let result: unknown
-    try { result = await this.runtime.authenticatedAudioPost(path, body, session, signal, { bypassCache: true }) }
+    try { result = await this.runtime.authenticatedAudioPost(path, body, session, signal, { bypassCache: true, lane: this.lane }) }
     catch (error) {
       if (error instanceof ArkmeUpstreamResponseError && typeof error.responseData === 'object' && error.responseData !== null
         && 'error_code' in error.responseData && error.responseData.error_code === 'recording_view_changed') return stale()
@@ -159,7 +172,7 @@ export class RecordingReadOwner {
       for (const value of row.items) {
         const item = record(value)
         if (item.status !== 'available') return invalid()
-        const fact = { ...(item.memory_owner_user_id === undefined ? {} : { memoryOwnerUserId: integer(item.memory_owner_user_id) }), recording_uid: id(item.recording_uid), start_at: integer(item.start_at), end_at: integer(item.end_at ?? 0), duration_ms: integer(item.duration_ms ?? 0), owner_version: integer(item.owner_version, 1), capture_state: captureState(item.capture_state) }
+        const fact = { ...(item.uploader_user_id === undefined ? {} : { uploaderUserId: integer(item.uploader_user_id, 1) }), ...(item.memory_owner_user_id === undefined ? {} : { memoryOwnerUserId: integer(item.memory_owner_user_id) }), recording_uid: id(item.recording_uid), start_at: integer(item.start_at), end_at: integer(item.end_at ?? 0), duration_ms: integer(item.duration_ms ?? 0), owner_version: integer(item.owner_version, 1), capture_state: captureState(item.capture_state) }
         if (seen.has(fact.recording_uid)) return invalid()
         seen.add(fact.recording_uid); facts.push(fact)
       }
@@ -170,6 +183,27 @@ export class RecordingReadOwner {
       cursors.add(cursor)
     } while (cursor !== '')
     return facts
+  }
+
+  /** Assign an entire recording to its start day. The owner supplies complete
+   * storage/input aggregates independently of the returned transcript page, so
+   * totals never download historical transcript bodies or deduce asset paths. */
+  async startDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const facts = (await this.recordings(window, session, signal)).filter(fact => fact.start_at >= window.startAt && fact.start_at < window.endAt)
+    const storage: RecordingStorageMetrics = { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+    const asrInput: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0, missing_history_count: 0 }
+    let sessionCount = 0
+    for (const fact of facts) {
+      // Missing ownership is not proof that a memory-owned recording costs
+      // this account storage. Fail explicitly instead of reporting false zero.
+      if (fact.uploaderUserId === undefined) return invalid()
+      if (fact.uploaderUserId !== session.userId) continue
+      const page = await this.transcript(fact.recording_uid, 'primary', { startAt: 0, endAt: Number.MAX_SAFE_INTEGER }, session, { limit: 1 }, signal)
+      addRecordingStorageMetrics(storage, page.storage)
+      addRecordingAsrInputMetrics(asrInput, page.asrInput)
+      sessionCount++
+    }
+    return { storage, asrInput, sessionCount }
   }
 
   /** Physical coverage is independent of transcript paging: silence and gaps remain visible. */
@@ -229,7 +263,10 @@ export class RecordingReadOwner {
       if (Array.from(body).length !== finish - begin || finish - begin > 4_000 || (item.text_truncated === true) !== (begin > 0 || finish < total)
         || start >= window.endAt || end <= window.startAt) return invalid()
       if (item.is_background !== undefined && typeof item.is_background !== 'boolean') return invalid()
-      return { ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
+      if (item.sound_source !== undefined && !['unknown', 'in_person', 'playback'].includes(String(item.sound_source))) return invalid()
+      if (item.contains_playback !== undefined && typeof item.contains_playback !== 'boolean') return invalid()
+      const edit = speakerEdit(item.speaker_edit)
+      return { ...(edit === undefined ? {} : { speakerEdit: edit }), ...(item.sound_source === undefined ? {} : { soundSource: item.sound_source as 'unknown' | 'in_person' | 'playback' }), ...(item.contains_playback === undefined ? {} : { containsPlayback: item.contains_playback as boolean }), ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
     })
     if (items.reduce((sum, item) => sum + item.textEnd - item.textStart, 0) > 20_000) return invalid()
     for (let index = 1; index < items.length; index++) follows(items[index - 1]!, items[index]!)
@@ -321,8 +358,20 @@ export class RecordingReadOwner {
   /** Explicit full-content consumer. No caller can mistake an initial page for
    * a full transcript when generating, searching or exporting a day. */
   async completeDay(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
+    return this.completeWindow(window, source, session, signal)
+  }
+
+  /** Entity evidence selects recordings by day but addresses exact source rows,
+   * including the selected recording's continuation after midnight. */
+  async completeSelectedRecordings(selection: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
+    const facts = await this.recordings(selection, session, signal)
+    const window = { startAt: 0, endAt: Number.MAX_SAFE_INTEGER }
+    const cursor: RecordingDayReadCursor = { ...window, source, positions: facts.map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
+    return this.completeWindow(window, source, session, signal, cursor)
+  }
+
+  private async completeWindow(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, cursor?: RecordingDayReadCursor): Promise<RecordingOwnerDayPage> {
     const items: RecordingOwnerFragment[] = []
-    let cursor: RecordingDayReadCursor | undefined
     let page: RecordingOwnerDayPage
     do {
       page = await this.dayPage(window, source, session, cursor, signal)

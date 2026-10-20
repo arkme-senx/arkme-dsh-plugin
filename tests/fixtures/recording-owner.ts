@@ -7,11 +7,12 @@ export const emptyCoverage = { ready_count: 0, processing_count: 0, failed_count
 export interface OwnerTestUtterance {
   text: string; start?: number; end?: number; ordinal?: number; childId?: string
   event?: string; background?: boolean
+  edit?: { s: number; e: number; revision: string; source_number: number; assignment_number: number; formal_speaker_uid?: string; partition_id?: string }; soundSource?: string; containsPlayback?: boolean
   speaker?: { reference?: string; kind?: string; label?: string; user_id?: number }
 }
 export interface OwnerTestRecording {
   asrInput?: { duration_ms: number; confirmed_count: number; pending_count: number; unknown_count: number; estimated_count: number }
-  storage?: { bytes: number; confirmed_count: number; pending_count: number; unknown_count: number }
+  storage?: { archive_bytes?: number; clip_bytes?: number; bytes: number; confirmed_count: number; pending_count: number; unknown_count: number }
   memoryOwnerUserId?: number
   captureState?: 'receiving' | 'complete' | 'interrupted'
   startAt: number; duration?: number; id?: string; revision?: string
@@ -43,7 +44,7 @@ export function recordingOwnerResponse(path: string, body: Record<string, unknow
   const fragments = items.flatMap((item, index) => {
     const chars = Array.from(item.text)
     return Array.from({ length: Math.ceil(chars.length / 4_000) }, (_, part) => ({
-      utterance_index: index, clip_locator: { child_id: item.childId ?? childId, source: body.source, ordinal: item.ordinal ?? index },
+      speaker_edit: item.edit, sound_source: item.soundSource, contains_playback: item.containsPlayback, utterance_index: index, clip_locator: { child_id: item.childId ?? childId, source: body.source, ordinal: item.ordinal ?? index },
       start_offset_ms: item.start ?? index * 2_000, end_offset_ms: item.end ?? (item.start ?? index * 2_000) + 1_000,
       text: chars.slice(part * 4_000, (part + 1) * 4_000).join(''), text_start_offset: part * 4_000,
       text_end_offset: Math.min((part + 1) * 4_000, chars.length), text_total_length: chars.length,
@@ -51,14 +52,17 @@ export function recordingOwnerResponse(path: string, body: Record<string, unknow
       identity: { reference: speakerReference, kind: 'named', label: '我', user_id: 42, ...item.speaker },
     }))
   })
+  const filtered = fragments.filter(item => row.startAt + item.start_offset_ms < Number(body.end_at) && row.startAt + item.end_offset_ms > Number(body.start_at))
+  let utterance = -1, previous = -1
+  for (const item of filtered) { if (item.utterance_index !== previous) { previous = item.utterance_index; utterance++ }; item.utterance_index = utterance }
   const offset = Number(body.page_cursor ?? 0), selected = [] as typeof fragments
   let chars = 0
-  for (const fragment of fragments.slice(offset, offset + Number(body.limit ?? 100))) {
+  for (const fragment of filtered.slice(offset, offset + Number(body.limit ?? 100))) {
     chars += Array.from(fragment.text).length
     if (chars > 20_000) break
     selected.push(fragment)
   }
-  const more = offset + selected.length < fragments.length
+  const more = offset + selected.length < filtered.length
   return { status: 'available', recording_uid: row.id ?? recordingId, start_at: row.startAt, revision: row.revision ?? recordingRevision,
     storage: row.storage,
     asr_input: row.asrInput,

@@ -177,7 +177,7 @@ describe('recording calendar selection', () => {
       day.transcript.dailyMetrics = scenario === 'mixed-history'
         ? inputMetrics(awaiting ? 'unavailable' : 'partial', awaiting ? 1 : 0)
         : inputMetrics(awaiting ? 'processing' : 'ready')
-      if (scenario === 'transcript-finishes' && reads === 1) day.transcript.state = 'processing'
+      if (scenario === 'transcript-finishes' && reads === 1) { day.transcript.state = 'processing'; day.transcript.processingCount = 1 }
       return day
     })
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
