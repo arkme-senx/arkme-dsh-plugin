@@ -27,7 +27,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
     },
     features: capabilities.features,
     availableMethods: [
-      'dayReviewState', 'createDayReview', 'reconcileDayReview', 'resumeDayReview', 'dayReviewResult', 'dayReviewPrompts', 'dayReviewEvidence',
+      'dayReviewState', 'createDayReview', 'reconcileDayReview', 'resumeDayReview', 'dayReviewResult', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence',
       'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
     ],
     limits: capabilities.limits,

@@ -8,6 +8,6 @@ export const automaticCapabilityDescriptions: Record<AutomaticCapabilityKey, str
   record_thought: '阿森会阅读你开启后新增的快记，在有想法时给出回应。',
   chat_thought: '阿森会根据你开启后的聊天内容给出想法，仅你自己可见。',
   arrangement_recognition: '从开启后的快记、录音总结和通话中识别自己的安排。',
-  offline_context: '根据开启后新增的录音或聊天内容，自动发现线下交流与聊天的关联，仅你自己可见。需要理解附件时会分析附件内容，消耗 AI 额度。',
+  offline_context: '开启后会检查历史及新增的录音和聊天，自动发现线下交流与聊天的关联，仅你自己可见。分析文本或附件会消耗 AI 额度；相同内容的分析结果会复用，重复开关不会重复计费。关闭后暂停自动处理。',
   goal_insight: '根据开启后的新材料自动更新目标。',
 }

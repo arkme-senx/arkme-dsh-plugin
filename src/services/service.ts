@@ -662,7 +662,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)

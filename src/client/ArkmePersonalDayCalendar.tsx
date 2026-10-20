@@ -9,6 +9,7 @@ import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
 import { useCalendarAutoRefresh } from './use-calendar-auto-refresh.js'
 import { ArkmeDayTimeline } from './ArkmeDayTimeline.js'
+import { useDayTimelineData } from './use-day-timeline-data.js'
 import { openReactionHistory } from './ArkmeReactionNotification.js'
 import { ArkmeCalendarMonthView } from './ArkmeCalendarSurface.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -45,15 +46,19 @@ function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { init
   const [monthRevision, setMonthRevision] = useState(0)
   const [dayArrangementsOpen, setDayArrangementsOpen] = useState(false)
   const [dayView, setDayView] = useState<CalendarDayView>('activity')
+  const [activityDate, setActivityDate] = useState(query.bucketDate)
   const [createOpen, setCreateOpen] = useState(false)
   const created = useCreatedArrangements()
   const [locationMap, setLocationMap] = useState<{ initialLocation?: ArkmeRecordLocationObservation }>()
   const [richDetail, setRichDetail] = useState<ArkmeTimelineItem>()
   const [showOriginal, setShowOriginal] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  const reader = useMemo(() => createDocumentedDayActivityReader(accountScope), [accountScope])
+  const reader = useMemo(() => createDocumentedDayActivityReader(accountScope), [accountScope, hardRevision])
   const hasHistoryMonth = visibleMonth <= today
   const isFuture = query.bucketDate > personalDateKey(today)
+  const activityData = useDayTimelineData(query, reader, revision,
+    !isFuture && (dayView === 'activity' || activityDate === query.bucketDate), hardRevision)
+  useEffect(() => { if (dayView === 'activity') setActivityDate(query.bucketDate) }, [dayView, query.bucketDate])
   const documentedMonth = useDocumentedDayMonth(accountScope, visibleMonth, query.timezone, hasHistoryMonth, monthRevision)
   const monthEnd = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0)
   const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1).getTime()
@@ -113,7 +118,7 @@ function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { init
         days={calendarDays} loading={hasHistoryMonth && (month.loading || documentedMonth.loading)} error={hasHistoryMonth ? month.error : ''}
         recordingDates={audioIndex?.key === monthKey ? audioIndex.dates : new Set()}
         onVisibleMonthChange={setVisibleMonth} onSelectDate={date => { setLocationMap(undefined); setCreateOpen(false); setRichDetail(undefined); setQuery(current => ({ ...current, bucketDate: personalDateKey(date) })) }} />
-      <p className="arkme-personal-day-caption">{tr("数字为个人记录数，圆点为录音索引。录音归属与覆盖范围以当天结果为准。")}</p>
+      <p className="arkme-personal-day-caption">{tr("数字：个人记录数 · 圆点：录音、对话等活动")}</p>
       {audioIndex?.key === monthKey && audioIndex.error && <p role="status" className="arkme-personal-day-caption">{tr("录音月历暂不可用，仍可点选日期查看。")}</p>}
       <div className="arkme-personal-day-links"><button type="button" onClick={() => arkmeUi.showStatistics(personalDateKey(visibleMonth).slice(0, 7))}>{tr("本月统计")}</button><button type="button" onClick={refreshMonth}>{tr("刷新月历")}</button>
       </div>
@@ -132,7 +137,7 @@ function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { init
           <div className="arkme-day-heading-actions"><button type="button" className="arkme-day-source" onClick={() => setCreateOpen(true)}><Plus size={15} aria-hidden /> {tr('添加安排')}</button>
             <button type="button" className="arkme-day-source" onClick={() => setLocationMap({})}>{tr('当天位置')}</button></div>{navigation}</header>
         <ArkmeCalendarDayReview key={hardRevision} query={query} view={dayView} refreshVersion={revision} />
-      </section> : <ArkmeDayTimeline headerNavigation={navigation} onAddArrangement={() => setCreateOpen(true)} onOpenLocations={location => setLocationMap(location ? { initialLocation: location } : {})} key={hardRevision} refreshVersion={revision} arrangementsActive={dayArrangementsOpen} onArrangementsChange={setDayArrangementsOpen}
+      </section> : <ArkmeDayTimeline data={activityData} headerNavigation={navigation} onAddArrangement={() => setCreateOpen(true)} onOpenLocations={location => setLocationMap(location ? { initialLocation: location } : {})} key={hardRevision} refreshVersion={revision} arrangementsActive={dayArrangementsOpen} onArrangementsChange={setDayArrangementsOpen}
         arrangementsContent={<ArkmeDayArrangements refreshVersion={revision} recentItems={created.items} accountScope={accountScope} bucketDate={query.bucketDate} timezone={query.timezone} />} query={query} reader={reader} onDetailChange={() => setRichDetail(undefined)}
         onQueryChange={next => { setRichDetail(undefined); setQuery(next) }}
         onOpenReactionSource={(message, expression) => {

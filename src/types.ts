@@ -4269,6 +4269,7 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'
   | 'calendar.day-review.source'
+  | 'calendar.day-review.models'
   | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'

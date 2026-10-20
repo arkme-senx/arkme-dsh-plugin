@@ -12,6 +12,19 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+  it('replaces or clears a same-sequence preview after a lifecycle snapshot', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'ref', sourceKey: 'chat:preview', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 100, unreadCount: 1, latestSequence: 9, latestPreview: '已删除消息' }
+    store.publish([source])
+    store.upsert({ ...source, latestPreview: '上一条消息', unreadCount: 0 })
+    expect(store.getSnapshot().sources[0]?.latestPreview).toBe('上一条消息')
+    const { latestPreview: _, ...empty } = source
+    store.upsert({ ...empty, unreadCount: 0 })
+    expect(store.getSnapshot().sources[0]?.latestPreview).toBeUndefined()
+    expect(store.getSnapshot().sources[0]?.latestSequence).toBe(9)
+  })
+
   it('publishes no unread flash while a foreground latest-edge reader has a pending ACK', () => {
     const store = new ArkmeChatDirectoryStore()
     const source = { sourceRef: 'ref', sourceKey: 'chat:live', kind: 'private_chat' as const,

@@ -15,6 +15,7 @@ const support = { supported: true, snapshotReuse: true, defaults }
 const result = { id: 'r1', snapshotId: 's1', generatedAtMillis: Date.now(), modelName: '模型', sourceKinds: ['audio'],
   coverage: [], sources: [], summary: [{ text: '旧结果仍然保留', sourceRefs: [] }], timeline: [], promptSnapshot: defaults }
 const state = { supported: true, job: null, result, freshness: 'unknown', versions: [] }
+const modelCatalog = { defaultCode: 'deepseek-v4-flash', models: [{ code: 'deepseek-v4-flash', displayName: 'DeepSeek V4.1 Flash（官方）' }, { code: 'qwen-flash', displayName: 'Qwen Flash' }, { code: 'qwen3.8-flash', displayName: 'Qwen 3.8 Flash' }] }
 let view: ReactTestRenderer | undefined, storage: Map<string, string>
 const text = (node: any): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node?.children ? text(node.children) : ''
 const content = () => text(view!.toJSON())
@@ -25,21 +26,23 @@ const edit = async (name: string, value: string) => act(async () => input(name).
 beforeEach(() => {
   storage = new Map()
   vi.stubGlobal('window', { localStorage: { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => storage.set(k, v) } })
-  vi.mocked(callArkme).mockReset().mockImplementation(async (op) => op === 'calendar.day-review.prompts' ? support : state)
+  vi.mocked(callArkme).mockReset().mockImplementation(async (op) => op === 'calendar.day-review.models' ? modelCatalog : op === 'calendar.day-review.prompts' ? support : state)
 })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.unstubAllGlobals() })
 describe('calendar prompt editing and actual generation binding', () => {
-  it.each(['calendar-review-not-accepted', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-storage'])('unlocks a definitive %s using the actual SDK error envelope', async code => {
+  it.each(['calendar-review-model-unsupported', 'calendar-review-not-accepted', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-storage'])('unlocks a definitive %s using the actual SDK error envelope', async code => {
     await mount(); await act(async () => button('提示词').props.onClick())
     await edit('日总结主要提示词', '长'.repeat(20000))
     await act(async () => button('保存配置').props.onClick())
-    vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code, message: '本次生成未受理', retryable: false }))
     await act(async () => button('更新回顾').props.onClick())
+    vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code, message: '本次生成未受理', retryable: false }))
+    await act(async () => button('确认').props.onClick())
     expect(content()).toContain('本次生成未受理')
     expect(content()).not.toContain('核对提交')
     expect(button('恢复默认').props.disabled).toBe(false)
     await act(async () => button('恢复默认').props.onClick())
     await act(async () => button('更新回顾').props.onClick())
+    await act(async () => button('确认').props.onClick())
     const submissions = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')
     expect(submissions).toHaveLength(2)
     expect(submissions[1]![1]!.requestId).not.toBe(submissions[0]![1]!.requestId)
@@ -59,6 +62,7 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(button('更新回顾').props.disabled).toBe(false)
     expect(content()).toContain('提示词已修改，重新生成后生效')
     await act(async () => button('更新回顾').props.onClick())
+    await act(async () => button('确认').props.onClick())
     const params = vi.mocked(callArkme).mock.calls.find(c => c[0] === 'calendar.day-review.create')![1]
     expect(params).toMatchObject({ promptConfig: { baseVersion: 'calendar-v1', summary: { instruction: '关注结论与进展', chunk: '保留分段证据' }, timeline: { instruction: '按事件发生时间组织', chunk: '保留时间精度和证据' } } })
     expect(params).not.toHaveProperty('constraints')
@@ -78,7 +82,7 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(input('日总结主要提示词').props.value).toBe('归纳进展')
   })
   it('keeps offline text as drafts, does not invent defaults, and blocks unsupported generation', async () => {
-    vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.prompts' ? { supported: false, snapshotReuse: false } : state)
+    vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.models' ? modelCatalog : op === 'calendar.day-review.prompts' ? { supported: false, snapshotReuse: false } : state)
     await mount(); await act(async () => button('提示词').props.onClick())
     expect(input('日总结主要提示词').props.value).toBe('')
     await edit('日总结主要提示词', '后端接通后测试')
@@ -103,8 +107,9 @@ describe('calendar prompt editing and actual generation binding', () => {
     await edit('日总结主要提示词', '新的关注点'); await act(async () => button('保存配置').props.onClick())
     const reuse = view!.root.findByProps({ className: 'day-review-reuse' }).findByType('input')
     await act(async () => reuse.props.onChange({ target: { checked: true } }))
-    vi.mocked(callArkme).mockRejectedValueOnce(new Error('network'))
     await act(async () => button('更新回顾').props.onClick())
+    vi.mocked(callArkme).mockRejectedValueOnce(new Error('network'))
+    await act(async () => button('确认').props.onClick())
     const first = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')[0]![1]
     expect(first).toMatchObject({ reuseResultId: 'r1', sourceKinds: ['audio'] })
     expect(view!.root.findAllByType('fieldset').every(f => f.props.disabled)).toBe(true)

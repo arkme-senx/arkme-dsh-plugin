@@ -39,7 +39,7 @@ export type OfflineContextRequest =
   | { operation: 'coverage'; sourceRef: string }
   | { operation: 'playback'; playbackRef: string }
   | { operation: 'transcript'; transcriptRef: string }
-  | { operation: 'list'; sourceRef: string; state?: 'suggested' | 'linked' | 'dismissed'; cursor?: string }
+  | { operation: 'list'; sourceRef: string; state?: 'suggested' | 'linked' | 'dismissed'; cursor?: string; messageRefs?: string[] }
   | { operation: 'read'; entryRef: string }
   | { operation: 'range-options'; entryRef: string; revision: string }
   | { operation: 'preview'; entryRef: string; revision: string; includeTranscript: boolean }

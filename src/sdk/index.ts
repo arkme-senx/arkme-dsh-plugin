@@ -1,3 +1,4 @@
+export type { DayReviewModels } from '../calendar-day-review.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
@@ -2479,6 +2480,7 @@ export class ArkmeSdk {
   async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
   async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
   async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
+  async dayReviewModels(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review.js').DayReviewModels> { await this.requireDayReview(signal); return this.call('calendar.day-review.models', { ...query }, signal) }
   async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
   /** Permission-checked original evidence. Raw navigation locators remain Host-only. */
   async dayReviewEvidence(query: DayReviewEvidenceQuery, signal?: AbortSignal): Promise<DayReviewOriginalEvidence> { await this.requireDayReview(signal); return this.call('calendar.day-review.evidence', { ...query }, signal) }

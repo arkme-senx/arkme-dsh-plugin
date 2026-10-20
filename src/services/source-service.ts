@@ -2183,6 +2183,7 @@ export class SourceService {
     session: ArkmeSessionCredentials,
     cached: ArkmeSourceItem | undefined,
     timelineItems: ArkmeTimelineItem[],
+    options: { previewSnapshot?: boolean } = {},
   ): Promise<ArkmeSourceItem> {
     const chatSession = objectValue(bundle.session)
     const counterpart = objectValue(bundle.private_counterpart)
@@ -2203,11 +2204,20 @@ export class SourceService {
       ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
       : stringValue(chatSession.title)).trim() || cached?.displayName || '未命名会话'
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
-    const latestPreview = latestItem === undefined
+    // Lifecycle changes keep last_seq stable. Only a full detail snapshot may
+    // replace/clear the preview without a new tail item; display-snapshots omit it.
+    const snapshotSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+    const previewSnapshot = options.previewSnapshot === true && snapshotSequence >= Math.max(cached?.latestSequence ?? 0, latestItem?.sequence ?? 0)
+    let latestPreview = latestItem === undefined
       ? cached?.latestPreview
       : latestItem.forwardRecords === undefined
         ? arkmeTimelineConversationPreview(latestItem)
         : `[转发] ${latestItem.forwardRecords.title}`
+    if (previewSnapshot) {
+      const record = objectValue(objectValue(bundle.latest_preview).record)
+      if (record.status !== 'unavailable') latestPreview = record.status === 'missing'
+        ? '' : arkmeChatConversationPreview(record, session.userId)
+    }
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),
       latestItem?.sequence ?? 0,

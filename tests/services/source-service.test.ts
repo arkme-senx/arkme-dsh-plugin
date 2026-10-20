@@ -108,6 +108,39 @@ describe('SourceService', () => {
     expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
   })
 
+  it.each(['previous', 'empty'] as const)('replaces a deleted latest preview from an authoritative snapshot: %s', async kind => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事',
+      activeAtMillis: 100, unreadCount: 1, latestSequence: 9, latestPreview: '已删除消息' }
+    const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: 9 },
+      unread_snapshot: { unread_count: 0, session_last_seq: 9 },
+      ...(kind === 'previous' ? { latest_preview: { relation: { seq: 8 }, record: { payload: { text_content: '上一条消息' } } } } : {}) }
+    const updated = await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })
+    expect(updated.latestPreview ?? '').toBe(kind === 'previous' ? '上一条消息' : '')
+    expect(updated.latestSequence).toBe(9)
+    expect(updated.unreadCount).toBe(0)
+    // Lightweight display snapshots cannot claim that the preview is empty.
+    expect((await service.chatSourceFromBundle({ session: bundle.session }, session, cached, [])).latestPreview).toBe('已删除消息')
+  })
+
+  it('does not let a lifecycle snapshot overwrite a newer confirmed arrival', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事', activeAtMillis: 100, unreadCount: 0, latestSequence: 10, latestPreview: '新消息' }
+    const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: 9 }, latest_preview: { record: { payload: { text_content: '旧摘要' } } } }
+    expect((await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })).latestPreview).toBe('新消息')
+    const item = { itemUid: 'new', title: '', textContent: '更新消息', senderName: '同事', isMe: false, status: 1, sendAtMillis: 101, sequence: 11 }
+    expect((await service.chatSourceFromBundle(bundle, session, cached, [item], { previewSnapshot: true })).latestPreview).toBe('更新消息')
+    for (const status of ['unavailable', 'missing']) {
+      const updated = await service.chatSourceFromBundle({ ...bundle, session: { ...bundle.session, last_seq: 10 },
+        latest_preview: { record: { status, payload: { text_content: '不得使用的正文' } } } }, session, cached, [], { previewSnapshot: true })
+      expect(updated.latestPreview ?? '').toBe(status === 'missing' ? '' : '新消息')
+    }
+  })
+
   it('keeps the signed conversation binding stable across activity updates but retains fresh directory evidence', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
