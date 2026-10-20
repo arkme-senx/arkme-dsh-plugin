@@ -1,11 +1,12 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { arkmeRecentEmojiStore } from '../src/client/emoji-recent-store.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 
 const { callArkme } = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme }))
 let renderer: ReactTestRenderer | undefined
-afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; callArkme.mockReset(); vi.restoreAllMocks(); vi.useRealTimers() })
+afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; arkmeRecentEmojiStore.clear(); callArkme.mockReset(); vi.restoreAllMocks(); vi.useRealTimers() })
 async function mount(accountKey = 'prod:42', onError = vi.fn()) {
   await act(async () => { renderer = create(<ArkmeEmojiPicker disabled={false} accountKey={accountKey} scopeKey="chat:1" onSelect={() => undefined} onError={onError} />) })
 }
@@ -52,14 +53,14 @@ describe('recent emoji picker', () => {
     expect(recentIds()).toEqual(['joy_face', 'angry_face'])
   })
 
-  it('ignores an earlier open response after a later open has loaded', async () => {
+  it('joins a pending load when reopening the panel', async () => {
     let finishFirst!: (ids: string[]) => void
     callArkme.mockImplementationOnce(async () => await new Promise<string[]>(resolve => { finishFirst = resolve }))
       .mockResolvedValueOnce(['joy_face'])
     await mount(); await toggle(); await toggle(); await toggle()
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(callArkme).toHaveBeenCalledTimes(1)
     await act(async () => { finishFirst(['angry_face']) })
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(recentIds()).toEqual(['angry_face'])
   })
 
   it('waits for accepted selections across conversation panel remounts', async () => {
@@ -127,7 +128,7 @@ describe('recent emoji picker', () => {
     expect(onSelect).toHaveBeenCalledTimes(2)
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
     expect(callArkme).toHaveBeenCalledTimes(3)
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
   })
   it('serializes rapid selections and continues after a failed save', async () => {
     let rejectFirst!: (reason: Error) => void
@@ -140,7 +141,7 @@ describe('recent emoji picker', () => {
     expect(callArkme).toHaveBeenCalledTimes(2)
     await act(async () => { rejectFirst(new Error('write failed')) })
     expect(callArkme).toHaveBeenCalledTimes(3)
-    expect(recentIds()).toEqual(['joy_face'])
+    expect(recentIds()).toEqual(['joy_face', 'angry_face'])
   })
   it('restores without browser storage and refreshes on every open', async () => {
     callArkme.mockResolvedValueOnce(['angry_face']).mockResolvedValueOnce(['joy_face', 'angry_face'])

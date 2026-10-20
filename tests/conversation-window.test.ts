@@ -37,8 +37,8 @@ it('replicates replacement and removal of a cached long-article card', async () 
  const article=(name:string):any=>({kind:'existing',detail:{sourceRef:'ref',title:name,textContent:name},messageActionRef:name})
  const stopA=await connectConversationDrafts(bridge(1),a,42,'test:42',aa),stopB=await connectConversationDrafts(bridge(2),b,42,'test:42',bb)
  aa.set(key,article('A')); expect(bb.get(key)?.article).toEqual(aa.get(key)?.article)
- aa.set(key,article('B')); expect(bb.get(key)?.article).toEqual(aa.get(key)?.article)
- bb.remove(key); expect(aa.get(key)).toBeUndefined(); stopA();stopB()
+ aa.set(key,article('B')); await vi.waitFor(()=>expect(bb.get(key)?.article).toEqual(aa.get(key)?.article))
+ bb.remove(key); await vi.waitFor(()=>expect(aa.get(key)).toBeUndefined()); stopA();stopB()
 })
 it('replicates a parent-only extension draft and its cancellation without echo', async () => {
  const a = new ArkmeComposerDraftStore(), b = new ArkmeComposerDraftStore()
@@ -234,4 +234,49 @@ it('restores Arko drafts through the same native snapshot without republishing t
  const store=new ArkmeComposerDraftStore(),key='arkme-composer:7:arko',publish=vi.fn(async()=>true)
  const stop=await connectConversationDrafts({snapshot:async()=>[{kind:'draft',key,value:{text:'Arko草稿',attachments:[],mentions:[],emojis:[]}}],onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
  try{expect(store.get(key).text).toBe('Arko草稿');expect(publish).not.toHaveBeenCalled()}finally{stop()}
+})
+
+it('ignores an out-of-order broker revision after receiving a newer draft', async()=>{
+ const store=new ArkmeComposerDraftStore(),key='arkme-composer:7:arko'
+ let receive!:(event:any)=>void
+ const stop=await connectConversationDrafts({snapshot:async()=>[],publish:async()=>true,onEvent:(fn:any)=>{receive=fn;return()=>{}}} as any,store,7,'prod:7')
+ try {
+  const event=(revision:number,text:string)=>({kind:'draft',key,revision,value:{text,attachments:[],mentions:[],emojis:[]}})
+  receive(event(3,'new'));receive(event(2,'old'));expect(store.get(key).text).toBe('new')
+ } finally {stop()}
+})
+it('imports legacy browser drafts once, stops duplicate writes, and keeps account eviction off disk', async()=>{
+ const key='arkme-composer:7:arko', storage={getItem:()=>null,setItem:vi.fn()}
+ const store=new ArkmeComposerDraftStore(storage), publish=vi.fn(async()=>true)
+ store.setText(key,'legacy memory')
+ const stop=await connectConversationDrafts({draftPersistence:1,snapshot:async()=>[],onEvent:()=>()=>{},publish} as any,store,7,'prod:7')
+ try {
+  const before=storage.setItem.mock.calls.length
+  store.setText(key,'native only')
+  const {flushConversationDrafts}=await import('../src/client/conversation-window-sync.js');await flushConversationDrafts()
+  expect(storage.setItem).toHaveBeenCalledTimes(before)
+  const writes=publish.mock.calls.length;store.clearAccount(7);await flushConversationDrafts()
+  expect(publish).toHaveBeenCalledTimes(writes)
+ } finally {stop()}
+})
+it('accepts a newer remote edit while the previously published local edit is awaiting disk confirmation', async()=>{
+ const store=new ArkmeComposerDraftStore(),key='arkme-composer:7:arko'
+ let receive!:(event:any)=>void,ack!:()=>void
+ const stop=await connectConversationDrafts({snapshot:async()=>[],onEvent:(fn:any)=>{receive=fn;return()=>{}},publish:()=>new Promise<boolean>(done=>{ack=()=>done(true)})} as any,store,7,'prod:7')
+ try {
+  store.setText(key,'local');await vi.waitFor(()=>expect(ack).toBeTypeOf('function'))
+  receive({kind:'draft',key,revision:2,value:{text:'newer remote',attachments:[],mentions:[],emojis:[]}})
+  expect(store.get(key).text).toBe('newer remote');ack()
+  const {flushConversationDrafts}=await import('../src/client/conversation-window-sync.js');await flushConversationDrafts()
+  expect(store.get(key).text).toBe('newer remote')
+ }finally{stop()}
+})
+it('does not apply or migrate a delayed snapshot after its account connection is cancelled',async()=>{
+ const store=new ArkmeComposerDraftStore(),controller=new AbortController(),key='arkme-composer:7:arko',publish=vi.fn(async()=>true)
+ let loaded!:(events:any[])=>void
+ const connecting=connectConversationDrafts({snapshot:()=>new Promise(done=>{loaded=done}),onEvent:()=>()=>{},publish} as any,store,7,'prod:7',undefined,controller.signal)
+ controller.abort();store.setText(key,'new account content')
+ loaded([{kind:'draft',key,value:{text:'old account content',attachments:[],mentions:[],emojis:[]}}])
+ const stop=await connecting
+ expect(store.get(key).text).toBe('new account content');expect(publish).not.toHaveBeenCalled();stop()
 })

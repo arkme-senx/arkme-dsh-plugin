@@ -1,17 +1,17 @@
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeComposerDraftStore } from './composer-draft-store.js'
 
-function authenticatedUserId(): number | undefined {
+function authenticatedAccount(): {userId: number; key: string} | undefined {
   const auth = arkmeAuthStore.getSnapshot().auth
-  return auth?.status === 'authenticated' ? auth.userId : undefined
+  return auth?.status === 'authenticated' && auth.userId !== undefined ? {userId: auth.userId, key: `${auth.environment}:${auth.userId}`} : undefined
 }
 
-let activeAuthenticatedUserId = authenticatedUserId()
+let activeAccount = authenticatedAccount()
 
 arkmeAuthStore.subscribe(() => {
-  const nextUserId = authenticatedUserId()
-  if (activeAuthenticatedUserId !== undefined && activeAuthenticatedUserId !== nextUserId) {
-    arkmeComposerDraftStore.clearAccount(activeAuthenticatedUserId)
+  const next = authenticatedAccount()
+  if (activeAccount !== undefined && activeAccount.key !== next?.key) {
+    arkmeComposerDraftStore.clearAccount(activeAccount.userId)
   }
-  activeAuthenticatedUserId = nextUserId
+  activeAccount = next
 })
