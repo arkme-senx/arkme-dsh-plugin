@@ -37,6 +37,8 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const [source, setSource] = useState<DayReviewOpenSource>(), [sourceLoading, setSourceLoading] = useState(''), [sourceError, setSourceError] = useState('')
   const [showOriginal, setShowOriginal] = useState(false), [uncertain, setUncertain] = useState(false)
   const readRequest = useRef<AbortController>(), writeRequest = useRef<AbortController>(), sourceRequest = useRef<AbortController>()
+  const refreshPending = useRef(false)
+  const readFailed = useRef(false)
   const versionRequest = useRef<AbortController>(), mounted = useRef(true), submittingRef = useRef(false)
   const selectionTouched = useRef(false), requestId = useRef('')
   const q = useRef(query).current
@@ -48,6 +50,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
   const setSelectedVersion = useCallback((id: string) => { selectedVersionRef.current = id; updateSelectedVersion(id) }, [])
   const clearSource = useCallback(() => { sourceTarget.current = undefined; setSource(undefined); setSourceLoading('') }, [])
   const apply = useCallback((value: DayReviewState) => {
+    readFailed.current = false
     setState(value)
     if (value.resultError) {
       setReuse(undefined); clearSource(); setHistorical(undefined); setSelectedVersion(''); setVersionLoading(false)
@@ -58,10 +61,15 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     if (!selectionTouched.current && value.result) setSources(value.result.sourceKinds)
     // A refreshed job may belong to another client; only the matching create reply acknowledges this submission.
   }, [clearSource, setSelectedVersion])
-  const read = useCallback(async () => {
-    if (submittingRef.current) return
+  const read = useCallback(async function readLatest(retryAfterFailure = false): Promise<void> {
+    if (submittingRef.current || (readFailed.current && !retryAfterFailure)) return
     if (!q.accountScope) { setLoading(false); setError(tr('账号范围尚未确认，请重新打开日历')); return }
-    readRequest.current?.abort()
+    // Ordinary realtime hints must not keep cancelling a slow read or restarting
+    // its deadline. Retain one follow-up; privacy/date/account changes still
+    // remount this component and immediately abort through the effect cleanup.
+    if (readRequest.current && !readRequest.current.signal.aborted) { refreshPending.current = true; return }
+    refreshPending.current = false
+    readFailed.current = false
     const controller = new AbortController(); readRequest.current = controller
     setLoading(true); setError('')
     try {
@@ -77,15 +85,24 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       if (next.status === 'rejected') throw next.reason
       apply(next.value)
       if (version && selectedVersionRef.current === version) {
-        if (history.status === 'rejected') { clearSource(); setHistorical(undefined); setSelectedVersion(''); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(history.reason)) }
+        if (history.status === 'rejected') { readFailed.current = true; clearSource(); setHistorical(undefined); setSelectedVersion(''); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(history.reason)) }
         else setHistorical(history.value)
       }
       if (original && sourceTarget.current === original) {
-        if (evidence.status === 'rejected') { clearSource(); setHistorical(undefined); setSelectedVersion(''); setState(undefined); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(evidence.reason)) }
+        if (evidence.status === 'rejected') { readFailed.current = true; clearSource(); setHistorical(undefined); setSelectedVersion(''); setState(undefined); versionRequest.current?.abort(); sourceRequest.current?.abort(); setError(errorText(evidence.reason)) }
         else setSource(evidence.value)
       }
-    } catch (e) { if (!controller.signal.aborted) { setError(errorText(e)); setState(undefined); clearSource(); setHistorical(undefined); setSelectedVersion(''); sourceRequest.current?.abort(); versionRequest.current?.abort() } }
-    finally { if (!controller.signal.aborted) setLoading(false) }
+    } catch (e) { if (!controller.signal.aborted) { readFailed.current = true; setError(errorText(e)); setState(undefined); clearSource(); setHistorical(undefined); setSelectedVersion(''); sourceRequest.current?.abort(); versionRequest.current?.abort() } }
+    finally {
+      if (readRequest.current === controller) readRequest.current = undefined
+      if (!controller.signal.aborted) {
+        setLoading(false)
+        // A failed read must leave its error and manual retry available. Realtime
+        // hints are not retries; only successful reads consume queued hints.
+        if (readFailed.current) refreshPending.current = false
+        else if (refreshPending.current) void readLatest()
+      }
+    }
   }, [q, apply, clearSource, setSelectedVersion])
   useEffect(() => {
     mounted.current = true; void read()
@@ -146,6 +163,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     finally { submittingRef.current = false; if (mounted.current && !controller.signal.aborted) setSubmitting(false) }
   }
   const selectVersion = async (id: string) => {
+    readFailed.current = false
     versionRequest.current?.abort(); sourceRequest.current?.abort(); clearSource(); setSourceError(''); setSourceLoading('')
     setReuse(undefined); setSelectedVersion(id); setHistorical(undefined); setError('')
     if (!id) { setVersionLoading(false); return }
@@ -186,7 +204,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       </fieldset>
       <div className="day-review-actions">
         <button type="button" className="arkme-day-source" aria-expanded={prompts.open} onClick={prompts.toggle}>{tr('提示词')}{prompts.draft.editing ? ' · ' + tr('未保存') : prompts.draft.saved ? ' · ' + tr('自定义') : ''}</button>
-        <button type="button" className="arkme-day-source" disabled={loading || submitting} onClick={() => void read()}>{tr('检查更新')}</button>
+        <button type="button" className="arkme-day-source" disabled={loading || submitting} onClick={() => void read(true)}>{tr('检查更新')}</button>
         <button type="button" className="day-review-generate" disabled={!state?.supported || !sources.length || submitting || (active && !uncertain) || loading || (!uncertain && !!prompts.block)} onClick={() => void generate()}>
           {tr(submitting ? '正在提交…' : uncertain ? '核对提交' : active ? '正在生成…' : state?.result ? '更新回顾' : '生成当天回顾')}</button>
       </div>
