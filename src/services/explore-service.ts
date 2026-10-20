@@ -151,12 +151,12 @@ export class ExploreService {
     }
   }
   async page(input: ExploreQuery, signal?: AbortSignal): Promise<ExplorePage> {
-    return this.readPage(input, signal, false)
+    return this.readPage(input, signal, true)
   }
   async relationPage(input: Omit<ExploreQuery, 'module'>, signal?: AbortSignal): Promise<ExplorePage> {
-    return this.readPage({...input, module: 'relations'}, signal, true)
+    return this.readPage({...input, module: 'relations'}, signal, false)
   }
-  private async readPage(input: ExploreQuery, signal: AbortSignal | undefined, paginatedRelations: boolean): Promise<ExplorePage> {
+  private async readPage(input: ExploreQuery, signal: AbortSignal | undefined, restoreWindow: boolean): Promise<ExplorePage> {
     const module = this.module(input.module), session = await this.runtime.requireSession(), epoch = this.epoch
     const filter = bounded(input.filter ?? '',100), query = bounded(input.query ?? '',200)
     const cursor = input.cursor ? await this.open(input.cursor,session,'cursor') : {}
@@ -185,17 +185,63 @@ export class ExploreService {
       }
       page.notice = '当前分析范围：'+list(home.sources).filter(x=>x.enabled===true).map(x=>text(x.display_name)).join('、')
     } else if (module === 'relations') {
-      const paged = paginatedRelations && (!input.cursor || cursor.protocol===2) ? await this.versionedPage('/api/v1/relation/entities/list', {
-        protocol_version:2,limit:Math.min(100,Math.max(1,Math.trunc(number(input.limit))||PAGE)),query,
-        ...(filter?{entity_types:[Number(filter)]}:{}),...(cursor.backendCursor?{cursor:cursor.backendCursor}:{})
-      },session,cursor.protocol===2,signal):undefined
+      // A refresh restores only the window the reader already loaded. Every owner
+      // request stays bounded; a cold read never downloads the whole directory.
+      const target = Math.min(restoreWindow && !input.cursor ? 10000 : 100, Math.max(1,Math.trunc(number(input.limit))||PAGE))
+      const requestPage = (backendCursor: unknown, limit: number, required: boolean) => this.versionedPage('/api/v1/relation/entities/list', {
+        protocol_version:2,limit,query,
+        ...(filter?{entity_types:[Number(filter)]}:{}),...(backendCursor?{cursor:backendCursor}:{})
+      },session,required,signal)
+      let paged = !input.cursor || cursor.protocol===2 ? await requestPage(cursor.backendCursor, Math.min(100,target), cursor.protocol===2) : undefined
+      let summary: Doc | undefined
+      if(paged&&(restoreWindow||input.includeCounts===true)) {
+        summary=cursor.summary?doc(cursor.summary):undefined
+        if(!summary) {
+          try {
+            summary=await this.request('relations','/api/v1/relation/entities/summary',{
+              snapshot:paged.snapshot,query,...(filter?{entity_types:[Number(filter)]}:{})
+            },session,signal)
+          } catch(error) {
+            // Older owners cannot preserve the existing page's exact counters.
+            // Only protocol absence uses the legacy compatibility path.
+            if(!(error instanceof ArkmePluginError)||![404,405].includes(error.upstreamStatus??error.httpStatus)||cursor.protocol===2)throw error
+            paged=undefined
+          }
+        }
+        if(paged&&(!summary||summary.protocol_version!==2||summary.snapshot!==paged.snapshot
+          ||!Number.isSafeInteger(summary.total)||number(summary.total)<0
+          ||!summary.type_counts||typeof summary.type_counts!=='object'||Array.isArray(summary.type_counts)
+          ||Object.values(summary.type_counts).some(value=>!Number.isSafeInteger(value)||number(value)<0)))throw missing()
+      }
       if (paged) {
         if(!Array.isArray(paged.entities) || (cursor.snapshot&&cursor.snapshot!==paged.snapshot)) throw missing()
+        const snapshot=paged.snapshot, rows=list(paged.entities), seen=new Set(rows.map(row=>text(row.entity_id))), cursors=new Set<string>()
+        // Empty search progress pages are legal. Keep a finite per-call budget;
+        // the existing continuation cursor carries any remaining search work.
+        for(let reads=1;rows.length<target&&paged.has_more===true&&(restoreWindow&&target>100||paged.search_pending===true)&&reads<200;reads++){
+          const backendCursor=text(paged.next_cursor)
+          if(cursors.has(backendCursor))throw missing()
+          cursors.add(backendCursor)
+          await this.guard(session,epoch,signal)
+          const following=await requestPage(backendCursor,Math.min(100,target-rows.length),true)
+          if(!following||following.snapshot!==snapshot||!Array.isArray(following.entities))throw missing()
+          for(const row of list(following.entities)){
+            const id=text(row.entity_id)
+            if(!id||seen.has(id))throw missing()
+            seen.add(id);rows.push(row)
+          }
+          paged=following
+        }
         page.filters=[{key:'',label:'全部'},...Object.entries(ENTITY_TYPES).map(([key,label])=>({key,label}))]
-        page.items=await Promise.all(list(paged.entities).map(row=>this.item(module,{...row,last_mention_at:row.last_mentioned_at},session,{linkedUserId:number(row.linked_user_id),aliases:strings(row.aliases)})))
-        page.totalKnown=false;page.total=page.items.length;page.searchPending=paged.search_pending===true
-        page.needsEnrichment=list(paged.entities).some(row=>number(row.linked_user_id)>0)
-        if(paged.has_more===true)next={protocol:2,backendCursor:paged.next_cursor,snapshot:paged.snapshot}
+        page.items=await Promise.all(rows.map(row=>this.item(module,{...row,last_mention_at:row.last_mentioned_at},session,{linkedUserId:number(row.linked_user_id),aliases:strings(row.aliases)})))
+        page.totalKnown=paged.has_more!==true;page.total=number(cursor.loadedCount)+page.items.length;page.searchPending=paged.search_pending===true
+        if(summary) {
+          const counts=doc(summary.type_counts),all=Object.values(counts).reduce<number>((sum,value)=>sum+number(value),0)
+          page.filters=[{key:'',label:'全部',count:all},...Object.entries(ENTITY_TYPES).filter(([key])=>number(counts[key])>0).map(([key,label])=>({key,label,count:number(counts[key])}))]
+          page.total=number(summary.total);page.totalKnown=true
+        }
+        page.needsEnrichment=rows.some(row=>number(row.linked_user_id)>0)
+        if(paged.has_more===true)next={protocol:2,backendCursor:paged.next_cursor,snapshot,loadedCount:number(cursor.loadedCount)+page.items.length,...(summary?{summary}:{})}
       } else {
       const raw = await this.relationHome(session,signal)
       const all = list(raw.entities), counts = new Map<number,number>()

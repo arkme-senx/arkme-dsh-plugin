@@ -69,7 +69,13 @@ export interface ExploreDetail {
   reclassifyTargets?: Array<{ref:string;label:string}>
   notice?: string
 }
-export interface ExploreQuery { /** Local relation projection size when restoring already loaded rows. */ limit?: number; module: ExploreModule; filter?: string; query?: string; cursor?: string }
+export interface ExploreQuery {
+  /** Existing page refreshes may restore a loaded window; each owner request is capped at 100. */
+  limit?: number
+  /** Request exact directory/search totals and global type counts (the existing UI always does). */
+  includeCounts?: boolean
+  module: ExploreModule; filter?: string; query?: string; cursor?: string
+}
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
   | { kind: 'record'; item: ArkmeTimelineItem }

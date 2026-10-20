@@ -172,6 +172,29 @@ it('restores saved relationship content immediately, keeps it on refresh failure
   expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
 })
 
+it('restores the complete loaded list window, retains its counts on failure and retries without an old cursor', async () => {
+  const account='test:'+ ++scope, at=Date.now()-60_000
+  const savedItems=Array.from({length:150},(_,i)=>item('saved-'+i))
+  const savedPage={...page,module:'relations',items:savedItems,total:1200,nextCursor:'old-snapshot',filters:[{key:'',label:'全部',count:1200}]}
+  relationViewCache.write(account,'view',{filter:'',query:'',page:savedPage,listTop:1600,detailTop:0,savedAt:at},at)
+  const pending:Array<{params:any;resolve:(v:any)=>void;reject:(e:Error)=>void}>=[]
+  mocks.call.mockImplementation(async(op,params)=>{
+    expect(op).toBe('explore.list')
+    return new Promise((resolve,reject)=>pending.push({params,resolve,reject}))
+  })
+  await act(async()=>root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+  expect(host.querySelector('.explore-list')?.scrollTop).toBe(1600)
+  expect(pending[0]!.params).toEqual({module:'relations',filter:'',query:'',limit:150})
+  await act(async()=>pending[0]!.reject(new Error('离线')))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+  expect(host.querySelector('.explore-header-actions')?.textContent).toContain('1200')
+  await click('重试')
+  expect(pending[1]!.params).toEqual(pending[0]!.params)
+  await act(async()=>pending[1]!.resolve({...savedPage,nextCursor:'new-snapshot'}))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+})
+
 it('keeps later detail pages visible when refreshing the first page and persists independently loaded regions', async () => {
   const account = 'test:' + ++scope, at = Date.now() - 60_000
   const evidence = (key: string) => ({ key, label: '来源', speaker: '', text: key, date: 0, anchor: false })

@@ -12,14 +12,15 @@ export const relationPagesTool = defineArkmeCoreToolModule({
       query:{type:'string'},filter:{type:'string',description:'Entity type 1–9, or empty for all.'},
       ref:{type:'string',description:'Opaque relation item ref for records.'},cursor:{type:'string'},
       limit:{type:'integer',description:'List only, 1–100.'},
+      include_counts:{type:'boolean',description:'List only. Include exact matching total and global type counts.'},
     },output:TEXT_OUTPUT,isConcurrencySafe:()=>true,
     execute:async(args,exec)=>{
       exec.signal?.throwIfAborted()
       if(args.action==='list'){
         if(args.ref!==undefined || (args.limit!==undefined&&(!Number.isInteger(args.limit)||args.limit<1||args.limit>100)))throw new TypeError('关系列表参数不合法')
-        return taggedJSON('关系',await ports.relationPage({...args.query!==undefined?{query:args.query}:{},...args.filter!==undefined?{filter:args.filter}:{},...args.cursor?{cursor:args.cursor}:{},...args.limit!==undefined?{limit:args.limit}:{}},exec.signal))
+        return taggedJSON('关系',await ports.relationPage({...args.query!==undefined?{query:args.query}:{},...args.filter!==undefined?{filter:args.filter}:{},...args.cursor?{cursor:args.cursor}:{},...args.limit!==undefined?{limit:args.limit}:{},...args.include_counts!==undefined?{includeCounts:args.include_counts}:{}},exec.signal))
       }
-      if(args.action!=='records'||!args.ref||args.query!==undefined||args.filter!==undefined||args.limit!==undefined)throw new TypeError('原文分页需要关系引用')
+      if(args.action!=='records'||!args.ref||args.query!==undefined||args.filter!==undefined||args.limit!==undefined||args.include_counts!==undefined)throw new TypeError('原文分页需要关系引用')
       return taggedJSON('关系原文',await ports.relationRecords({ref:args.ref,...args.cursor?{cursor:args.cursor}:{}},exec.signal))
     },
   }),
