@@ -13,7 +13,7 @@ function seed(target: {id:string;source?:string;sourceKind?:string;text:string},
  const previous = reactionFixture.history.filter(item=>item.target_id===target.id && item.expression.text===label).at(-1)
  reactionFixture.history.push({event_uid:String(reactionFixture.history.length),target_id:target.id,expression:{text:label},active:!previous?.active,at:time,restricted:false,text:target.text,source_kind:target.sourceKind??'group_chat'})
 }
-const query: DayActivityQuery = { accountScope: 'account:42', bucketDate: '2026-09-19', timezone: 'Asia/Shanghai', mode: 'activities', kind: 'all', includeBackground: false }
+const query: DayActivityQuery = { accountScope: 'test:42', bucketDate: '2026-09-19', timezone: 'Asia/Shanghai', mode: 'activities', kind: 'all', includeBackground: false }
 const at = Date.parse('2026-09-19T10:00:00+08:00')
 const point: ArkmeRecordLocationObservation = { source: 'device', latitude: 30.52, longitude: 114.31, label: '办公区附近', deviceLabel: '电脑' }
 const entry = (id: string, location?: ArkmeRecordLocationObservation): DayActivityEntry => ({ id, kind: 'note', startAtMillis: at, endAtMillis: at,
@@ -41,6 +41,15 @@ const mount = async (reader: DayActivityReader) => act(async () => { view = crea
 afterEach(() => { act(() => view?.unmount()); reactionPreview.setScope(undefined) })
 
 describe('reaction events in the existing day timeline', () => {
+  it('reads reactions while activity sources are pending', async () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+    seed({ id: 'parallel', text: '表态独立可见' }, '收到', at)
+    const { reader } = setup()
+    reader.loadDay = vi.fn(() => new Promise(() => {}))
+    await mount(reader)
+    expect(text()).toContain('表态独立可见')
+    expect(reader.loadDay).toHaveBeenCalledTimes(1)
+  })
   it('uses the original compact time style without extra message metadata and reuses the source button', async () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     seed({ id: 'old', text: '昨天的消息' }, '收到', at)
@@ -92,7 +101,7 @@ describe('reaction events in the existing day timeline', () => {
     expect(content(view.root.findByProps({ className: 'arkme-day-overview' }).children)).toBe('已加载：1 次表态操作')
     expect(text()).not.toContain('暂无可显示的活动')
     await click('地点')
-    expect(content(view.root.findByProps({ className: 'arkme-day-overview' }).children)).not.toContain('表态操作')
+    expect(view.root.findAllByProps({ className: 'arkme-day-overview' })).toHaveLength(0)
   })
   it('does not announce an empty day while reaction history is still loading', async () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
@@ -102,7 +111,7 @@ describe('reaction events in the existing day timeline', () => {
     try {
       await mount(setup([]).reader)
       expect(text()).not.toContain('这一天暂无匹配内容')
-      expect(text()).toContain('正在加载表态记录')
+      expect(text()).toContain('正在加载当天活动')
       await act(async () => complete({items:[],has_more:false}))
       expect(text()).toContain('这一天暂无匹配内容')
     } finally { pending.mockRestore(); reactionFixture.call = original }

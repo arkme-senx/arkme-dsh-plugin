@@ -113,7 +113,9 @@ interface InFlightEntry {
   controller: AbortController
   epoch: number
   consumers: number
+  foregroundConsumers: number
   cancelWhenUnobserved: boolean
+  request: Pick<ArkmeCoordinatedRequest<unknown>, 'lane'>
 }
 
 const DEFAULT_LANE_LIMITS: Record<ArkmeRequestLane, ArkmeRequestLimit> = {
@@ -269,7 +271,7 @@ export class ArkmeRequestCoordinator {
     if (existing !== undefined && existing.epoch === epoch && !existing.controller.signal.aborted) {
       this.bump(request, 'joined')
       request.onQueue?.('join', { lane: request.lane, service: request.service })
-      return await this.joinFlight<T>(existing, request.signal).then(clone)
+      return await this.joinFlight<T>(existing, request.signal, request.lane).then(clone)
     }
     const controller = new AbortController()
     const cacheMs = normalizedDuration(request.cacheMs)
@@ -304,9 +306,25 @@ export class ArkmeRequestCoordinator {
       .finally(() => {
         if (this.inFlight.get(fullKey)?.promise === promise) this.inFlight.delete(fullKey)
       })
-    const entry = { promise, controller, epoch, consumers: 0, cancelWhenUnobserved: request.cancelWhenUnobserved === true }
+    const entry = { promise, controller, epoch, consumers: 0, foregroundConsumers: 0, cancelWhenUnobserved: request.cancelWhenUnobserved === true, request: sharedRequest }
     this.inFlight.set(fullKey, entry)
-    return await this.joinFlight<T>(entry, request.signal).then(clone)
+    return await this.joinFlight<T>(entry, request.signal, request.lane).then(clone)
+  }
+
+  /** Shared reads inherit priority from their remaining subscribers. */
+  private updateSharedReadPriority(entry: InFlightEntry): void {
+    if (entry.request.lane !== 'interactive-read' && entry.request.lane !== 'background-read') return
+    const lane = entry.foregroundConsumers > 0 ? 'interactive-read' : 'background-read'
+    if (lane === entry.request.lane) return
+    // Keep the same transport, route budget, scope and deadline. Active transports
+    // are not preempted; later recovery attempts use the remaining subscribers' priority.
+    entry.request.lane = lane
+    const queued = this.queue.find(item => item.signal === entry.controller.signal)
+    if (queued === undefined) return
+    queued.lane = lane
+    this.queue.sort((left, right) => LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
+      || left.sequence - right.sequence)
+    this.drain()
   }
 
   /** Hard account/lifecycle invalidation. Old completions cannot populate the new scope. */
@@ -380,7 +398,6 @@ export class ArkmeRequestCoordinator {
     try {
       while (true) {
         release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission)
-        this.bump(request, 'started')
         if (controller.signal.aborted) throw abortError(controller.signal.reason)
         if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
         let value: T
@@ -428,12 +445,16 @@ export class ArkmeRequestCoordinator {
     }
   }
 
-  private async joinFlight<T>(entry: InFlightEntry, signal?: AbortSignal): Promise<T> {
+  private async joinFlight<T>(entry: InFlightEntry, signal: AbortSignal | undefined, lane: ArkmeRequestLane): Promise<T> {
     entry.consumers += 1
+    if (lane === 'interactive-read') entry.foregroundConsumers += 1
+    this.updateSharedReadPriority(entry)
     try { return await this.joinCaller(entry.promise as Promise<T>, signal) }
     finally {
       entry.consumers -= 1
+      if (lane === 'interactive-read') entry.foregroundConsumers -= 1
       if (entry.cancelWhenUnobserved && entry.consumers === 0) entry.controller.abort()
+      else this.updateSharedReadPriority(entry)
     }
   }
 
@@ -488,7 +509,7 @@ export class ArkmeRequestCoordinator {
         const index = this.queue.indexOf(queued)
         if (index >= 0) this.queue.splice(index, 1)
         signal.removeEventListener('abort', abort)
-        onQueue?.('cancel', { lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
+        onQueue?.('cancel', { lane: queued.lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
         reject(abortError(signal.reason))
       }
       queued = { lane, service, transport, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
@@ -527,6 +548,7 @@ export class ArkmeRequestCoordinator {
         queued.route.tokens = Math.max(0, queued.route.tokens - 1)
         queued.route.active += 1
       }
+      this.bump(queued, 'started')
       queued.onQueue?.('start', { lane: queued.lane, service: queued.service, queueWaitMs: this.now() - queued.queuedAt, queueLength: this.queue.length, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
       let released = false
       queued.resolve(() => {

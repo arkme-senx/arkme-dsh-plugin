@@ -76,3 +76,31 @@ Audio 正式回听接口对既有 `.m4a` 切片返回 `audio/mp4`，Host 原白�
 
 
 末轮同步 dev 3f71352d（只更新消息标记测试夹具）后，4 workers 重跑出现 4 个既有发布脚本测试的默认 5 秒超时；未发生断言失败。代码、断言和超时设置不变，1 worker 定向 26 项通过，随后 2 workers 完整重跑 **12,678 通过 / 21 跳过、零失败**（1,079 文件通过 / 16 跳过）。保留失败日志 `/tmp/offline-release-loop-plugin-final-base.log`、定向日志 `...-final-focused.log` 和最终全量日志 `...-final-low-concurrency.log`。本次基线合并没有改变已验证 tgz 的生产源码。
+
+## 2026-10-19 原交互恢复与历史范围准入
+
+本轮替换先前自行增加的顶部入口和候选弹窗，复用交接预览的内联待确认条、原卡片及消息侧“线下已讨论 ↗”。原文/回听使用现有确认对话框布局。共享小组件的 CSS 内联随组件注入，避免独立插件打包后裸样式。
+
+| 能力面 | 实现与验证 |
+| --- | --- |
+| Host | 现有 list 增加 messageRefs，限制 100 个、账号/环境/会话校验、筛选范围绑定游标；Chat 复用现有来源索引 |
+| Tools | 现有 arkme_offline_context_read 的 message_refs 接入同一 Host；官方 DSH 0.1.5-rc.2 真实 Agent 会话查询通过 |
+| SDK | 独立仓外 consumer 仅 import 公开 /sdk，严格类型编译及真实 Host → Chat 消息筛选查询通过 |
+| UI | 原待确认条展开/确认、消息侧标记和跳转、卡片实际浏览器验证；无顶部自造入口 |
+
+不可变 tgz 在独立 Profile 中验收，不修改官方 DSH。UI/Host 局部 162 项通过，1 个原生环境用例在该局部命令跳过，真实原生链路另测。全量首轮 12,695 项通过，1 个 Arko 消息标记 UI 等待失败；原断言单独复跑 5 项通过，正式 pnpm 完整复验 12,696 项通过、21 跳过，零失败（1,081 文件通过、16 跳过）；见 Meta verification.md。
+
+证据：/tmp/offline-idempotence-ui-tests-final.log、/tmp/offline-ui-final-full-tests.log、/tmp/offline-ui-final-mark-retest.log、/tmp/offline-ui-runtime/dsh-idempotence.log、/tmp/offline-message-sdk-compile.log、/tmp/offline-message-sdk-run.log、/tmp/offline-ui-runtime/ui-admission-final.png。截图含合成用户与合成录音文本；不作为真实模型效果或线上数据验收。用户 3081 实例未改。
+
+
+## 2026-10-19 合并前复核：长对话定位
+
+确认并修复两处同根问题：虚拟列表仅为消息行保留导航锚点，未挂载的线下卡片无法定位；缓存路径平滑滚动尚未结束就释放锚点，导致滚动停在中间。现在将 contextRef 映射到既有虚拟列表行，按现有 around 路径先同步定位再消费目标。不增加 UI 入口、弹窗、状态机或依赖。
+
+- 单测先用旧行为复现失败，再验证修复；相关 429 项通过。
+- 正式 pnpm 全量 12,698 项通过、21 跳过（1,081 文件通过、16 跳过），typecheck、build、tgz 打包与官方 CLI 隔离安装通过。
+- 最终产物在实际浏览器中覆盖 180 条消息长窗口：卡片未挂载时点击消息标记定位；卡片和消息互在未加载分页时双向 around 导航；原待确认条、确认、原文及冻结分享预览与确认。
+- 原生 Chat 验证同群其他成员不能读取私人关联，分享后只能读取分享消息，timeline 不泄露 offline_context 私有项。Tools 和仓外 SDK 已通过正式 Host 查询；导航修复没有新增 Host 能力。
+- 本轮回听夹具返回 offline-premerge 测试桶，被正式域名白名单拒绝，错误在原卡片呈现；不计为成功播放，不放宽白名单。此前 M4A 合成播放证据见上节，不能替代本轮真实录音验收。
+
+日志：`/tmp/offline-review-navigation-red.log`、`/tmp/offline-review-navigation-final.log`、`/tmp/offline-review-plugin-full-final.log`；最终产物 `/tmp/offline-review-final.tgz`，截图 `/tmp/offline-ui-runtime/ui-final-long-navigation.png`。均为隔离合成账号和数据，未修改用户 3081 实例。

@@ -117,7 +117,7 @@ def capture_machine(folder, args):
     control = read(folder / 'control.json')
     claim = read(folder / 'claim.json')
     if control.get('version') != 2 or claim.get('version') != 2 or claim.get('homeKey') != args.home_key: return
-    if control['status'] not in ('pending', 'active') or not live(control): return
+    if control['status'] not in ('pending', 'active') or not capture_allowed(control): return
     if claim['at'] > control['expiresAt']: return
     raw = sys.stdin.buffer.read(524289)
     if len(raw) > 524288: return

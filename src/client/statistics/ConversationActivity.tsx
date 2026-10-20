@@ -10,7 +10,7 @@ import { withArkmeReadDeadline } from '../read-deadline.js'
 import { arkmeUi } from '../ui-controller.js'
 import { useConversationActivity } from './use-conversation-activity.js'
 
-const css = `
+export const conversationActivityStyles = `
 .ca-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0}
 .ca-metrics strong{display:block;font-size:21px;line-height:1.5;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .ca-bars{height:156px;display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px;border-bottom:1px solid ${arkmeTheme.borderSoft};padding-top:10px}
@@ -42,7 +42,7 @@ export function ConversationActivity({ query, source, refreshRevision, onSupport
   const result = owner.state?.result
   useEffect(() => { onSupport(owner.state?.supported === true); return () => onSupport(false) }, [owner.state?.supported, onSupport])
   useEffect(() => setSelected(undefined), [result?.id])
-  return <><style>{css}</style>
+  return <><style>{conversationActivityStyles}</style>
     <div className="cw-controls"><span className="cw-muted" style={{ marginRight: 'auto' }}>{tr('所有消息类型 · 按发送时间统计')}</span><button disabled={owner.loading} onClick={() => void owner.read()}>{tr(owner.loading ? '读取中…' : '刷新统计')}</button></div>
     {owner.error && <p role="alert">{owner.error}</p>}
     {owner.loading && !owner.state && <p role="status">{tr('正在读取活跃时间…')}</p>}

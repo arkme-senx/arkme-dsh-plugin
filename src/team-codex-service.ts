@@ -10,6 +10,7 @@ import { TEAM_CODEX_BRIDGE_SCRIPT } from './team-codex-bridge-script.js'
 import { TeamCodexMachineJournal } from './team-codex-machine-journal.js'
 import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
 import { TeamCodexCloud, type TeamCodexCloudPort } from './team-codex-cloud.js'
+import { TeamCodexCaptureHealthReader } from './team-codex-capture-health.js'
 
 interface Binding {
   id: string; user_id: number; team_ref: string; member_json: string; title: string
@@ -51,6 +52,7 @@ export class TeamCodexService {
   private readonly db: DatabaseSync
   private readonly machine: TeamCodexMachineJournal
   private readonly titles: TeamCodexDesktopTitleReader
+  private readonly captureHealth: TeamCodexCaptureHealthReader
   private readonly cloud: TeamCodexCloud | undefined
   private cloudPumping = false
   private nextCloudPump = 0
@@ -87,12 +89,13 @@ export class TeamCodexService {
       CREATE TABLE IF NOT EXISTS codex_entry_accounts (user_id INTEGER PRIMARY KEY, confirmed_at INTEGER NOT NULL);`)
     this.machine = new TeamCodexMachineJournal(this.db,options.directory,this.now,readJson,atomicJson,options.codexHome)
     this.titles = new TeamCodexDesktopTitleReader(options.codexHome)
+    this.captureHealth = new TeamCodexCaptureHealthReader(options.codexHome, this.now)
     this.cloud = options.cloud ? new TeamCodexCloud(this.db, options.cloud, options.currentUserId, this.now, owner => this.rememberEntry(owner)) : undefined
     // The helper is copied into private runtime storage, not into Codex config.
     const helper = join(options.directory, 'bridge.py')
     if (existsSync(helper) && lstatSync(helper).isSymbolicLink()) throw new Error('Invalid team Codex helper')
     writeFileSync(helper, TEAM_CODEX_BRIDGE_SCRIPT, { mode: 0o600 })
-    this.fence()
+    this.fence(true)
   }
 
   start(): () => void {
@@ -103,7 +106,7 @@ export class TeamCodexService {
   }
 
   /** Called synchronously when the account scope closes, before another account can read. */
-  fence(): void {
+  fence(preserveCaptureLease = false): void {
     this.generation += 1
     this.cloud?.fence()
     this.identities.clear()
@@ -111,13 +114,17 @@ export class TeamCodexService {
     this.entryChecks.clear()
     this.entryRequests.clear()
     rmSync(join(this.options.directory, 'active.json'), { force: true })
+    if (!preserveCaptureLease) rmSync(join(this.options.directory, 'capture-lease.json'), { force: true })
   }
 
   close(): void {
     if (this.closed) return
     this.closed = true
     if (this.timer) clearInterval(this.timer)
-    this.fence()
+    // A normal runtime restart may finish a Codex turn while this host is unavailable.
+    // The last verified account gets at most ten minutes of local-only buffering.
+    // Logout/account switches use fence() above and revoke the lease immediately.
+    this.fence(true)
     this.db.close()
   }
 
@@ -224,7 +231,9 @@ export class TeamCodexService {
     const local = this.localState(userId, teamRef, self)
     // An unsupported/offline cloud must never substitute my local tasks for a colleague's tasks.
     const scoped = memberRef && memberRef !== String(userId) ? {...local,tasks:[]} : local
-    return this.cloud ? await this.cloud.state(userId, teamRef, scoped, page, memberRef, sourceId, projectKey) : scoped
+    const result = this.cloud ? await this.cloud.state(userId, teamRef, scoped, page, memberRef, sourceId, projectKey) : scoped
+    if (await this.user() !== userId) fail('账号已切换，请重试', 409)
+    return { ...result, tasks: this.captureHealth.annotate(userId, teamRef, result.tasks) }
   }
 
   private async resolveDirectoryMember(teamRef:string, owner:number, memberRef:string):Promise<string> {
@@ -383,6 +392,7 @@ export class TeamCodexService {
       if (this.closed || generation !== this.generation) return
       if (!userId) { this.fence(); return }
       atomicJson(join(this.options.directory,'active.json'), { userId, at:this.now() })
+      atomicJson(join(this.options.directory,'capture-lease.json'), { userId, at:this.now(), expiresAt:this.now()+600_000 })
       const rows = this.db.prepare("SELECT * FROM connections WHERE user_id=? AND status IN ('pending','active')").all(userId) as unknown as Binding[]
       for (const row of rows) this.ingest(row)
       this.machine.ingest(userId)

@@ -128,13 +128,16 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   }
 }
 
-function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse): void {
+function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number): void {
   const encoded = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(encoded),
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    // Standard timing metadata separates Host execution from browser queueing
+    // and transport. No request parameters, identity or upstream URL is exposed.
+    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}` }),
   })
   res.end(encoded)
 }
@@ -905,6 +908,7 @@ export interface ArkmeHostApiOptions {
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const started = performance.now()
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
       if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
@@ -1006,7 +1010,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamCodex,
         options.migrationManager,
       ))
-      writeJson(res, 200, { ok: true, value })
+      writeJson(res, 200, { ok: true, value }, started)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
@@ -1028,7 +1032,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           ...(known.imageFailures === undefined ? {} : { imageFailures: known.imageFailures }),
           ...(known.publishReceipt === undefined ? {} : { publishReceipt: known.publishReceipt }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
-      })
+      }, started)
     } finally {
       res.off('close', abortDisconnectedRequest)
     }
@@ -1696,6 +1700,7 @@ export async function dispatchArkmeHostOperation(
     case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
     case 'calendar.day-review.source': return await service.dayReviewSource(params, requestSignal)
+    case 'calendar.day-review.models': return await service.dayReviewModels(params, requestSignal)
     case 'calendar.day-review.prompts': return await service.dayReviewPrompts(params, requestSignal)
     case 'calendar.record-location': return await service.calendarRecordLocation(stringParam(params, 'locationRef'), requestSignal)
     case 'calendar.records': {

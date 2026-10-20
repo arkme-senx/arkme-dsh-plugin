@@ -9,6 +9,7 @@ interface Ports {
   currentUser(): Promise<number | undefined>
   files(): FileTransfers
   identify(ref: string, userId: number): Promise<string>
+  identifyReply?(conversationRef: string, messageRef: string, userId: number): Promise<string>
   execute(operation: TeamAppOperation, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown>
 }
 const fail = (code: string, message: string) => new ArkmePluginError(`team-${code}`, message, false, 409)
@@ -69,18 +70,21 @@ export class TeamSendQueue {
   async enqueue(input: TeamSendInput): Promise<TeamSendTask> {
     const user = await this.user(), epoch = this.epoch
     if (!uuid.test(input.clientUid) || !Number.isSafeInteger(input.expectedReplySeq) || input.expectedReplySeq < 0
+      || (input.replyToRef !== undefined && (typeof input.replyToRef !== 'string' || !input.replyToRef || input.replyToRef.length > 16_000))
       || !input.content || typeof input.content.text_content !== 'string' || input.content.text_content.length > 20_000
       || !Array.isArray(input.fileRefs) || input.fileRefs.length > 9 || new Set(input.fileRefs).size !== input.fileRefs.length
       || input.fileRefs.some(ref => typeof ref !== 'string')
       || JSON.stringify(input.content).length > 128_000) throw fail('invalid_request', '发送内容或附件无效')
     const conversationKey = await this.ports.identify(input.conversationRef, user)
+    const replyToKey = input.replyToRef ? await this.ports.identifyReply?.(input.conversationRef, input.replyToRef, user) : undefined
+    if (input.replyToRef && !replyToKey) throw fail('invalid_request', '原消息不可引用，请重新选择')
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
-    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs})
+    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.replyToRef ? {replyToRef:input.replyToRef} : {})})
     const tasks = await this.ports.files().mutateTeamSends(user, tasks => {
       const prior = tasks.find(task => task.clientUid === input.clientUid)
       if (prior) {
-        if (prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
+        if (prior.conversationKey !== conversationKey || prior.replyToKey !== replyToKey || prior.expectedReplySeq !== input.expectedReplySeq
           || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
         }
@@ -89,7 +93,7 @@ export class TeamSendQueue {
       if (tasks.filter(task => !['sent', 'cancelled'].includes(task.state)).length >= 100) throw fail('queue-full', '待发送消息过多，请先处理失败消息')
       const completed = tasks.filter(task => ['sent', 'cancelled'].includes(task.state) && !task.fileRefs.length).slice(0, -100)
       for (const task of completed) tasks.splice(tasks.indexOf(task), 1)
-      tasks.push({ ...inputCopy, taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
+      tasks.push({ ...inputCopy, ...(replyToKey ? {replyToKey} : {}), taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
         files: teamTaskFiles(files), attempts: 0, nextAttemptAt: 0 })
     })
     this.wake(0)
@@ -164,7 +168,7 @@ export class TeamSendQueue {
   }
   private command(task: TeamSendTask): Record<string, unknown> {
     return { conversationRef: task.conversationRef, clientUid: task.clientUid,
-      expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content }
+      expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content, ...(task.replyToRef ? {replyToRef:task.replyToRef} : {}) }
   }
   private async save(user: number, task: TeamSendTask): Promise<void> {
     await this.ports.files().mutateTeamSends(user, tasks => {

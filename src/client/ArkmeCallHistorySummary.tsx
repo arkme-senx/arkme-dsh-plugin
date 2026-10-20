@@ -11,7 +11,7 @@ export function ArkmeCallHistorySummary({ item, style, textStyle }: {
 }) {
   useArkmeLocale()
   const { element, detail, failed } = useCallRecordPreview<HTMLSpanElement>(
-    item.summaryNeedsDetail ? item.callRef : undefined, item.summaryUpdatedAtMillis)
+    item.summaryNeedsDetail ? item.callRef : undefined, item.summaryUpdatedAtMillis, item.stableId)
   const status = detail?.summaryStatus ?? item.summaryStatus
   const text = detail?.summaryText?.trim() ?? (item.summaryNeedsDetail ? '' : item.summaryPreview?.trim())
   const summary = item.summaryNeedsDetail && !detail

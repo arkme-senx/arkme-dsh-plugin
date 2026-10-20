@@ -1097,6 +1097,32 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-bottom-error': true })).toHaveLength(0)
   })
 
+  it('positions a cached context card before releasing its virtual anchor', async () => {
+    const page = unifiedFixture(target, [])
+    page.unified.events.push({ kind: 'offline-context', eventId: 'context-event', source: 'offline_context',
+      occurredAtMillis: 50, orderTie: 'context', contentStatus: 'available', entryRef: 'context-ref', revision: '1', title: '', summary: '' })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline' ? Promise.resolve(page) : baseCall(operation, ...args))
+    const body = { scrollTop: 0, scrollHeight: 5000, clientHeight: 600,
+      scrollTo: vi.fn(({ top, behavior }: { top: number; behavior: string }) => {
+        // A native smooth scroll has not reached the row when React consumes
+        // the target and releases the forced virtual chunk.
+        if (behavior === 'auto') body.scrollTop = top
+      }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
+      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'context-event', offlineContextRef: 'context-ref' },
+        getBoundingClientRect: () => ({ top: 3000 - body.scrollTop, bottom: 3200 - body.scrollTop, height: 200 }) }],
+    }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    body.scrollTop = 0
+    await act(async () => { arkmeUi.showConversationTarget(target, 'context-ref', 50, undefined, undefined, false, false, 'context-ref') })
+    expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
+    expect(body.scrollTop).toBe(2800)
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
+  })
+
   it('lets a newer locate of an already loaded message supersede a pending return', async () => {
     const body = await mountBottomControl(true)
     const pending = deferred<unknown>()
@@ -1866,6 +1892,7 @@ describe('conversation send directory projection', () => {
     const localStorage = new Map<string, string>()
     const sessionStorage = new Map<string, string>()
     vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(() => true),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,

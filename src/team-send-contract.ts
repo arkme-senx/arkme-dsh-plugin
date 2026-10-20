@@ -8,8 +8,10 @@ export interface TeamSendInput {
   expectedReplySeq: number
   content: TeamContent
   fileRefs: string[]
+  replyToRef?: string
 }
 export interface TeamSendTask extends TeamSendInput {
+  replyToKey?: string
   taskRef: string
   conversationKey: string
   createdAtMillis: number

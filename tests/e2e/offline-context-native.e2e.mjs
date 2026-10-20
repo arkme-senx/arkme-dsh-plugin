@@ -59,7 +59,7 @@ it('preserves the real card flow through native services and the paid gateway', 
     await page.goto(authenticatedUrl,{waitUntil:'load'})
     await page.getByRole('button',{name:'对话',exact:true}).click()
     await page.getByText(fixture.title,{exact:true}).first().click()
-    await page.getByRole('button',{name:'线下交流',exact:true}).click()
+    await page.getByRole('button',{name:/段线下交流待确认/}).click()
     const card = page.locator(`[data-offline-context-id="${initial.id}"]`)
     await card.waitFor()
     await card.getByRole('button',{name:'回听',exact:true}).click()

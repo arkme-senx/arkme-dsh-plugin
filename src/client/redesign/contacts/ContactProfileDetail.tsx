@@ -300,6 +300,7 @@ export function ContactProfileContent({
         <span className="arkme-contact-profile-avatar">
           <ArkmeUserAvatar
             {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
+            {...(profile.avatarFallback === undefined ? {} : { fallback: profile.avatarFallback })}
             size={72}
             label={tr("{v0}的头像", { v0: displayName })}
           />

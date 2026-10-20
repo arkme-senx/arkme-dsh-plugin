@@ -162,13 +162,20 @@ export class OfflineContextService implements OfflineContextPort {
       if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw invalid()
       const state = input.state ?? 'suggested'
       if (!['suggested', 'linked', 'dismissed'].includes(state)) throw invalid()
+      if (input.messageRefs !== undefined && (!Array.isArray(input.messageRefs) || input.messageRefs.length < 1 || input.messageRefs.length > 100)) throw invalid()
+      const relations = input.messageRefs?.map(ref => {
+        const message = open(ref, 'message')
+        if (message.chat !== source.ownerRef) throw invalid()
+        return text(message.relation)
+      }).sort()
+      const filter = relations ? fingerprint(relations) : undefined
       const cursor = input.cursor ? open(input.cursor, 'page') : undefined
-      if (cursor && (cursor.chat !== source.ownerRef || cursor.state !== state)) throw invalid()
-      const raw = await post('list', { chat_session_uid: source.ownerRef, state, limit: 20, descending: true, ...(cursor ? { after: cursor.after } : {}) })
+      if (cursor && (cursor.chat !== source.ownerRef || cursor.state !== state || cursor.filter !== filter)) throw invalid()
+      const raw = await post('list', { chat_session_uid: source.ownerRef, state, limit: 20, descending: true, ...(relations ? { message_uids: relations } : {}), ...(cursor ? { after: cursor.after } : {}) })
       if (!Array.isArray(raw.items) || raw.items.length > 20 || typeof raw.has_more !== 'boolean') throw invalid()
       const entries = await Promise.all(raw.items.map(v => project(objectValue(v), input.sourceRef, source.displayName, source.kind as 'private_chat' | 'group_chat')))
       await current()
-      return { entries, hasMore: raw.has_more, ...(raw.has_more ? { nextCursor: seal({ chat: source.ownerRef, state, after: raw.next }, 'page') } : {}) }
+      return { entries, hasMore: raw.has_more, ...(raw.has_more ? { nextCursor: seal({ chat: source.ownerRef, state, ...(filter ? { filter } : {}), after: raw.next }, 'page') } : {}) }
     }
     if (input.operation === 'range-options') {
       const identity = open(input.entryRef, 'entry')
