@@ -1,3 +1,4 @@
+import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
 import { messageSyncToolModules } from './conversation/message-sync.js'
 import {teamProfileTools} from './contacts/team-profile.js'
@@ -86,6 +87,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
+  relationPagesTool,
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,

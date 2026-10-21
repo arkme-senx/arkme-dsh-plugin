@@ -152,7 +152,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     <ConversationActionsMenu anchor={menu} label={tr('更多团队对话操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
       conversationExportActionItem({ busy: exporting, processed: archive.messages.length, invoke: () => void exportHistory() }),
       ...(conversation.side === 'team' ? [{ id: 'private', label: tr('发起私聊'), icon: <ChatCircle size={20}/>, busy: privateBusy, invoke: () => void openPrivate() }] : []),
-      { id: 'pin', label: tr(pinned ? '取消置顶' : '置顶'), icon: <PushPin size={20}/>, invoke: () => { try { teamDirectoryPreferences.pin(accountKey, target, !pinned) } catch (e) { setNotice(errorText(e)) } } },
+      { id: 'pin', label: tr(pinned ? '取消置顶' : '置顶'), icon: <PushPin size={20}/>, invoke: async () => { try { await teamDirectoryPreferences.pin(accountKey, target, !pinned) } catch (e) { setNotice(errorText(e)) } } },
     ]}/>
     <ArkmeSelfCalendarPopover open={open === 'calendar'} anchor={calendar} accountScope={accountKey} scopeKey={`team:${conversation.key}`} getReadingDate={getReadingDate}
       onClose={() => setOpen(undefined)} onSelectRecord={() => {}}

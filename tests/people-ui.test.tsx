@@ -71,7 +71,7 @@ it('keeps people visible while refreshing and after a refresh failure', async ()
   expect(host.querySelectorAll('.people-row')).toHaveLength(1)
   await act(async () => fail(new Error('暂时断网')))
   expect(host.querySelectorAll('.people-row')).toHaveLength(1)
-  expect(host.textContent).toContain('录音说话人 · 暂不可用')
+  expect(host.textContent).toContain('录音说话人 · 1 暂未更新')
 })
 
 it('does not describe a failed speaker index as still processing', async () => {
@@ -81,4 +81,77 @@ it('does not describe a failed speaker index as still processing', async () => {
   await click('查看录音')
   expect(host.textContent).toContain('录音出现记录读取失败')
   expect(host.textContent).not.toContain('录音出现记录仍在整理')
+})
+
+it('publishes each relation page, retains partial results on a later error and retries from a new snapshot', async () => {
+  let finish!: (v: unknown) => void
+  mocks.call.mockImplementation(async (_op, input) => input.source !== 'relations' ? { source: input.source, items: [] }
+    : input.cursor ? new Promise(resolve => { finish = resolve }) : { source: 'relations', items: [relation], nextCursor: 'second-page' })
+  await act(async () => root.render(<PeopleSurface accountScope="paged" onBack={() => {}}/>))
+  expect(host.querySelectorAll('.people-row')).toHaveLength(1)
+  expect(host.textContent).toContain('关系人物 · 1 加载中')
+  expect(mocks.call.mock.calls.some(([op, p]) => op === 'people.list' && p.cursor === 'second-page')).toBe(true)
+  await act(async () => finish({ source: 'relations', items: [{...relation, key: 'e2', personKey: 'u2', name:'第二位'}] }))
+  expect(host.querySelectorAll('.people-row')).toHaveLength(2)
+  mocks.call.mockImplementation(async (_op, input) => { if (input.source === 'relations') throw new Error('offline'); return {source:input.source,items:[]} })
+  await click('刷新')
+  expect(host.querySelectorAll('.people-row')).toHaveLength(2)
+  expect(host.textContent).toContain('关系人物 · 2 暂未更新')
+})
+
+it('restores stale directory, selected person, original records and scroll immediately on reentry', async () => {
+  mocks.call.mockImplementation(async (op, input) => op === 'people.list' ? { source:input.source, items:input.source === 'relations' ? [relation] : [] }
+    : {evidence:[{key:'old',text:'缓存中的原始记录',label:'来源',date:1,speaker:'',anchor:false}]})
+  await act(async () => root.render(<PeopleSurface accountScope="restored" onBack={() => {}}/>))
+  await act(async () => (host.querySelector('.people-row') as HTMLButtonElement).click())
+  const scroll = host.querySelector('.explore-detail') as HTMLElement
+  await act(async () => { scroll.scrollTop=123;scroll.dispatchEvent(new Event('scroll')) })
+  await act(async () => root.render(<div/>))
+  const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now+31_000)
+  mocks.call.mockImplementation(()=>new Promise(()=>{}))
+  await act(async () => root.render(<PeopleSurface accountScope="restored" onBack={() => {}}/>))
+  expect(host.querySelectorAll('.people-row')).toHaveLength(1)
+  expect(host.querySelector('h1')?.textContent).toBe('宏顺')
+  expect(host.textContent).toContain('缓存中的原始记录')
+  expect((host.querySelector('.explore-detail') as HTMLElement).scrollTop).toBe(123)
+  await act(async () => root.render(<PeopleSurface accountScope="another-account" onBack={() => {}}/>))
+  expect(host.querySelectorAll('.people-row')).toHaveLength(0)
+  expect(host.textContent).not.toContain('缓存中的原始记录')
+})
+
+it('does not reload original records just because a refreshed signed reference changed', async () => {
+  let ref='first'
+  mocks.call.mockImplementation(async (op,input)=>op==='people.list'?{source:input.source,items:input.source==='relations'?[{...relation,relation:{...relation.relation,ref}}]:[]}
+    :{evidence:[{key:'old',text:'保持正在看的内容',label:'来源',date:1,speaker:'',anchor:false}]})
+  await act(async () => root.render(<PeopleSurface accountScope="references" onBack={() => {}}/>))
+  await act(async () => (host.querySelector('.people-row') as HTMLButtonElement).click())
+  ref='new-signed-reference';await click('刷新')
+  expect(host.textContent).toContain('保持正在看的内容')
+  expect(mocks.call.mock.calls.filter(([op])=>op==='explore.detail')).toHaveLength(1)
+})
+
+it('resumes a page interrupted by new identity facets and retries the actual failed page',async()=>{
+  const observers:Array<()=>void>=[]
+  vi.stubGlobal('IntersectionObserver',class {constructor(private cb:(entries:unknown[])=>void){} observe(){observers.push(()=>this.cb([{isIntersecting:true}]))} disconnect(){}})
+  let moreFacet=false, failPage!:(error:Error)=>void, blockedSignal:AbortSignal|undefined
+  const evidence=(key:string)=>({key,text:key,label:'来源',date:1,speaker:'',anchor:false})
+  mocks.call.mockImplementation(async(op,input,signal)=>{
+    if(op==='people.list')return {source:input.source,items:input.source==='relations'?[relation,...(moreFacet?[{...relation,key:'e-extra',relation:{...relation.relation,key:'e-extra',ref:'extra'}}]:[])]:[]}
+    if(input.ref==='extra')return {evidence:[]}
+    if(input.cursor){blockedSignal=signal;return new Promise((_resolve,reject)=>{failPage=reject})}
+    return {evidence:[evidence('原文第一页')],nextCursor:'page-two'}
+  })
+  await act(async()=>root.render(<PeopleSurface accountScope="interrupted-page" onBack={()=>{}}/>))
+  await act(async()=>(host.querySelector('.people-row') as HTMLButtonElement).click())
+  await act(async()=>observers.at(-1)!())
+  moreFacet=true;await click('刷新')
+  expect(blockedSignal?.aborted).toBe(true)
+  expect(host.textContent).toContain('原文第一页')
+  expect(host.textContent).not.toContain('正在读取相关记录')
+  await act(async()=>observers.at(-1)!())
+  await act(async()=>failPage(new Error('第二页暂时失败')))
+  mocks.call.mockImplementation(async()=>({evidence:[evidence('原文第二页')]}))
+  await click('重试')
+  expect(mocks.call.mock.lastCall?.[1].cursor).toBe('page-two')
+  expect(host.textContent).toContain('原文第一页');expect(host.textContent).toContain('原文第二页')
 })

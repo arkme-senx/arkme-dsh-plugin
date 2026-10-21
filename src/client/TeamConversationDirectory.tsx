@@ -61,7 +61,12 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     if (!folder.teamRef || channel) return
     const controller = new AbortController(), teamRef = folder.teamRef
     void callArkme<TeamChannel>('team.app.channel', { teamRef, expectedAccountKey: accountKey }, controller.signal)
-      .then(value => { if (!controller.signal.aborted) { teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId)); arkmeUi.resolveTeamDirectory(teamRef, value) } })
+      .then(async value => {
+        controller.signal.throwIfAborted()
+        await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId))
+        controller.signal.throwIfAborted()
+        arkmeUi.resolveTeamDirectory(teamRef, value)
+      })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : tr('暂时无法打开团队，请重试')) })
     return () => controller.abort()
   }, [accountKey, folder.teamRef, channel, attempt])

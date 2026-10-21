@@ -13,7 +13,7 @@ export function recordingPickerStack(): string | undefined {
 
 /** One OS chooser per owner. Diagnostics intentionally contain no file paths or names. */
 export class RecordingFilePicker {
-  private active: { id: string; started: number; interruption?: string } | undefined
+  private active: { id: string; started: number; interruption?: string; becameHidden?: boolean } | undefined
   private sequence = 0
   constructor(private readonly context: () => PickerContext = () => ({})) {}
 
@@ -44,7 +44,10 @@ export class RecordingFilePicker {
         window.addEventListener(name, listener)
         observers.push(() => window.removeEventListener(name, listener))
       }
-      const listener = () => this.event('visibility-change', { visibility: document.visibilityState })
+      const listener = () => {
+        if (document.visibilityState === 'hidden') request.becameHidden = true
+        this.event('visibility-change', { visibility: document.visibilityState })
+      }
       document.addEventListener('visibilitychange', listener)
       observers.push(() => document.removeEventListener('visibilitychange', listener))
     }
@@ -60,10 +63,13 @@ export class RecordingFilePicker {
       const message = (typeof error?.message === 'string' ? error.message : '无法选择文件')
         .replace(/(?:file:\/\/|\/(?:Users|Volumes|home|private)\/|[A-Za-z]:\\)[^\r\n"]+/g, '[path]')
       this.event('rejected', { backend, errorName: name, errorMessage: message, interruption: request.interruption,
+        becameHidden: request.becameHidden === true,
         cancellationOwner: name === 'AbortError' ? 'unknown' : undefined })
-      if (name === 'AbortError' && !request.interruption) return { status: 'cancelled' }
+      // Native cancellation resolves with an empty selection; a native rejection is a failure.
+      if (name === 'AbortError' && backend !== 'desktop' && !request.interruption && !request.becameHidden) return { status: 'cancelled' }
       return { status: 'error', message: name === 'AbortError'
-        ? '文件选择器意外关闭，请重试' : `无法打开文件选择器：${message}` }
+        ? request.becameHidden ? '文件选择已中止，请回到当前窗口重试' : '文件选择器意外关闭，请重试'
+        : `无法打开文件选择器：${message}` }
     } finally {
       observers.forEach(dispose => dispose())
       this.active = undefined

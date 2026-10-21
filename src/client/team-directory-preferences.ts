@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { localDirectoryPreferences, useLocalDirectoryPreferenceHydration } from './local-directory-preferences.js'
 import type { TeamConversation } from '../team-app-contract.js'
 import type { TeamConversationGroup } from './team-conversation-directory.js'
 
@@ -27,7 +28,9 @@ export const teamEntryPinned = (preferences: TeamDirectoryPreferences, target: T
 export class TeamDirectoryPreferenceStore {
   private cache = new Map<string, TeamDirectoryPreferences>()
   private listeners = new Set<() => void>()
-  constructor(private storage: () => Pick<Storage, 'getItem' | 'setItem'> | undefined) {}
+  constructor(private storage: () => Pick<Storage, 'getItem' | 'setItem'> | undefined, private durable = false) {
+    if (durable) localDirectoryPreferences.subscribe(this.invalidate)
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   invalidate = () => { this.cache.clear(); for (const listener of this.listeners) listener() }
   read = (account: string): TeamDirectoryPreferences => {
@@ -36,7 +39,7 @@ export class TeamDirectoryPreferenceStore {
     if (cached) return cached
     const result: Record<string, Preference> = Object.create(null)
     try {
-      const raw = JSON.parse(this.storage()?.getItem(prefix + account) ?? '{}')
+      const raw = this.durable ? Object.fromEntries(Object.entries(localDirectoryPreferences.read(account)).filter(([key]) => key.startsWith('team:')).map(([key, value]) => [key.slice(5), value])) : JSON.parse(this.storage()?.getItem(prefix + account) ?? '{}')
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) for (const [key, value] of Object.entries(raw)) {
         const item = value as Preference
         if (!item || typeof item.pinned !== 'boolean') continue
@@ -49,6 +52,10 @@ export class TeamDirectoryPreferenceStore {
   }
   private write(account: string, value: TeamDirectoryPreferences) {
     if (!account) throw new Error('请先登录')
+    if (this.durable) {
+      const previous = this.read(account)
+      return Promise.all(Object.entries(value).filter(([key, item]) => JSON.stringify(previous[key]) !== JSON.stringify(item)).map(([key, item]) => localDirectoryPreferences.set(account, `team:${key}`, { ...item, pinnedAt: item.pinned ? Date.now() : 0 }))).then(() => {})
+    }
     const storage = this.storage()
     if (!storage) throw new Error('本机设置暂时无法保存，请重试')
     try { storage.setItem(prefix + account, JSON.stringify(value)) }
@@ -56,16 +63,20 @@ export class TeamDirectoryPreferenceStore {
     this.cache.set(account, value); for (const listener of this.listeners) listener()
   }
   pin(account: string, target: TeamEntryTarget, pinned: boolean) {
-    this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned } })
+    return this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned } })
   }
   remove(account: string, target: TeamEntryTarget, at = Date.now()) {
     const sequences = Object.fromEntries(teamEntryConversations(target).map(c => [teamConversationEntryKey(c), c.lastSeq]))
-    this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned: false, removal: { at, sequences } } })
+    return this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned: false, removal: { at, sequences } } })
   }
-  restore(account: string, key: string) {
+  restore(account: string, key: string): void | Promise<void> {
+    if (this.durable) return localDirectoryPreferences.hydrate(account).then(() => this.restoreLoaded(account, key))
+    return this.restoreLoaded(account, key)
+  }
+  private restoreLoaded(account: string, key: string) {
     const previous = this.read(account)
     if (!previous[key]?.removal) return
-    this.write(account, { ...previous, [key]: { pinned: previous[key]!.pinned } })
+    return this.write(account, { ...previous, [key]: { pinned: previous[key]!.pinned } })
   }
   /** Unknown visitors may merely be older directory pages. Verify their latest actual message before restoring a folder. */
   async reconcile(account: string, conversations: TeamConversation[], latestMessageAt: (c: TeamConversation) => Promise<number>, signal: AbortSignal) {
@@ -76,19 +87,20 @@ export class TeamDirectoryPreferenceStore {
         const removal = this.read(account)[key]?.removal
         if (!removal) continue
         const before = removal.sequences[conversationKey]
-        if (before !== undefined) { if (c.lastSeq > before) this.restore(account, key); continue }
+        if (before !== undefined) { if (c.lastSeq > before) await this.restore(account, key); continue }
         if (!c.lastSeq) continue
         const actualTime = c.updatedAt > removal.at ? await latestMessageAt(c) : 0
         signal.throwIfAborted()
         if (this.read(account)[key]?.removal !== removal) continue
-        if (actualTime > removal.at) this.restore(account, key)
-        else this.write(account, { ...this.read(account), [key]: { pinned: false, removal: { ...removal, sequences: { ...removal.sequences, [conversationKey]: c.lastSeq } } } })
+        if (actualTime > removal.at) await this.restore(account, key)
+        else await this.write(account, { ...this.read(account), [key]: { pinned: false, removal: { ...removal, sequences: { ...removal.sequences, [conversationKey]: c.lastSeq } } } })
       }
     }
   }
 }
-export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore(() => typeof localStorage === 'undefined' ? undefined : localStorage)
+export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore(() => undefined, true)
 if (typeof window !== 'undefined') window.addEventListener('storage', event => { if (!event.key || event.key.startsWith(prefix)) teamDirectoryPreferences.invalidate() })
 export function useTeamDirectoryPreferences(account: string) {
+  useLocalDirectoryPreferenceHydration(account)
   return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.read(account), () => empty)
 }

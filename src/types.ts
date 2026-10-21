@@ -1499,6 +1499,8 @@ arkoImagesV1?:true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    relationPages?: true
+    recordingPersonReferences?: true
     recordingEntities?: true
     recordingEntityStart?: true
     speakerPresence?: true
@@ -4109,11 +4111,13 @@ export type ArkmePluginOperation =
   | 'arko.pending.read'
   | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
+  | 'relations.list' | 'relations.records'
   | 'people.list' | 'people.open-chat'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
@@ -4169,6 +4173,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.preview'
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
+  | 'device.lock.status' | 'device.lock.lock' | 'device.lock.unlock'
   | 'auth.logout'
   | 'auth.logout.feedback'
   | 'user-ban.status'
@@ -4339,6 +4344,9 @@ export type ArkmePluginOperation =
   | 'extensions.audit.check'
   | 'sources.list'
   | 'sources.self-target'
+  | 'directory.preferences.read'
+  | 'directory.preferences.set'
+  | 'directory.preferences.migrate'
   | 'conversation.directory.bot-pin'
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'

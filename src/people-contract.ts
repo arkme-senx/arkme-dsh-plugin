@@ -20,7 +20,7 @@ export interface PersonFacet {
   assignmentRef?: string
   chatRef?: string
 }
-export interface PeoplePage { source: PeopleSource; items: PersonFacet[] }
+export interface PeoplePage { source: PeopleSource; items: PersonFacet[]; nextCursor?: string }
 export interface UnifiedPerson {
   key: string
   name: string
