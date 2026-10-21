@@ -143,7 +143,7 @@ describe('Arkme product navigation', () => {
     expect(lockIconIndex).toBeLessThan(productNavigationSource.indexOf('<Database size={19}'))
     expect(productNavigationSource).not.toContain('arkmeUi.showVoiceprint()')
     expect(productNavigationSource).not.toContain('<strong>声纹管理</strong>')
-    expect(productNavigationSource).toContain('<strong>{tr("数据管理")}</strong>')
+    expect(productNavigationSource).toContain('<strong>数据管理</strong>')
     expect(productNavigationSource).toContain("arkmeUi.showWorld('mine')")
     expect(productNavigationSource).toContain("arkmeUi.openDshSettings('arkme-usage')")
     expect(productNavigationSource).not.toContain('<strong>我的账户</strong>')
