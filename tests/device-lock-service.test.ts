@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeviceLockService } from '../src/services/device-lock-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
@@ -11,12 +12,12 @@ const token = (sessionId = sid) => `e30.${Buffer.from(JSON.stringify({user_id: 1
 function fixture() {
   let session: ArkmeSessionCredentials | undefined = { userId: 1, accessToken: token(), refreshToken: 'refresh' }
   let legacy = false, fail = false, locks = 0, cleanups = 0
-  let native = { supported: true, locked: false, sessionEnded: false, needsCredentials: false, message: '', userId: 1, clientId: 2, sessionId: sid }
+  let native = { supported: true, locked: false, sessionEnded: false, needsCredentials: false, message: '', userId: 1, clientId: 2, sessionId: sid, loginKey: createHash('sha256').update('refresh').digest('hex') }
   const fetchImpl = vi.fn(async (_: unknown, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body))
     if (body.action === 'capabilities.get') return new Response(JSON.stringify({ok: true, value: {capabilities: {deviceLock: legacy ? undefined : {version: 1}}}}))
     if (fail && body.action === 'device.lock.logout') return new Response('', {status: 503})
-    if (body.action === 'device.lock.bind') { Object.assign(native, {sessionId: JSON.parse(Buffer.from(body.payload.accessToken.split('.')[1], 'base64url').toString()).session_id, sessionEnded: false}); }
+    if (body.action === 'device.lock.bind') { Object.assign(native, {sessionId: JSON.parse(Buffer.from(body.payload.accessToken.split('.')[1], 'base64url').toString()).session_id, sessionEnded: false, loginKey: body.payload.loginKey}); }
     if (body.action === 'device.lock.lock') { locks++; native.locked = true }
     if (body.action === 'device.lock.logout') native.sessionEnded = true
     if (body.action === 'device.lock.cleanup') { cleanups++; native.sessionEnded = false; native.locked = false }
@@ -25,7 +26,7 @@ function fixture() {
   const logout = vi.fn(async (expected: ArkmeSessionCredentials) => { expect(session).toBe(expected); session = undefined })
   const runtime = { config: {}, fetchImpl, accountScopedSession: async () => session, sessionStore: {read: async () => session}, refreshAccessToken: vi.fn(async (current: ArkmeSessionCredentials) => current) } as unknown as ServiceRuntime
   const owner = new DeviceLockService(runtime, logout, { endpoint: 'http://127.0.0.1:1234/v1/actions', token: 'host-token', sessionId: 'harness-session' }); owners.push(owner)
-  return { owner, fetchImpl, logout, native, getSession: () => session, legacy: () => { legacy = true }, failRevoke: () => { fail = true }, replace: () => { session = {...session!, accessToken: token('replacement_session_001')} }, locks: () => locks, cleanups: () => cleanups }
+  return { owner, fetchImpl, logout, native, getSession: () => session, legacy: () => { legacy = true }, failRevoke: () => { fail = true }, replace: () => { session = {...session!, accessToken: token('replacement_session_001'), refreshToken: 'replacement-refresh'} }, locks: () => locks, cleanups: () => cleanups }
 }
 describe('device lock Host lifecycle', () => {
   it('does not require the first remote registration to protect the current local login', async () => {
@@ -106,7 +107,19 @@ describe('device lock Host lifecycle', () => {
     await expect(f.owner.requestUnlock()).rejects.toThrow('登录状态已变化')
     expect(f.fetchImpl.mock.calls.some(([, init]) => JSON.parse(String(init?.body)).action === 'device.lock.unlock')).toBe(false)
   })
-  it('does not label a server revocation failure as successful logout', async () => {
+  it('does not label a native persistence failure as successful logout', async () => {
     const f = fixture(); await f.owner.refresh(); f.failRevoke(); await expect(f.owner.beforeLogout()).rejects.toThrow(); expect(f.getSession()).toBeDefined(); expect(f.cleanups()).toBe(0)
   })
+})
+
+it('keeps native password recovery available before first registration completes', async () => {
+ const f = fixture(); Object.assign(f.native, {sessionId: undefined, userId: undefined, clientId: undefined}); f.native.locked = true
+ expect(await f.owner.requestUnlock()).toMatchObject({locked: true})
+ expect(f.fetchImpl.mock.calls.some(([, init]) => JSON.parse(String(init?.body)).action === 'device.lock.unlock')).toBe(true)
+})
+
+it('cleans up local locks while the first registration is still pending', async () => {
+ const f = fixture(); Object.assign(f.native, {sessionId: undefined}); f.native.locked = true
+ expect(await f.owner.beforeLogout()).toBe(true)
+ await f.owner.afterLogout(); expect(f.native.locked).toBe(false); expect(f.cleanups()).toBe(1)
 })

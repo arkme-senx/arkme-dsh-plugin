@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
@@ -6,14 +7,15 @@ import { DeviceControlRealtime, deviceControlRealtimeOrigin } from './device-con
 
 interface NativeSnapshot {
   supported: boolean; locked: boolean; sessionEnded: boolean; needsCredentials: boolean; message: string
-  userId?: number; clientId?: number; sessionId?: string; operationState?: ArkmeDeviceLockSnapshot['operationState']
+  loginKey?: string; userId?: number; clientId?: number; sessionId?: string; operationState?: ArkmeDeviceLockSnapshot['operationState']
 }
+const loginKey = (session: ArkmeSessionCredentials) => createHash('sha256').update(session.refreshToken).digest('hex')
 const unavailable: ArkmeDeviceLockSnapshot = { available: false, locked: false, sessionEnded: false, message: '' }
 function sameLogin(session: ArkmeSessionCredentials, native: NativeSnapshot): boolean {
   try {
     const claims = JSON.parse(Buffer.from(session.accessToken.split('.')[1] ?? '', 'base64url').toString()) as Record<string, unknown>
     return session.userId === native.userId && claims.client_id === native.clientId
-      && (claims.session_id === native.sessionId || claims.session_id === undefined || claims.session_id === '')
+      && native.loginKey === loginKey(session)
   } catch { return false }
 }
 
@@ -88,13 +90,13 @@ export class DeviceLockService {
     }
     if (this.boundToken !== session.accessToken || native.needsCredentials || native.sessionId === undefined || !sameLogin(session, native)) {
       if (native.needsCredentials) session = await this.runtime.refreshAccessToken(session)
-      native = await this.bridge('device.lock.bind', { accessToken: session.accessToken })
+      native = await this.bridge('device.lock.bind', { accessToken: session.accessToken, loginKey: loginKey(session) })
       this.boundToken = session.accessToken
     }
     native = await this.bridge('device.lock.sync')
     if (native.needsCredentials) {
       session = await this.runtime.refreshAccessToken(session)
-      native = await this.bridge('device.lock.bind', { accessToken: session.accessToken }); this.boundToken = session.accessToken
+      native = await this.bridge('device.lock.bind', { accessToken: session.accessToken, loginKey: loginKey(session) }); this.boundToken = session.accessToken
     }
     if (native.sessionEnded && sameLogin(session, native)) {
       this.realtime.close(); await this.localLogout(session)
@@ -118,7 +120,7 @@ export class DeviceLockService {
     if (this.disposed || !await this.nativeSupported()) throw new ArkmePluginError('device-lock-unavailable', '当前桌面暂不支持解锁', false, 501)
     const native = await this.bridge('device.lock.status')
     const session = await this.runtime.accountScopedSession()
-    if (this.disposed || session === undefined || !sameLogin(session, native)) throw new ArkmePluginError('login-context-changed', '登录状态已变化，请重试', true, 409)
+    if (this.disposed || session === undefined || (native.sessionId !== undefined && !sameLogin(session, native))) throw new ArkmePluginError('login-context-changed', '登录状态已变化，请重试', true, 409)
     if (native.sessionEnded) return this.refresh()
     // Local OS authentication must remain reachable while remote sync is down.
     // The native owner alone verifies credentials and applies the unlock fact.
@@ -126,13 +128,13 @@ export class DeviceLockService {
   }
   async beforeLogout(expected?: ArkmeSessionCredentials): Promise<boolean> {
     if (!await this.nativeSupported()) return false
-    // Once this login is bound, inability to revoke is an error, never a local
-    // success. Older clients/backends with no binding retain existing logout.
+    // Mark only this native instance before invoking the existing credential
+    // cleanup. Remote delivery must never be a prerequisite for local logout.
     const native = await this.bridge('device.lock.status')
     const session = await this.runtime.accountScopedSession()
     if (expected !== undefined && (session?.userId !== expected.userId || session?.refreshToken !== expected.refreshToken)) throw new ArkmePluginError('login-context-changed', '登录状态已变化，请重试', true, 409)
-    if (session === undefined || native.sessionId === undefined || !sameLogin(session, native)) return false
-    this.project(await this.bridge('device.lock.logout', { sessionId: native.sessionId }), true); return true
+    if (session === undefined || (native.loginKey !== undefined && !sameLogin(session, native))) return false
+    this.project(await this.bridge('device.lock.logout', { ...(native.sessionId === undefined ? {} : { sessionId: native.sessionId }), loginKey: loginKey(session) }), true); return true
   }
   async afterLogout(): Promise<void> { this.realtime.close(); this.boundToken = ''; const native = await this.bridge('device.lock.status'); this.project(native.sessionEnded ? await this.bridge('device.lock.cleanup') : native, false) }
   dispose(): void { this.disposed = true; clearTimeout(this.timer); this.realtime.close(); this.boundToken = '' }
