@@ -1,7 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import CodeRuntime, { type CodeRunRequest } from '@deepseek-ai/dsh-code-runtime'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from '../helpers/session-input.js'
+import CodeRuntime, { type PtcRunRequest as CodeRunRequest } from '@deepseek-ai/dsh-ptc-runtime'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -11,16 +12,18 @@ import { preparedDirectory, directoryResult } from '../helpers/recording-directo
 
 async function fixture(code = false, snapshotOnly = false) {
   const ctx = new Context()
+  ctx.provide('workingDirectory', { ensure: async () => process.cwd() })
   await ctx.plugin(SystemPrompt)
-  await ctx.plugin(ToolRuntime, code ? { mode: 'both' } : {})
+  await ctx.plugin(ToolRuntime, code ? { mode: 'ptc' } : {})
   if (code) {
     class OfflineRuntime extends CodeRuntime {
       readonly language = 'typescript'
       readonly isolation = 'test'
+      resolve(request: CodeRunRequest) { return { ...request, cwd: process.cwd(), timeoutMs: 30_000 } }
       async run(request: CodeRunRequest) {
         try {
           const result = await request.bindings[0]!.functions.arkme_recording_import_folder!({ action: 'prepare', directory_path: '/recordings' })
-          return { logs: [String(result)] }
+          return { logs: [JSON.stringify(result)] }
         } catch { return { logs: ['预检失败，请重试'] } }
       }
     }
@@ -35,9 +38,9 @@ async function fixture(code = false, snapshotOnly = false) {
   } as unknown as ArkmeToolPorts), { inject: ['tools', 'systemPrompt'] }))
   const mounted = await mount()
   const session = Session.create(SessionId('confirmation-runtime'))
-  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
-  const agentSession = snapshotOnly ? { snapshotEvents: () => [...session.events], append: session.append.bind(session) } : session
-  const agent = { id: session.id, session: agentSession, inbox } as unknown as Agent
+  const inbox = createSessionInput(session)
+  const agentSession = snapshotOnly ? { snapshotEvents: () => [...session.snapshotEvents()], append: session.append.bind(session) } : session
+  const agent = { ctx, id: session.id, session: agentSession, inbox } as unknown as Agent
   let count = 0
   const invoke = async (args: Record<string, unknown> = { action: 'prepare' }, name = 'arkme_recording_import_folder') => {
     const callId = CallId(`call-${++count}`)
@@ -92,11 +95,11 @@ describe.each([false, true])('conversational confirmation with durable DSH inbox
       return await next()
     })
     expect((await f.invoke({ code: 'offline binding', description: '目录预检' }, 'run_code')).isError).toBe(false)
-    const dispatch = f.session.events.find(event => event.type === 'tool/code-dispatch')
+    const dispatch = f.session.snapshotEvents().find(event => event.type === 'tool/ptc-dispatch')
     expect(dispatch?.data.isError).toBe(true)
     f.enqueue('确认继续')
     f.consume()
-    expect(JSON.stringify(await f.invoke({ action: 'upload' }))).toContain('confirmation_required')
+    expect(JSON.stringify(await f.invoke({ code: 'offline binding', description: '重新预检' }, 'run_code'))).toContain('confirmation_required')
     expect(f.upload).not.toHaveBeenCalled()
     expect(f.prepare).toHaveBeenCalledTimes(2)
   })
@@ -168,7 +171,7 @@ describe.each([false, true])('conversational confirmation with durable DSH inbox
     const input = { rootCallId, name: 'arkme_recording_import_folder',
       arguments: { action: 'upload', directory_path: '/recordings' }, agent: f.agent, signal: new AbortController().signal }
     const prepared = await f.ctx.tools.execute({ ...input, callId: CallId('root:code:1') })
-    f.session.append('tool/code-dispatch', { rootCallId, parentCallId: rootCallId, subCallId: CallId('root:code:1'),
+    f.session.append('tool/ptc-dispatch', { rootCallId, parentCallId: rootCallId, subCallId: CallId('root:code:1'),
       name: input.name, arguments: input.arguments, content: prepared.content, isError: prepared.isError })
     f.enqueue('确认上传')
     f.consume()
@@ -215,7 +218,7 @@ describe.each([false, true])('conversational confirmation with durable DSH inbox
     const pending = f.invoke()
     await vi.waitFor(() => expect(f.prepare).toHaveBeenCalledOnce())
     f.enqueue('取消，改为另一个目录')
-    expect(f.session.events.at(-1)?.type).toBe('agent/inbox/spliced')
+    expect(f.session.snapshotEvents().at(-1)?.type).toBe('agent/inbox/spliced')
     release()
     expect((await pending).isError).toBe(true)
     expect(f.upload).not.toHaveBeenCalled()

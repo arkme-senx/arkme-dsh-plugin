@@ -287,6 +287,12 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
       }
       let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      // The 0.2 Web frontend emits ./assets and relative plugin-batch URLs.
+      // This document lives below /arkme-self; resolve its resources from the
+      // original root document instead of /arkme-self/assets and /plugins.
+      html = /<base\b[^>]*>/i.test(html)
+        ? html.replace(/<base\b[^>]*>/i, '<base href="/">')
+        : html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<base href="/">`)
       if (options.sessionClient !== undefined) {
         if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error('harness session restore requires a document head')
         html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-session-restore>${HARNESS_SESSION_RESTORE_SCRIPT}</script>`)

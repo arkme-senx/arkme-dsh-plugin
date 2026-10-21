@@ -5,7 +5,7 @@ import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 
 const PREFIX = 'data-arkme-session-'
-const HEADER = '[data-slot="conversation.session.header"] > header'
+const HEADER = '[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])'
 const SIDEBAR = '[data-slot="sidebar"]'
 const COPY = [
   { expand: '打开侧边栏', collapse: '收起侧边栏', create: '新建会话', blank: '新会话', sessions: '会话', choose: '切换会话', search: '搜索会话', view: '视图选项', add: '添加工作区' },
@@ -27,14 +27,14 @@ function shell(doc: Document) {
   const root = slot?.firstElementChild as HTMLElement | null
   const center = frame?.children[1] as HTMLElement | undefined
   const right = frame?.children[2]
-  const tracks = frame?.style.gridTemplateColumns.match(/^\S+px minmax\(0(?:px)?, 1fr\) (\S+px)$/)
+  const tracks = frame?.style.gridTemplateColumns.match(/^\S+px minmax\(\d+(?:px)?, 1fr\) (\S+px|minmax\(0px, \S+px\))$/)
   if (!root || !column || !frame || !center || !tracks || frame.firstElementChild !== column
     || !right?.hasAttribute('data-rightbar-col') || !root.querySelector('[data-slot="sidebar.workspaces"]')) return
   const brand = root.firstElementChild as HTMLElement | null
-  const toggle = brand?.querySelector<HTMLButtonElement>('button[aria-label]:last-child')
+  const toggle = [...(root?.querySelectorAll<HTMLButtonElement>('button[aria-label]') ?? [])].find(button => COPY.some(c => c.expand === button.getAttribute('aria-label') || c.collapse === button.getAttribute('aria-label')))
   const copy = COPY.find(c => c.expand === toggle?.getAttribute('aria-label') || c.collapse === toggle?.getAttribute('aria-label'))
-  const create = [...root.querySelectorAll<HTMLButtonElement>(':scope > button[aria-label]')]
-    .find(button => button.getAttribute('aria-label') === copy?.create)
+  const create = [...root.querySelectorAll<HTMLButtonElement>('button[aria-label]')]
+    .find(button => button.getAttribute('aria-label') === copy?.create && !brand?.contains(button))
   if (!brand || !toggle || !copy || !create) return
   return { slot, column, frame, root, center, brand, toggle, create, copy, rightTrack: tracks[1]! }
 }
@@ -67,7 +67,7 @@ function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, str
   const cluster = actions?.parentElement
   const row = cluster?.parentElement
   const nav = cluster?.querySelector<HTMLElement>(':scope > nav')
-  if (!actions || !cluster || !row || !nav || row.parentElement !== header || cluster.children.length !== 2
+  if (!actions || !cluster || !row || !nav || (row.parentElement !== header && row.parentElement?.parentElement !== header) || cluster.children.length !== 2
     || cluster.firstElementChild !== nav || cluster.lastElementChild !== actions) return []
   const utilities = [...row.children].filter(node => node !== cluster && !node.hasAttribute(PREFIX + 'identity')) as HTMLElement[]
   return [[header, 'header'], [row, 'title-row'], [cluster, 'title-cluster'], [actions, 'summary'], [nav, 'title-nav'],
@@ -166,7 +166,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     html[${PREFIX}preview] [${PREFIX}column], html[${PREFIX}preview] [role="menu"],
     html[${PREFIX}preview] [role="dialog"], html[${PREFIX}preview] [role="alertdialog"] { visibility: visible !important; }
     [${PREFIX}frame] { grid-template-columns: 0px minmax(0, 1fr) var(--arkme-session-rightbar) !important; transition: none !important; }
-    [${PREFIX}frame] > :nth-child(2) { grid-column: 2; }
+    [${PREFIX}frame] > :nth-child(2) { grid-column: 2; position: relative; }
+    [${PREFIX}frame] header:has([data-conversation-header-leading]) { min-height: 50px !important; }
     [${PREFIX}frame] > [data-rightbar-col] { grid-column: 3; }
     [${PREFIX}frame] > [data-side="sidebar"] { display: none !important; }
     [${PREFIX}column] {
@@ -178,7 +179,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     }
     [${PREFIX}column][${PREFIX}open] { display: block !important; pointer-events: auto; }
     [${PREFIX}root] { width: 100% !important; height: auto; max-height: var(--arkme-session-height); border-radius: 9px; padding: ${CONVERSATION_MENU_LAYOUT.paddingY}px ${CONVERSATION_MENU_LAYOUT.paddingX}px !important; position: relative; }
-    [${PREFIX}brand], [${PREFIX}native-title] { display: none !important; }
+    [${PREFIX}brand], [${PREFIX}native-title],
+    [${PREFIX}root] > [data-window-drag], [${PREFIX}root] > nav { display: none !important; }
     [${PREFIX}create] { order: 10; flex-shrink: 0; margin: 8px 0 0 !important; }
     [${PREFIX}root][${PREFIX}compact-tools] [${PREFIX}create] { width: calc(100% - var(--arkme-session-tools-width) - 8px); }
     [${PREFIX}tools-header] { display: contents !important; }
@@ -389,13 +391,16 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     } else if (!visibleHeader) {
       mark(identity, 'fallback')
       if (identity.parentElement !== next.center) next.center.append(identity)
+    } else if (header?.querySelector('[data-conversation-header-leading]')) {
+      mark(identity, 'fallback')
+      if (identity.parentElement !== next.center) next.center.append(identity)
     } else {
       // An unrecognized future native header keeps its own layout, not an
       // overlaid product name that could obscure upstream navigation.
       identity.remove()
     }
     const nativeTitle = visibleHeader
-      ? header?.querySelector<HTMLElement>('nav > :last-child > button:disabled') : undefined
+      ? header?.querySelector<HTMLElement>('nav > :last-child > button:disabled, nav > :last-child > span:not([data-arkme-session-anchor])') : undefined
     if (title !== nativeTitle) {
       title?.removeAttribute(PREFIX + 'native-title')
       title = nativeTitle ?? undefined
@@ -413,7 +418,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       mark(host, 'fallback')
       if (host.parentElement !== next.center) next.center.append(host)
     }
-    const text = title?.textContent?.trim() || (visibleHeader ? next.copy.sessions : next.copy.blank)
+    const text = title?.textContent?.trim() || (visibleHeader && header.querySelector('nav') ? next.copy.sessions : next.copy.blank)
     if (labelText.textContent !== text) labelText.textContent = text
     trigger.title = text
     // Re-clone only when the row's status actually changed: replacing the node

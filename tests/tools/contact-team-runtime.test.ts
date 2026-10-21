@@ -1,6 +1,7 @@
 import {Context} from '@deepseek-ai/cordis'
-import {Inbox,type Agent} from '@deepseek-ai/dsh-agent'
-import {CallId,createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
+import type {Agent} from '@deepseek-ai/dsh-agent'
+import {createSessionInput} from '../helpers/session-input.js'
+import {ToolCallId as CallId,createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {Session,SessionId} from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -10,7 +11,7 @@ it('discovers team join in a real DSH session and enforces human confirmation',a
  const ctx=new Context();await ctx.plugin(SystemPrompt);await ctx.plugin(ToolRuntime)
  const read=vi.fn(async()=>({profileRef:'opaque',profileRevision:3,canEditProfile:true})),write=vi.fn(async()=>({requestUid:'receipt',acceptedRevision:4})),upload=vi.fn(async()=>({uploadRef:'upload'}))
  const mounted=await ctx.plugin(Object.assign((inner:Context)=>registerArkmeTools(inner,{searchContact:read,joinContactTeam:write} as unknown as ArkmeToolPorts),{inject:['tools','systemPrompt']}))
- const session=Session.create(SessionId('team-profile-session')),inbox=new Inbox(session,{inserted(){},discarded(){},claimed(){}}),agent={id:session.id,session,inbox} as unknown as Agent
+ const session=Session.create(SessionId('team-profile-session')),inbox=createSessionInput(session),agent={id:session.id,session,inbox} as unknown as Agent
  let count=0
  const human=()=>{inbox.append('next-step',createUserMessage({content:[{type:'text',text:'确认申请加入团队 arkme_cn'}],source:{kind:'user'}}));for(const m of inbox.claim('next-step',0))session.append('user/message',m,{surfaceOp:'append'})}
  const invoke=async(name:string,args:Record<string,unknown>)=>{

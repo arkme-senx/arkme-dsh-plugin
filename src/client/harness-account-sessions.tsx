@@ -1,8 +1,11 @@
+import { currentHarnessSession, type HarnessSessionList } from './harness-session-state.js'
 import type { HarnessNativeWindow } from '../harness-native-transport-script.js'
 import { installSessionOriginHover, sessionOrigin } from './harness-session-origin.js'
 import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
 import { Modal, Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { callArkme } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
@@ -10,7 +13,7 @@ import { openNativeAccountSession } from './harness-native-navigation.js'
 import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
 import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
-type SessionsState = ReturnType<ISessions['list']['getSnapshot']>
+type SessionsState = HarnessSessionList
 type Workspace = { workspaceId: string; title: string; path: string; createdAt?: number; sessionIds: string[] }
 type WorkspacesState = { items: readonly Workspace[]; archivedSessionIds: readonly string[]; phase: string; state: string; error: unknown }
 type Hook<S> = <T>(select: (state: S) => T) => T
@@ -22,14 +25,13 @@ type BrowserProps = Record<string, unknown> & {
   useStore: Hook<BrowserView>
   open(id: string): void; startSession(id?: string): void
   renameSession(id: string, title: string): Promise<void>; archiveSession(id: string): Promise<void>
-  forkSession(id: string): void; renderSlot(name: string, owner: object): ReactNode
+  forkSession(id: string): void; renderSlot(name: string, owner: object, options?: unknown): ReactNode
 }
 const SLOT = 'sidebar.workspaces'
 const FLOW = 'sidebar.workspaces.directoryFlow'
 const OWN_FLOW = 'arkme.accountSessions.directoryFlow'
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: object }
     'arkme.accountSessions.directoryFlow': { kind: 'single'; scope: 'root'; owner: object }
   }
 }
@@ -60,7 +62,7 @@ export function projectAccountSessions(local: SessionsState, rows: readonly DshA
     if (byId[id] || (directory?.preferredSession?.(id) && directory.preferredSession(id) !== id)) continue
     // A row is selectable only after its native added event has landed.
     if (!row.local && (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__) continue
-    byId[id] = { id, title: row.title, displayTitle: row.title, updatedAt: row.updatedAt, running: row.running, blank: row.blank }
+    byId[id] = { id, title: row.title, displayTitle: row.title, updatedAt: row.updatedAt, running: row.running, blank: row.blank, retainedBy: {} }
     ids.push(id)
   }
   const current = selected ? (selected.local ? selected.sessionRef : accountSessionKey(selected)) : local.current
@@ -219,7 +221,8 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   const sourceRuntime: string | null = null
   const creating = useRef(false)
   const [operationError, setOperationError] = useState('')
-  const local = props.useSessions(state => state)
+  const catalogState = props.useSessions(state => state)
+  const local = useMemo(() => ({ ...catalogState, current: currentHarnessSession(catalogState) }), [catalogState])
   const workspaces = props.useWorkspaces(state => state)
   const catalog = useMemo(() => accountSessionCatalog(surface), [])
 
@@ -307,7 +310,7 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
           .catch(error => { if (!catalog.signal.aborted) setOperationError(error instanceof Error ? error.message : '新建会话失败') })
           .finally(() => { creating.current = false })
       }} />
-    {operationError && <Modal open onClose={() => setOperationError('')} title="无法执行操作"><p>{operationError}</p><Button onClick={() => setOperationError('')}>知道了</Button></Modal>}
+    {operationError && <Modal open closeLabel="关闭" onClose={() => setOperationError('')} title="无法执行操作"><p>{operationError}</p><Button onClick={() => setOperationError('')}>知道了</Button></Modal>}
   </>
 }
 
@@ -330,26 +333,35 @@ export function installHarnessAccountSessions(ctx: ClientContext, surface: Eleme
     remove?.(); remove = undefined; native = next
     try {
       if (!next || typeof next.component !== 'function' || typeof next.inject !== 'function'
-        || !next.store || !next.children?.[FLOW] || Object.keys(next.children).length !== 1) return
+        || !next.store || !next.children?.[FLOW]) return
       const Native = next.component as ComponentType<BrowserProps>
+      const childNames = Object.keys(next.children)
+      const ownName = (name: string) => name === FLOW ? OWN_FLOW : `arkme.accountSessions.native.${name}`
       const Wrapped = (props: BrowserProps) => <AccountSessionBrowser {...props} Native={Native} surface={surface}
-        renderSlot={(name, owner) => name === FLOW
-          ? <div data-slot={FLOW} style={{ display: 'contents' }}>{props.renderSlot(OWN_FLOW, owner)}</div> : null} />
-      // Dynamic Slot ledger composition is intentionally type-erased at this
-      // boundary; the source entry already proved its store/inject contract.
+        renderSlot={(name, owner, options) => childNames.includes(name)
+          ? <div data-slot={name} style={{ display: 'contents' }}>{props.renderSlot(ownName(name), owner, options)}</div> : null} />
+      // Each copied native child receives an Arkme-owned declaration. Preserve
+      // the 0.2 row menus, leading/hover seats, and hookContext alongside picking.
       const register = slots.register.bind(slots) as unknown as (options: object, component: unknown) => () => void
       const restoreBrowser = register({ name: SLOT, priority: -100, store: next.store, inject: next.inject, locale: next.locale,
-        children: { [OWN_FLOW]: next.children[FLOW] } }, Wrapped)
-      let picker: StoredEntry | undefined, restorePicker: (() => void) | undefined
-      const syncPicker = () => {
-        const current = slots.entriesOfSlot(FLOW)[0]
-        if (current === picker) return
-        restorePicker?.(); restorePicker = undefined; picker = current
-        if (current && !current.children) restorePicker = register({ name: OWN_FLOW, ...current.options, store: current.store, inject: current.inject, locale: current.locale }, current.component)
-      }
-      const unsubscribe = slots.subscribe(FLOW, syncPicker)
-      syncPicker()
-      remove = () => { unsubscribe(); restorePicker?.(); restoreBrowser() }
+        children: Object.fromEntries(childNames.map(name => [ownName(name), next.children![name as keyof typeof next.children]])) }, Wrapped)
+      const cleanups = childNames.map(name => {
+        let previous: readonly StoredEntry[] = [], restores: Array<() => void> = []
+        const syncChildren = () => {
+          const current = slots.entriesOfSlot(name as typeof FLOW)
+          if (current.length === previous.length && current.every((entry, index) => entry === previous[index])) return
+          restores.forEach(dispose => dispose()); restores = []; previous = [...current]
+          for (const entry of current) {
+            if (entry.children) continue
+            restores.push(register({ ...entry.options, name: ownName(name), store: entry.store,
+              inject: entry.inject, locale: entry.locale }, entry.component))
+          }
+        }
+        const unsubscribe = slots.subscribe(name as typeof FLOW, syncChildren)
+        syncChildren()
+        return () => { unsubscribe(); restores.forEach(dispose => dispose()) }
+      })
+      remove = () => { cleanups.forEach(dispose => dispose()); restoreBrowser() }
     } finally { updating = false }
   }
   const unsubscribe = slots.subscribe(SLOT, sync)

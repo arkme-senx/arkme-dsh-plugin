@@ -1,10 +1,10 @@
-import { IconUserOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconUserOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import type { ComponentType } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 const NAV_ICONS: { labels: readonly string[]; marker: string; Icon: ComponentType<{ size: number; className?: string | undefined }> }[] = [
-  { labels: ['我的账户', 'My account'], marker: 'arkmeAccountNavIcon', Icon: IconUserOutline16 },
+  { labels: ['我的账户', 'My account'], marker: 'arkmeAccountNavIcon', Icon: IconUserOutlineMedium },
   { labels: ['数据管理', 'Data management'], marker: 'arkmeDataNavIcon', Icon: Archive },
 ]
 const NAV_ICON_SELECTOR = '[data-arkme-account-nav-icon], [data-arkme-data-nav-icon]'

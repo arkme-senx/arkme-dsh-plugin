@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
-import { Toast, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconWarningOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamRecordSource as Source, TeamTimeline } from '../team-app-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -65,6 +65,6 @@ export function TeamRecordSource({ conversationUid, navigable = false, onOpened 
       <Users size={14} aria-hidden /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
       <CaretRight size={12} aria-hidden />
     </button>
-    {error && <Toast text={error} anchor={button.current} icon={<IconWarningOutline16 />} onDone={() => setError('')} />}
+    {error && <Toast text={error} anchor={button.current} icon={<IconWarningOutlineMedium />} onDone={() => setError('')} />}
   </>
 }

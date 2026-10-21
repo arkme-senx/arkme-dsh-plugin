@@ -61,7 +61,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
       contentFrame = nextContent
       contentFrame?.setAttribute('data-arkme-harness-content-frame', '')
     }
-    const nextHeader = contentFrame?.querySelector<HTMLElement>('[data-slot="conversation.session.header"] > header') ?? undefined
+    const nextHeader = contentFrame?.querySelector<HTMLElement>('[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])') ?? undefined
     if (nextHeader !== sessionHeader) {
       if (sessionHeader) resize?.unobserve(sessionHeader)
       sessionHeader = nextHeader

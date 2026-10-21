@@ -1,4 +1,4 @@
-import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { HarnessSessions as ISessions } from './harness-session-state.js'
 type SubagentAddress = ReturnType<ISessions['list']['getSnapshot']>['currentAddress']
 
 export interface DesktopSessionSelectionBridge {
