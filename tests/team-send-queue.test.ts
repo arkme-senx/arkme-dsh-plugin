@@ -434,3 +434,15 @@ it('persists reply identity through restart and retries without dropping or chan
   expect(sends.length).toBeGreaterThan(0)
   for (const [,command] of sends) expect(command).toMatchObject({clientUid:request.clientUid,replyToRef:request.reply!.messageRef,replyRecordVersion:3})
 })
+
+it('derives the reply identity on the Host for Tools and reuses it after an unknown response',async()=>{
+ const f=await fixture();f.setOnline(false)
+ const request=input({reply:{messageRef:'42:conversation:reply:parent#old',messageKey:'',version:3,text:'',senderName:''}})
+ const accepted=await f.queue.enqueue(request)
+ expect(accepted.reply?.messageKey).toBe('42:conversation:reply:parent')
+ expect(request.reply?.messageKey).toBe('')
+ f.restart()
+ const replay=await f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:parent#new'}})
+ expect(replay.taskRef).toBe(accepted.taskRef)
+ expect(replay.reply?.messageRef).toBe(request.reply!.messageRef)
+})

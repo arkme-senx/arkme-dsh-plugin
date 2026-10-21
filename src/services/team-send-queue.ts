@@ -10,7 +10,7 @@ interface Ports {
   currentUser(): Promise<number | undefined>
   files(): FileTransfers
   identify(ref: string, userId: number): Promise<string>
-  identifyReply?(conversationRef: string, messageRef: string, userId: number): Promise<string>
+  identifyReply(conversationRef: string, messageRef: string, userId: number): Promise<string>
   execute(operation: TeamAppOperation, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown>
 }
 const fail = (code: string, message: string) => new ArkmePluginError(`team-${code}`, message, false, 409)
@@ -78,19 +78,21 @@ export class TeamSendQueue {
     if (input.reply && (typeof input.reply.messageRef !== 'string' || !input.reply.messageRef || !Number.isSafeInteger(input.reply.version) || input.reply.version <= 0
       || input.reply.quote && (!readMessageQuote(input.reply.quote) || input.reply.quote.recordVersion !== input.reply.version))) throw fail('invalid_request', '引用消息或选区无效')
     const conversationKey = await this.ports.identify(input.conversationRef, user)
-    if (input.reply && this.ports.identifyReply) {
-      const key = await this.ports.identifyReply(input.conversationRef, input.reply.messageRef, user)
-      if (key !== input.reply.messageKey) throw fail('invalid_request', '引用消息与当前会话不匹配')
+    let reply = input.reply
+    if (reply) {
+      const key = await this.ports.identifyReply(input.conversationRef, reply.messageRef, user)
+      if (reply.messageKey && key !== reply.messageKey) throw fail('invalid_request', '引用消息与当前会话不匹配')
+      reply = { ...reply, messageKey: key }
     }
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
-    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.reply ? {reply:input.reply} : {})})
+    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(reply ? {reply} : {})})
     const tasks = await this.ports.files().mutateTeamSends(user, tasks => {
       const prior = tasks.find(task => task.clientUid === input.clientUid)
       if (prior) {
         if (prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
           || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
-          || JSON.stringify(prior.reply && {key:prior.reply.messageKey,version:prior.reply.version,quote:prior.reply.quote}) !== JSON.stringify(input.reply && {key:input.reply.messageKey,version:input.reply.version,quote:input.reply.quote})) {
+          || JSON.stringify(prior.reply && {key:prior.reply.messageKey,version:prior.reply.version,quote:prior.reply.quote}) !== JSON.stringify(inputCopy.reply && {key:inputCopy.reply.messageKey,version:inputCopy.reply.version,quote:inputCopy.reply.quote})) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
         }
         return
