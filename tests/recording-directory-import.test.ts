@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { prepareRecordingDirectory, importRecordingDirectory, recordingDirectoryStartTime, type RecordingDirectoryInput } from '../src/recording-directory-import.js'
 import { toPublicRecordingImportJob, type RecordingImportJob, type RecordingDirectorySnapshot, type RecordingDirectorySource } from '../src/recording-import-contract.js'
+import { planRecordingToolBatch } from '../src/recording-tool-batch.js'
 
 const probeFile = vi.fn(async () => ({ kind: 'wav' as const, durationMillis: 1000 }))
 const stageFile = vi.fn(async () => ({ sourceHandle: 'opaque-staged-recording', sha256: 'a'.repeat(64), mimeType: 'audio/wav' }))
@@ -39,6 +40,52 @@ function localTask(overrides: Partial<RecordingImportJob> = {}): RecordingDirect
     sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId },
     task: toPublicRecordingImportJob(job, 'old-ref') }
 }
+
+describe('directory batch workflow', () => {
+  beforeEach(() => vi.clearAllMocks())
+  function plannerFixture() {
+    let journal: unknown
+    return vi.fn(async (_user, candidates) => {
+      const plan = planRecordingToolBatch(journal, candidates, 'Asia/Shanghai'); journal = plan.journal
+      return { supported: true, members: plan.members }
+    })
+  }
+  it('groups fresh files once and persists slot identities before admission', async () => {
+    const f = fixture([file(), file('R20260102-110000.WAV')]), planner = plannerFixture()
+    await importRecordingDirectory(f.ports as never, source, input, f.prepared as never, undefined, planner)
+    const metadata = f.ports.acceptRecordingImport.mock.calls.map(call => call[1])
+    expect(planner.mock.invocationCallOrder[0]).toBeLessThan(f.ports.acceptRecordingImport.mock.invocationCallOrder[0]!)
+    expect(metadata.map(meta => meta.batch.itemIndex)).toEqual([0, 1])
+    expect(metadata[0].batch.batchId).toBe(metadata[1].batch.batchId)
+    f.ports.acceptRecordingImport.mockClear()
+    f.prepared.scan.files.reverse(); f.prepared.preview.reverse()
+    await importRecordingDirectory(f.ports as never, source, input, f.prepared as never, undefined, planner)
+    expect(f.ports.acceptRecordingImport.mock.calls.map(call => call[1].batch)).toEqual(metadata.map(meta => meta.batch).reverse())
+  })
+  it('excludes completed recordings discovered between confirmation and upload from batch count', async () => {
+    const f = fixture([file(), file('R20260102-110000.WAV')]), planner = plannerFixture()
+    f.snapshot.existingFileNames = [file().fileName]
+    f.snapshot.owner = [{ sessionId: 'old', fileName: file().fileName, fileSize: 100, startAtMillis: start,
+      durationMillis: 1000, belongUserId: 42, hasFinishedUpload: true }]
+    const result = await importRecordingDirectory(f.ports as never, source, input, f.prepared as never, undefined, planner)
+    expect(result.counts.matched_uploaded).toBe(1)
+    expect(f.ports.acceptRecordingImport.mock.calls[0]![1].batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
+  })
+  it('does not stage any file after a capability failure', async () => {
+    const f = fixture(), planner = plannerFixture()
+    planner.mockRejectedValueOnce(new Error('not authenticated'))
+    await expect(importRecordingDirectory(f.ports as never, source, input, f.prepared as never, undefined, planner)).rejects.toThrow('not authenticated')
+    expect(stageFile).not.toHaveBeenCalled()
+    expect(f.ports.acceptRecordingImport).not.toHaveBeenCalled()
+  })
+  it('resumes old ordinary jobs without assigning phantom batch slots', async () => {
+    const f = fixture(), planner = plannerFixture()
+    f.snapshot.local = [localTask({ phase: 'uploading' })]
+    const result = await importRecordingDirectory(f.ports as never, source, input, f.prepared as never, undefined, planner)
+    expect(result.workflow).toEqual({ supported: true, batchIds: [], untrackedUploads: 1 })
+    expect(f.ports.acceptRecordingImport).not.toHaveBeenCalled()
+  })
+})
 
 describe('directory recording import', () => {
   beforeEach(() => vi.clearAllMocks())

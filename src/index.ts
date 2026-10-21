@@ -474,6 +474,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.accountScope.start()
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
+  ctx.effect(() => service.accountScope.subscribe(() => { void service.deviceLockStatus().catch(() => undefined) }), 'dsh-arkme: desktop device lock lifecycle')
   ctx.inject(['llm'], modelCtx => {
     const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
@@ -1069,7 +1070,7 @@ function validateConfig(ctx: Context, config: Config): void {
       ...(config.memoryCoreBaseUrl ? [config.memoryCoreBaseUrl] : []),
       config.audioBaseUrl,
       config.openApiBaseUrl,
-      ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
+      ...(config.dshRemoteRealtimeBaseUrl.trim() !== '' ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
       throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
@@ -1109,7 +1110,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['audioBaseUrl', config.audioBaseUrl],
     ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],
-    ...(config.dshRemoteFeatureEnabled
+    ...(config.dshRemoteRealtimeBaseUrl.trim() !== ''
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
       : []),
   ] as const) {

@@ -159,3 +159,18 @@ it('privacy lock removes original text, inferred names and every reference befor
   expect(JSON.stringify(detail.evidence)).not.toContain('王明')
  }finally{f.service.dispose()}
 })
+
+it('pages the people directory using the person type and keeps continuation account scoped', async () => {
+ const f=fixture()
+ try {
+  const first=await f.service.personPage()
+  expect(first.items).toHaveLength(1)
+  expect(f.post.mock.calls[0]![1]).toMatchObject({entity_types:[1],limit:50})
+  expect(f.get).not.toHaveBeenCalled()
+  expect(f.post.mock.calls.every(([path])=>!path.endsWith('/summary'))).toBe(true)
+  const next=await f.service.personPage(first.nextCursor)
+  expect(next.items[0]?.item.title).toBe('第二人')
+  f.switch()
+  await expect(f.service.personPage(first.nextCursor)).rejects.toThrow()
+ } finally {f.service.dispose()}
+})

@@ -10,11 +10,11 @@ export function useTeamConversationEntryActions(accountKey: string | undefined, 
   const key = teamEntryKey(target), pinned = teamEntryPinned(preferences, target), hidden = teamEntryHidden(preferences, target)
   useEffect(() => { setPoint(undefined); setPreview(false); setError('') }, [accountKey, key])
   const name = target.kind === 'folder' ? target.group.channel.name : target.conversation.side === 'team' ? target.conversation.visitor?.nickname ?? '用户' : target.conversation.channel.name
-  const mutate = (action: () => void) => { try { action(); setPoint(undefined); setError('') } catch (caught) { setError(caught instanceof Error ? caught.message : '操作失败，请重试') } }
-  const restore = () => { if (accountKey) teamDirectoryPreferences.restore(accountKey, key) }
+  const mutate = async (action: () => void | Promise<void>) => { setPoint(undefined); try { await action(); setError('') } catch (caught) { setError(caught instanceof Error ? caught.message : '操作失败，请重试') } }
+  const restore = () => { if (accountKey) return teamDirectoryPreferences.restore(accountKey, key) }
   return {
     pinned,
-    open: (navigate: () => void) => mutate(() => { restore(); navigate() }),
+    open: (navigate: () => void) => mutate(async () => { const saved = restore(); navigate(); await saved }),
     onContextMenu: (event: MouseEvent<HTMLElement>) => {
       if (!accountKey) return
       event.preventDefault(); event.stopPropagation(); setError('')

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { importFilePlaceholder, resolveImportFile, ImportFileAccessError, type ImportQueueRecord } from '../src/client/recordings/recording-import-journal.js'
+import { DesktopImportJournal, importFilePlaceholder, resolveImportFile, ImportFileAccessError, type ImportQueueRecord } from '../src/client/recordings/recording-import-journal.js'
 
 function record(file: File): ImportQueueRecord {
   return { id: 'test', accountKey: 'prod:42', fileName: file.name, fileSize: file.size, lastModified: file.lastModified,
@@ -36,5 +36,39 @@ describe('durable import source recovery', () => {
     const row = record(file)
     row.source = { kind: 'handle', handle: { kind: 'file', name: file.name, queryPermission: async () => 'granted', requestPermission: async () => 'granted', getFile: async () => replacement } }
     await expect(resolveImportFile(row)).rejects.toThrow('已改变')
+  })
+})
+
+describe('native import upgrade preserves browser candidates', () => {
+  const original = () => record(new File(['bytes'], 'old.wav', { lastModified: 123 }))
+  it('restores both stores and prefers a persisted native conversion without duplicate rows', async () => {
+    const old = original()
+    const converted = { ...old, source: { kind: 'desktop' as const, token: 'grant' } }
+    const other = { ...old, id: 'other' }
+    const browser = { list: vi.fn(async () => [old, other]), change: vi.fn(async () => {}) }
+    const native = { list: vi.fn(async () => [converted]), change: vi.fn(async () => {}) }
+    const journal = new DesktopImportJournal('prod:42', native, browser)
+    expect(await journal.list('prod:42')).toEqual([converted, other])
+    await expect(journal.list('prod:43')).rejects.toThrow('账号不匹配')
+  })
+  it('retains the legacy copy if saving its native replacement fails', async () => {
+    const browser = { list: vi.fn(async () => [original()]), change: vi.fn(async () => {}) }
+    const native = { list: vi.fn(async () => []), change: vi.fn(async () => { throw new Error('disk full') }) }
+    const journal = new DesktopImportJournal('prod:42', native, browser)
+    await expect(journal.change([{ ...original(), source: { kind: 'desktop', token: 'grant' } }], []))
+      .rejects.toThrow('disk full')
+    expect(browser.change).not.toHaveBeenCalled()
+  })
+  it('routes mixed sources to their own stores and removes deleted candidates from both', async () => {
+    const old = original()
+    const added = { ...old, id: 'new', source: { kind: 'desktop' as const, token: 'grant' } }
+    const browser = { list: vi.fn(async () => [old]), change: vi.fn(async () => {}) }
+    const native = { list: vi.fn(async () => []), change: vi.fn(async () => {}) }
+    const journal = new DesktopImportJournal('prod:42', native, browser)
+    await journal.change([old, added], ['deleted'])
+    expect(native.change).toHaveBeenNthCalledWith(1, 'prod:42', [added], ['deleted'])
+    expect(browser.change).toHaveBeenCalledWith([old], ['deleted', 'new'])
+    expect(native.change).toHaveBeenNthCalledWith(2, 'prod:42', [], ['test'])
+    await expect(journal.change([{ ...old, accountKey: 'prod:43' }], [])).rejects.toThrow('账号不匹配')
   })
 })

@@ -1,3 +1,4 @@
+import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
 import type {ExploreQuery,ExplorePage,ExploreDetail} from '../../explore-contract.js'
 import type {ArkmeTeamProfileToolPort} from '../../team-profile-contract.js'
 import type { ArkmeOfficialNotificationPort } from '../../official-notification-contract.js'
@@ -26,6 +27,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
   ArkmeOfficialNotificationPort,
   ArkmeSelfRolePort,
