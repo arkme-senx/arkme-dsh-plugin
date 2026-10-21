@@ -552,3 +552,61 @@ it('retries a failed history-window direction without refreshing the current con
   expect(( [...host.querySelectorAll('button')].find(node => node.textContent === '更晚') as HTMLButtonElement).disabled).toBe(true)
  } finally { vi.useRealTimers() }
 })
+
+
+it.each((['desc', 'asc'] as const).flatMap(direction =>
+  (['message', 'linked-record', 'search', 'clear', 'capabilities', 'send', 'latest', 'account'] as const)
+    .map(destination => ({ direction, destination }))))(
+  'cancels pending $direction paging when navigating to $destination', async ({ direction, destination }) => {
+  vi.useFakeTimers()
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  let finish!: (value: unknown) => void
+  let pageSignal: AbortSignal | undefined
+  vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+    const historical = otherSessionRead(method)
+    if (method === 'arko.context') {
+      const window = historical as { items: object[] }
+      return { ...window, items: window.items.map(item => ({ ...item, createdRecordUids: ['linked-record'] })),
+        hasBefore: true, hasAfter: true, beforeCursor: 'window-before', afterCursor: 'window-after' } as never
+    }
+    if (historical) return historical as never
+    if (method === 'arko.messages' && ['window-before', 'window-after'].includes(String(input?.cursor))) {
+      pageSignal = signal
+      return await new Promise(resolve => { finish = resolve }) as never
+    }
+    if (method === 'record.app.detail') return await new Promise(() => {}) as never
+    if (method === 'arko.ask') return { sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'completed', text: '当前会话的新回答', reasoning: '', createdRecordUids: [] } as never
+    return original(method, input, signal)
+  })
+  try {
+    await locateOtherSession()
+    if (destination === 'linked-record') await click(bubble('历史窗口中的原始问题'))
+    await click([...host.querySelectorAll('button')].find(node => node.textContent === (direction === 'desc' ? '更早' : '更晚'))!)
+    if (destination === 'message') await click(bubble('历史窗口中的原始问题'))
+    else if (destination === 'linked-record') await click([...detail()!.querySelectorAll('button')].find(node => node.textContent?.includes('查看关联快记'))!)
+    else if (destination === 'search') await click(host.querySelector('[aria-label="搜索 Arko 对话"]')!)
+    else if (destination === 'clear') await menuAction('清除上下文')
+    else if (destination === 'capabilities') await menuAction('小助 能干什么')
+    else if (destination === 'send') {
+      await act(async () => { arkmeComposerDraftStore.setText(arkmeArkoComposerDraftKey(10001), '继续当前会话') })
+      await click(host.querySelector('[aria-label="发送"]')!)
+    }
+    else if (destination === 'latest') await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
+    else await act(async () => {
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 })
+      root.render(<ArkmeArkoSurface key={10002} />)
+    })
+    await act(async () => { finish({ items: [{ messageRef: 'late-page', messageId: 98, sessionId: 7, role: 'user', text: '失效分页的迟到消息', reasoning: '', createdAtMillis: 1699999999000, status: 1, createdRecordUids: [] }], hasMore: false }) })
+    expect(pageSignal?.aborted).toBe(true)
+    expect(host.textContent).not.toContain('失效分页的迟到消息')
+    if (destination === 'message') expect(detail()!.textContent).toContain('历史窗口中的原始问题')
+    if (destination === 'linked-record') expect(host.querySelector('[aria-label="快记详情"]')?.textContent).toContain('正在读取')
+    if (destination === 'search') expect(host.querySelector('[aria-label="搜索 Arko 关键词"]')).not.toBeNull()
+    if (['latest', 'account', 'capabilities', 'send'].includes(destination)) expect(host.querySelector('[aria-label="Arko 历史定位"]')).toBeNull()
+    else {
+      expect(host.textContent).toContain('历史窗口中的原始问题')
+      const earlier = [...host.querySelectorAll('button')].find(node => node.textContent === '更早') as HTMLButtonElement
+      expect(earlier.disabled).toBe(false)
+    }
+  } finally { vi.useRealTimers() }
+})

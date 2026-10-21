@@ -467,6 +467,11 @@ export function ArkmeArkoSurface() {
   const [windowError, setWindowError] = useState<{ direction: 'asc' | 'desc'; message: string }>()
   const windowController = useRef<AbortController>()
   const historyController = useRef<AbortController>()
+  const cancelWindowRead = useCallback(() => {
+    windowController.current?.abort()
+    setWindowLoading(false)
+    setWindowError(undefined)
+  }, [])
   useEffect(() => () => { windowController.current?.abort(); historyController.current?.abort() }, [accountKey])
   historyViewRef.current = historyWindow !== undefined
   const visibleMessages = useMemo(() => historyWindow === undefined ? messages : mergeHistory([], historyWindow.items), [messages, historyWindow])
@@ -516,6 +521,7 @@ export function ArkmeArkoSurface() {
   const linkedController = useRef<AbortController>()
   useEffect(() => { setLinkedRecord(undefined); return () => linkedController.current?.abort() }, [accountKey])
   const openLinkedRecord = async (uid: string) => {
+    cancelWindowRead()
     linkedController.current?.abort(); const controller = new AbortController(); linkedController.current = controller
     setLinkedRecord({ uid }); setLinkedOriginal(false); setDetailSelection(undefined)
     try {
@@ -535,6 +541,7 @@ export function ArkmeArkoSurface() {
       : undefined
   useEffect(() => { setDetailSelection(undefined) }, [detailScope])
   const openMessageDetail = (id: string, trigger: HTMLElement) => {
+    cancelWindowRead()
     followTailRef.current = false
     detailTriggerRef.current = trigger
     if (detailBodyRef.current !== null) detailBodyRef.current.scrollTop = 0
@@ -981,6 +988,7 @@ export function ArkmeArkoSurface() {
     if (imageError !== undefined) { setError(imageError); return }
 
     sendInFlightRef.current = true
+    cancelWindowRead()
     setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
     try {
       const continuation = latestContinuation(messages, session.sessionId)
@@ -1028,7 +1036,7 @@ export function ArkmeArkoSurface() {
     } finally {
       sendInFlightRef.current = false
     }
-  }, [catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
+  }, [cancelWindowRead, catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel || accountKey === undefined) return false
@@ -1133,15 +1141,15 @@ export function ArkmeArkoSurface() {
       <ArkmeArkoHistoryTools key={accountKey} accountScope={accountKey ?? ''} name={displayName} host={shellRef}
         detailOpen={detailMessage !== undefined || linkedRecord !== undefined}
         disabled={sendDisabled || messageActions.selecting} clearDisabled={messageActions.selecting || loading || interactionLocked || clearing || session === undefined}
-        onClear={() => setClearConfirmOpen(true)} onCapabilities={trigger => { void send('你能帮我干什么', trigger) }}
-        onOpenPanel={() => { closeLinkedRecord(); setDetailSelection(undefined); followTailRef.current = false }}
+        onClear={() => { cancelWindowRead(); setClearConfirmOpen(true) }} onCapabilities={trigger => { void send('你能帮我干什么', trigger) }}
+        onOpenPanel={() => { cancelWindowRead(); closeLinkedRecord(); setDetailSelection(undefined); followTailRef.current = false }}
         getReadingDate={() => {
           const viewport = bodyRef.current, bounds = viewport?.getBoundingClientRect()
           const visible = bounds && Array.from(viewport!.querySelectorAll<HTMLElement>('[data-arko-at]')).find(node => node.getBoundingClientRect().bottom > bounds.top)
           return visible ? arkoHistoryDate(Number(visible.dataset.arkoOrderAt ?? visible.dataset.arkoAt)) || undefined : undefined
         }}
         onLocate={(window, item) => {
-          windowController.current?.abort(); setWindowLoading(false); setWindowError(undefined)
+          cancelWindowRead()
           setDetailSelection(undefined); followTailRef.current = false
           setHistoryWindow(window); setLocationTarget(item.messageId)
         }} />
@@ -1155,7 +1163,7 @@ export function ArkmeArkoSurface() {
       {windowLoading && <span role="status">{tr('正在读取…')}</span>}
       {windowError && <span role="alert">{windowError.message}<button type="button" style={styles.retryButton} disabled={windowLoading} onClick={() => { void pageWindow(windowError.direction) }}>{tr('重试历史读取')}</button></span>}
       {historyWindow.items.some(item => item.orderAtMillis && arkoHistoryDate(item.orderAtMillis) !== arkoHistoryDate(item.createdAtMillis)) && <span>{tr('日历按历史排序日期定位，消息保留原显示时间')}</span>}
-      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { windowController.current?.abort(); setWindowLoading(false); setWindowError(undefined); setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
+      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { cancelWindowRead(); setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
     </div>}
     <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}
       onScroll={event => { const node = event.currentTarget; followTailRef.current = !historyViewRef.current && node.scrollHeight - node.clientHeight - node.scrollTop < 80 }}>

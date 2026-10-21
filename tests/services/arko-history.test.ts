@@ -182,3 +182,28 @@ it.each([{...exportImage,size:-1},{...exportImage,mime_type:'text/html'},{...exp
  await expect(service.arkoExport()).rejects.toMatchObject({code:'arko-export-incomplete'})
  expect(await readdir(join(directory,'generated-downloads')).catch(()=>[])).toEqual([])
 })
+
+
+it.each([2, 3] as const)('exports readable known emoji while preserving Markdown and unknown tokens for role %s', async role => {
+ const body = '**收到** [jm_emoji:smiling_face]\n未知 [jm_emoji:not_a_known_emoji]，残缺 [jm_emoji:'
+ const { service } = await setup(async () => stream(protocol({ role, body })))
+ const exported = await service.arkoExport(), local = await service.readGeneratedFile(exported.fileRef)
+ const text = await readFile(local.path, 'utf8')
+ const projected = '**收到** 😊\n未知 [jm_emoji:not_a_known_emoji]，残缺 [jm_emoji:'
+ expect(text).toContain(role === 2 ? '```text\n' + projected + '\n```' : projected)
+ expect(text).not.toContain('[jm_emoji:smiling_face]')
+ expect(exported.count).toBe(1)
+})
+it('validates raw emoji-bearing source bytes before publishing the readable export', async () => {
+ const { service, directory } = await setup(async () => stream(protocol({ role: 2, body: '[jm_emoji:smiling_face]', hash: 'wrong-digest' })))
+ await expect(service.arkoExport()).rejects.toMatchObject({ code: 'arko-export-incomplete' })
+ expect(await readdir(join(directory, 'generated-downloads'))).toEqual([])
+})
+it('does not interpret emoji-like attachment names as message emoji', async () => {
+ const image = { ...exportImage, file_name: '[jm_emoji:smiling_face].png' }
+ const { service } = await setup(async () => stream(protocol({ role: 2, body: '[jm_emoji:smiling_face]', attachments: [image] })))
+ const exported = await service.arkoExport(), local = await service.readGeneratedFile(exported.fileRef)
+ const text = await readFile(local.path, 'utf8')
+ expect(text).toContain('😊')
+ expect(text).toContain(image.file_name)
+})

@@ -1,5 +1,6 @@
 import type { ArkmeArkoExportProgress } from './arko-history-contract.js'
 import { ARKO_IMAGE_DRAFT_LIMIT, ARKO_IMAGE_DRAFT_MAX_BYTES, ARKO_IMAGE_MIME_TYPES } from './arko-image-contract.js'
+import { arkmeEmojiPlainText } from './arkme-emoji-text.js'
 import { createHash } from 'node:crypto'
 import { ArkmePluginError, objectValue } from './services/service.js'
 
@@ -56,7 +57,8 @@ export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal
       const status = run ? ` · ${escapeHeading(Object.hasOwn(runLabels, run) ? runLabels[run]! : run)}` : item.status === 2 ? ' · 生成中' : item.status === 3 || item.status === 5 ? ' · 未完成' : ''
       const images = imageDescriptions(item.attachments)
       if (images.length && item.role !== 2) throw invalid()
-      const text = item.role === 2 ? (item.content || !images.length ? userBody(item.content) : '') : item.content
+      const content = arkmeEmojiPlainText(item.content)
+      const text = item.role === 2 ? (content || !images.length ? userBody(content) : '') : content
       const attachments = images.length ? `\n\n图片附件（仅描述，不包含图片文件）：\n\n${userBody(images.map((image, index) => `${index + 1}. ${image}`).join('\n'))}` : ''
       await write(`## ${item.role === 2 ? '我' : escapeHeading(name)} · ${at}${status}\n\n来源：${item.source_type === 1 ? '历史助手' : 'Agent'} · 消息 ${String(item.id)}\n\n${text}${attachments}\n\n`)
       onProgress?.({ count })
