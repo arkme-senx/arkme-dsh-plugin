@@ -388,7 +388,8 @@ export function createArkmeArkoHistoryToolDefinition(service: ArkmeArkoToolPort)
       if (args.action === 'export') return JSON.stringify(await service.arkoExport(exec.signal))
       const compact = (item: ArkmeArkoHistoryItem) => ({ messageRef: item.messageRef, role: item.role,
         text: item.text.slice(0, 2000), textTruncated: item.text.length > 2000, createdAtMillis: item.createdAtMillis,
-        orderAtMillis: item.orderAtMillis, status: item.status, runStatus: item.runStatus, createdRecordUids: item.createdRecordUids })
+        orderAtMillis: item.orderAtMillis, status: item.status, runStatus: item.runStatus, createdRecordUids: item.createdRecordUids,
+        ...(item.contentBlocks?.some(block => block.kind === 'image') ? { images: item.contentBlocks.filter(block => block.kind === 'image').map(block => ({ fileName: block.fileName, mimeType: block.mimeType, size: block.size })) } : {}) })
       if (args.action === 'context') {
         const window = await service.arkoContext({ messageRef: args.message_ref ?? '', before: 2, after: 2 }, exec.signal)
         return JSON.stringify({ ...window, items: window.items.map(compact) })

@@ -33,7 +33,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
 }) {
   const calendarAnchor = useRef<HTMLButtonElement>(null), menuAnchor = useRef<HTMLButtonElement>(null), searchAnchor = useRef<HTMLButtonElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState<'calendar' | 'search' | 'menu'>()
-  const [query, setQuery] = useState(''), [role, setRole] = useState(''), [startDate, setStartDate] = useState(''), [endDate, setEndDate] = useState('')
+  const [query, setQuery] = useState('')
   const [page, setPage] = useState(emptyPage), [searching, setSearching] = useState(false), [searchError, setSearchError] = useState('')
   const [locationFeedback, setLocationFeedback] = useState<{ text: string; pending: boolean }>()
   const [exporting, setExporting] = useState(false), [notice, setNotice] = useState(''), [exportCount, setExportCount] = useState(0)
@@ -41,7 +41,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
   const cancelLocation = useCallback(() => { locateController.current?.abort(); setLocationFeedback(undefined) }, [])
   useEffect(() => () => { searchController.current?.abort(); locateController.current?.abort(); exportController.current?.abort() }, [accountScope])
   useEffect(() => { setPage(emptyPage); setNotice(''); setLocationFeedback(undefined); setExporting(false); setOpen(undefined) }, [accountScope])
-  useEffect(() => { if (detailOpen) setOpen(undefined) }, [detailOpen])
+  useEffect(() => { if (detailOpen) { cancelLocation(); setOpen(undefined) } }, [detailOpen, cancelLocation])
   const search = useCallback(async (cursor?: string) => {
     searchController.current?.abort()
     if (!query.trim()) { setPage(emptyPage); setSearching(false); setSearchError(''); return }
@@ -53,8 +53,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
       const found = new Set<string>()
       for (let index = 0; index < 1000; index++) {
         const result = await callArkme<ArkmeArkoSearchPage>('arko.search', { keyword: query.trim(), limit: 50,
-          ...(next ? { cursor: next } : {}), ...(role ? { role } : {}), ...(startDate ? { startAtMillis: new Date(`${startDate}T00:00:00`).getTime() } : {}),
-          ...(endDate ? { endAtMillis: new Date(`${nextDate(endDate)}T00:00:00`).getTime() } : {}) }, controller.signal)
+          ...(next ? { cursor: next } : {}) }, controller.signal)
         controller.signal.throwIfAborted()
         const replace = index === 0 && !cursor
         setPage(previous => ({ ...result, scanned: (replace ? 0 : previous.scanned) + result.scanned,
@@ -66,7 +65,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
       }
     } catch (error) { if (!controller.signal.aborted) setSearchError(failText(error)) }
     finally { if (!controller.signal.aborted) setSearching(false) }
-  }, [query, role, startDate, endDate])
+  }, [query])
   useEffect(() => {
     searchController.current?.abort(); setSearching(false)
     if (open !== 'search') return
@@ -141,8 +140,8 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     <ArkmeConversationHeaderIconButton label={tr('搜索 Arko 对话')} buttonRef={searchAnchor} hasPopup="dialog" expanded={open === 'search'} onClick={() => toggle('search')}><MagnifyingGlass size={24} aria-hidden /></ArkmeConversationHeaderIconButton>
     <ConversationActionsMenu anchor={menuAnchor} label={tr('更多 Arko 操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
       conversationExportActionItem({ busy: exporting, processed: exportCount, invoke: () => { void exportMessages() } }),
-      { id: 'new-context', label: tr('清除上下文'), icon: <ArrowsClockwiseIcon size={20} />, disabled: clearDisabled, invoke: onClear },
-      { id: 'capabilities', label: tr('{v0} 能干什么', { v0: name }), icon: <RobotIcon size={20} />, disabled, invoke: () => onCapabilities(menuAnchor.current) },
+      { id: 'new-context', label: tr('清除上下文'), icon: <ArrowsClockwiseIcon size={20} />, disabled: clearDisabled, invoke: () => { cancelLocation(); onClear() } },
+      { id: 'capabilities', label: tr('{v0} 能干什么', { v0: name }), icon: <RobotIcon size={20} />, disabled, invoke: () => { cancelLocation(); onCapabilities(menuAnchor.current) } },
     ]} />
     <ArkmeSelfCalendarPopover open={open === 'calendar'} anchor={calendarAnchor} accountScope={accountScope} scopeKey="arko-history"
       getReadingDate={getReadingDate} onClose={() => setOpen(undefined)} onSelectRecord={() => {}}
@@ -150,17 +149,12 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     {host.current && open === 'search' && createPortal(<ArkmeDetailShell title={tr('搜索 Arko 对话')} label={tr('搜索 Arko 对话')} returnFocusRef={searchAnchor} onClose={() => { cancelLocation(); setOpen(undefined) }} bodyStyle={{ padding: '12px 16px' }}>
       <input ref={searchInput} type="search" aria-label={tr('搜索 Arko 关键词')} placeholder={tr('搜索提问和回复')} value={query} onChange={event => setQuery(event.target.value)}
         style={{ width: '100%', height: 36, boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, padding: '0 10px', background: arkmeTheme.input, color: arkmeTheme.text, font: 'inherit' }} />
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-        <select aria-label={tr('消息角色')} value={role} onChange={event => setRole(event.target.value)}><option value="">{tr('提问和回复')}</option><option value="user">{tr('我的提问')}</option><option value="assistant">{tr('Arko 回复')}</option></select>
-        <input type="date" aria-label={tr('开始日期')} value={startDate} onChange={event => setStartDate(event.target.value)} />
-        <input type="date" aria-label={tr('结束日期')} value={endDate} onChange={event => setEndDate(event.target.value)} />
-      </div>
       <p role="status" style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{searching ? tr('正在搜索 · 已扫描 {v0} 条', { v0: page.scanned }) : searchError ? tr('搜索未完成，请重试') : !query.trim() ? tr('输入关键词，查找提问和回复') : page.hasMore ? tr('搜索尚未完成，可继续查找；当前保留最多 200 条匹配') : tr('已扫描到历史末尾；当前窗口最多保留 200 条匹配')}{query.trim() && ` · 当前显示 ${page.items.length} 条匹配`}</p>
       {query.trim() && <button type="button" disabled={searching} style={button} onClick={() => { void search() }}>{tr('重新搜索')}</button>}
       {searchError && <p role="alert" style={{ color: arkmeTheme.danger }}>{searchError}<button type="button" style={button} onClick={() => { void search(page.nextCursor) }}>{tr('重试')}</button></p>}
       {page.items.map(item => <button type="button" key={item.messageKey} data-arko-search-hit={item.messageRef} onClick={() => { void locate(item.messageRef) }}
         style={{ display: 'block', width: '100%', textAlign: 'left', padding: '12px 0', border: 0, borderBottom: `1px solid ${arkmeTheme.borderSoft}`, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit' }}>
-        <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12 }}>{item.role === 'user' ? tr('我') : name} · {new Date(item.createdAtMillis).toLocaleString()}</span>
+        <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12, marginBottom: 6 }}>{item.role === 'user' ? tr('我') : name} · {new Date(item.createdAtMillis).toLocaleString()}</span>
         <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.6 }}><ArkmeRichText text={item.role === 'assistant' ? arkmeMarkdownPlainText(item.snippet) : item.snippet} presentation="preview" /></span>
       </button>)}
       {page.hasMore && <button type="button" data-arko-search-more disabled={searching} style={button} onClick={() => { void search(page.nextCursor) }}>{page.items.length ? tr('显示更多结果') : tr('继续查找')}</button>}

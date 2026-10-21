@@ -52,3 +52,11 @@ it('retains legacy history cancellation and rejects malformed public input befor
  await expect(dispatchArkmeHostOperation(service as never, 'arko.messages', { limit: 'invalid' })).rejects.toMatchObject({ code: 'arko-history-invalid' })
  expect(service.arkoMessages).not.toHaveBeenCalled()
 })
+
+it('exposes safe image descriptions in history Tool previews without leaking delivery capabilities',async()=>{
+ const {createArkmeArkoHistoryToolDefinition}=await import('../src/tools/business/arko/index.js')
+ const service={arkoMessages:vi.fn(async()=>({items:[{messageRef:'opaque',role:'user',text:'',createdRecordUids:[],contentBlocks:[{kind:'image',mediaRef:'PRIVATE-MEDIA',fileAssetUid:'PRIVATE-ASSET',fileName:'photo.png',mimeType:'image/png',size:100}]}],hasMore:false})),arkoSearch:vi.fn(),arkoContext:vi.fn(),arkoExport:vi.fn()}
+ const tool=createArkmeArkoHistoryToolDefinition(service as never)
+ const text=String(await tool.execute({action:'query'},{signal:new AbortController().signal} as never))
+ expect(text).toContain('photo.png');expect(text).not.toContain('PRIVATE-MEDIA');expect(text).not.toContain('PRIVATE-ASSET')
+})

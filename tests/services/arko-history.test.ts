@@ -13,9 +13,9 @@ const config: ArkmeServiceConfig = { environment: 'test', authBaseUrl: 'https://
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 const wireItem = { id: 1, session_id: 2, role: 3, type: 1, source_type: 1, status: 1, created_at_ms: 90000, order_at_ms: 100000, created_at: 90, content: '# 原始正文\n\n**你好**\n\n|a|b|', extra: '{}', reason_content: 'DO NOT EXPOSE' }
-function protocol(options: { complete?: boolean; hash?: string; count?: number; body?: string; runStatus?: string; role?: 2 | 3 } = {}) {
+function protocol(options: { complete?: boolean; hash?: string; count?: number; body?: string; runStatus?: string; role?: 2 | 3; attachments?: unknown } = {}) {
   // Deliberate whitespace and key ordering exercise raw-byte hashing.
-  const raw = ` { "item": ${JSON.stringify({ ...wireItem, content: options.body ?? wireItem.content, ...(options.runStatus ? { run_status: options.runStatus } : {}), ...(options.role ? { role: options.role } : {}) })}, "kind":"item" }\n`
+  const raw = ` { "item": ${JSON.stringify({ ...wireItem, ...(options.attachments === undefined ? {} : {attachments:options.attachments}), content: options.body ?? wireItem.content, ...(options.runStatus ? { run_status: options.runStatus } : {}), ...(options.role ? { role: options.role } : {}) })}, "kind":"item" }\n`
   const complete = JSON.stringify({ kind: 'complete', version: 'arko-export-v1', count: options.count ?? 1, bytes: Buffer.byteLength(raw), sha256: options.hash ?? createHash('sha256').update(raw).digest('hex') }) + '\n'
   return JSON.stringify({ kind: 'start', version: 'arko-export-v1' }) + '\n' + raw + (options.complete === false ? '' : complete)
 }
@@ -166,4 +166,19 @@ it('uses canonical message creation time instead of embedded record/cache timest
  expect(page.items[0]).toMatchObject({ createdAtMillis: wireItem.created_at_ms, orderAtMillis: wireItem.order_at_ms })
  const context = await service.arkoContext({ messageRef: page.items[0]!.messageRef!, before: 0, after: 0 })
  expect(context.items[0]).toMatchObject({ createdAtMillis: wireItem.created_at_ms, orderAtMillis: wireItem.order_at_ms })
+})
+
+const exportImage={type:'image',file_asset_uid:'5f964638-43a8-4f24-a380-6fec1482aaab',file_name:'photo.png',mime_type:'image/png',size:100,sha256:'a'.repeat(64),width:10,height:10}
+it.each(['','文字与图片'])('exports original image descriptions for %j without publishing a binary or delivery URL',async body=>{
+ const {service}=await setup(async()=>stream(protocol({role:2,body,attachments:[exportImage,exportImage]})))
+ const exported=await service.arkoExport();const file=await service.readGeneratedFile(exported.fileRef);const text=await readFile(file.path,'utf8')
+ expect(text).toContain('仅描述，不包含图片文件')
+ expect(text.match(/photo.png/g)).toHaveLength(2)
+ expect(text).toContain('image/png');expect(text).not.toContain(exportImage.file_asset_uid)
+ if(body)expect(text).toContain(body)
+})
+it.each([{...exportImage,size:-1},{...exportImage,mime_type:'text/html'},{...exportImage,file_name:'injected\nheading'}])('rejects invalid image export metadata before publishing: %j',async image=>{
+ const {service,directory}=await setup(async()=>stream(protocol({role:2,body:'',attachments:[image]})))
+ await expect(service.arkoExport()).rejects.toMatchObject({code:'arko-export-incomplete'})
+ expect(await readdir(join(directory,'generated-downloads')).catch(()=>[])).toEqual([])
 })

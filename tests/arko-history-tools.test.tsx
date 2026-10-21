@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
+import { findSelectedMessageText } from '../src/client/message-selection-search.js'
 import { ArkmeSdk } from '../src/sdk/index.js'
 import { callArkme } from '../src/client/api.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
@@ -168,4 +169,46 @@ it('keeps the original three-line rich-text search preview',async()=>{
  expect(hit.textContent).toContain('标题 目标')
  expect(hit.textContent).not.toContain('**')
  expect(hit.querySelector('span[style*="line-clamp"]')).not.toBeNull()
+})
+
+
+it('detail navigation cancels an older pending context location',async()=>{
+ let finish!: (value: unknown)=>void, signal!:AbortSignal
+ const original=vi.mocked(callArkme).getMockImplementation()!
+ vi.mocked(callArkme).mockImplementation(async(op,args,passed)=>{
+  if(op==='arko.context'){signal=passed!;return await new Promise(resolve=>{finish=resolve}) as never}
+  return original(op,args,passed)
+ })
+ await click('[aria-label="搜索 Arko 对话"]');await enterQuery('目标');await click('[data-arko-search-hit]')
+ await act(async()=>root.render(<ArkmeArkoHistoryTools accountScope="test:1" name="小助" host={{current:host}} disabled={false} clearDisabled={false} detailOpen={true} onClear={clear} onCapabilities={capabilities} onOpenPanel={panelOpen} onLocate={locate} getReadingDate={()=>'2026-10-01'}/>))
+ expect(host.querySelector('[aria-label="搜索 Arko 关键词"]')).toBeNull()
+ await act(async()=>finish(window))
+ expect(locate).not.toHaveBeenCalled()
+ expect(signal.aborted).toBe(true)
+})
+
+it('preserves the original single search input and shared calendar instead of adding filter controls',async()=>{
+ await click('[aria-label="搜索 Arko 对话"]')
+ expect(host.querySelector('[aria-label="搜索 Arko 关键词"]')).not.toBeNull()
+ expect(host.querySelector('select,input[type="date"]')).toBeNull()
+ expect(host.querySelector('[aria-label="按日期查看 Arko 对话"]')).not.toBeNull()
+})
+it('routes the existing selected-text search intent through the server search owner',async()=>{
+ let accepted=false
+ await act(async()=>{accepted=findSelectedMessageText('arko:test:1','目标')})
+ expect(accepted).toBe(true)
+ await act(async()=>{await vi.advanceTimersByTimeAsync(350)})
+ expect(callArkme).toHaveBeenCalledWith('arko.search',expect.objectContaining({keyword:'目标'}),expect.any(AbortSignal))
+ expect(vi.mocked(callArkme).mock.calls.some(([op])=>op==='arko.history')).toBe(false)
+ expect(panelOpen).toHaveBeenCalledOnce()
+})
+it.each(['清除上下文','小助 能干什么'])('cancels older context navigation before the explicit action %s',async action=>{
+ let finish!:(value:unknown)=>void,signal!:AbortSignal
+ const original=vi.mocked(callArkme).getMockImplementation()!
+ vi.mocked(callArkme).mockImplementation(async(op,args,passed)=>op==='arko.context'?(signal=passed!,await new Promise(resolve=>{finish=resolve}) as never):original(op,args,passed))
+ await click('[aria-label="搜索 Arko 对话"]');await enterQuery('目标');await click('[data-arko-search-hit]')
+ await openMenu();await menuItem(action)
+ expect(signal.aborted).toBe(true)
+ await act(async()=>finish(window))
+ expect(locate).not.toHaveBeenCalled()
 })

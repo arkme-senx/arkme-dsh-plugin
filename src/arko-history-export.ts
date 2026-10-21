@@ -1,4 +1,5 @@
 import type { ArkmeArkoExportProgress } from './arko-history-contract.js'
+import { ARKO_IMAGE_DRAFT_LIMIT, ARKO_IMAGE_DRAFT_MAX_BYTES, ARKO_IMAGE_MIME_TYPES } from './arko-image-contract.js'
 import { createHash } from 'node:crypto'
 import { ArkmePluginError, objectValue } from './services/service.js'
 
@@ -15,6 +16,21 @@ function userBody(text: string): string {
   for (const match of text.matchAll(/`+/g)) fenceLength = Math.max(fenceLength, match[0].length + 1)
   const fence = '`'.repeat(fenceLength)
   return `${fence}text\n${text}\n${fence}`
+}
+function imageDescriptions(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > ARKO_IMAGE_DRAFT_LIMIT) throw invalid()
+  return value.map(raw => {
+    const image = objectValue(raw)
+    if (image.type !== 'image' || typeof image.file_name !== 'string' || Buffer.byteLength(image.file_name, 'utf8') > 1024 || /[\0\r\n]/.test(image.file_name)
+      || typeof image.file_asset_uid !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(image.file_asset_uid)
+      || !ARKO_IMAGE_MIME_TYPES.some(mime => mime === image.mime_type)
+      || !Number.isSafeInteger(image.size) || (image.size as number) <= 0 || (image.size as number) > ARKO_IMAGE_DRAFT_MAX_BYTES
+      || typeof image.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(image.sha256)
+      || !Number.isSafeInteger(image.width) || !Number.isSafeInteger(image.height) || (image.width as number) <= 0 || (image.height as number) <= 0
+      || (image.width as number) > 8192 || (image.height as number) > 8192 || (image.width as number) * (image.height as number) > 40_000_000) throw invalid()
+    return `${image.file_name || '图片'}（${String(image.mime_type)}，${String(image.size)} 字节）`
+  })
 }
 /** Integrity is computed over untouched byte lines, never reserialized JSON. */
 export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal: AbortSignal, write: (text: string) => Promise<void>, name: string, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<number> {
@@ -38,7 +54,11 @@ export async function consumeArkoExport(body: ReadableStream<Uint8Array>, signal
       if (item.run_status !== undefined && (typeof item.run_status !== 'string' || item.run_status.length > 64)) throw invalid()
       const run = typeof item.run_status === 'string' ? item.run_status : ''
       const status = run ? ` · ${escapeHeading(Object.hasOwn(runLabels, run) ? runLabels[run]! : run)}` : item.status === 2 ? ' · 生成中' : item.status === 3 || item.status === 5 ? ' · 未完成' : ''
-      await write(`## ${item.role === 2 ? '我' : escapeHeading(name)} · ${at}${status}\n\n来源：${item.source_type === 1 ? '历史助手' : 'Agent'} · 消息 ${String(item.id)}\n\n${item.role === 2 ? userBody(item.content) : item.content}\n\n`)
+      const images = imageDescriptions(item.attachments)
+      if (images.length && item.role !== 2) throw invalid()
+      const text = item.role === 2 ? (item.content || !images.length ? userBody(item.content) : '') : item.content
+      const attachments = images.length ? `\n\n图片附件（仅描述，不包含图片文件）：\n\n${userBody(images.map((image, index) => `${index + 1}. ${image}`).join('\n'))}` : ''
+      await write(`## ${item.role === 2 ? '我' : escapeHeading(name)} · ${at}${status}\n\n来源：${item.source_type === 1 ? '历史助手' : 'Agent'} · 消息 ${String(item.id)}\n\n${text}${attachments}\n\n`)
       onProgress?.({ count })
     } else if (frame.kind === 'complete' && state === 'items' && frame.version === 'arko-export-v1') {
       if (frame.count !== count || frame.bytes !== bytes || frame.sha256 !== digest.digest('hex')) throw invalid()
