@@ -2,7 +2,7 @@ import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
-import { Button, IconEditOutline16, IconNewChatOutline16, IconTrashOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEditOutlineMedium, IconNewChatOutlineMedium, IconTrashOutlineMedium, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { conversationMenuLayer, conversationMenuPosition } from './conversation-menu-layer.js'
@@ -1026,10 +1026,10 @@ export function ArkmeSourceBreadcrumb({
             : <ArkmeTopicCount count={displayedCount} error={error} hidden={showActions} />}</button>
           {showActions && <span data-arkme-self-topic-actions style={styles.topicActions}><ArkmeDshRowActionsMenu open={manageMenuOpen} label={tr("{v0}主题操作", { v0: row.source.displayName })}
             items={[
-              ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutline16 /> }] : []),
-              ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutline16 /> }] : []),
+              ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutlineMedium /> }] : []),
+              ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutlineMedium /> }] : []),
               { id: 'archive', label: tr('归档'), icon: <Archive size={16} />, disabled: archiveMutation.isBusy(row.source.sourceRef) },
-              ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutline16 />, danger: true }] : []),
+              ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutlineMedium />, danger: true }] : []),
             ]}
             onToggle={() => { setSortMenuOpen(false); setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : row.source) }}
             onClose={() => { setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : current) }}
@@ -1080,7 +1080,7 @@ export function ArkmeSourceBreadcrumb({
       <div data-arkme-self-topic-footer="true" style={styles.createFooter}>
         {onCreateTopic !== undefined && <Button type="button" variant="outline" size="md" aria-label={tr("新主题")}
           disabled={assignment?.disabled}
-          className="arkme-self-topic-create-button" icon={<IconNewChatOutline16 size={14} />} onClick={() => {
+          className="arkme-self-topic-create-button" icon={<IconNewChatOutlineMedium size={14} />} onClick={() => {
           if (assignment) { if (!assignment.disabled) onCreateTopic(); return }
           acceptExternalSelection()
           closeMenu()

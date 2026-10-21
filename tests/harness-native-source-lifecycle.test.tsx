@@ -82,9 +82,9 @@ it('retains selection during discovery, opens incrementally and never lets late 
   const open = vi.fn((id: string) => { current = id; notify() })
   const clear = vi.fn(() => { current = undefined; notify() })
   const byId: Record<string, object> = { A: {} }
-  apply({ effect: (fn: () => () => void) => disposers.push(fn()), sessions: { open, clear, list: {
+  apply({ effect: (fn: () => () => void) => disposers.push(fn()), uiWorkspace: { openSession: open }, sessions: { subagentAddress: () => undefined, open, clear, list: {
     subscribe: (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn) },
-    getSnapshot: () => ({ byId, current }),
+    getSnapshot: () => ({ byId: Object.fromEntries(Object.entries(byId).map(([id, row]) => [id, { ...row, id, retainedBy: id === current ? { mainView: 1 } : {} }])) }),
   } } } as never)
   const select = async (id: string, revision: string) => { surface.dataset.arkmeOpenSession = id; surface.dataset.arkmeOpenRevision = revision; await Promise.resolve() }
   await select('A', '1'); expect(current).toBe('A')
@@ -106,9 +106,9 @@ it('never holds plugin boot on account discovery or conversation history', async
   const notify = () => listeners.forEach(fn => fn())
   const refresh = vi.fn()
   const open = vi.fn((id: string) => { current = id; notify() })
-  const boot = apply({ effect: (fn: () => () => void) => disposers.push(fn()), sessions: {
-    open, clear: () => { current = undefined; notify() }, refresh,
-    list: { getSnapshot: () => ({ byId, current }), subscribe: (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn) } },
+  const boot = apply({ effect: (fn: () => () => void) => disposers.push(fn()), uiWorkspace: { openSession: open }, sessions: {
+    subagentAddress: () => undefined, open, clear: () => { current = undefined; notify() }, refresh,
+    list: { getSnapshot: () => ({ byId: Object.fromEntries(Object.entries(byId).map(([id, row]) => [id, { ...row, id, retainedBy: id === current ? { mainView: 1 } : {} }])) }), subscribe: (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn) } },
   } } as never)
   await Promise.resolve()
   expect(boot).toBeUndefined(); expect(open).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled()

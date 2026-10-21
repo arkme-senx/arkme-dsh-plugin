@@ -1,7 +1,10 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import { currentHarnessSession } from './harness-session-state.js'
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { createElement, useLayoutEffect } from 'react'
+import { createElement, useLayoutEffect, useMemo } from 'react'
 import { HARNESS_ACTIVITY_ATTRIBUTE, HARNESS_ACTIVITY_EVENT, HarnessActivityTracker, type ActivityList, type PendingInteractions } from './harness-activity.js'
 
 /** A renderless public-slot reader bridges the native iframe's actual state to the Arkme row. */
@@ -37,16 +40,14 @@ export function installHarnessActivityReporter(ctx: ClientContext, surface: Elem
     useLayoutEffect(() => { latest = props; sync() }, [props.list, props.archived, props.pending])
     return null
   }
-  function WithPending({ usePending, ...props }: Omit<NonNullable<typeof latest>, 'pending'> & { usePending: SnapshotSelectorHook<PendingInteractions> }) {
-    const pending = usePending(value => value)
-    return createElement(Publish, { ...props, pending })
-  }
-  function Reporter({ useSessions, useWorkspaces, useSessionPendingInteraction }: PropsRuntime<'sidebar.footer.action'> & { useSessionPendingInteraction?: SnapshotSelectorHook<PendingInteractions> }) {
-    const list = useSessions(value => value)
+  function Reporter({ useSessions, useSessionStatus, useWorkspaces }: PropsRuntime<'sidebar.footer.action'>) {
+    const catalog = useSessions(value => value)
+    const statuses = useSessionStatus(value => value)
     const archived = useWorkspaces(value => value.archivedSessionIds)
-    return useSessionPendingInteraction
-      ? createElement(WithPending, { list, archived, usePending: useSessionPendingInteraction })
-      : createElement(Publish, { list, archived, pending: undefined })
+    const list = useMemo(() => ({ ...catalog, current: currentHarnessSession(catalog) }), [catalog])
+    const pending = useMemo<PendingInteractions>(() => new Map([...statuses].flatMap(([id, status]) =>
+      status.pendingInteraction ? [[id, { kind: status.pendingInteraction.kind }] as const] : [])), [statuses])
+    return createElement(Publish, { list, archived, pending })
   }
   const observer = new MutationObserver(sync)
   observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-follow-session', 'data-arkme-account-id', 'data-arkme-account-scope'] })

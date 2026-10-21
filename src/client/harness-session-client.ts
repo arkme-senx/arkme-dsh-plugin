@@ -1,12 +1,14 @@
 import { createHarnessDraftBridge, HARNESS_ATTACHMENT_DRAFT_KEY, type DraftSessions, type HarnessDraftWindow } from './harness-attachment-draft.js'
 import type { HarnessNativeWindow } from '../harness-native-transport-script.js'
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { harnessSessions, type HarnessSessions as ISessions } from './harness-session-state.js'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 import { HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../harness-embed-contract.js'
 import { HARNESS_LOCAL_SESSION_OPEN } from './harness-session-menu-bridge.js'
 import { observeHarnessSessionSelection, type DesktopSessionSelectionBridge } from './harness-session-selection.js'
 
-export const inject = ['sessions', 'remote', 'remote.session']
+export const inject = ['uiWorkspace', 'sessions', 'remote', 'remote.session']
 const REFRESH_MS = 10_000
 
 type ComposerBlock = { readonly reason: string }
@@ -48,7 +50,7 @@ export function apply(ctx: ClientContext): void {
   if ((window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__) {
     ctx.inject(['connection'], scope => {
       const connection = scope.get('connection') as { state: Parameters<typeof lockDisconnectedComposer>[1] }
-      const sessions = scope.sessions as unknown as ISessions
+      const sessions = harnessSessions(scope)
       scope.effect(() => {
         const surface = window.frameElement?.parentElement
         const state = {
@@ -68,7 +70,7 @@ export function apply(ctx: ClientContext): void {
     const surface = window.frameElement?.parentElement
     if (surface?.getAttribute('data-arkme-owned') !== 'deepseek-harness-surface') return () => undefined
     const apiPath = document.querySelector<HTMLMetaElement>('meta[name="arkme-session-api"]')?.content
-    const sessions = (ctx as unknown as { sessions?: ISessions }).sessions
+    const sessions = harnessSessions(ctx)
     if (sessions === undefined) return () => undefined
     // The same-origin parent preload owns the account-scoped IPC lease. The native
     // iframe has no Node access and must not select a storage path or account itself.

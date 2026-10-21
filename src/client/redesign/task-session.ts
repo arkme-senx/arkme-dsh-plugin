@@ -1,4 +1,7 @@
-import type { ISessions, IWorkspaces, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { HarnessSessions } from '../harness-session-state.js'
+import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 export function needsArkmeWorkspaceBrowser(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
@@ -14,8 +17,9 @@ export function needsArkmeWorkspaceBrowser(error: unknown): boolean {
  */
 export async function resolveArkmeTaskSession(
   workspaces: IWorkspaces,
-  sessions: ISessions,
+  sessions: HarnessSessions,
   options: { workspaceId?: WorkspaceId; path?: string } = {},
+  navigation: Pick<UiWorkspace, 'connectWorkspace'>,
 ): Promise<SessionId | undefined> {
   const workspaceSnapshot = workspaces.list.getSnapshot()
   const currentSessionId = sessions.list.getSnapshot().current
@@ -23,14 +27,14 @@ export async function resolveArkmeTaskSession(
     ? undefined
     : workspaceSnapshot.items.find(workspace => workspace.sessionIds.includes(currentSessionId))?.workspaceId
 
-  let workspaceId = options.workspaceId ?? currentWorkspaceId ?? workspaceSnapshot.recentWorkspaceId
+  let workspaceId = options.workspaceId ?? currentWorkspaceId ?? workspaceSnapshot.items[0]?.workspaceId
   if (workspaceId === undefined) {
     if (options.path === undefined) return undefined
     const workspace = await workspaces.create({ path: options.path })
     workspaceId = workspace.workspaceId
   }
 
-  const sessionId = await workspaces.connectWorkspace(workspaceId)
+  const sessionId = await navigation.connectWorkspace(workspaceId)
   sessions.open(sessionId)
   return sessionId
 }

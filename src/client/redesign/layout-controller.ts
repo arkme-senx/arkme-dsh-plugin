@@ -1,4 +1,4 @@
-import type { ILayout } from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { ILayout, MainPanelId, PanelInfo } from '@deepseek-ai/dsh-client-ui-layout/client'
 
 export interface ArkmeLayoutSnapshot {
   sidebarOpen: boolean
@@ -8,6 +8,25 @@ export interface ArkmeLayoutSnapshot {
 /** Arkme-owned implementation of DSH's public layout action contract. */
 export class ArkmeLayoutController implements ILayout {
   private snapshot: ArkmeLayoutSnapshot = { sidebarOpen: true, detailsOpen: false }
+  private panel: PanelInfo = { activePanelId: null }
+  private navigation = new AbortController()
+  readonly panelInfo = {
+    getSnapshot: (): PanelInfo => this.panel,
+    subscribe: (listener: () => void): (() => void) => this.subscribe(listener),
+  }
+  selectPanel(activePanelId: MainPanelId | null): void {
+    if (this.panel.activePanelId === activePanelId) return
+    this.panel = { activePanelId }
+    for (const listener of this.listeners) listener()
+  }
+  beginNavigation(): AbortSignal {
+    this.navigation.abort()
+    this.navigation = new AbortController()
+    return this.navigation.signal
+  }
+  openRightbar(_track: boolean, _fullscreen: boolean): void { this.openDetails() }
+  closeRightbar(): void { this.closeDetails() }
+
   private readonly listeners = new Set<() => void>()
 
   readonly getSnapshot = (): ArkmeLayoutSnapshot => this.snapshot

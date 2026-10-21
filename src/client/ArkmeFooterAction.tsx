@@ -1,6 +1,8 @@
+import { currentHarnessSession } from './harness-session-state.js'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { tr } from './locale.js'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { useArkmeBrand } from './product-brand.js'
 
@@ -96,7 +98,7 @@ export function ArkmeFooterAction({
   unreadCount = 0,
 }: ArkmeFooterActionProps) {
   const brand = useArkmeBrand()
-  const currentSession = useSessions(state => state.current)
+  const currentSession = useSessions(currentHarnessSession)
   const normalizedUnread = Math.max(0, Math.trunc(unreadCount))
   const unreadLabel = normalizedUnread > 99 ? '99+' : String(normalizedUnread)
   const statusLabel = bindingRequired ? '待绑定' : loggedOut ? '未登录' : ''

@@ -1,6 +1,6 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { useVisibleReactionNotification } from './ArkmeReactionNotification.js'
-import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeReactionActorCard } from './ArkmeReactionActorCard.js'
 import { ArkmeReactionPhrases } from './ArkmeReactionPhrases.js'
 import { arkmeDefaultEmojis } from './arkme-emoji.js'
@@ -148,7 +148,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     {enabled && <div className={standalone ? undefined : 'arkme-reaction-hover-toolbar'} style={standalone ? {} : { position: 'absolute', ...toolbar, zIndex: 5 }}>
       <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, padding: 3, borderRadius: 6, color: c.secondary }}><ReactionAddIcon /></button>
     </div>}
-    {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutline16 />} onDone={() => setNotice(undefined)} />)}
+    {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutlineMedium />} onDone={() => setNotice(undefined)} />)}
     {overlay && (typeof document === 'undefined' ? overlay : createPortal(overlay, document.body))}
   </div>
 }

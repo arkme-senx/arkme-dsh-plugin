@@ -16,7 +16,7 @@ describe('lazy native layout loader', () => {
   })
   it('shares one load, only imports presentation exports, and cleans up scripts', async () => {
     const dom = new JSDOM('', { url: 'http://localhost' })
-    const native = { version: 1, WidthHandle: () => null, resolveContentWidth: () => 700, classes: { root: 'native' } }
+    const native = { version: 1, WidthHandle: () => null, resolveContentWidth: () => 700, classes: { root: 'native', body: 'native-body' } }
     const navigation = { version: 1, TurnNavigator: { $$typeof: Symbol.for('react.memo') } }
     const importModule = vi.fn(async (id: string) => id === HARNESS_LAYOUT_MODULES.width.id ? native : navigation)
     const dispose = installHarnessConversationLayoutLoader({ modules: { import: importModule } } as any, dom.window.document)
@@ -27,7 +27,7 @@ describe('lazy native layout loader', () => {
       const scripts = [...dom.window.document.querySelectorAll('script')]
       expect(scripts).toHaveLength(2)
       scripts.forEach(script => script.dispatchEvent(new dom.window.Event('load')))
-      expect((await first)?.rootClass).toBe('native')
+      expect((await first)?.rootClass).toBe('native native-body')
       expect(importModule).toHaveBeenCalledTimes(2)
       expect(dom.window.document.querySelectorAll('script')).toHaveLength(0)
     } finally { dispose(); dom.window.close() }

@@ -155,7 +155,7 @@ export class DshCloudNativeTransport {
     if (mode === 'call' && endpoint === 'session/list') {
       const rows = await this.sessions(runtime, signal)
       return ok({ items: rows.map(row => ({ sessionId: row.session_ref, updatedAt: row.source_updated_at, running: false, blank: row.blank === true,
-        projections: { asOfSeq: row.projection_as_of_seq ?? -1, values: { title: row.title || null } } })) })
+        projections: { kind: 'cached', asOfSeq: row.projection_as_of_seq ?? -1, values: { title: row.title || null } } })) })
     }
     if (mode === 'call' && endpoint === 'session/canOpenWorkspacePath') return ok(false)
     let frame: unknown

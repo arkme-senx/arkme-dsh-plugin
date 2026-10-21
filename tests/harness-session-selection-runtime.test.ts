@@ -1,104 +1,91 @@
+import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
-import { HARNESS_SESSION_RESTORE_SCRIPT } from '../src/harness-session-restore-script.js'
-import { Context } from '@deepseek-ai/cordis'
 import * as cordis from '@deepseek-ai/cordis'
-import * as slots from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionRuntime, WorkspaceRuntime } from '@deepseek-ai/dsh-client-runtime/client'
+import * as store from '@deepseek-ai/dsh-client-store'
+import * as React from 'react'
+import * as jsx from 'react/jsx-runtime'
 import { afterEach, expect, it, vi } from 'vitest'
+import { HARNESS_SESSION_RESTORE_SCRIPT } from '../src/harness-session-restore-script.js'
+import { ArkmeLayoutController } from '../src/client/redesign/layout-controller.js'
+import { harnessSessions } from '../src/client/harness-session-state.js'
 import { observeHarnessSessionSelection } from '../src/client/harness-session-selection.js'
 
-type Runtime = { SessionRuntime: typeof SessionRuntime; WorkspaceRuntime: typeof WorkspaceRuntime }
-let runtime: Runtime
 const cleanup: Array<() => unknown> = []
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllGlobals() })
 
-async function boot(sessionId: string | null, failList = false, subagentAddress?: { parentSessionId: string; childSessionId: string; mode: 'continuable' }) {
-  const values = new Map(sessionId === null ? [] : [['dsh.sessions.current', JSON.stringify({ sessionId, ...(subagentAddress ? { subagentAddress } : {}) })]])
-  let restored = values.get('dsh.sessions.current') ?? null
+async function boot(savedId: string, loading = false, address?: object) {
+  const saved = JSON.stringify({ sessionId: savedId, ...(address ? { subagentAddress: address } : {}) })
+  const values = new Map([['dsh.sessions.current', '{}']])
   class Storage {
     getItem(key: string) { return values.get(key) ?? null }
     setItem(key: string, value: string) { values.set(key, value) }
+    removeItem(key: string) { values.delete(key) }
   }
   const storage = new Storage()
-  vi.stubGlobal('localStorage', storage)
-  vi.stubGlobal('window', { __ModuleLoader__: { load: (entry: { factory(require: (id: string) => unknown): Runtime }) => {
-    runtime = entry.factory(id => {
-      if (id === '@deepseek-ai/cordis') return cordis
-      if (id === '@deepseek-ai/dsh-client-ui-slots') return slots
-      throw new Error(`Unexpected runtime dependency ${id}`)
-    })
-  } } })
-  await import('@deepseek-ai/dsh-client-runtime/client')
-  const ctx = new Context()
-  cleanup.push(() => ctx.fiber.dispose())
-  const ok = (value: unknown) => Promise.resolve({ result: { ok: true, value } })
-  let fail = failList
-  const summary = (id: string, blank = false) => ({ sessionId: id, cwd: '/work', updatedAt: 1, running: false, blank })
-  const create = vi.fn(async () => ({ result: { ok: true, value: { sessionId: 'new-blank' } } }))
-  const api = {
-    sessions: {
-      list: () => fail ? Promise.reject(new Error('offline')) : ok({ items: [summary('A'), summary('B')] }),
-      create,
-      history: () => ok({ events: [], hasMore: false, running: false }),
-    },
-    subagents: {
-      list: () => ok({ parentAvailable: true, entries: subagentAddress ? [{ kind: 'child', id: 'child', mode: 'continuable', activity: 'idle' }] : [] }),
-      history: () => ok({ events: [], hasMore: false }),
-    },
-    workspace: { list: () => ok({ items: [{ workspaceId: 'work', path: '/work', sessionIds: ['A', 'B'], createdAt: 1 }], archivedSessionIds: [] }) },
-  }
-  // Reproduce the actual desktop's two runtime boot: the root starts a pending
-  // list pull and clears the shared selection key before the iframe constructs.
-  const outerCtx = new Context()
-  cleanup.push(() => outerCtx.fiber.dispose())
-  const outer = new runtime.SessionRuntime(outerCtx, {
-    ...api, sessions: { ...api.sessions, list: () => new Promise(() => {}) },
-  } as never, {} as never)
-  outer.handleConnected()
-  await Promise.resolve()
-  if (sessionId !== null && !subagentAddress) expect(values.get('dsh.sessions.current')).toBe('{}')
   runInNewContext(HARNESS_SESSION_RESTORE_SCRIPT, { Storage, window: {
-    localStorage: storage, parent: { arkmeDesktop: { sessionSelection: { restore: () => restored } } },
+    localStorage: storage, parent: { arkmeDesktop: { sessionSelection: { restore: () => saved } } },
   } })
-  const sessions = new runtime.SessionRuntime(ctx, api as never, {} as never)
-  const workspaces = new runtime.WorkspaceRuntime(ctx, api as never, sessions)
-  cleanup.push(workspaces.startInitialSelection())
-  const saved: string[] = []
-  cleanup.push(observeHarnessSessionSelection(sessions, { save: async (id, address) => { saved.push(id); restored = JSON.stringify({ sessionId: id, subagentAddress: address }); return true } }))
-  sessions.handleConnected()
-  workspaces.handleConnected()
-  return { sessions, workspaces, saved, create, reconnect: () => { fail = false; sessions.handleConnected() } }
+  vi.stubGlobal('localStorage', storage)
+  const summary = (id: string) => ({ id, displayTitle: id, blank: false, cwd: '/work', running: false, updatedAt: 1, retainedBy: {} })
+  const list = store.createSnapshotStore<any>({ phase: loading ? 'loading' : 'ready', ids: ['A', 'B'], byId: { A: summary('A'), B: summary('B') }, projectionsBySession: {} })
+  const addresses = new Map<string, object>()
+  const create = vi.fn(async () => {
+    list.set({ ...list.getSnapshot(), ids: [...list.getSnapshot().ids, 'new-blank'], byId: { ...list.getSnapshot().byId, 'new-blank': summary('new-blank') } })
+    return 'new-blank'
+  })
+  const sessions = { list, create, subagentAddress: (id: string) => addresses.get(id), retain(target: string | any) {
+    const id = typeof target === 'string' ? target : target.childSessionId
+    if (typeof target !== 'string') addresses.set(id, target)
+    const update = (count: number) => list.set({ ...list.getSnapshot(), byId: { ...list.getSnapshot().byId, [id]: { ...(list.getSnapshot().byId[id] ?? summary(id)), retainedBy: { mainView: count } } } })
+    update(1)
+    return { sessionId: id, release: () => update(0) }
+  } }
+  const workspaces = { list: store.createSnapshotStore({ phase: 'ready', items: [{ workspaceId: 'work', title: 'work', path: '/work', sessionIds: ['A', 'B'], createdAt: '2026-01-01', updatedAt: '2026-01-01' }], archivedSessionIds: [] }) }
+  const ctx = new cordis.Context()
+  cleanup.push(() => ctx.fiber.dispose())
+  ctx.provide('sessions', sessions as never); ctx.provide('workspaces', workspaces as never)
+  ctx.provide('remote', { directoryPicker: {} } as never)
+  ctx.provide('layout', new ArkmeLayoutController())
+  // Mount the published 0.2 UI navigation service; stop at the renderer boundary.
+  // Controller snapshots/retention are explicit fixtures, not a copied navigation algorithm.
+  const rendererBoundary = new Error('renderer outside navigation test')
+  ctx.provide('slots', { provideRoot: () => { throw rendererBoundary } } as never)
+  let plugin: any
+  const modules: Record<string, unknown> = { '@deepseek-ai/cordis': cordis, '@deepseek-ai/dsh-client-store': store,
+    '@deepseek-ai/dsh-client-ui-primitives': {}, react: React, 'react/jsx-runtime': jsx }
+  const source = await readFile(new URL('../node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js', import.meta.url), 'utf8')
+  runInNewContext(source, { window: { __ModuleLoader__: { load: (entry: any) => { plugin = entry.factory((id: string) => { if (!(id in modules)) throw Error(id); return modules[id] }) } } },
+    AbortController, AbortSignal, console, setTimeout, clearTimeout, queueMicrotask })
+  expect(() => plugin.apply(ctx)).toThrow(rendererBoundary)
+  const adapted = harnessSessions(ctx)
+  const persisted: string[] = []
+  cleanup.push(observeHarnessSessionSelection(adapted, { save: async id => { persisted.push(id); return true } }))
+  return { ctx, adapted, list, create, persisted }
 }
 
-it('the real Harness runtime restores before default creation and emits changes for open and new-session actions', async () => {
+it('restores before creating defaults and observes native UI navigation through public ownership', async () => {
   const f = await boot('A')
-  await vi.waitFor(() => expect(f.sessions.list.getSnapshot().current).toBe('A'))
-  expect(f.workspaces.list.getSnapshot().baselinesReady).toBe(true)
+  await vi.waitFor(() => expect(f.adapted.list.getSnapshot().current).toBe('A'))
   expect(f.create).not.toHaveBeenCalled()
-  f.sessions.open('B' as never)
-  await vi.waitFor(() => expect(f.saved.at(-1)).toBe('B'))
-  f.workspaces.startSession()
-  await vi.waitFor(() => expect(f.saved.at(-1)).toBe('new-blank'))
-  expect(f.create).toHaveBeenCalledTimes(1)
+  f.ctx.uiWorkspace.openSession('B' as never)
+  await vi.waitFor(() => expect(f.persisted.at(-1)).toBe('B'))
+  f.ctx.uiWorkspace.startSession('work' as never)
+  await vi.waitFor(() => expect(f.adapted.list.getSnapshot().current).toBe('new-blank'))
+  expect(f.create).toHaveBeenCalledOnce()
 })
 
-it('the real Harness runtime falls back only after a successful list proves the saved session is missing', async () => {
+it('waits for a ready catalog before replacing a missing saved selection', async () => {
   const f = await boot('deleted', true)
-  await vi.waitFor(() => expect(f.workspaces.list.getSnapshot().phase).toBe('ready'))
-  expect(f.workspaces.list.getSnapshot().baselinesReady).toBe(false)
-  expect(f.create).not.toHaveBeenCalled()
-  expect(f.saved).toEqual([])
-  f.reconnect()
-  await vi.waitFor(() => expect(f.sessions.list.getSnapshot().current).toBe('new-blank'))
-  expect(f.create).toHaveBeenCalledTimes(1)
-  await vi.waitFor(() => expect(f.saved).toEqual(['new-blank']))
+  expect(f.create).not.toHaveBeenCalled(); expect(f.persisted).toEqual([])
+  f.list.set({ ...f.list.getSnapshot(), phase: 'ready' })
+  await vi.waitFor(() => expect(f.adapted.list.getSnapshot().current).toBe('new-blank'))
+  expect(f.create).toHaveBeenCalledOnce()
 })
 
-
-it('restores a catalog child using its persisted public parent/child address', async () => {
-  const f = await boot('child', false, { parentSessionId: 'A', childSessionId: 'child', mode: 'continuable' })
-  await vi.waitFor(() => expect(f.sessions.list.getSnapshot().current).toBe('child'))
-  expect(f.sessions.list.getSnapshot().currentAddress).toEqual({ parentSessionId: 'A', childSessionId: 'child', mode: 'continuable' })
+it('restores the public durable parent/child address', async () => {
+  const address = { parentSessionId: 'A', childSessionId: 'child', mode: 'continuable' }
+  const f = await boot('child', false, address)
+  await vi.waitFor(() => expect(f.adapted.list.getSnapshot().current).toBe('child'))
+  expect(f.adapted.list.getSnapshot().currentAddress).toEqual(address)
   expect(f.create).not.toHaveBeenCalled()
-  await vi.waitFor(() => expect(f.saved).toContain('child'))
 })
