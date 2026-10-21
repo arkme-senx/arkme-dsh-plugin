@@ -332,18 +332,20 @@ describe('transcript forwarding interaction', () => {
   })
 })
 
-it('searches every occurrence, navigates cyclically, clears on date changes, and restricts selection to one recording', async () => {
+it('searches every occurrence, navigates cyclically, clears on date changes, and permits copying or playback across recordings while keeping the forwarding restriction', async () => {
   vi.setSystemTime(new Date(2026, 8, 4, 12))
   const scroll = vi.fn()
   vi.stubGlobal('requestAnimationFrame', () => 1)
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('document', { ...document, body: {}, getSelection: () => null })
+  vi.stubGlobal('window', { innerWidth: 1400, innerHeight: 900, addEventListener() {}, removeEventListener() {} })
   mocks.call.mockImplementation(async (operation, params) => {
     if (operation === 'recordings.calendar') return { days: [] }
     if (operation === 'recordings.summary-model-config') return { options: [] }
     if (operation === 'recordings.day') return { dateStamp: params.dateStamp, transcript: section([item('one'), item('two', 'other')]), summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } } as ArkmeRecordingDay
     throw new Error(operation)
   })
-  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />, { createNodeMock: () => ({ querySelector: () => ({ scrollIntoView: scroll }), querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} }) }) })
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />, { createNodeMock: () => ({ setAttribute() {}, removeAttribute() {}, querySelector: () => ({ scrollIntoView: scroll }), querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} }) }) })
   await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索' }).props.onClick() })
   await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onChange({ target: { value: '你好' } }) })
   expect(renderer.root.findAllByType('mark')).toHaveLength(4)
@@ -352,11 +354,15 @@ it('searches every occurrence, navigates cyclically, clears on date changes, and
   expect(scroll).toHaveBeenCalled()
   await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onKeyDown({ key: 'Enter', preventDefault() {} }) })
   expect(JSON.stringify(renderer.toJSON())).toContain('1/4')
-  await act(async () => { renderer.root.findByProps({ 'aria-label': '多选' }).props.onClick() })
-  await act(async () => { renderer.root.findAllByProps({ type: 'checkbox' })[0]!.props.onChange({ target: { checked: true } }) })
+  expect(renderer.root.findAllByProps({ 'aria-label': '多选' })).toHaveLength(0)
+  await act(async () => { renderer.root.findAllByProps({ 'data-recording-transcript-item': 'one' })[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 }) })
+  await act(async () => { renderer.root.findByProps({ role: 'menuitem', 'aria-label': '多选' }).props.onClick() })
+  expect(renderer.root.findAllByProps({ type: 'checkbox' })[0]!.props.checked).toBe(true)
   await act(async () => { renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.onChange({ target: { checked: true } }) })
-  expect(renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.checked).toBe(false)
-  expect(JSON.stringify(renderer.toJSON())).toContain('请选择同一次录音')
+  expect(renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.checked).toBe(true)
+  expect(renderer.root.findByProps({ 'aria-label': '转发' }).props.disabled).toBe(true)
+  expect(renderer.root.findByProps({ 'aria-label': '复制链接' }).props.disabled).toBe(true)
+  expect(JSON.stringify(renderer.toJSON())).toContain('复制和播放不受影响')
   expect(renderer.root.findByProps({ 'aria-label': '录音多选操作' })).toBeTruthy()
   await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
   expect(renderer.root.findAllByProps({ 'aria-label': '搜索当天转写' })).toHaveLength(0)

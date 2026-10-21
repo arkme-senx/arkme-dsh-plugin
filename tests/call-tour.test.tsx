@@ -74,8 +74,9 @@ it('guides the real call surface through six steps and enables utterance playbac
   expect(document.querySelector('[data-arkme-call-detail-content]')?.textContent).toContain('确认了发布会演示顺序')
   await click('下一步'); expect(focusedTarget()).toBe('video')
   await click('下一步'); expect(focusedTarget()).toBe('utterance')
-  const utterance = document.querySelector<HTMLButtonElement>('[data-arkme-call-tour-target="utterance"]')!
-  expect(utterance.tagName).toBe('BUTTON')
+  const utterance = document.querySelector<HTMLElement>('[data-arkme-call-tour-target="utterance"]')!
+  expect(utterance.getAttribute('role')).toBe('button')
+  expect(utterance.tabIndex).toBe(0)
   await act(async () => utterance.click()); await settle()
   expect(utterance.textContent).not.toContain('正在播放')
   expect(DemoAudio.latest).toBeUndefined()

@@ -1,3 +1,4 @@
+import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
 import { OfflineContextMessageLink, useOfflineContextMessageLinks } from './offline-context/OfflineContextMessageLink.js'
@@ -1806,6 +1807,8 @@ function copyLinkSnapshotTimelineItem(item: ArkmeMessageCopyLinkSnapshotItem, in
     status: 1,
     templateKind: item.templateKind,
     displayKind: item.displayKind,
+    ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
+    ...(item.mediaUnavailable ? { mediaUnavailable: true } : {}),
     ...(avatar !== '' && !/^(https?:|data:|blob:)/iu.test(avatar) ? { avatarRef: avatar } : {}),
   }
 }
@@ -1852,11 +1855,7 @@ function CopyLinkDetailDrawer({
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
       </div>
       <div style={styles.copyLinkDetailRecordContent}>
-        <ArkmeMessageContent
-          item={snapshot}
-          presentation="detail"
-          shareWebsite={shareWebsite}
-        />
+        <CopyLinkSnapshotContent item={item} snapshot={snapshot} shareWebsite={shareWebsite} />
       </div>
     </div>
   }
@@ -1867,11 +1866,7 @@ function CopyLinkDetailDrawer({
       <div style={styles.copyLinkDetailMultiContent}>
         <span style={styles.copyLinkDetailRecordSender}>{copyLinkSnapshotSenderName(item)}</span>
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
-        <ArkmeMessageContent
-          item={snapshot}
-          presentation="detail"
-          shareWebsite={shareWebsite}
-        />
+        <CopyLinkSnapshotContent item={item} snapshot={snapshot} shareWebsite={shareWebsite} />
         {item.mediaItems.length > 0 && <p style={styles.copyLinkDetailContentLabel}>
           {item.mediaItems.map(media => media.fileName.trim()).filter(value => value !== '').slice(0, 2).join('、')}
         </p>}
@@ -1888,11 +1883,7 @@ function CopyLinkDetailDrawer({
           {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailExtensionTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
         </div>
         <div style={styles.copyLinkDetailExtensionContent}>
-          <ArkmeMessageContent
-            item={snapshot}
-            presentation="detail"
-            shareWebsite={shareWebsite}
-          />
+          <CopyLinkSnapshotContent item={item} snapshot={snapshot} shareWebsite={shareWebsite} />
         </div>
       </div>
     </div>

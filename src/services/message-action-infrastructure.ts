@@ -1,3 +1,4 @@
+import { createMessageCopyLink } from './message-copy-link-create.js'
 import { createHash } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
@@ -49,18 +50,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult> {
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/messages/copy-link/get-or-create',
-      { sources: references.map(reference => this.copyLinkSource(reference)) },
-      session,
-      signal,
-    )
-    const sid = stringValue(data.sid).trim()
-    const url = stringValue(data.url).trim()
-    if (sid === '' || !/^https?:\/\//i.test(url)) {
-      throw new ArkmePluginError('message-copy-link-response-invalid', '复制链接失败，请稍后重试', true, 502)
-    }
-    return { sid, url }
+    return await createMessageCopyLink(this.runtime, references.map(reference => this.copyLinkSource(reference)), session, signal)
   }
 
   async forwardToChat(input: Parameters<MessageActionGateway['forwardToChat']>[0]): Promise<ArkmeSourceSendResult> {
