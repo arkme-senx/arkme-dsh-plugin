@@ -92,6 +92,38 @@ describe('recording import dialog behavior', () => {
     })
   }
 
+  it('uses the native chooser when available and keeps a cancellation quiet', async () => {
+    const pick = vi.fn(async () => [])
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(pick).toHaveBeenCalledOnce()
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('surfaces native picker failures without opening a competing browser chooser', async () => {
+    const pick = vi.fn(async () => { throw new Error('系统文件选择窗口未能打开') })
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' }).some(node => renderedText(node).includes('系统文件选择窗口未能打开'))).toBe(true)
+  })
+
   function memoryJournal() {
     const records = new Map<string, import('../src/client/recordings/recording-import-journal.js').ImportQueueRecord>()
     return {

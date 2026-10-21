@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RecordingFilePicker } from '../src/client/recordings/recording-file-picker.js'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('recording chooser diagnostics', () => {
   it('suppresses competing requests while preserving the first chooser', async () => {
@@ -31,12 +31,33 @@ describe('recording chooser diagnostics', () => {
       .toEqual({ status: 'error', message: '无法打开文件选择器：File picker already active.' })
     expect(await picker.run('browser', async () => { picker.interrupt('dialog-close-requested'); throw new DOMException('aborted', 'AbortError') }))
       .toEqual({ status: 'error', message: '文件选择器意外关闭，请重试' })
+    expect(await picker.run('desktop', async () => { throw new DOMException('aborted', 'AbortError') }))
+      .toEqual({ status: 'error', message: '文件选择器意外关闭，请重试' })
   })
   it('redacts local paths from chooser failures and diagnostics', async () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     const result = await new RecordingFilePicker().run('desktop', async () => { throw new Error('Cannot open /Users/person/Private Audio.wav') })
     expect(result).toEqual({ status: 'error', message: '无法打开文件选择器：Cannot open [path]' })
     expect(JSON.stringify(log.mock.calls)).not.toContain('/Users/person')
+  })
+
+  it('surfaces an abort after visibility loss even if visibility recovers before rejection', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const page = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+    vi.stubGlobal('document', page)
+    vi.stubGlobal('window', new EventTarget())
+    const picker = new RecordingFilePicker()
+    const result = await picker.run('browser', async () => {
+      page.visibilityState = 'hidden'
+      page.dispatchEvent(new Event('visibilitychange'))
+      page.visibilityState = 'visible'
+      page.dispatchEvent(new Event('visibilitychange'))
+      throw new DOMException('aborted', 'AbortError')
+    })
+    expect(result).toEqual({ status: 'error', message: '文件选择已中止，请回到当前窗口重试' })
+    // The next, visible user cancellation must not inherit the last failure's state.
+    expect(await picker.run('browser', async () => { throw new DOMException('aborted', 'AbortError') }))
+      .toEqual({ status: 'cancelled' })
   })
 
 })
