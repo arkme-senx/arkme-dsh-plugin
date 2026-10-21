@@ -4,7 +4,7 @@ import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quo
 import { underlineCapabilities, underlineId, readUnderlineSnapshot, type MessageUnderlineChange } from '../message-annotations.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
-import { longArticleImageDestinations, remapLongArticleAssets } from '../long-article-content.js'
+import { longArticleImageDestinations } from '../long-article-content.js'
 import { encodeMentionMetadata, type ResolvedMentions } from './mention-metadata-codec.js'
 import { recordManualEditFact } from '../record-edit-history.js'
 import type { RecordEditHistoryTarget } from './record-edit-history-service.js'
@@ -26,7 +26,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { MemberEventService } from './member-event-service.js'
 import { postChatMessageCreation } from './direct-message-admission-service.js'
-import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
+import { projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
 import { projectOwnedRecordExtensions, projectOwnedRecordParent } from '../record-extension-tree.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -45,12 +45,10 @@ import type {
   ArkmeBotConversationSendResult,
   ArkmeBotNotificationPreference,
   ArkmeDirectTextSendResult,
-  ArkmeForwardRecordPreviewItem,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
   ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
-  ArkmeForwardTranscriptSegment,
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupJoinRestrictionMutationResult,
@@ -2364,6 +2362,7 @@ export class ChatService {
             } }),
             mediaUnavailable: media.unavailableRecordUids.has(recordUid),
           })
+          if (item.forwardRecords !== undefined) await this.record.hydrateForwardAvatars(raw, session.userId, item)
           const entry = objectValue(raw)
           const core = objectValue(entry.record_core)
           const sourceTopicUid = entry.source_kind === 1 ? ''
@@ -2455,7 +2454,8 @@ export class ChatService {
         const rawRecords = selected.map(candidate => candidate.raw)
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const signingKey = await this.runtime.stateStore.uniqueCode()
-        const records = selected.map(({ raw, topic, topicUid }) => {
+        const records: ArkmeTimelineItem[] = []
+        for (const { raw, topic, topicUid } of selected) {
           const recordUid = this.record.recordUid(raw)
           const displayItems = media.displayItemsByRecordUid.get(recordUid)
           const topicHierarchyKey = topic.topicHierarchyKey!
@@ -2469,12 +2469,13 @@ export class ChatService {
             },
             mediaUnavailable: media.unavailableRecordUids.has(recordUid),
           })
+          if (item.forwardRecords !== undefined) await this.record.hydrateForwardAvatars(raw, session.userId, item)
           const assignable = this.withPersonalRecordCapabilities(source, item, session.userId, signingKey,
             numberValue(objectValue(raw).owner_user_id), topicUid)
-          return assignable.recordTopicAssignmentRef === undefined
+          records.push(assignable.recordTopicAssignmentRef === undefined
             ? assignable
-            : { ...assignable, recordTopicAssignmentTopicKey: topicHierarchyKey }
-        })
+            : { ...assignable, recordTopicAssignmentTopicKey: topicHierarchyKey })
+        }
         const hasMore = candidates.length > limit || streams.some(stream => stream.hasMore)
         const lastItem = selected.at(-1)?.item
         if (hasMore && lastItem === undefined) {
@@ -4191,7 +4192,6 @@ export class ChatService {
         text_state: 1,
         forward_records: {
           render_kind: 'forward_records',
-          schema_version: 1,
           source_type: 'quick_records',
           title: '转发快记',
           source_record_uids: references.map(reference => reference.recordUid).filter(recordUid => recordUid.trim() !== ''),
@@ -4199,7 +4199,7 @@ export class ChatService {
           summary_lines: references.slice(0, 3).map(reference =>
             `${reference.senderName}: ${reference.textContent.trim() || reference.title.trim() || '非文本内容'}`,
           ),
-          items: references.map((reference, index) => this.forwardPayloadItem(reference, index)),
+          items: references.map(reference => this.forwardPayloadItem(reference)),
         },
       }
       const appendCommentWarning = async (sent: ArkmeSourceSendResult): Promise<ArkmeSourceSendResult> => {
@@ -5647,133 +5647,13 @@ export class ChatService {
     }
   
   async chatForwardRecordsPreview(
-      raw: unknown,
-      viewerUserId: number,
-      fallbackCreatedAtMillis: number,
-    ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
-      const contentPayload = this.media.recordContentPayload(raw)
-      const nested = objectValue(contentPayload.forward_records ?? contentPayload.forwardRecords)
-      const payload = Object.keys(nested).length > 0 ? nested : contentPayload
-      if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
-  
-      const projectedItems: ArkmeForwardRecordPreviewItem[] = []
-      let truncated = false
-      let remainingSegments = 2_000
-      const epochMillis = (value: unknown): number => {
-        const time = numberValue(value)
-        return Number.isFinite(time) && time > 0 && time < 8.64e15
-          ? Math.trunc(time < 1e12 ? time * 1000 : time) : 0
-      }
-      const appendItems = async (values: unknown[], depth: number): Promise<void> => {
-        if (values.length > 100) truncated = true
-        const sorted = values.slice(0, 100).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
-          .sort((left, right) => (left.order || left.index) - (right.order || right.index))
-        for (const entry of sorted) {
-          if (projectedItems.length >= 100) { truncated = true; return }
-          const item = objectValue(entry.value)
-          const nestedForward = objectValue(item.forward_records ?? item.forwardRecords)
-          if (depth < 4
-            && stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records') {
-            await appendItems(listValue(nestedForward.items), depth + 1)
-            continue
-          }
-          if (depth >= 4 && Object.keys(nestedForward).length > 0) truncated = true
-          const rawType = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
-          const sourceSender = item.source_sender_user_id ?? item.sourceSenderUserId
-          const isDeepSeekReply = rawType === 'agent'
-            && numberValue(sourceSender) === 0 && stringValue(item.source_avatar_kind ?? item.sourceAvatarKind) === 'deepseek'
-          // Chat omits the zero AI speaker ID; content ownership must not turn that reply into a human speaker.
-          const senderUserId = isDeepSeekReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
-          const senderName = isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
-            item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
-          ).trim() || 'Arkme用户'
-          // Agent forward snapshots use render_format; ordinary Record text_format has a separate contract.
-          const textFormat = rawType === 'agent'
-            && stringValue(item.render_format ?? item.renderFormat) === 'markdown' ? 'markdown' : arkmeRecordTextFormat(item)
-          const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
-          let textContent = textFormat === 'markdown' ? rawText : rawText.trim()
-          const displayKind = numberValue(item.display_kind ?? item.displayKind)
-          const title = stringValue(item.title).trim()
-          const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
-            rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
-              || rawType === 'agent' || rawType === 'ai_letter' ? rawType : 'unknown'
-          const files = listValue(item.files)
-          const longArticle = displayKind === 1
-          const contentBlocks = this.media.forwardContentBlocks(files, viewerUserId, { longArticle })
-          if (longArticle && textFormat === 'markdown') {
-            const aliases = new Map(files.map((value, index) => [`arkme-asset:${stringValue(objectValue(value).file_asset_uid)}`, `arkme-asset:media-${index}`]))
-            textContent = remapLongArticleAssets(textContent, aliases)
-          }
-          const call = objectValue(item.call_record_snapshot ?? item.callRecordSnapshot)
-          const recordingSegments = listValue(item.long_recording_segments ?? item.longRecordingSegments)
-          const rawSegments = recordingSegments.length > 0 ? recordingSegments : listValue(call.transcript_segments ?? call.transcriptSegments)
-          const segmentValues = rawSegments.slice(0, Math.min(500, remainingSegments))
-          remainingSegments -= segmentValues.length
-          const segments: ArkmeForwardTranscriptSegment[] = segmentValues.map(value => {
-            if (recordingSegments.length > 0) return projectForwardRecordingSegment(value, senderName)
-            const segment = objectValue(value)
-            const offset = (value: unknown) => Math.max(0, Math.trunc(numberValue(value)))
-            const startMillis = offset(segment.start_millis ?? segment.startMillis ?? segment.start_ms ?? segment.startMs)
-            const endMillis = Math.max(startMillis, offset(segment.end_millis ?? segment.endMillis ?? segment.end_ms ?? segment.endMs))
-            const speakerNumber = offset(segment.speaker_number ?? segment.speakerNumber)
-            const speakerName = stringValue(segment.speaker_label ?? segment.speakerLabel ?? segment.speaker_name ?? segment.speakerName).trim()
-              || (speakerNumber > 0 ? `说话人 ${String(speakerNumber)}` : senderName)
-            const audioUrl = stringValue(segment.audio_url ?? segment.audioUrl).trim()
-            const segmentMedia = audioUrl === '' ? [] : this.media.forwardContentBlocks([{
-              type: 2, name: '通话片段', mime_type: 'audio/wav', download_url: audioUrl,
-              duration_sec: (endMillis - startMillis) / 1000,
-            }], viewerUserId)
-            return {
-              speakerName, textContent: stringValue(segment.text ?? segment.text_content ?? segment.textContent), startMillis, endMillis,
-              ...(segmentMedia.length === 0 ? {} : { contentBlocks: segmentMedia }),
-              ...(audioUrl !== '' && segmentMedia.length === 0 ? { mediaUnavailable: true as const } : {}),
-            }
-          })
-          const imageCount = Math.max(0, Math.trunc(numberValue(item.image_count ?? item.imageCount)))
-          const voiceCount = Math.max(0, Math.trunc(numberValue(item.voice_count ?? item.voiceCount)))
-          const fileCount = Math.max(0, Math.trunc(numberValue(item.file_count ?? item.fileCount)))
-          const fileName = listValue(item.file_names ?? item.fileNames)
-            .map(value => stringValue(value).trim()).find(value => value !== '')
-          const contentLabel = imageCount > 0
-            ? imageCount > 1 ? `[${String(imageCount)}张图片]` : '[图片]'
-            : voiceCount > 0 ? '[语音]'
-              : fileCount > 0 ? fileName === undefined ? '[文件]' : `[文件] ${fileName}`
-                : stringValue(item.availability).trim() !== '' ? '原快记暂不可查看' : undefined
-          projectedItems.push({
-            senderName,
-            ...(isDeepSeekReply ? { avatarKind: 'deepseek' as const } : {}),
-            ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
-            // Only a resolved other account gets an actionable identity; the
-            // viewer's own id and unresolved senders stay off the wire.
-            ...(senderUserId > 0 && senderUserId !== viewerUserId ? { senderUserId } : {}),
-            sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
-            title,
-            textContent,
-            textFormat,
-            displayKind,
-            sourceType,
-            templateKind: numberValue(item.template_kind ?? item.templateKind),
-            ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
-            ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
-            ...(segments.length === 0 ? {} : { segments }),
-            ...(segmentValues.length < rawSegments.length || (!longArticle && files.length > 32) ? { truncated: true } : {}),
-            ...(contentLabel === undefined ? {} : { contentLabel }),
-          })
-        }
-      }
-      await appendItems(listValue(payload.items), 0)
-  
-      const summaryLines = listValue(payload.summary_lines ?? payload.summaryLines)
-        .map(value => stringValue(value).trim()).filter(value => value !== '')
-      const createdAtMillis = epochMillis(payload.created_at ?? payload.createdAt) || epochMillis(fallbackCreatedAtMillis)
-      return {
-        title: stringValue(payload.title).trim() || '转发快记',
-        createdAtMillis,
-        summaryLines,
-        items: projectedItems,
-        ...(truncated ? { truncated: true } : {}),
-      }
-    }
+    raw: unknown,
+    viewerUserId: number,
+    fallbackCreatedAtMillis: number,
+  ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
+    return await projectForwardRecordsWithAvatars(this.media.recordContentPayload(raw), viewerUserId,
+      fallbackCreatedAtMillis, this.media, this.profile)
+  }
 
   chatSharedRecordingPreview(raw: unknown): ArkmeTimelineItem['sharedRecording'] | undefined {
     const contentPayload = this.media.recordContentPayload(raw)
@@ -7114,12 +6994,9 @@ export class ChatService {
     return result
   }
 
-  private forwardPayloadItem(reference: ArkmeMessageActionRefPayload, itemOrder: number): Record<string, unknown> {
+  private forwardPayloadItem(reference: ArkmeMessageActionRefPayload): Record<string, unknown> {
     return {
-      item_order: itemOrder,
-      source_kind: reference.sourceKind,
       record_uid: reference.recordUid,
-      source_type: reference.sourceKind === 'chat_relation' ? 'chat_record' : 'record',
       ...(reference.recordOwnerUserId !== 0 ? { owner_id: reference.recordOwnerUserId } : {}),
       ...(reference.relationUid === '' ? {} : { source_rel_uid: reference.relationUid }),
       ...(reference.chatSessionUid === '' ? {} : { source_chat_session_uid: reference.chatSessionUid }),
@@ -7130,10 +7007,8 @@ export class ChatService {
       send_at: reference.sendAtMillis,
       title: reference.title,
       text: reference.textContent,
-      text_preview: arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits'),
       text_format: reference.textFormat ?? 'plain',
       template_kind: reference.templateKind,
-      display_kind: reference.displayKind,
       image_count: reference.imageCount,
       voice_count: reference.voiceCount,
       file_count: reference.fileCount,

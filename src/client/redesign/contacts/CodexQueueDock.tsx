@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { IconChevronDownOutline14, IconChevronUpOutline14, IconQueueOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineMedium, IconChevronUpOutlineMedium, IconQueueOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamCodexQueuedRequest, TeamCodexTask } from '../../../team-codex-contract.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 
@@ -61,13 +61,13 @@ export function CodexQueueDock({ task }: { task: TeamCodexTask }) {
   const label = warning ? tr('上次队列 {count} 条', { count })
     : items.some(item => !waiting(item)) ? tr('待处理 {count} 条', { count })
     : tr('{count} 条排队消息', { count })
-  const lead = <span className="arkme-codex-queue-lead" aria-hidden="true"><IconQueueOutline14/></span>
+  const lead = <span className="arkme-codex-queue-lead" aria-hidden="true"><IconQueueOutlineMedium size={14}/></span>
   return <div className="arkme-codex-queue-dock" data-codex-queue-dock="">
     <div className="arkme-codex-queue-panel">
       {count > 1 && <button type="button" className="arkme-codex-queue-header" aria-expanded={!collapsed} aria-controls={listId} onClick={() => setCollapsed(value => !value)}>
         {lead}<span className="arkme-codex-queue-count">{label}</span>
         {!listVisible && status && <span className="arkme-codex-queue-status" role="status">{status}</span>}
-        <span className="arkme-codex-queue-chevron" aria-hidden="true">{collapsed ? <IconChevronUpOutline14/> : <IconChevronDownOutline14/>}</span>
+        <span className="arkme-codex-queue-chevron" aria-hidden="true">{collapsed ? <IconChevronUpOutlineMedium size={14}/> : <IconChevronDownOutlineMedium size={14}/>}</span>
       </button>}
       {warning && <div className="arkme-codex-queue-notice" role="status" title={warningTitle}>{!count && lead}<span>{warning}</span></div>}
       {!!count && <ul id={listId} className="arkme-codex-queue-list" aria-label={tr('排队请求')} hidden={!listVisible}>

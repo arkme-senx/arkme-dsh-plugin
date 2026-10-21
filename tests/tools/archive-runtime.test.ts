@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from '../helpers/session-input.js'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -18,7 +19,7 @@ it('discovers archive tools in an official DSH session, requires a human grant, 
     listArchives: async () => ({ items: [], hasMore: false }), getArchiveStates: read, setArchiveState: write,
   } as unknown as ArkmeToolPorts), { inject: ['tools', 'systemPrompt'] }))
   const session = Session.create(SessionId('archive-session'))
-  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
+  const inbox = createSessionInput(session)
   const agent = { id: session.id, session, inbox } as unknown as Agent
   const signal = new AbortController().signal
   let count = 0

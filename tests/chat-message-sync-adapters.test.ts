@@ -2,8 +2,9 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SessionStore from '@deepseek-ai/dsh-session'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from './helpers/session-input.js'
 import { afterEach, expect, it, vi } from 'vitest'
 import { registerArkmeTools } from '../src/tools/registry/registrar.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
@@ -53,7 +54,7 @@ it('requires a human confirmation before the registered DSH retry Tool runs', as
   const ctx = new Context(); await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   const retry=vi.fn(async()=>progress)
   const mounted=await ctx.plugin(Object.assign((inner:Context)=>registerArkmeTools(inner,{retryMessageSync:retry} as never,'business'),{inject:['tools','systemPrompt']}))
-  const session=ctx.sessions.create(), inbox=new Inbox(session,{inserted(){},discarded(){},claimed(){}})
+  const session=ctx.sessions.create(), inbox=createSessionInput(session)
   const agent={id:session.id,session,inbox} as Agent
   let count=0
   const human=(text:string)=>{

@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from '../helpers/session-input.js'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -15,7 +16,7 @@ it('discovers safe lock tools in an official session and requires human grants w
     deviceLockStatus: async () => snapshot, lockDevice: request, requestDeviceUnlock: request,
   } as unknown as ArkmeToolPorts), { inject: ['tools', 'systemPrompt'] }))
   const session = Session.create(SessionId('device-lock-session'))
-  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
+  const inbox = createSessionInput(session)
   const agent = { id: session.id, session, inbox } as unknown as Agent
   let count = 0
   const invoke = async (name: string, args = {}) => {

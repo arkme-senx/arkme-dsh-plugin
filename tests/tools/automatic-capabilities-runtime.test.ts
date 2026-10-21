@@ -2,8 +2,8 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SessionStore from '@deepseek-ai/dsh-session'
-import { Inbox } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createSessionInput } from '../helpers/session-input.js'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { expect, it, vi } from 'vitest'
 import { registerArkmeTools } from '../../src/tools/registry/registrar.js'
 
@@ -32,7 +32,7 @@ it('official DSH confirms a human disable and executes only the prepared account
   await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   try {
     const session = ctx.sessions.create()
-    const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
+    const inbox = createSessionInput(session)
     const agent = { id: session.id, session, inbox }
     const settings = { accountScope: 'prod:123', settings: [{ key: 'record_thought', title: '快记建议', enabled: true, version: 9, enabledAt: 100 }] }
     const query = vi.fn(async () => settings), update = vi.fn(async () => settings)

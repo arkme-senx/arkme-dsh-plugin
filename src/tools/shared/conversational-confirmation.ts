@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { CallId } from '@deepseek-ai/dsh-llm'
+import type { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { readSessionEvents } from '../../dsh-session-events.js'
 
 const DEFAULT_CONFIRMATION_TTL_MILLIS = 10 * 60_000
@@ -215,16 +216,27 @@ function hasLaterDirectUserInput(agent: Agent, afterSeq: number): boolean {
 
 function confirmationResult(agent: Agent, pending: PendingConfirmation): { seq: number; isError: boolean } | undefined {
   let preparedSucceeded = pending.preparedCallId === pending.preparedRootCallId
-  for (const event of readSessionEvents(agent.session)) {
+  // A plugin can still run on the shipped 0.1.x runtime during rollout. Its
+  // nested dispatch and tool-result envelope remain valid confirmation proof.
+  type LegacyDispatch = { type: 'tool/code-dispatch'; seq: number; data: {
+    rootCallId: CallId; subCallId: CallId; isError: boolean; content: readonly { type: string; text?: string }[]
+  } }
+  for (const event of readSessionEvents(agent.session) as readonly (SessionEvent | LegacyDispatch)[]) {
     if (event.seq <= pending.preparedAfterSeq) continue
-    if (event.type === 'tool/code-dispatch' && event.data.rootCallId === pending.preparedRootCallId
+    if ((event.type === 'tool/code-dispatch' || event.type === 'tool/ptc-dispatch') && event.data.rootCallId === pending.preparedRootCallId
       && event.data.subCallId === pending.preparedCallId) {
       if (event.data.isError && !isPreparedConfirmation(event.data.content, pending)) return { seq: event.seq, isError: true }
       preparedSucceeded = true
     }
     if (event.type !== 'tool/result' || (event.surfaceOp !== undefined && event.surfaceOp !== 'append')) continue
-    const [result] = event.data.message.content
-    if (event.data.message.source.callId === pending.preparedRootCallId && result.toolCallId === pending.preparedRootCallId) {
+    const message = event.data.message
+    const legacy = message.content[0] as unknown as {
+      type?: string; toolCallId?: string; content?: readonly { type: string; text?: string }[]; isError?: boolean
+    } | undefined
+    const result = message.role === 'tool' ? message
+      : legacy?.type === 'tool-result' && legacy.content !== undefined ? legacy : undefined
+    if (result !== undefined && result.content !== undefined
+      && message.source.callId === pending.preparedRootCallId && result.toolCallId === pending.preparedRootCallId) {
       // MCP output schemas describe owner results, so its local confirmation is
       // a non-execution error. Only this exact, already prepared result
       // establishes publication; arbitrary failures still require preparation.

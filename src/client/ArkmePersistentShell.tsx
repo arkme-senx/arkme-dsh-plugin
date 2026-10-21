@@ -1,3 +1,5 @@
+import { currentHarnessSession } from './harness-session-state.js'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -6,7 +8,7 @@ import {
   type ReactNode, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
@@ -435,7 +437,7 @@ export function ArkmePersistentSidebar({
       compact={false}
       hosted
       taskExpanded
-      currentSessionId={sessionState.current}
+      currentSessionId={currentHarnessSession(sessionState)}
     />
     <PersistentDirectoryPanel key={`${contactsAccountKey}:contacts`} active={directoryVisible && contactsMode} mode="contacts">
       <ContactDirectorySurface active={directoryVisible && contactsMode}
@@ -478,7 +480,7 @@ export function ArkmePersistentSidebar({
         compactDirectory={compactDirectory}
         embeddedProductShell
         showHarnessEntry
-        currentSessionId={sessionState.current}
+        currentSessionId={currentHarnessSession(sessionState)}
         renderSlot={renderSlot}
         searchDshMessages={searchDsh}
         onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}
@@ -509,14 +511,15 @@ export function ArkmePersistentSidebar({
   </aside>
 }
 
-export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'>
+export type ArkmePersistentWorkspaceProps = PropsRuntime<'main'>
   & PropsLocale<typeof ARKME_LOGIN_LOCALE_NAMESPACE>
   & { closeDetails(): void }
 
 /** Arkme keeps the conversation seat and embeds the complete native DSH client inside it. */
 export function ArkmePersistentWorkspace({
-  sessionId, closeDetails, t,
+  useSessions, closeDetails, t,
 }: ArkmePersistentWorkspaceProps) {
+  const sessionId = useSessions(currentHarnessSession)
   useArkmeLocale()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -614,7 +617,7 @@ export function ArkmePersistentWorkspace({
   </main>
 }
 
-export type ArkmePersistentDetailsProps = PropsRuntime<'details'> & { closeDetails(): void }
+export type ArkmePersistentDetailsProps = PropsRuntime<'rightbar'> & { closeDetails(): void }
 
 /** Claim the details seat as an empty Arkme surface so the official DSH panel is never visible. */
 export function ArkmePersistentDetails({ closeDetails }: ArkmePersistentDetailsProps) {

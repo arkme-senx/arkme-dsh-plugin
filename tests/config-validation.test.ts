@@ -101,14 +101,14 @@ describe('plugin environment validation', () => {
   it('normalizes a legacy production profile through the plugin apply entrypoint', () => {
     const config = { ...productionConfig(), dataBaseUrl: '' }
 
-    expect(() => apply({ webServer: { host: '0.0.0.0' } } as never, config))
+    expect(() => apply({ webServer: { host: '0.0.0.0', port: 3000 } } as never, config))
       .toThrow(/Web UI must bind 127\.0\.0\.1/)
   })
 
   it('rejects a production profile that silently keeps a test service origin', () => {
     const config = { ...productionConfig(), intelligentBaseUrl: 'https://jotmo-intelligent.senguo.me' }
 
-    expect(() => { apply({} as never, config) })
+    expect(() => { apply({ webServer: { host: '127.0.0.1', port: 3000 } } as never, config) })
       .toThrow(/production environment must explicitly configure every service origin/)
   })
 

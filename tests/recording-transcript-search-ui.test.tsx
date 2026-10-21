@@ -17,6 +17,7 @@ const input = () => host.querySelector<HTMLInputElement>('input')
 const outside = () => host.querySelector<HTMLButtonElement>('button:last-child')!
 const render = (initial = '') => act(() => root.render(<Search initial={initial} />))
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.useFakeTimers()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   find.mockClear(); previous.mockClear(); next.mockClear()

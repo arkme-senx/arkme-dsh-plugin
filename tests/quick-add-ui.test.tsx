@@ -1,3 +1,4 @@
+import { IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -17,15 +18,15 @@ describe('Arkme quick-add UI', () => {
     expect(markup).toContain('width:40px;height:40px')
     expect(markup).toContain('border-radius:11px')
     // Same DSH icon set as the composer's bottom-left add button, not a text glyph.
-    expect(markup).toContain('M8.64453 1.5V7.34961H14.5V8.65039H8.64453V14.5H7.34473V8.65039H1.5V7.34961H7.34473V1.5H8.64453Z')
+    expect(markup).toContain(renderToStaticMarkup(<IconPlusOutlineMedium size={20} aria-hidden />))
     expect(markup).not.toContain('>＋</button>')
     expect(markup).not.toContain('role="treeitem"')
     expect(markup).not.toContain('>添加联系人<')
   })
 
   it('matches the directory search geometry and reuses the host add icon', () => {
-    expect(quickAddSource).toContain("IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'")
-    expect(quickAddSource).toContain('<IconPlusOutline16 size={20} aria-hidden />')
+    expect(quickAddSource).toContain("IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'")
+    expect(quickAddSource).toContain('<IconPlusOutlineMedium size={20} aria-hidden />')
     expect(quickAddSource).toContain("backgroundColor: 'var(--dsw-specific-selector, transparent)'")
     expect(quickAddSource).toContain('height: directorySearchLayout.field.height')
     expect(quickAddSource).toContain('borderRadius: directorySearchLayout.field.borderRadius')

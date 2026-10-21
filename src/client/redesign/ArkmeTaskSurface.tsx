@@ -8,7 +8,8 @@ import { Paperclip } from '@phosphor-icons/react/Paperclip'
 import { Plus } from '@phosphor-icons/react/Plus'
 import { SquaresFour } from '@phosphor-icons/react/SquaresFour'
 import { Waveform } from '@phosphor-icons/react/Waveform'
-import type { SessionId, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import { ArkmeJiwoBrandMark } from '../ArkmeJiwoBrandMark.js'
 
 function taskTime(updatedAt: number): string {
@@ -29,7 +30,7 @@ function taskTime(updatedAt: number): string {
 export function ArkmeTaskDirectory({
   sessions, selected, onNew, onOpen,
 }: {
-  sessions: readonly SessionSummary[]
+  sessions: readonly (SessionSummary & { pendingInteraction?: string })[]
   selected: SessionId | undefined
   onNew(): void
   onOpen(sessionId: SessionId): void
