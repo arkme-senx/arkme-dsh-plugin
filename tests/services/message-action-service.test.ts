@@ -6,6 +6,7 @@ import {
   LocalMessageActionCapabilityCodec,
 } from '../../src/services/message-action-infrastructure.js'
 import { MessageActionService } from '../../src/services/message-action-service.js'
+import { assertRecordForwardInput } from '../fixtures/record-forward-input.js'
 
 const userId = 42
 const signingKey = 'message-action-test-signing-key'
@@ -30,7 +31,10 @@ function runtime(overrides: Record<string, unknown> = {}) {
     stateStore: { uniqueCode: vi.fn(async () => signingKey) },
     requireSession: vi.fn(async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' })),
     authenticatedChatPost: vi.fn(async () => ({ sid: 'share-sid', url: 'https://jotmo.example/s/share-sid' })),
-    authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }),
+    authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => {
+      assertRecordForwardInput(body)
+      return body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }
+    }),
     ...overrides,
   }
 }
@@ -161,7 +165,8 @@ describe('MessageActionService', () => {
       targetSourceRef: 'opaque-target', requestId: 'request-stable', recordUid: forwardRecordUid, sendAtMillis: 1_786_000_123_000,
     })
     expect(ownerRuntime.authenticatedPost.mock.calls[0]?.[1]).toMatchObject({ content_payload: { forward_records: {
-      items: [{ source_kind: 'agent_message', text, text_preview: '文'.repeat(495) }],
+      summary_lines: ['Agent: ' + '文'.repeat(495)],
+      items: [{ text, text_format: 'markdown' }],
     } } })
   })
 
@@ -188,8 +193,6 @@ describe('MessageActionService', () => {
       content_payload: {
         forward_records: {
           items: [{
-            source_kind: 'agent_message',
-            source_type: 'agent',
             record_uid: 'agent-entry-record',
             owner_id: userId,
           }],

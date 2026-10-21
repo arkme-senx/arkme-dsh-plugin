@@ -766,6 +766,7 @@ export function apply(ctx: Context, config: Config): void {
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'uploads'),
     maxUploadBytes: config.maxUploadBytes,
+    requestTimeoutMs: config.requestTimeoutMs,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)

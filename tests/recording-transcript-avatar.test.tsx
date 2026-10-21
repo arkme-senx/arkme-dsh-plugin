@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', async original => ({
-  ...await original<typeof import('../src/client/api.js')>(), callArkme: mocks.call,
+// Loading the real API here also loads its cyclic UI dependencies before the mock is installed.
+vi.mock('../src/client/api.js', async () => ({
+  ArkmeClientError: (await import('../src/sdk/index.js')).ArkmeClientError,
+  callArkme: mocks.call,
 }))
 import { ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingTimeline } from '../src/client/recordings/ArkmeRecordingTimeline.js'
